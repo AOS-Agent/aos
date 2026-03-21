@@ -560,6 +560,7 @@ prereq_superwhisper() {
     fi
 
     # Ensure SuperWhisper starts at login
+    mkdir -p "$HOME/Library/LaunchAgents"
     local sw_plist="$HOME/Library/LaunchAgents/com.agent.superwhisper.plist"
     if [[ -f "$sw_plist" ]]; then
         _skip "SuperWhisper LaunchAgent"
