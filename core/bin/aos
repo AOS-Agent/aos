@@ -270,59 +270,59 @@ except py_compile.PyCompileError as e:
         ;;
 
     start)
-        # Flow: open editor → launch cld in its terminal
-        # Claude Code handles its own auth on first run — no need to pre-auth.
+        # Flow: write a VS Code task that auto-runs cld → open VS Code
+        # Claude Code needs the IDE terminal for interactive features (AskUserQuestion).
         EDITOR_FILE="$HOME/.aos/config/editor"
         EDITOR_CMD=""
 
         if [[ -f "$EDITOR_FILE" ]]; then
             EDITOR_CMD=$(cat "$EDITOR_FILE")
         else
-            # Auto-detect
             command -v cursor &>/dev/null && EDITOR_CMD="cursor"
             command -v code &>/dev/null && EDITOR_CMD="code"
         fi
 
-        # Open editor and launch cld inside its terminal
-        if [[ -n "$EDITOR_CMD" ]]; then
-            echo ""
-            echo "  Opening $EDITOR_CMD with Claude Code..."
-            # Open editor to home directory
-            "$EDITOR_CMD" "$HOME" &>/dev/null &
-            sleep 2
-
-            # Send cld command to the editor's integrated terminal
-            if [[ "$EDITOR_CMD" == "code" ]] || [[ "$EDITOR_CMD" == "cursor" ]]; then
-                # Use VS Code / Cursor CLI to run cld in the integrated terminal
-                "$EDITOR_CMD" --command "workbench.action.terminal.new" 2>/dev/null || true
-                sleep 1
-                # osascript to type cld into the active terminal
-                osascript -e '
-                    tell application "System Events"
-                        delay 0.5
-                        keystroke "cld"
-                        keystroke return
-                    end tell
-                ' 2>/dev/null &
-            fi
-
-            echo ""
-            if [[ ! -f "$HOME/.aos/config/onboarding.yaml" ]]; then
-                echo "  Sahib is waiting in your editor to walk you through setup."
-            else
-                echo "  Claude Code is running in your editor."
-            fi
-        else
-            # No editor — run cld directly in this terminal
-            echo ""
-            if [[ ! -f "$HOME/.aos/config/onboarding.yaml" ]]; then
-                echo "  Launching Claude Code — Sahib will walk you through setup."
-            else
-                echo "  Launching Claude Code..."
-            fi
-            echo ""
-            exec cld
+        if [[ -z "$EDITOR_CMD" ]]; then
+            echo "No editor found. Install VS Code or Cursor, then run aos start."
+            echo "Or run cld directly: cld"
+            exit 1
         fi
+
+        # Write a VS Code workspace task that auto-runs cld on folder open
+        local vscode_dir="$HOME/.vscode"
+        mkdir -p "$vscode_dir"
+        cat > "$vscode_dir/tasks.json" << 'TASKS'
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Claude Code",
+      "type": "shell",
+      "command": "cld",
+      "runOptions": { "runOn": "folderOpen" },
+      "presentation": {
+        "reveal": "always",
+        "focus": true,
+        "panel": "dedicated"
+      },
+      "isBackground": true,
+      "problemMatcher": []
+    }
+  ]
+}
+TASKS
+
+        echo ""
+        echo "  Opening $EDITOR_CMD..."
+        if [[ ! -f "$HOME/.aos/config/onboarding.yaml" ]]; then
+            echo "  Claude Code will start automatically — Sahib will walk you through setup."
+        else
+            echo "  Claude Code will start automatically in the terminal."
+        fi
+        echo ""
+
+        # Open editor to home directory — task auto-runs cld
+        exec "$EDITOR_CMD" "$HOME"
         ;;
 
     deploy)
