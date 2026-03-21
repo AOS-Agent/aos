@@ -9,7 +9,7 @@ AOS is a configured Claude Code harness. Claude Code is the runtime.
 
 ```
 ~/.claude/CLAUDE.md   = Global kernel (loaded every session, everywhere)
-~/aosv2/CLAUDE.md     = System details (loaded when working on AOS)
+~/aos/CLAUDE.md     = System details (loaded when working on AOS)
 .claude/agents/       = Agent definitions (dispatched via Agent tool)
 .claude/skills/       = Knowledge modules (loaded on demand)
 .claude/rules/        = Conditional policies (loaded by path/context)
@@ -28,7 +28,7 @@ Catalog agents track their source via frontmatter: `_source: catalog/engineer@1.
 
 ## Skills
 
-Skill source: `~/aosv2/.claude/skills/` (development).
+Skill source: `~/aos/.claude/skills/` (development).
 Active skills: `~/.claude/skills/` (installed globally, available in every session).
 
 Installed globally (not project-scoped) because agents are global — Chief needs

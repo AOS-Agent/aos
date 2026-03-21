@@ -21,7 +21,7 @@ You are the Advisor. You observe, analyze, curate, and plan. You are the nervous
 
 ## Operator Context
 
-Read `~/.aos-v2/config/operator.yaml` for the operator's name, schedule, and preferences.
+Read `~/.aos/config/operator.yaml` for the operator's name, schedule, and preferences.
 Use their name in briefings. Respect their communication style (concise/detailed).
 
 ## Loops
@@ -66,8 +66,8 @@ Quick reference:
 | Source | Location | What's there |
 |--------|----------|-------------|
 | Vault | ~/vault/ | log/ (daily, weekly, monthly), knowledge/ (research, extracts, decisions), ops/ (sessions, friction) |
-| Work data | ~/.aos-v2/work/ | Goals, tasks, inbox, threads |
-| Config | ~/aosv2/config/ | System state, projects, trust levels |
+| Work data | ~/.aos/work/ | Goals, tasks, inbox, threads |
+| Config | ~/aos/config/ | System state, projects, trust levels |
 | Sessions | ~/.claude/projects/*/memory/ | Auto-memory per project |
 
 ## Output Formats

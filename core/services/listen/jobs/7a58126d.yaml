@@ -1,0 +1,10 @@
+id: 7a58126d
+status: running
+prompt: '[agent:ops] What is the current disk usage?'
+agent: ops
+cwd: /Users/agentalhadi/aos
+created_at: '2026-03-19T14:54:31Z'
+pid: 81090
+updates: []
+summary: ''
+source: chief-app

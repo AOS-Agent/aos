@@ -1,0 +1,1030 @@
+{% extends "base.html" %}
+
+{% block title %}Command Center{% endblock %}
+{% block page_name %}Command Center{% endblock %}
+{% block shell_width %}1400px{% endblock %}
+
+{% block css_vars %}
+            {% for agent in agents %}
+            --agent-{{ agent.name | replace('-', '_') }}: {{ agent.color }};
+            {% endfor %}
+{% endblock %}
+
+{% block nav_extra %}
+                <a href="http://127.0.0.1:6006" target="_blank" class="nav-link nav-link-external">Agent Traces <i data-lucide="external-link" style="width:10px;height:10px;"></i></a>
+                <div class="connection-dot connected" id="connection-dot" title="Live connection"></div>
+{% endblock %}
+
+{% block styles %}
+        .header-meta {
+            font-family: var(--font-mono);
+            font-size: 12px;
+            color: var(--text-tertiary);
+        }
+
+        .phase-badge {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            font-weight: 600;
+            padding: 4px 12px;
+            border-radius: 20px;
+            background: var(--accent-muted);
+            color: var(--accent);
+            border: 1px solid rgba(232, 114, 58, 0.3);
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+        }
+
+        .pulse-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--status-online);
+            animation: pulse 2s ease-in-out infinite;
+            box-shadow: 0 0 8px rgba(52, 211, 153, 0.4);
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.5; transform: scale(0.85); }
+        }
+
+        /* === GRID === */
+        .grid {
+            display: grid;
+            gap: 16px;
+        }
+
+        .grid-top {
+            grid-template-columns: repeat(4, 1fr);
+        }
+
+        .grid-main {
+            grid-template-columns: 1fr 1fr;
+            margin-top: 16px;
+        }
+
+        .grid-bottom {
+            grid-template-columns: 1fr;
+            margin-top: 16px;
+        }
+
+        /* === CARDS === */
+        .card {
+            background: var(--bg-surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 20px;
+            transition: border-color 0.15s ease;
+        }
+
+        .card:hover {
+            border-color: var(--border-light);
+        }
+
+        .card-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 16px;
+        }
+
+        .card-title {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+        }
+
+        .card-icon {
+            color: var(--text-tertiary);
+        }
+
+        /* === STAT CARDS === */
+        .stat-value {
+            font-family: var(--font-mono);
+            font-size: 28px;
+            font-weight: 700;
+            margin-bottom: 4px;
+        }
+
+        .stat-label {
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        .stat-bar {
+            height: 4px;
+            border-radius: 2px;
+            background: var(--bg-surface-alt);
+            margin-top: 12px;
+            overflow: hidden;
+        }
+
+        .stat-bar-fill {
+            height: 100%;
+            border-radius: 2px;
+            transition: width 0.5s ease;
+        }
+
+        /* === SERVICES === */
+        .service-list {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .service-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px 14px;
+            background: var(--bg-surface-alt);
+            border-radius: 8px;
+            border: 1px solid transparent;
+            transition: border-color 0.15s;
+        }
+
+        .service-row:hover {
+            border-color: var(--border);
+        }
+
+        .service-name {
+            font-family: var(--font-mono);
+            font-size: 13px;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .service-detail {
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+
+        .status-dot.online { background: var(--status-online); box-shadow: 0 0 6px rgba(52, 211, 153, 0.4); }
+        .status-dot.offline { background: var(--status-error); }
+        .status-dot.warning { background: var(--status-warning); }
+
+        /* === AGENTS === */
+        .agents-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+            gap: 12px;
+        }
+
+        .agent-card {
+            padding: 16px;
+            background: var(--bg-surface-alt);
+            border-radius: 10px;
+            border: 1px solid var(--border);
+            transition: all 0.2s ease;
+            cursor: default;
+        }
+
+        .agent-card:hover {
+            border-color: var(--border-light);
+            transform: translateY(-1px);
+        }
+
+        .agent-header {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+
+        .agent-avatar {
+            width: 36px;
+            height: 36px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: var(--font-arabic);
+            font-size: 16px;
+            font-weight: 700;
+            color: var(--bg-primary);
+            flex-shrink: 0;
+        }
+
+        .agent-name {
+            font-family: var(--font-mono);
+            font-size: 13px;
+            font-weight: 600;
+        }
+
+        .agent-arabic {
+            font-family: var(--font-arabic);
+            font-size: 12px;
+            color: var(--text-secondary);
+            direction: rtl;
+        }
+
+        .agent-role {
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-bottom: 8px;
+        }
+
+        .agent-meta {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .trust-badge {
+            font-family: var(--font-mono);
+            font-size: 10px;
+            padding: 2px 8px;
+            border-radius: 10px;
+            background: var(--bg-surface);
+            color: var(--text-secondary);
+            border: 1px solid var(--border);
+        }
+
+        .agent-stat {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            color: var(--text-tertiary);
+        }
+
+        /* === ACTIVITY FEED === */
+        .feed {
+            max-height: 500px;
+            overflow-y: auto;
+            scrollbar-width: thin;
+            scrollbar-color: var(--border) transparent;
+        }
+
+        .feed::-webkit-scrollbar { width: 6px; }
+        .feed::-webkit-scrollbar-track { background: transparent; }
+        .feed::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+        .feed-item {
+            display: flex;
+            gap: 12px;
+            padding: 12px 0;
+            border-bottom: 1px solid var(--border);
+            animation: fadeIn 0.2s ease;
+        }
+
+        .feed-item:last-child { border-bottom: none; }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(4px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .feed-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-top: 6px;
+            flex-shrink: 0;
+        }
+
+        .feed-content { flex: 1; min-width: 0; }
+
+        .feed-action {
+            font-size: 13px;
+            font-weight: 500;
+        }
+
+        .feed-action .agent-tag {
+            font-family: var(--font-mono);
+            font-weight: 600;
+            font-size: 12px;
+        }
+
+        .feed-summary {
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-top: 2px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .feed-time {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            color: var(--text-tertiary);
+            flex-shrink: 0;
+        }
+
+        .feed-status {
+            font-family: var(--font-mono);
+            font-size: 10px;
+            padding: 1px 6px;
+            border-radius: 4px;
+        }
+
+        .feed-status.completed { background: rgba(52, 211, 153, 0.15); color: var(--status-online); }
+        .feed-status.running { background: rgba(96, 165, 250, 0.15); color: var(--status-info); }
+        .feed-status.failed { background: rgba(248, 113, 113, 0.15); color: var(--status-error); }
+
+        /* === TASKS === */
+        .task-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .task-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 14px;
+            background: var(--bg-surface-alt);
+            border-radius: 8px;
+        }
+
+        .task-status-icon {
+            width: 18px;
+            height: 18px;
+            border-radius: 4px;
+            border: 2px solid var(--border-light);
+            flex-shrink: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .task-status-icon.done {
+            background: var(--status-online);
+            border-color: var(--status-online);
+        }
+
+        .task-status-icon.in_progress {
+            border-color: var(--status-info);
+        }
+
+        .task-title {
+            font-size: 13px;
+            flex: 1;
+        }
+
+        .task-title.done {
+            color: var(--text-tertiary);
+            text-decoration: line-through;
+        }
+
+        .task-assignee {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            color: var(--text-tertiary);
+        }
+
+        /* === EMPTY STATES === */
+        .empty-state {
+            text-align: center;
+            padding: 40px 20px;
+            color: var(--text-tertiary);
+        }
+
+        .empty-state i { margin-bottom: 12px; }
+
+        .empty-state p {
+            font-size: 13px;
+            margin-top: 8px;
+        }
+
+        /* === CRONS TABLE === */
+        .crons-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-family: var(--font-mono);
+            font-size: 12px;
+        }
+
+        .crons-table th {
+            font-size: 10px;
+            color: var(--text-tertiary);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            font-weight: 600;
+            padding: 0 10px 10px;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .crons-table td {
+            padding: 9px 10px;
+            border-bottom: 1px solid var(--border);
+            vertical-align: middle;
+        }
+
+        .crons-table tr:last-child td { border-bottom: none; }
+
+        .crons-table tr.cron-disabled td { opacity: 0.4; }
+
+        .crons-table tr:hover td { background: var(--bg-surface-alt); }
+
+        .cron-name { font-weight: 600; font-size: 12px; }
+
+        .cron-schedule { font-size: 11px; color: var(--text-secondary); font-family: var(--font-sans); }
+
+        .cron-age { font-size: 11px; color: var(--text-tertiary); }
+
+        .cron-dur { font-size: 11px; color: var(--text-tertiary); }
+
+        .cron-dot {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+
+        .cron-dot.ok { background: var(--status-online); box-shadow: 0 0 5px rgba(52,211,153,0.4); }
+        .cron-dot.failed { background: var(--status-error); box-shadow: 0 0 5px rgba(248,113,113,0.4); }
+        .cron-dot.stale { background: var(--status-warning); }
+        .cron-dot.pending { background: var(--text-tertiary); }
+        .cron-dot.disabled { background: var(--border); }
+
+        .cron-status-label {
+            font-size: 10px;
+            font-family: var(--font-mono);
+            padding: 2px 6px;
+            border-radius: 4px;
+        }
+
+        .cron-status-label.ok { background: rgba(52,211,153,0.12); color: var(--status-online); }
+        .cron-status-label.failed { background: rgba(248,113,113,0.12); color: var(--status-error); }
+        .cron-status-label.stale { background: rgba(251,191,36,0.12); color: var(--status-warning); }
+        .cron-status-label.pending { background: rgba(92,96,112,0.15); color: var(--text-tertiary); }
+        .cron-status-label.disabled { background: var(--bg-surface-alt); color: var(--text-tertiary); }
+
+        .crons-sep td {
+            padding: 6px 10px;
+            font-size: 10px;
+            color: var(--text-tertiary);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            background: var(--bg-surface-alt);
+            border-bottom: 1px solid var(--border);
+        }
+
+        /* === RESPONSIVE (page-specific) === */
+        .automations-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+        @media (max-width: 640px) {
+            .card { padding: 12px; border-radius: 10px; }
+            .card-header { margin-bottom: 8px; }
+            .feed { max-height: 350px; }
+            .feed-item { padding: 8px 0; gap: 8px; }
+            .feed-action { font-size: 12px; }
+            .feed-summary { font-size: 11px; }
+            .feed-time { font-size: 10px; }
+            .automations-grid { grid-template-columns: 1fr; }
+        }
+{% endblock %}
+
+{% block content %}
+        <!-- NOW -->
+        <div class="card" style="margin-bottom:16px;{% if active_sessions %}border-color:var(--status-online);border-left:3px solid var(--status-online);{% endif %}">
+            {% if active_sessions %}
+            <div style="display:flex;align-items:center;gap:10px;">
+                <div class="pulse-dot"></div>
+                <div>
+                    <div style="font-family:var(--font-mono);font-size:14px;font-weight:600;">
+                        Claude is working in <span style="color:var(--accent);">{{ active_sessions[0].project }}</span>
+                    </div>
+                    {% if active_sessions[0].file_names %}
+                    <div style="font-size:12px;color:var(--text-secondary);margin-top:2px;">
+                        Editing {{ active_sessions[0].file_names[-1] }}
+                        {% if active_sessions[0].file_names|length > 1 %} +{{ active_sessions[0].file_names|length - 1 }} more{% endif %}
+                        &middot; {{ active_sessions[0].total_tools }} ops so far
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+            {% else %}
+            <div style="display:flex;align-items:center;gap:10px;">
+                <div style="width:8px;height:8px;border-radius:50%;background:var(--text-tertiary);"></div>
+                <div>
+                    <div style="font-family:var(--font-mono);font-size:14px;color:var(--text-secondary);">All quiet</div>
+                    {% if last_active_ago %}
+                    <div style="font-size:12px;color:var(--text-tertiary);">Last active {{ last_active_ago }}</div>
+                    {% endif %}
+                </div>
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- TODAY + HEALTH row -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px;">
+            <!-- Today -->
+            <div class="card" style="cursor:pointer;" onclick="window.location='/sessions'">
+                <div class="card-title" style="margin-bottom:10px;">TODAY</div>
+                <div style="display:flex;flex-wrap:wrap;gap:12px;">
+                    <div>
+                        <div style="font-family:var(--font-mono);font-size:22px;font-weight:700;color:var(--accent);">{{ today.sessions }}</div>
+                        <div style="font-size:11px;color:var(--text-secondary);">sessions</div>
+                    </div>
+                    <div>
+                        <div style="font-family:var(--font-mono);font-size:22px;font-weight:700;">{{ today.files }}</div>
+                        <div style="font-size:11px;color:var(--text-secondary);">files</div>
+                    </div>
+                    {% if today.commits > 0 %}
+                    <div>
+                        <div style="font-family:var(--font-mono);font-size:22px;font-weight:700;">{{ today.commits }}</div>
+                        <div style="font-size:11px;color:var(--text-secondary);">commits</div>
+                    </div>
+                    {% endif %}
+                </div>
+                {% if today.active_time != '0s' %}
+                <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-tertiary);margin-top:8px;">{{ today.active_time }} active</div>
+                {% endif %}
+            </div>
+
+            <!-- Health -->
+            <div class="card" id="health-card">
+                <div class="card-title" style="margin-bottom:10px;">HEALTH</div>
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+                    <span class="status-dot {{ 'online' if health_status == 'ok' else 'warning' if health_status == 'warning' else 'offline' }}" id="health-dot"></span>
+                    <span style="font-family:var(--font-mono);font-size:12px;" id="health-text">{{ health_text }}</span>
+                </div>
+                <div style="display:flex;gap:16px;font-family:var(--font-mono);font-size:11px;color:var(--text-tertiary);">
+                    <span id="stat-disk-value">Disk {{ health.disk_pct }}%</span>
+                    <span id="stat-ram-value">RAM {{ health.ram_pct }}%</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- RECENT SESSIONS -->
+        <div class="card" style="margin-bottom:16px;">
+            <div class="card-header">
+                <span class="card-title">Recent Sessions</span>
+                <a href="/sessions" style="font-family:var(--font-mono);font-size:10px;color:var(--text-tertiary);text-decoration:none;">view all</a>
+            </div>
+            {% if recent_sessions %}
+            <div style="display:flex;flex-direction:column;gap:10px;">
+                {% for s in recent_sessions[:6] %}
+                {% if s.status != 'running' %}
+                <div style="padding:10px 12px;background:var(--bg-surface-alt);border-radius:8px;border-left:3px solid {{ 'var(--accent)' if s.file_names else 'var(--border)' }};">
+                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+                        <div style="display:flex;align-items:center;gap:8px;">
+                            <span style="font-family:var(--font-mono);font-size:13px;font-weight:600;color:var(--accent);">{{ s.project }}</span>
+                            {% if s.duration_str %}
+                            <span style="font-family:var(--font-mono);font-size:10px;color:var(--text-tertiary);">{{ s.duration_str }}</span>
+                            {% endif %}
+                        </div>
+                        <span style="font-family:var(--font-mono);font-size:10px;color:var(--text-tertiary);">{{ s.started_at[11:16] }}</span>
+                    </div>
+                    {% if s.file_names %}
+                    <div style="font-size:12px;color:var(--text-secondary);margin-bottom:2px;">
+                        {{ s.file_names[:3] | join(', ') }}{% if s.file_names|length > 3 %} +{{ s.file_names|length - 3 }}{% endif %}
+                    </div>
+                    {% endif %}
+                    {% for action in s.key_actions %}
+                    {% if 'commit' in action.action.lower() or 'agent' in action.action.lower() or 'install' in action.action.lower() %}
+                    <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-tertiary);margin-top:2px;">
+                        {{ action.action }}{% if action.summary %}: {{ action.summary[:60] }}{% endif %}
+                    </div>
+                    {% endif %}
+                    {% endfor %}
+                </div>
+                {% endif %}
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="empty-state">
+                <p style="font-size:12px;">No sessions yet. Activity will appear here as Claude Code runs.</p>
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- AUTOMATIONS -->
+        <div class="card" style="margin-bottom:16px;">
+            <div class="card-header">
+                <span class="card-title">Automations</span>
+                <i data-lucide="cog" class="card-icon" style="width:14px;height:14px;"></i>
+            </div>
+            <div class="automations-grid">
+                <!-- Cron Jobs -->
+                <div>
+                    <div style="font-family:var(--font-mono);font-size:10px;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">Scheduled Jobs</div>
+                    <div style="display:flex;flex-direction:column;gap:8px;">
+                        {% for job in crons %}
+                        <div class="service-row" style="flex-direction:column;align-items:stretch;gap:6px;">
+                            <div style="display:flex;align-items:center;justify-content:space-between;">
+                                <div style="display:flex;align-items:center;gap:8px;">
+                                    <i data-lucide="clock" style="width:14px;height:14px;color:var(--status-info);flex-shrink:0;"></i>
+                                    <span style="font-family:var(--font-mono);font-size:13px;font-weight:500;">{{ job.name }}</span>
+                                </div>
+                                <button onclick="runCron('{{ job.name }}')" id="cron-btn-{{ job.name }}"
+                                    style="font-family:var(--font-mono);font-size:10px;padding:3px 10px;border-radius:5px;border:1px solid var(--border-light);background:var(--bg-surface);color:var(--text-secondary);cursor:pointer;transition:all 0.15s;"
+                                    onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'"
+                                    onmouseout="this.style.borderColor='var(--border-light)';this.style.color='var(--text-secondary)'">
+                                    Run Now
+                                </button>
+                            </div>
+                            <div style="display:flex;align-items:center;justify-content:space-between;">
+                                <span style="font-size:11px;color:var(--text-secondary);">{{ job.schedule_human }}</span>
+                                {% if job.last_run %}
+                                <span style="font-family:var(--font-mono);font-size:10px;color:var(--text-tertiary);">last: {{ job.last_run[11:16] }}</span>
+                                {% endif %}
+                            </div>
+                            {% if job.last_output %}
+                            <div style="font-family:var(--font-mono);font-size:10px;color:var(--text-tertiary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ job.last_output }}</div>
+                            {% endif %}
+                        </div>
+                        {% endfor %}
+                        {% if not crons %}
+                        <div style="font-size:12px;color:var(--text-tertiary);padding:12px;">No cron jobs found</div>
+                        {% endif %}
+                    </div>
+                </div>
+
+                <!-- LaunchAgents -->
+                <div>
+                    <div style="font-family:var(--font-mono);font-size:10px;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">Services (LaunchAgents)</div>
+                    <div style="display:flex;flex-direction:column;gap:8px;">
+                        {% for la in launch_agents %}
+                        <div class="service-row" style="flex-direction:column;align-items:stretch;gap:6px;">
+                            <div style="display:flex;align-items:center;justify-content:space-between;">
+                                <div style="display:flex;align-items:center;gap:8px;">
+                                    <span class="status-dot {{ 'online' if la.status == 'running' else 'offline' }}"></span>
+                                    <span style="font-family:var(--font-mono);font-size:13px;font-weight:500;">{{ la.name }}</span>
+                                    {% if la.pid %}
+                                    <span style="font-family:var(--font-mono);font-size:10px;color:var(--text-tertiary);">PID {{ la.pid }}</span>
+                                    {% endif %}
+                                </div>
+                                <button onclick="restartAgent('{{ la.name }}')" id="la-btn-{{ la.name }}"
+                                    style="font-family:var(--font-mono);font-size:10px;padding:3px 10px;border-radius:5px;border:1px solid var(--border-light);background:var(--bg-surface);color:var(--text-secondary);cursor:pointer;transition:all 0.15s;"
+                                    onmouseover="this.style.borderColor='var(--status-warning)';this.style.color='var(--status-warning)'"
+                                    onmouseout="this.style.borderColor='var(--border-light)';this.style.color='var(--text-secondary)'">
+                                    Restart
+                                </button>
+                            </div>
+                            <div style="display:flex;align-items:center;gap:12px;">
+                                <span style="font-family:var(--font-mono);font-size:11px;color:{{ 'var(--status-online)' if la.status == 'running' else 'var(--status-error)' }};">{{ la.status }}</span>
+                                <span style="font-family:var(--font-mono);font-size:10px;color:var(--text-tertiary);">{{ la.label }}</span>
+                            </div>
+                        </div>
+                        {% endfor %}
+                        {% if not launch_agents %}
+                        <div style="font-size:12px;color:var(--text-tertiary);padding:12px;">No LaunchAgents found</div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- CRONS PANEL -->
+        <div class="card" style="margin-bottom:16px;" id="crons-card">
+            <div class="card-header">
+                <span class="card-title">Crons</span>
+                <div style="display:flex;align-items:center;gap:10px;">
+                    <span id="crons-summary" style="font-family:var(--font-mono);font-size:10px;color:var(--text-tertiary);"></span>
+                    <i data-lucide="timer" class="card-icon" style="width:14px;height:14px;"></i>
+                </div>
+            </div>
+            <div id="crons-table-wrap">
+                <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-tertiary);padding:20px;text-align:center;">Loading...</div>
+            </div>
+        </div>
+
+        <!-- LIVE ACTIVITY FEED -->
+        <div class="card">
+            <div class="card-header">
+                <span class="card-title">Live Activity</span>
+                <i data-lucide="radio" class="card-icon" style="width:14px;height:14px;"></i>
+            </div>
+            <div class="feed" id="activity-feed">
+                {% set ns = namespace(count=0) %}
+                {% for item in activity %}
+                {% if not (item.agent == 'ops' and item.action == 'heartbeat') and ns.count < 15 %}
+                {% set ns.count = ns.count + 1 %}
+                <div class="feed-item" data-id="{{ item.id }}">
+                    <div class="feed-dot" style="background: {{ 'var(--status-info)' if item.agent == 'claude' else 'var(--accent)' if item.agent == 'telegram' else 'var(--text-tertiary)' }};"></div>
+                    <div class="feed-content">
+                        <div class="feed-action">
+                            {% if item.agent == 'claude' %}
+                            <span class="agent-tag" style="color: var(--status-info);">{{ item.action }}</span>
+                            {% elif item.agent == 'telegram' %}
+                            <span class="agent-tag" style="color: var(--accent);">{{ item.action | replace('_', ' ') }}</span>
+                            {% else %}
+                            <span class="agent-tag" style="color: var(--accent);">{{ item.agent }}</span>
+                            {{ item.action | replace('_', ' ') }}
+                            {% endif %}
+                        </div>
+                        {% if item.summary %}
+                        <div class="feed-summary">{{ item.summary }}</div>
+                        {% endif %}
+                    </div>
+                    <span class="feed-time">{{ item.timestamp[11:16] }}</span>
+                </div>
+                {% endif %}
+                {% endfor %}
+                {% if not activity %}
+                <div class="empty-state" id="empty-feed">
+                    <i data-lucide="radio" style="width:24px;height:24px;"></i>
+                    <p>Waiting for activity...</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- WORK TASKS -->
+        {% if tasks %}
+        <div class="grid grid-bottom" style="margin-top:16px;">
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">Tasks</span>
+                    <i data-lucide="check-square" class="card-icon" style="width:16px;height:16px;"></i>
+                </div>
+                <div class="task-list">
+                    {% for task in tasks %}
+                    <div class="task-row">
+                        <div class="task-status-icon {% if task.status == 'done' %}done{% elif task.status == 'active' or task.status == 'in_progress' %}in_progress{% endif %}">
+                            {% if task.status == 'done' %}
+                            <i data-lucide="check" style="width:12px;height:12px;color:var(--bg-primary);"></i>
+                            {% endif %}
+                        </div>
+                        <span class="task-title">{{ task.title }}</span>
+                        {% if task.priority %}
+                        <span class="task-assignee" style="font-family:var(--font-mono);font-size:10px;padding:2px 6px;border-radius:4px;background:var(--surface-elevated);{% if task.priority == 1 %}color:var(--status-error);{% elif task.priority == 2 %}color:var(--accent);{% else %}color:var(--text-tertiary);{% endif %}">P{{ task.priority }}</span>
+                        {% endif %}
+                        {% if task.project %}
+                        <span class="task-assignee">{{ task.project }}</span>
+                        {% endif %}
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- FOOTER -->
+        <div style="text-align:center;padding:24px 0 12px;color:var(--text-tertiary);font-family:var(--font-mono);font-size:10px;">
+            AOS &middot; {{ state.tailscale_ip | default('') }}
+        </div>
+{% endblock %}
+
+{% block scripts %}
+        // Agent color mapping
+        const agentColors = {
+            {% for agent in agents %}
+            '{{ agent.name }}': '{{ agent.color }}',
+            {% endfor %}
+        };
+
+        function getAgentColor(agent) {
+            return agentColors[agent] || 'var(--accent)';
+        }
+
+        function escapeHtml(text) {
+            const d = document.createElement('div');
+            d.textContent = text;
+            return d.innerHTML;
+        }
+
+        function createFeedItem(item) {
+            // Filter heartbeats from live feed
+            if (item.agent === 'ops' && item.action === 'heartbeat') return null;
+
+            let color, actionHtml;
+            if (item.agent === 'claude') {
+                color = 'var(--status-info)';
+                actionHtml = `<span class="agent-tag" style="color:var(--status-info);">${escapeHtml(item.action)}</span>`;
+            } else if (item.agent === 'telegram') {
+                color = 'var(--accent)';
+                actionHtml = `<span class="agent-tag" style="color:var(--accent);">${escapeHtml(item.action.replace(/_/g, ' '))}</span>`;
+            } else {
+                color = getAgentColor(item.agent);
+                actionHtml = `<span class="agent-tag" style="color:${color};">${escapeHtml(item.agent)}</span> ${escapeHtml(item.action.replace(/_/g, ' '))}`;
+            }
+
+            const summary = item.summary ? `<div class="feed-summary">${escapeHtml(item.summary)}</div>` : '';
+            const time = (item.timestamp || '').slice(11, 16);
+            const html = `
+                <div class="feed-item" data-id="${item.id}">
+                    <div class="feed-dot" style="background: ${color};"></div>
+                    <div class="feed-content">
+                        <div class="feed-action">${actionHtml}</div>
+                        ${summary}
+                    </div>
+                    <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 4px;">
+                        <span class="feed-status ${item.status}">${item.status}</span>
+                        <span class="feed-time">${time}</span>
+                    </div>
+                </div>`;
+            const template = document.createElement('template');
+            template.innerHTML = html.trim();
+            return template.content.firstChild;
+        }
+
+        function updateHealth(health) {
+            const diskVal = document.querySelector('#stat-disk-value');
+            const ramVal = document.querySelector('#stat-ram-value');
+            if (diskVal) {
+                diskVal.textContent = 'Disk ' + health.disk_pct + '%';
+                diskVal.style.color = health.disk_pct > 85 ? 'var(--status-error)' : '';
+            }
+            if (ramVal) {
+                ramVal.textContent = 'RAM ' + health.ram_pct + '%';
+                ramVal.style.color = health.ram_pct > 85 ? 'var(--status-error)' : '';
+            }
+        }
+
+        // --- Crons panel ---
+        function relativeTime(isoStr) {
+            if (!isoStr) return '—';
+            const then = new Date(isoStr);
+            const now = new Date();
+            const s = Math.floor((now - then) / 1000);
+            if (s < 5) return 'just now';
+            if (s < 60) return `${s}s ago`;
+            if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+            if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+            return `${Math.floor(s / 86400)}d ago`;
+        }
+
+        function durStr(s) {
+            if (!s && s !== 0) return '—';
+            if (s < 1) return '<1s';
+            if (s < 60) return `${s}s`;
+            return `${Math.floor(s / 60)}m ${s % 60}s`;
+        }
+
+        function renderCrons(data) {
+            const jobs = data.jobs || [];
+            const summary = data.summary || {};
+
+            // Summary line
+            const summaryEl = document.getElementById('crons-summary');
+            if (summaryEl) {
+                const parts = [];
+                if (summary.ok) parts.push(`<span style="color:var(--status-online)">${summary.ok} ok</span>`);
+                if (summary.failed) parts.push(`<span style="color:var(--status-error)">${summary.failed} failed</span>`);
+                if (summary.stale) parts.push(`<span style="color:var(--status-warning)">${summary.stale} stale</span>`);
+                if (summary.disabled) parts.push(`<span style="color:var(--text-tertiary)">${summary.disabled} disabled</span>`);
+                summaryEl.innerHTML = parts.join(' &middot; ');
+            }
+
+            // Build table
+            const wrap = document.getElementById('crons-table-wrap');
+            if (!wrap) return;
+
+            if (!jobs.length) {
+                wrap.innerHTML = '<div style="font-size:12px;color:var(--text-tertiary);padding:20px;text-align:center;">No cron jobs found</div>';
+                return;
+            }
+
+            let html = `<table class="crons-table">
+                <thead><tr>
+                    <th>Name</th>
+                    <th>Schedule</th>
+                    <th>Last Run</th>
+                    <th>Status</th>
+                    <th>Duration</th>
+                </tr></thead><tbody>`;
+
+            let shownDisabledSep = false;
+            for (const job of jobs) {
+                if (job.status === 'disabled' && !shownDisabledSep) {
+                    shownDisabledSep = true;
+                    html += `<tr class="crons-sep"><td colspan="5">Disabled</td></tr>`;
+                }
+                const cls = job.status;
+                const rowCls = job.status === 'disabled' ? 'cron-disabled' : '';
+                html += `<tr class="${rowCls}">
+                    <td class="cron-name">${escapeHtml(job.name)}</td>
+                    <td class="cron-schedule">${escapeHtml(job.schedule)}</td>
+                    <td class="cron-age">${relativeTime(job.last_run)}</td>
+                    <td><span class="cron-status-label ${cls}">${cls}</span></td>
+                    <td class="cron-dur">${durStr(job.duration_s)}</td>
+                </tr>`;
+            }
+
+            html += '</tbody></table>';
+            wrap.innerHTML = html;
+        }
+
+        async function loadCrons() {
+            try {
+                const r = await fetch('/api/crons');
+                const data = await r.json();
+                renderCrons(data);
+            } catch (e) {
+                const wrap = document.getElementById('crons-table-wrap');
+                if (wrap) wrap.innerHTML = '<div style="font-size:12px;color:var(--status-error);padding:20px;">Failed to load cron data</div>';
+            }
+        }
+
+        // Load immediately and refresh every 30 seconds
+        loadCrons();
+        setInterval(loadCrons, 30000);
+
+        // SSE connection
+        const evtSource = new EventSource('/api/stream');
+
+        evtSource.addEventListener('activity', (e) => {
+            const item = JSON.parse(e.data);
+            const feed = document.getElementById('activity-feed');
+            const empty = document.getElementById('empty-feed');
+            if (empty) empty.remove();
+
+            // Don't add duplicates
+            if (feed.querySelector(`[data-id="${item.id}"]`)) return;
+
+            const el = createFeedItem(item);
+            feed.insertBefore(el, feed.firstChild);
+
+            // Keep feed at max 50 items
+            while (feed.children.length > 50) {
+                feed.removeChild(feed.lastChild);
+            }
+        });
+
+        evtSource.addEventListener('health', (e) => {
+            const health = JSON.parse(e.data);
+            updateHealth(health);
+        });
+
+        evtSource.addEventListener('services', (e) => {
+            const services = JSON.parse(e.data);
+            const online = Object.values(services).filter(s => s.status === 'online').length;
+            const total = Object.keys(services).length;
+            const dot = document.querySelector('#health-dot');
+            const text = document.querySelector('#health-text');
+            if (dot && text) {
+                if (online === total) {
+                    dot.className = 'status-dot online';
+                    text.textContent = 'All systems operational';
+                } else {
+                    const offline = Object.entries(services).filter(([,s]) => s.status !== 'online').map(([n]) => n.charAt(0).toUpperCase() + n.slice(1));
+                    dot.className = 'status-dot offline';
+                    text.textContent = offline.join(', ') + ' offline';
+                }
+            }
+        });
+
+        // Connection status
+        const connDot = document.getElementById('connection-dot');
+        evtSource.onopen = () => {
+            if (connDot) { connDot.className = 'connection-dot connected'; connDot.title = 'Live'; }
+        };
+        evtSource.onerror = () => {
+            if (connDot) { connDot.className = 'connection-dot disconnected'; connDot.title = 'Disconnected'; }
+        };
+
+        // Automation controls
+        async function runCron(name) {
+            const btn = document.getElementById('cron-btn-' + name);
+            const origText = btn.textContent;
+            btn.textContent = 'Running...';
+            btn.style.borderColor = 'var(--status-info)';
+            btn.style.color = 'var(--status-info)';
+            btn.disabled = true;
+            try {
+                const r = await fetch('/api/automations/cron/' + name + '/run', { method: 'POST' });
+                const data = await r.json();
+                btn.textContent = data.ok ? 'Triggered' : 'Failed';
+                btn.style.borderColor = data.ok ? 'var(--status-online)' : 'var(--status-error)';
+                btn.style.color = data.ok ? 'var(--status-online)' : 'var(--status-error)';
+            } catch (e) {
+                btn.textContent = 'Error';
+                btn.style.borderColor = 'var(--status-error)';
+                btn.style.color = 'var(--status-error)';
+            }
+            setTimeout(() => { btn.textContent = origText; btn.disabled = false; btn.style.borderColor = ''; btn.style.color = ''; }, 3000);
+        }
+
+        async function restartAgent(name) {
+            const btn = document.getElementById('la-btn-' + name);
+            const origText = btn.textContent;
+            btn.textContent = 'Restarting...';
+            btn.style.borderColor = 'var(--status-warning)';
+            btn.style.color = 'var(--status-warning)';
+            btn.disabled = true;
+            try {
+                const r = await fetch('/api/automations/launchagent/' + name + '/restart', { method: 'POST' });
+                const data = await r.json();
+                btn.textContent = data.ok ? 'Restarted' : 'Failed';
+                btn.style.borderColor = data.ok ? 'var(--status-online)' : 'var(--status-error)';
+                btn.style.color = data.ok ? 'var(--status-online)' : 'var(--status-error)';
+            } catch (e) {
+                btn.textContent = 'Error';
+                btn.style.borderColor = 'var(--status-error)';
+                btn.style.color = 'var(--status-error)';
+            }
+            setTimeout(() => { btn.textContent = origText; btn.disabled = false; btn.style.borderColor = ''; btn.style.color = ''; }, 3000);
+        }
+
+        // Auto-refresh page every 60s to update Now/Today sections
+        setTimeout(() => location.reload(), 60000);
+{% endblock %}

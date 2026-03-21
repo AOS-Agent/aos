@@ -55,10 +55,10 @@ All three are managed by a single system: one LaunchAgent, one YAML config, one 
 ### Implementation
 
 One LaunchAgent (`com.aos.scheduler`) runs every 5 minutes via `StartCalendarInterval`.
-It executes `~/aosv2/core/bin/scheduler`, which:
+It executes `~/aos/core/bin/scheduler`, which:
 
-1. Reads `~/aosv2/config/crons.yaml` (what to run, how often)
-2. Reads `~/.aos-v2/logs/crons/status.json` (when things last ran)
+1. Reads `~/aos/config/crons.yaml` (what to run, how often)
+2. Reads `~/.aos/logs/crons/status.json` (when things last ran)
 3. Decides what's due
 4. Runs each due job with timeout + lock file
 5. Updates status.json + per-job logs
@@ -79,101 +79,101 @@ It executes `~/aosv2/core/bin/scheduler`, which:
 ### Config Format
 
 ```yaml
-# ~/aosv2/config/crons.yaml
+# ~/aos/config/crons.yaml
 
 jobs:
   # --- Tier 1: System breaks without these ---
 
   watchdog:
-    command: bash ~/aosv2/core/bin/watchdog
+    command: bash ~/aos/core/bin/watchdog
     every: 5m
     timeout: 60
     ping: https://hc-ping.com/UUID  # dead man's switch
 
   auto-commit:
-    command: bash ~/aosv2/core/bin/auto-commit cron
+    command: bash ~/aos/core/bin/auto-commit cron
     every: 30m
     timeout: 120
     ping: https://hc-ping.com/UUID
 
   qmd-reindex:
-    command: bash ~/aosv2/core/bin/qmd-reindex
+    command: bash ~/aos/core/bin/qmd-reindex
     every: 30m
     timeout: 120
 
   session-export:
-    command: python3 ~/aosv2/core/bin/session-export
+    command: python3 ~/aos/core/bin/session-export
     every: 2h
     timeout: 300
     ping: https://hc-ping.com/UUID
 
   rotate-logs:
-    command: bash ~/aosv2/core/bin/rotate-logs
+    command: bash ~/aos/core/bin/rotate-logs
     at: "03:00"
     timeout: 60
 
   compile-daily:
-    command: python3 ~/aosv2/core/bin/compile-daily
+    command: python3 ~/aos/core/bin/compile-daily
     at: "23:30"
     timeout: 120
 
   # --- Tier 2: System is dumber without these ---
 
   inbox-collect:
-    command: python3 ~/aosv2/core/bin/inbox-collect
+    command: python3 ~/aos/core/bin/inbox-collect
     every: 30m
     timeout: 120
 
   session-analysis:
-    command: python3 ~/aosv2/core/bin/session-analysis
+    command: python3 ~/aos/core/bin/session-analysis
     at: "22:00"
     weekday: sunday
     timeout: 180
 
   weekly-digest:
-    command: python3 ~/aosv2/core/bin/weekly-digest
+    command: python3 ~/aos/core/bin/weekly-digest
     at: "20:00"
     weekday: sunday
     timeout: 300
 
   stale-detector:
-    command: python3 ~/aosv2/core/bin/stale-detector
+    command: python3 ~/aos/core/bin/stale-detector
     at: "08:00"
     timeout: 60
 
   # --- Tier 3: System becomes proactive ---
 
   morning-context:
-    command: python3 ~/aosv2/core/bin/morning-context
+    command: python3 ~/aos/core/bin/morning-context
     at: "06:30"
     timeout: 60
 
   email-digest:
-    command: python3 ~/aosv2/core/bin/email-digest
+    command: python3 ~/aos/core/bin/email-digest
     at: "07:30"
     timeout: 120
     enabled: false  # until email access is configured
 
   nightly-pipeline:
-    command: python3 ~/aosv2/core/bin/nightly-pipeline
+    command: python3 ~/aos/core/bin/nightly-pipeline
     at: "23:00"
     timeout: 600
 
   compile-patterns:
-    command: python3 ~/aosv2/core/bin/compile-patterns
+    command: python3 ~/aos/core/bin/compile-patterns
     at: "04:00"
     timeout: 120
     enabled: false  # until execution logging exists
 
   meeting-prep:
-    command: python3 ~/aosv2/core/bin/meeting-prep
+    command: python3 ~/aos/core/bin/meeting-prep
     every: 15m
     active_hours: "08:00-20:00"
     timeout: 60
     enabled: false  # until calendar integration exists
 
   monthly-review:
-    command: python3 ~/aosv2/core/bin/monthly-review
+    command: python3 ~/aos/core/bin/monthly-review
     at: "10:00"
     monthday: 1
     timeout: 300
@@ -183,7 +183,7 @@ jobs:
 ### Status File
 
 ```json
-// ~/.aos-v2/logs/crons/status.json
+// ~/.aos/logs/crons/status.json
 {
   "watchdog": {
     "last_run": "2026-03-21T13:45:02",
@@ -210,9 +210,9 @@ macOS LaunchAgents support `WatchPaths` — when a file/directory changes, the a
 
 | Watch Path | Script | Purpose |
 |------------|--------|---------|
-| `~/.aos-v2/data/health/` | `bin/on-health-update` | Health JSON arrives → update daily log, check 3-day trends |
+| `~/.aos/data/health/` | `bin/on-health-update` | Health JSON arrives → update daily log, check 3-day trends |
 | `~/vault/inbox/` | `bin/on-inbox-file` | New file → classify, route to correct vault folder, reindex |
-| `~/.aos-v2/work/work.yaml` | `bin/on-work-change` | Task completed → update project status, check goal progress |
+| `~/.aos/work/work.yaml` | `bin/on-work-change` | Task completed → update project status, check goal progress |
 
 ### Implementation
 
@@ -322,10 +322,10 @@ If/when we need more complex pipelines (5+), extract to `config/pipelines.yaml` 
 When `install.sh` is built, it must:
 
 1. **Create directories**:
-   - `~/.aos-v2/logs/crons/`
-   - `~/.aos-v2/data/health/`
-   - `~/.aos-v2/work/`
-   - `~/.aos-v2/inbox/`
+   - `~/.aos/logs/crons/`
+   - `~/.aos/data/health/`
+   - `~/.aos/work/`
+   - `~/.aos/inbox/`
 
 2. **Install LaunchAgent**: `com.aos.scheduler.plist` → `~/Library/LaunchAgents/`
 
@@ -333,7 +333,7 @@ When `install.sh` is built, it must:
 
 4. **Seed config**: Copy `crons.yaml` template (Tier 1 enabled, Tier 2-3 disabled)
 
-5. **Initialize status**: `echo '{}' > ~/.aos-v2/logs/crons/status.json`
+5. **Initialize status**: `echo '{}' > ~/.aos/logs/crons/status.json`
 
 6. **TCC permissions**: Prompt user to grant Full Disk Access to `/opt/homebrew/bin/python3`
 
@@ -353,16 +353,16 @@ When `install.sh` is built, it must:
 | `session-export` | Ready — minor: hardcoded PROJECT_ALIASES |
 | `session-analysis` | Ready |
 | `compile-daily` | **Fix HEALTH_DIR** — points to v1 path `~/aos/data/health/` |
-| `compile-patterns` | No-op until execution logging exists. Move output to `~/.aos-v2/patterns/` |
+| `compile-patterns` | No-op until execution logging exists. Move output to `~/.aos/patterns/` |
 | `qmd-reindex` | Add `set -e` and `command -v qmd` check |
 
 ### Port from v1
 | Script | Effort |
 |--------|--------|
 | `watchdog` | M — update paths, add Tailscale/internet checks, add Healthchecks.io ping |
-| `auto-commit` | S — update repo path to `~/aosv2/` |
-| `rotate-logs` | S — update log dir to `~/.aos-v2/logs/` |
-| `inbox-collect` | M — rewrite for v2 paths, stage to `~/.aos-v2/inbox/` |
+| `auto-commit` | S — update repo path to `~/aos/` |
+| `rotate-logs` | S — update log dir to `~/.aos/logs/` |
+| `inbox-collect` | M — rewrite for v2 paths, stage to `~/.aos/inbox/` |
 | `weekly-digest` | M — rewrite for v2 paths |
 
 ### New

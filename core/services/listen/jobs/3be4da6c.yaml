@@ -1,0 +1,10 @@
+id: 3be4da6c
+status: running
+prompt: Hello
+agent: main
+cwd: /Users/agentalhadi/aos
+created_at: '2026-03-19T15:09:39Z'
+pid: 85057
+updates: []
+summary: ''
+source: chief-app

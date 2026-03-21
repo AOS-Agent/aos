@@ -1,0 +1,16 @@
+id: 0fc18b60
+status: running
+prompt: "[WATCHDOG ESCALATION] Service: Phoenix\n\nReason: Flapping: restarted 3 times\
+  \ in the last 24 hours and still down\n\nRecent log tail:\n(no watchdog log entries)\n\
+  \nYou are the system technician. A service named 'Phoenix' has been flagged by the\
+  \ watchdog as critically unhealthy. Please:\n1. Read the relevant logs (logs/bridge.err.log,\
+  \ logs/watchdog.log, and service-specific logs)\n2. Diagnose the root cause\n3.\
+  \ Attempt a fix\n4. Write a brief vault note at ~/vault/sessions/watchdog-escalation-2026-03-20-Phoenix.md\n\
+  5. Send a Telegram message (via TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID from Keychain)\
+  \ reporting what you found and what you did\n\nService LaunchAgent labels follow\
+  \ the pattern: com.agent.<lowercase-name> (e.g. Bridge \u2192 com.agent.bridge).\n\
+  AOS dir: /Users/agentalhadi/aos"
+created_at: '2026-03-20T18:22:20Z'
+pid: 70755
+updates: []
+summary: ''

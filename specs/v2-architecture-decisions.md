@@ -9,8 +9,8 @@
 ## Decision 1: Directory Boundaries
 
 ```
-~/aosv2/       SYSTEM CODE    Git repo. Safe to pull/reset/clone.
-~/.aos-v2/     USER DATA      Never in git. Never touched by updates.
+~/aos/       SYSTEM CODE    Git repo. Safe to pull/reset/clone.
+~/.aos/     USER DATA      Never in git. Never touched by updates.
 ~/vault/       KNOWLEDGE      Independent. Obsidian-native. Path configurable.
 ~/project/     PROJECTS       Self-contained. Own work/, .claude/, CLAUDE.md.
 ```
@@ -18,10 +18,10 @@
 **Rule**: No user data inside the system repo. Ever.
 
 **Rationale**: PAI's USER/SYSTEM split. A `git clean -fd` on the system repo
-must never destroy user data. Backup story: `~/.aos-v2/` + `~/vault/` + project
+must never destroy user data. Backup story: `~/.aos/` + `~/vault/` + project
 `work/` dirs = everything.
 
-**Why `~/.aos-v2/` (hidden)?** This machine IS the agent. Users interact via
+**Why `~/.aos/` (hidden)?** This machine IS the agent. Users interact via
 IDE (VS Code/Cursor remote — hidden folders visible by default), SSH, or Telegram.
 Nobody browses Finder on a dedicated agent machine. Hidden keeps home dir clean.
 
@@ -29,7 +29,7 @@ Nobody browses Finder on a dedicated agent machine. Hidden keeps home dir clean.
 path. QMD indexes it independently. It's a peer to the OS, not subordinate.
 Vault path is a config setting, not hardcoded.
 
-**Naming**: `~/aosv2/` is temporary during parallel development with v1. Renamed
+**Naming**: `~/aos/` is temporary during parallel development with v1. Renamed
 to `~/aos/` when v1 is retired. Single rename, no other changes needed.
 
 ---
@@ -41,8 +41,8 @@ Three layers, no overlap:
 | File | Loaded when | Purpose | Size |
 |------|------------|---------|------|
 | `~/.claude/CLAUDE.md` | Every session, everywhere | OS kernel — identity, boundaries, rules | 37 lines |
-| `~/aosv2/CLAUDE.md` | Working on AOS itself | System architecture, layout, dev guide, build status | 85 lines |
-| `~/aosv2/.claude/CLAUDE.md` | Working on AOS itself | Harness model reference, agent install mechanism | 25 lines |
+| `~/aos/CLAUDE.md` | Working on AOS itself | System architecture, layout, dev guide, build status | 85 lines |
+| `~/aos/.claude/CLAUDE.md` | Working on AOS itself | Harness model reference, agent install mechanism | 25 lines |
 
 **Rule**: Global kernel under 50 lines. System CLAUDE.md under 150 lines.
 Detail goes in specs/ and skills.
@@ -72,7 +72,7 @@ Three tiers:
 
 ### Catalog Agents (ship as templates, user activates)
 
-Templates in `~/aosv2/templates/agents/`. Copied to `~/.claude/agents/` on activation.
+Templates in `~/aos/templates/agents/`. Copied to `~/.claude/agents/` on activation.
 Examples: engineer, developer, marketing, researcher, writer.
 
 Copied (not symlinked) so users can customize. Frontmatter tracks source:
@@ -86,8 +86,8 @@ No template, no restrictions. Whatever the user needs.
 ### Where agents live on disk
 
 ```
-~/aosv2/core/agents/         Source for system agents (chief, steward, advisor)
-~/aosv2/templates/agents/    Catalog templates (engineer, developer, etc.)
+~/aos/core/agents/         Source for system agents (chief, steward, advisor)
+~/aos/templates/agents/    Catalog templates (engineer, developer, etc.)
 ~/.claude/agents/            Active agents (installed here, available everywhere)
 ~/project/.claude/agents/    Project-scoped agents (only in that project)
 ```
@@ -140,7 +140,7 @@ They inherit from global automatically.
 ## Decision 5: Scaffold Structure
 
 ```
-~/aosv2/
+~/aos/
 ├── .claude/agents/        Agent definitions (empty, built in agent layer step)
 ├── .claude/skills/        Skills (empty, ported from v1 when relevant)
 ├── .claude/hooks/         Hook scripts (empty, built with work system)
@@ -152,7 +152,7 @@ They inherit from global automatically.
 ├── vendor/                Third-party dependencies
 └── specs/                 Architecture docs
 
-~/.aos-v2/
+~/.aos/
 ├── work/                  Work system data
 ├── services/              Service runtime state
 └── logs/                  All logs

@@ -203,7 +203,7 @@ def compute_goal_health(goals: list, tasks: list) -> list:
 def save_weekly_snapshot(metrics: dict, metrics_dir: Path = None):
     """Save weekly metrics snapshot to disk."""
     if metrics_dir is None:
-        metrics_dir = Path.home() / ".aos-v2" / "work" / "metrics"
+        metrics_dir = Path.home() / ".aos" / "work" / "metrics"
     metrics_dir.mkdir(parents=True, exist_ok=True)
 
     period = metrics.get("period", date.today().isoformat())

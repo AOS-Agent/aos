@@ -37,7 +37,7 @@ requires:
       plist: com.agent.bridge
   config:
     - key: telegram.bot_username
-      file: ~/.aos-v2/services/bridge/config.yaml
+      file: ~/.aos/services/bridge/config.yaml
 
 # How to verify this integration is working
 health:
@@ -49,7 +49,7 @@ health:
       command: "curl -s https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getMe"
       expect: '"ok":true'
     - name: heartbeat_recent
-      command: "find ~/.aos-v2/services/bridge/ -name 'heartbeat.json' -mmin -5"
+      command: "find ~/.aos/services/bridge/ -name 'heartbeat.json' -mmin -5"
       expect: non-empty
 
 # Layers this integration touches

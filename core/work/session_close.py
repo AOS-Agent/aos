@@ -3,7 +3,7 @@
 AOS Session Close Hook
 
 Runs on SessionEnd. Does two things:
-1. Logs session to ~/.aos-v2/logs/sessions.jsonl (lightweight record)
+1. Logs session to ~/.aos/logs/sessions.jsonl (lightweight record)
 2. Links session to work system:
    - If active tasks exist for this project/cwd, link the session to them
    - If a thread exists for this cwd, append the session
@@ -24,7 +24,7 @@ import os
 from datetime import datetime
 from pathlib import Path
 
-LOG_DIR = Path.home() / ".aos-v2" / "logs"
+LOG_DIR = Path.home() / ".aos" / "logs"
 LOG_FILE = LOG_DIR / "sessions.jsonl"
 
 # Add work engine to path
@@ -65,7 +65,7 @@ def main():
 
     # Check for a session-context file that the inject_context hook may have written
     # This file tracks which tasks were explicitly referenced during the session
-    context_file = Path.home() / ".aos-v2" / "work" / ".session-context.json"
+    context_file = Path.home() / ".aos" / "work" / ".session-context.json"
     explicit_task_ids = []
     if context_file.exists():
         try:
@@ -91,7 +91,7 @@ def main():
     # Only auto-create threads for known project directories
     home = str(Path.home())
     known_project_dirs = [
-        os.path.join(home, "aosv2"),
+        os.path.join(home, "aos"),
         os.path.join(home, "aos"),
         os.path.join(home, "nuchay"),
         os.path.join(home, "chief-ios-app"),

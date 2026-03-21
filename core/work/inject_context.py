@@ -120,7 +120,7 @@ def main():
     # Write session context file for session_close.py to read
     # Tracks which tasks were "in scope" for this session
     task_ids_in_scope = [t["id"] for t in project_active + active]
-    context_file = Path.home() / ".aos-v2" / "work" / ".session-context.json"
+    context_file = Path.home() / ".aos" / "work" / ".session-context.json"
     try:
         context_file.parent.mkdir(parents=True, exist_ok=True)
         context_file.write_text(json.dumps({
@@ -136,7 +136,7 @@ def main():
     guidance_lines = []
     if project_active:
         task_ids = ", ".join(t["id"] for t in project_active)
-        guidance_lines.append(f"If you complete any active task ({task_ids}), mark it done: `python3 ~/aosv2/core/work/cli.py done <id>`")
+        guidance_lines.append(f"If you complete any active task ({task_ids}), mark it done: `python3 ~/aos/core/work/cli.py done <id>`")
     if due:
         guidance_lines.append("Overdue tasks exist — flag them to the operator if relevant.")
     guidance_lines.append("If multi-step work emerges that isn't tracked above, suggest tracking it as a task or thread.")

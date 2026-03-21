@@ -1,0 +1,235 @@
+{% extends "base.html" %}
+
+{% block title %}Crons{% endblock %}
+{% block page_name %}Crons{% endblock %}
+
+{% block styles %}
+        .crons-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-family: var(--font-mono);
+            font-size: 12px;
+        }
+
+        .crons-table th {
+            font-size: 10px;
+            color: var(--text-tertiary);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            font-weight: 600;
+            padding: 0 12px 12px;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .crons-table td {
+            padding: 10px 12px;
+            border-bottom: 1px solid var(--border);
+            vertical-align: middle;
+        }
+
+        .crons-table tr:last-child td { border-bottom: none; }
+        .crons-table tr.cron-disabled td { opacity: 0.4; }
+        .crons-table tr:hover td { background: var(--bg-surface-alt); }
+
+        .cron-name { font-weight: 600; font-size: 13px; }
+        .cron-schedule { font-size: 12px; color: var(--text-secondary); font-family: var(--font-sans); }
+        .cron-age { font-size: 11px; color: var(--text-tertiary); }
+        .cron-dur { font-size: 11px; color: var(--text-tertiary); }
+        .cron-count { font-size: 11px; color: var(--text-tertiary); }
+
+        .cron-status-label {
+            font-size: 10px;
+            font-family: var(--font-mono);
+            padding: 2px 8px;
+            border-radius: 4px;
+            display: inline-block;
+        }
+
+        .cron-status-label.ok { background: rgba(52,211,153,0.12); color: var(--status-online); }
+        .cron-status-label.failed { background: rgba(248,113,113,0.12); color: var(--status-error); }
+        .cron-status-label.stale { background: rgba(251,191,36,0.12); color: var(--status-warning); }
+        .cron-status-label.pending { background: rgba(92,96,112,0.15); color: var(--text-tertiary); }
+        .cron-status-label.disabled { background: var(--bg-surface-alt); color: var(--text-tertiary); }
+
+        .crons-sep td {
+            padding: 8px 12px;
+            font-family: var(--font-mono);
+            font-size: 10px;
+            color: var(--text-tertiary);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            background: var(--bg-surface-alt);
+            border-bottom: 1px solid var(--border);
+        }
+
+        .summary-bar {
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+            margin-bottom: 16px;
+        }
+
+        .summary-stat {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .summary-value {
+            font-family: var(--font-mono);
+            font-size: 24px;
+            font-weight: 700;
+        }
+
+        .summary-label {
+            font-size: 11px;
+            color: var(--text-secondary);
+        }
+{% endblock %}
+
+{% block content %}
+        <!-- SUMMARY -->
+        <div class="card" style="margin-bottom:16px;" id="summary-card">
+            <div class="card-header">
+                <span class="card-title">Summary</span>
+                <span id="last-updated" style="font-family:var(--font-mono);font-size:10px;color:var(--text-tertiary);"></span>
+            </div>
+            <div class="summary-bar" id="summary-stats">
+                <div class="summary-stat">
+                    <div class="summary-value" id="stat-total">—</div>
+                    <div class="summary-label">total</div>
+                </div>
+                <div class="summary-stat">
+                    <div class="summary-value" id="stat-enabled">—</div>
+                    <div class="summary-label">enabled</div>
+                </div>
+                <div class="summary-stat">
+                    <div class="summary-value" style="color:var(--status-online);" id="stat-ok">—</div>
+                    <div class="summary-label">ok</div>
+                </div>
+                <div class="summary-stat">
+                    <div class="summary-value" style="color:var(--status-error);" id="stat-failed">—</div>
+                    <div class="summary-label">failed</div>
+                </div>
+                <div class="summary-stat">
+                    <div class="summary-value" style="color:var(--status-warning);" id="stat-stale">—</div>
+                    <div class="summary-label">stale</div>
+                </div>
+                <div class="summary-stat">
+                    <div class="summary-value" style="color:var(--text-tertiary);" id="stat-disabled">—</div>
+                    <div class="summary-label">disabled</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- JOBS TABLE -->
+        <div class="card" id="crons-card">
+            <div class="card-header">
+                <span class="card-title">Scheduled Jobs</span>
+                <i data-lucide="timer" class="card-icon" style="width:14px;height:14px;"></i>
+            </div>
+            <div id="crons-table-wrap">
+                <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-tertiary);padding:20px;text-align:center;">Loading...</div>
+            </div>
+        </div>
+{% endblock %}
+
+{% block scripts %}
+        function relativeTime(isoStr) {
+            if (!isoStr) return '—';
+            const then = new Date(isoStr);
+            const now = new Date();
+            const s = Math.floor((now - then) / 1000);
+            if (s < 5) return 'just now';
+            if (s < 60) return `${s}s ago`;
+            if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+            if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+            return `${Math.floor(s / 86400)}d ago`;
+        }
+
+        function durStr(s) {
+            if (!s && s !== 0) return '—';
+            if (s < 1) return '<1s';
+            if (s < 60) return `${s}s`;
+            return `${Math.floor(s / 60)}m ${s % 60}s`;
+        }
+
+        function escapeHtml(text) {
+            const d = document.createElement('div');
+            d.textContent = text;
+            return d.innerHTML;
+        }
+
+        function renderCrons(data) {
+            const jobs = data.jobs || [];
+            const summary = data.summary || {};
+
+            // Summary stats
+            document.getElementById('stat-total').textContent = summary.total ?? '—';
+            document.getElementById('stat-enabled').textContent = summary.enabled ?? '—';
+            document.getElementById('stat-ok').textContent = summary.ok ?? '—';
+            document.getElementById('stat-failed').textContent = summary.failed ?? '—';
+            document.getElementById('stat-stale').textContent = summary.stale ?? '—';
+            document.getElementById('stat-disabled').textContent = summary.disabled ?? '—';
+
+            const lu = document.getElementById('last-updated');
+            if (lu) lu.textContent = 'updated ' + new Date().toLocaleTimeString();
+
+            // Table
+            const wrap = document.getElementById('crons-table-wrap');
+            if (!wrap) return;
+
+            if (!jobs.length) {
+                wrap.innerHTML = '<div style="font-size:12px;color:var(--text-tertiary);padding:20px;text-align:center;">No cron jobs found</div>';
+                return;
+            }
+
+            let html = `<table class="crons-table">
+                <thead><tr>
+                    <th>Name</th>
+                    <th>Schedule</th>
+                    <th>Last Run</th>
+                    <th>Status</th>
+                    <th>Duration</th>
+                    <th>Runs</th>
+                </tr></thead><tbody>`;
+
+            let shownDisabledSep = false;
+            for (const job of jobs) {
+                if (job.status === 'disabled' && !shownDisabledSep) {
+                    shownDisabledSep = true;
+                    html += `<tr class="crons-sep"><td colspan="6">Disabled</td></tr>`;
+                }
+                const rowCls = job.status === 'disabled' ? 'cron-disabled' : '';
+                const lastFailureBadge = job.last_failure
+                    ? `<br><span style="font-size:10px;color:var(--status-error);">last fail: ${relativeTime(job.last_failure)}</span>`
+                    : '';
+                html += `<tr class="${rowCls}">
+                    <td class="cron-name">${escapeHtml(job.name)}</td>
+                    <td class="cron-schedule">${escapeHtml(job.schedule)}</td>
+                    <td class="cron-age">${relativeTime(job.last_run)}${lastFailureBadge}</td>
+                    <td><span class="cron-status-label ${job.status}">${job.status}</span></td>
+                    <td class="cron-dur">${durStr(job.duration_s)}</td>
+                    <td class="cron-count">${job.run_count ?? '—'}</td>
+                </tr>`;
+            }
+
+            html += '</tbody></table>';
+            wrap.innerHTML = html;
+        }
+
+        async function loadCrons() {
+            try {
+                const r = await fetch('/api/crons');
+                const data = await r.json();
+                renderCrons(data);
+            } catch (e) {
+                const wrap = document.getElementById('crons-table-wrap');
+                if (wrap) wrap.innerHTML = '<div style="font-size:12px;color:var(--status-error);padding:20px;">Failed to load cron data</div>';
+            }
+        }
+
+        loadCrons();
+        setInterval(loadCrons, 30000);
+{% endblock %}

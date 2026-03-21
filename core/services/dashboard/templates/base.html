@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AOS — {% block title %}Dashboard{% endblock %}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=IBM+Plex+Sans:wght@300;400;500;600&family=Amiri:wght@400;700&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+    <style>
+        :root {
+            --bg-primary: #0f1117;
+            --bg-surface: #1a1d27;
+            --bg-surface-alt: #232733;
+            --bg-surface-hover: #2a2e3a;
+            --border: #2e3340;
+            --border-light: #383d4a;
+            --text-primary: #e8e9ed;
+            --text-secondary: #8b8f9a;
+            --text-tertiary: #5c6070;
+            --accent: #e8723a;
+            --accent-hover: #f0854f;
+            --accent-muted: rgba(232, 114, 58, 0.15);
+            --accent-glow: rgba(232, 114, 58, 0.08);
+            --status-online: #34d399;
+            --status-warning: #fbbf24;
+            --status-error: #f87171;
+            --status-info: #60a5fa;
+            --font-mono: 'JetBrains Mono', 'SF Mono', monospace;
+            --font-sans: 'IBM Plex Sans', -apple-system, sans-serif;
+            --font-arabic: 'Amiri', serif;
+            {% block css_vars %}{% endblock %}
+        }
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            background: var(--bg-primary); color: var(--text-primary);
+            font-family: var(--font-sans); font-size: 14px; line-height: 1.5;
+            min-height: 100vh; overflow-x: hidden;
+        }
+        body::before {
+            content: ''; position: fixed; inset: 0;
+            background-image:
+                linear-gradient(rgba(46, 51, 64, 0.3) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(46, 51, 64, 0.3) 1px, transparent 1px);
+            background-size: 60px 60px; pointer-events: none; z-index: 0;
+        }
+        .shell {
+            position: relative; z-index: 1; max-width: {% block shell_width %}1200px{% endblock %};
+            margin: 0 auto; padding: 24px 20px;
+            {% block shell_extra %}{% endblock %}
+        }
+
+        /* Header */
+        .header {
+            display: flex; align-items: center; justify-content: space-between;
+            margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid var(--border);
+        }
+        .header-left { display: flex; align-items: center; gap: 16px; }
+        .logo-mark {
+            width: 36px; height: 36px; background: var(--accent); border-radius: 8px;
+            display: flex; align-items: center; justify-content: center;
+            font-family: var(--font-mono); font-weight: 700; font-size: 16px; color: var(--bg-primary);
+        }
+        .header-title { font-family: var(--font-mono); font-size: 18px; font-weight: 600; }
+        .header-title span { color: var(--accent); }
+        .nav-links { display: flex; gap: 8px; align-items: center; }
+        .nav-link {
+            font-family: var(--font-mono); font-size: 11px; color: var(--text-secondary);
+            text-decoration: none; padding: 4px 10px; border: 1px solid var(--border);
+            border-radius: 6px; transition: all 0.15s;
+        }
+        .nav-link:hover { border-color: var(--accent); color: var(--accent); }
+        .nav-link.active { background: var(--accent-muted); color: var(--accent); border-color: rgba(232,114,58,0.3); }
+        .nav-link-external { display: inline-flex; align-items: center; gap: 4px; }
+        .connection-dot { width: 8px; height: 8px; border-radius: 50%; transition: background 0.3s; }
+        .connection-dot.connected { background: var(--status-online); box-shadow: 0 0 8px rgba(52, 211, 153, 0.4); animation: pulse-dot 2s ease-in-out infinite; }
+        .connection-dot.disconnected { background: var(--status-error); animation: none; }
+        @keyframes pulse-dot { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+
+        /* Responsive — header */
+        @media (max-width: 768px) {
+            .nav-links { flex-wrap: wrap; }
+        }
+        @media (max-width: 640px) {
+            .shell { padding: 12px 10px; }
+            .header { flex-direction: column; align-items: flex-start; gap: 10px; }
+            .nav-links { width: 100%; flex-wrap: wrap; }
+            .nav-link { font-size: 10px; padding: 3px 8px; }
+        }
+        @media (max-width: 380px) {
+            .nav-link { font-size: 9px; padding: 2px 6px; }
+        }
+
+        {% block styles %}{% endblock %}
+    </style>
+</head>
+<body>
+    <div class="shell">
+        <header class="header">
+            <div class="header-left">
+                <div class="logo-mark">A</div>
+                <div class="header-title">AOS <span>{% block page_name %}Dashboard{% endblock %}</span></div>
+            </div>
+            <div class="nav-links">
+                <a href="/" class="nav-link{% if active_page == 'dashboard' %} active{% endif %}">Dashboard</a>
+                <a href="/agents" class="nav-link{% if active_page == 'agents' %} active{% endif %}">Agents</a>
+                <a href="/sessions" class="nav-link{% if active_page == 'sessions' %} active{% endif %}">Sessions</a>
+                <a href="/conversations" class="nav-link{% if active_page == 'conversations' %} active{% endif %}">Conversations</a>
+                <a href="/logs" class="nav-link{% if active_page == 'logs' %} active{% endif %}">Logs</a>
+                <a href="/crons" class="nav-link{% if active_page == 'crons' %} active{% endif %}">Crons</a>
+                {% block nav_extra %}{% endblock %}
+            </div>
+        </header>
+
+        {% block content %}{% endblock %}
+    </div>
+
+    <script>
+        lucide.createIcons();
+        {% block scripts %}{% endblock %}
+    </script>
+</body>
+</html>

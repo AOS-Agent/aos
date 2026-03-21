@@ -1,0 +1,42 @@
+{
+  "skill_name": "extract",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "https://www.instagram.com/reel/DVUJeahgMMe/",
+      "expected_output": "Should detect Instagram reel, extract metadata (author, likes, caption), transcribe audio via Whisper, and save to vault. Should show a brief summary of what the reel covers.",
+      "files": [],
+      "assertions": [
+        {"text": "Response includes the author name (Nick, nicholas.puru, or nicholaspuru)"},
+        {"text": "Response includes engagement stats (likes count or comments count)"},
+        {"text": "Response includes a transcript or summary of spoken content from the reel"},
+        {"text": "A vault note file was created in the vault or output directory"},
+        {"text": "Response includes a human-readable summary, not just raw metadata dump"}
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "what does this video say? https://youtu.be/eA9Zf2-qYYM",
+      "expected_output": "Should detect YouTube URL, extract metadata, pull captions (not Whisper since YT has captions), summarize the content, and answer the question about what the video covers. Should save to vault.",
+      "files": [],
+      "assertions": [
+        {"text": "Response answers the question by summarizing what the video covers"},
+        {"text": "Response mentions the video topic (AI agents, building agents, or agent loops)"},
+        {"text": "Transcript was obtained via captions (not Whisper) since YouTube has captions available"},
+        {"text": "A vault note file was created"}
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "someone sent me this on whatsapp, can you quickly tell me what its about? https://www.instagram.com/reel/DVUJeahgMMe/",
+      "expected_output": "Should extract the Instagram reel, transcribe, and give a concise summary focused on answering 'what is it about'. Should be quick and conversational.",
+      "files": [],
+      "assertions": [
+        {"text": "Response is concise — under 300 words (user said 'quickly')"},
+        {"text": "Response summarizes what the reel is about"},
+        {"text": "Response does NOT include a raw transcript dump"},
+        {"text": "Tone is conversational, not formal report-style"}
+      ]
+    }
+  ]
+}

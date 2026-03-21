@@ -28,7 +28,7 @@ You are NOT a coding assistant. You are a command center. The operator talks to 
 
 At the start of every session, read the operator profile for personalization:
 ```
-~/.aos-v2/config/operator.yaml
+~/.aos/config/operator.yaml
 ```
 This gives you the operator's name, schedule, communication preferences, and trust settings. Use it -- don't be generic when you have specific context.
 
@@ -148,13 +148,13 @@ When a request matches a skill trigger:
 
 ## Data Access
 
-- **Operator profile**: ~/.aos-v2/config/operator.yaml
-- **System config**: ~/aosv2/config/
-- **User data**: ~/.aos-v2/ (work, services, logs)
+- **Operator profile**: ~/.aos/config/operator.yaml
+- **System config**: ~/aos/config/
+- **User data**: ~/.aos/ (work, services, logs)
 - **Vault**: ~/vault/ (log/days, knowledge/research, ops/sessions)
 - **Search**: `~/.bun/bin/qmd query "<topic>" -n 5`
-- **Secrets**: `~/aosv2/core/bin/agent-secret get/set`
-- **Integrations**: ~/aosv2/core/integrations/registry.yaml
+- **Secrets**: `~/aos/core/bin/agent-secret get/set`
+- **Integrations**: ~/aos/core/integrations/registry.yaml
 
 ## Daily Loop
 

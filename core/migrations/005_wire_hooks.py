@@ -1,0 +1,90 @@
+"""
+Migration 005: Register AOS hooks in Claude Code settings.
+
+Hooks:
+- SessionStart: inject_context.py (loads active tasks/threads into session)
+- SessionEnd: session_close.py (links session to tasks, captures outcomes)
+
+These are registered in ~/.claude/settings.json.
+Existing hooks are preserved — AOS hooks are appended.
+"""
+
+DESCRIPTION = "Wire work system hooks into Claude Code"
+
+import json
+from pathlib import Path
+
+SETTINGS_FILE = Path.home() / ".claude" / "settings.json"
+AOS_DIR = Path.home() / "aos"
+
+HOOKS = {
+    "SessionStart": {
+        "command": f"python3 {AOS_DIR}/core/work/inject_context.py",
+        "description": "AOS: inject active tasks and threads",
+    },
+    "SessionEnd": {
+        "command": f"python3 {AOS_DIR}/core/work/session_close.py",
+        "description": "AOS: link session to tasks and capture outcomes",
+    },
+}
+
+
+def _get_settings() -> dict:
+    """Load existing settings or empty dict."""
+    if SETTINGS_FILE.exists():
+        with open(SETTINGS_FILE) as f:
+            return json.load(f)
+    return {}
+
+
+def _save_settings(data: dict):
+    """Save settings preserving formatting."""
+    SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with open(SETTINGS_FILE, "w") as f:
+        json.dump(data, f, indent=2)
+
+
+def _hook_installed(settings: dict, event: str, command: str) -> bool:
+    """Check if a specific hook command is already registered."""
+    hooks = settings.get("hooks", {})
+    event_hooks = hooks.get(event, [])
+    if isinstance(event_hooks, list):
+        return any(
+            (isinstance(h, dict) and h.get("command") == command) or
+            (isinstance(h, str) and h == command)
+            for h in event_hooks
+        )
+    return False
+
+
+def check() -> bool:
+    """Applied if all AOS hooks are registered."""
+    settings = _get_settings()
+    for event, hook in HOOKS.items():
+        if not _hook_installed(settings, event, hook["command"]):
+            return False
+    return True
+
+
+def up() -> bool:
+    """Register AOS hooks in settings.json."""
+    settings = _get_settings()
+
+    if "hooks" not in settings:
+        settings["hooks"] = {}
+
+    for event, hook in HOOKS.items():
+        if _hook_installed(settings, event, hook["command"]):
+            print(f"       {event} hook already registered ✓")
+            continue
+
+        if event not in settings["hooks"]:
+            settings["hooks"][event] = []
+
+        settings["hooks"][event].append({
+            "command": hook["command"],
+        })
+        print(f"       Registered {event} → {hook['description']}")
+
+    _save_settings(settings)
+    return True

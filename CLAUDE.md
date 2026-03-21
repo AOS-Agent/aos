@@ -23,7 +23,7 @@ or limiting the power user.
 ## System Layout
 
 ```
-~/aosv2/                       SYSTEM CODE (this repo)
+~/aos/                       SYSTEM CODE (this repo)
 ├── core/                      System code
 │   ├── services/              Bridge, dashboard, listen, memory
 │   ├── integrations/          WhatsApp, health, roborock, etc. (optional)
@@ -39,7 +39,7 @@ or limiting the power user.
 ├── vendor/                    Third-party dependencies
 └── specs/                     Living architecture docs
 
-~/.aos-v2/                     USER DATA (never in this repo)
+~/.aos/                     USER DATA (never in this repo)
 ├── work/                      Work system data (goals, tasks, inbox, reviews)
 ├── services/                  Runtime state for services
 └── logs/                      All logs

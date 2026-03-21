@@ -2,7 +2,7 @@
 # Version: 1.0
 #
 # This defines the canonical format for all work entities.
-# User data lives at ~/.aos-v2/work/ (never in this repo).
+# User data lives at ~/.aos/work/ (never in this repo).
 # Progressive: only id, title, status are required. Everything else is optional.
 
 # --- Scale Modes ---

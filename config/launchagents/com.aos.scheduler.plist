@@ -8,7 +8,7 @@
     <key>ProgramArguments</key>
     <array>
         <string>/opt/homebrew/bin/python3</string>
-        <string>/Users/agentalhadi/aosv2/core/bin/scheduler</string>
+        <string>/Users/agentalhadi/aos/core/bin/scheduler</string>
     </array>
 
     <!-- Every 5 minutes via StartCalendarInterval (survives sleep/wake) -->
@@ -33,9 +33,9 @@
     <string>Background</string>
 
     <key>StandardOutPath</key>
-    <string>/Users/agentalhadi/.aos-v2/logs/crons/scheduler.log</string>
+    <string>/Users/agentalhadi/.aos/logs/crons/scheduler.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/agentalhadi/.aos-v2/logs/crons/scheduler.log</string>
+    <string>/Users/agentalhadi/.aos/logs/crons/scheduler.log</string>
 
     <key>EnvironmentVariables</key>
     <dict>

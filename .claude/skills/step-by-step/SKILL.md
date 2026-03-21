@@ -99,7 +99,7 @@ Size dots: `🟢 S` · `🟡 M` · `🔴 L`
 
 Examples of good criteria:
 - `curl http://127.0.0.1:4096/health` returns 200
-- `~/.aos-v2/logs/bridge.jsonl` contains entries with `"level"` and `"ts"` fields
+- `~/.aos/logs/bridge.jsonl` contains entries with `"level"` and `"ts"` fields
 - `launchctl list | grep com.agent.logwatch` shows running
 
 Then ask:
@@ -194,7 +194,7 @@ The operator is always in control. If they say "skip the ceremony, just execute"
 
 ## Usage Tracking
 
-After completing a step-by-step flow, append a one-line entry to `~/.aos-v2/logs/step-by-step.jsonl`:
+After completing a step-by-step flow, append a one-line entry to `~/.aos/logs/step-by-step.jsonl`:
 
 ```json
 {"date":"2026-03-21","task":"Redis setup","parts":4,"mode":"as-we-go","domain":"infrastructure","skipped":0,"splits":1}

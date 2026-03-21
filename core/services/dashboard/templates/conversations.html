@@ -1,0 +1,185 @@
+{% extends "base.html" %}
+
+{% block title %}Conversations{% endblock %}
+{% block page_name %}Conversations{% endblock %}
+
+{% block styles %}
+        /* Stats bar */
+        .stats-bar { display: flex; gap: 24px; margin-bottom: 20px; }
+        .stat-item { display: flex; align-items: baseline; gap: 6px; }
+        .stat-num { font-family: var(--font-mono); font-size: 20px; font-weight: 700; color: var(--accent); }
+        .stat-label { font-size: 12px; color: var(--text-secondary); }
+
+        /* Filter bar */
+        .filter-bar { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+        .filter-btn {
+            font-family: var(--font-mono); font-size: 11px; color: var(--text-secondary);
+            background: var(--bg-surface); border: 1px solid var(--border); border-radius: 16px;
+            padding: 4px 12px; cursor: pointer; transition: all 0.15s;
+        }
+        .filter-btn:hover, .filter-btn.active {
+            background: var(--accent-muted); color: var(--accent); border-color: rgba(232,114,58,0.3);
+        }
+
+        /* Conversation list */
+        .conv-list { display: flex; flex-direction: column; gap: 8px; }
+        .conv-item {
+            background: var(--bg-surface); border: 1px solid var(--border); border-radius: 10px;
+            padding: 16px; cursor: pointer; transition: all 0.15s;
+        }
+        .conv-item:hover { border-color: var(--border-light); }
+        .conv-item.expanded { border-color: var(--accent); }
+        .conv-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+        .conv-agent {
+            font-family: var(--font-mono); font-size: 12px; font-weight: 600;
+            padding: 2px 8px; border-radius: 10px; background: var(--accent-muted); color: var(--accent);
+        }
+        .conv-meta { display: flex; align-items: center; gap: 12px; }
+        .conv-time { font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary); }
+        .conv-duration { font-family: var(--font-mono); font-size: 10px; color: var(--text-tertiary); }
+        .conv-topic {
+            font-family: var(--font-mono); font-size: 10px; color: var(--text-secondary);
+            padding: 1px 6px; border-radius: 4px; background: var(--bg-surface-alt);
+        }
+
+        /* Message bubbles */
+        .conv-message {
+            padding: 10px 14px; border-radius: 8px; margin-bottom: 6px;
+            background: var(--bg-surface-alt); font-size: 13px; line-height: 1.6;
+            border-left: 3px solid var(--status-info);
+        }
+        .conv-response {
+            padding: 10px 14px; border-radius: 8px;
+            background: var(--bg-surface-alt); font-size: 13px; line-height: 1.6;
+            border-left: 3px solid var(--accent);
+            max-height: 0; overflow: hidden; transition: max-height 0.3s ease;
+        }
+        .conv-item.expanded .conv-response { max-height: 2000px; }
+        .conv-response-label {
+            font-family: var(--font-mono); font-size: 10px; color: var(--text-tertiary);
+            text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px;
+        }
+        .conv-response pre {
+            white-space: pre-wrap; word-break: break-word;
+            font-family: var(--font-mono); font-size: 12px; color: var(--text-secondary);
+        }
+        .conv-expand-hint {
+            font-family: var(--font-mono); font-size: 10px; color: var(--text-tertiary);
+            margin-top: 4px;
+        }
+
+        /* Empty state */
+        .empty-state {
+            text-align: center; padding: 60px 20px; color: var(--text-tertiary);
+        }
+        .empty-state i { margin-bottom: 12px; }
+
+        @media (max-width: 640px) {
+            .stats-bar { gap: 12px; flex-wrap: wrap; }
+            .stat-num { font-size: 16px; }
+            .filter-bar { gap: 6px; }
+            .filter-btn { font-size: 10px; padding: 3px 10px; }
+            .conv-item { padding: 12px; }
+            .conv-header { flex-direction: column; align-items: flex-start; gap: 6px; }
+            .conv-meta { flex-wrap: wrap; gap: 6px; }
+            .conv-message { font-size: 12px; padding: 8px 10px; }
+            .conv-response pre { font-size: 11px; }
+        }
+{% endblock %}
+
+{% block content %}
+        <div class="stats-bar">
+            <div class="stat-item">
+                <span class="stat-num">{{ stats.total }}</span>
+                <span class="stat-label">total</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-num">{{ stats.today }}</span>
+                <span class="stat-label">today</span>
+            </div>
+            {% for a in stats.by_agent[:5] %}
+            <div class="stat-item">
+                <span class="stat-num" style="font-size:14px;">{{ a.count }}</span>
+                <span class="stat-label">{{ a.agent or 'system' }}</span>
+            </div>
+            {% endfor %}
+        </div>
+
+        <div class="filter-bar">
+            <button class="filter-btn active" onclick="filterConvs('all')">All</button>
+            {% for a in stats.by_agent %}
+            <button class="filter-btn" onclick="filterConvs('{{ a.agent }}')">{{ a.agent or 'system' }}</button>
+            {% endfor %}
+        </div>
+
+        <div class="conv-list" id="conv-list">
+            {% if conversations %}
+                {% for conv in conversations %}
+                <div class="conv-item" data-agent="{{ conv.agent or '' }}" onclick="this.classList.toggle('expanded')">
+                    <div class="conv-header">
+                        <div style="display:flex;align-items:center;gap:8px;">
+                            {% if conv.agent %}
+                            <span class="conv-agent">{{ conv.agent }}</span>
+                            {% endif %}
+                            {% if conv.topic_name %}
+                            <span class="conv-topic">{{ conv.topic_name }}</span>
+                            {% endif %}
+                            {% if conv.message_type != 'text' %}
+                            <span class="conv-topic">{{ conv.message_type }}</span>
+                            {% endif %}
+                        </div>
+                        <div class="conv-meta">
+                            {% if conv.duration_ms %}
+                            <span class="conv-duration">{{ (conv.duration_ms / 1000) | round(1) }}s</span>
+                            {% endif %}
+                            <span class="conv-time">{{ conv.timestamp[:16] }}</span>
+                        </div>
+                    </div>
+                    <div class="conv-message">{{ conv.message[:500] }}{% if conv.message|length > 500 %}...{% endif %}</div>
+                    {% if conv.response %}
+                    <div class="conv-expand-hint">click to expand response</div>
+                    <div class="conv-response">
+                        <div class="conv-response-label">Response</div>
+                        <pre>{{ conv.response[:5000] }}{% if conv.response|length > 5000 %}...{% endif %}</pre>
+                    </div>
+                    {% else %}
+                    <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-tertiary);margin-top:4px;">
+                        (no response recorded)
+                    </div>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            {% else %}
+                <div class="empty-state">
+                    <i data-lucide="message-square" style="width:40px;height:40px;"></i>
+                    <p style="margin-top:12px;">No conversations yet.<br>Send a message via Telegram to see it here.</p>
+                </div>
+            {% endif %}
+        </div>
+
+        <div style="text-align:center;padding:32px 0 16px;color:var(--text-tertiary);font-family:var(--font-mono);font-size:11px;">
+            AOS Conversations &middot; Port 4096
+        </div>
+{% endblock %}
+
+{% block scripts %}
+        function filterConvs(agent) {
+            document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+            event.target.classList.add('active');
+
+            document.querySelectorAll('.conv-item').forEach(item => {
+                if (agent === 'all' || item.dataset.agent === agent) {
+                    item.style.display = '';
+                } else {
+                    item.style.display = 'none';
+                }
+            });
+        }
+
+        setInterval(async () => {
+            try {
+                const r = await fetch('/api/conversations?limit=100');
+                const convs = await r.json();
+            } catch(e) {}
+        }, 30000);
+{% endblock %}

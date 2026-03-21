@@ -1,0 +1,4 @@
+# Telegram Bot Configuration
+# Each project gets its own bot via @BotFather
+bot_token_key: TELEGRAM_BOT_TOKEN_{{PROJECT_NAME_UPPER}}   # keychain key
+chat_id_key: TELEGRAM_CHAT_ID_{{PROJECT_NAME_UPPER}}

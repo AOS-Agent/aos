@@ -70,7 +70,7 @@ Monitor -> Detect -> Correct -> Report
 
 ## Operator Context
 
-Read `~/.aos-v2/config/operator.yaml` for the operator's name, schedule, and quiet hours.
+Read `~/.aos/config/operator.yaml` for the operator's name, schedule, and quiet hours.
 Respect schedule blocks -- don't alert during teaching or prayer time unless critical (service down, disk full).
 
 ## Rules
@@ -78,5 +78,5 @@ Respect schedule blocks -- don't alert during teaching or prayer time unless cri
 - Never restart the bridge from within a bridge-triggered session
 - All corrections get logged -- no silent fixes
 - Verify after correcting -- don't assume the fix worked
-- Read `~/.aos-v2/` for runtime state, `~/aosv2/config/` for expected state
+- Read `~/.aos/` for runtime state, `~/aos/config/` for expected state
 - Trust Level 1 -- all reports verifiable by the operator

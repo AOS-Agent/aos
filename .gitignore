@@ -1,4 +1,28 @@
+# Python
 __pycache__/
 *.pyc
 *.pyo
+.venv/
+*.egg-info/
+
+# macOS
 .DS_Store
+
+# Vendor (large third-party tools, user installs separately)
+vendor/
+
+# Instance data that might accidentally end up here
+logs/
+data/
+*.log
+
+# Compatibility symlinks (point to instance or core)
+bin
+apps
+
+# IDE
+.vscode/
+.xcodebuildmcp/
+
+# Worktrees
+.claude/worktrees/

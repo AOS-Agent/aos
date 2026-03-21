@@ -261,7 +261,7 @@ def cmd_link(args):
 
     if not session_id:
         # Try to read current session from context file
-        context_file = os.path.join(os.path.expanduser("~"), ".aos-v2", "work", ".session-context.json")
+        context_file = os.path.join(os.path.expanduser("~"), ".aos", "work", ".session-context.json")
         if os.path.exists(context_file):
             try:
                 ctx = json.load(open(context_file))

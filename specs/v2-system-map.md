@@ -55,9 +55,9 @@ AOS doesn't build an agent framework. It configures Claude Code.
 ~/.claude/CLAUDE.md          Global kernel (every session)
 ~/.claude/settings.json      Default agent, teams, permissions
 ~/.claude/agents/            Active agents (system + catalog + user)
-~/aosv2/.claude/skills/      Knowledge modules (loaded on demand)
-~/aosv2/.claude/rules/       Conditional policies (loaded by context)
-~/aosv2/.claude/hooks/       Deterministic lifecycle handlers
+~/aos/.claude/skills/      Knowledge modules (loaded on demand)
+~/aos/.claude/rules/       Conditional policies (loaded by context)
+~/aos/.claude/hooks/       Deterministic lifecycle handlers
 ```
 
 ### SERVICES — Always-on processes
@@ -71,7 +71,7 @@ Persistent daemons managed by LaunchAgents. Run independently of Claude sessions
 | Listen | Job server (background tasks) | 7600 |
 | Memory | Semantic search (ChromaDB MCP) | stdio |
 
-Code: `core/services/`. Runtime data: `~/.aos-v2/services/`.
+Code: `core/services/`. Runtime data: `~/.aos/services/`.
 
 ### KNOWLEDGE — What the system remembers
 
@@ -95,7 +95,7 @@ Goals → Projects → Tasks → Sessions → Knowledge → Reviews → Goals
 | Component | What | Where |
 |-----------|------|-------|
 | Work engine | Parse, query, metrics | `core/work/` |
-| Work data | Tasks, goals, inbox, threads, reviews | `~/.aos-v2/work/` |
+| Work data | Tasks, goals, inbox, threads, reviews | `~/.aos/work/` |
 | Project work | Per-project tasks/goals (rolls up) | `~/project/work/` |
 | Skills | /work, work-awareness, /review, /triage | `.claude/skills/` |
 | Hooks | Session→task linking, context injection | `.claude/hooks/` |
@@ -162,7 +162,7 @@ Build the harness and agents so the system can talk.
 | Core skills (recall, step-by-step, onboarding) | Harness | S |
 | Integration framework (registry + manifest pattern) | Integrations | S |
 
-**Done when**: Open a session in ~/aosv2/, Chief responds with full context,
+**Done when**: Open a session in ~/aos/, Chief responds with full context,
 can dispatch Steward and Advisor.
 
 ### Phase B: Substance
@@ -216,7 +216,7 @@ goals updated. System improves itself measurably over 30 days.
 ## Filesystem Reference
 
 ```
-~/aosv2/                         SYSTEM (git repo)
+~/aos/                         SYSTEM (git repo)
 ├── CLAUDE.md                    System dev context
 ├── .claude/                     Skills, hooks, rules
 ├── core/
@@ -233,7 +233,7 @@ goals updated. System improves itself measurably over 30 days.
 ├── vendor/                      Third-party deps
 └── specs/                       Architecture docs
 
-~/.aos-v2/                       USER DATA (never in git)
+~/.aos/                       USER DATA (never in git)
 ├── work/                        Goals, tasks, inbox, reviews
 ├── services/                    Runtime state
 └── logs/                        All logs

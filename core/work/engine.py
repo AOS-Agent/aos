@@ -1,7 +1,7 @@
 """
 AOS Work Engine — Read/write work files.
 
-Data lives at ~/.aos-v2/work/work.yaml (small mode).
+Data lives at ~/.aos/work/work.yaml (small mode).
 This module handles CRUD for tasks, projects, goals, threads, and inbox.
 """
 
@@ -10,7 +10,7 @@ import yaml
 from datetime import datetime, date
 from pathlib import Path
 
-WORK_DIR = Path.home() / ".aos-v2" / "work"
+WORK_DIR = Path.home() / ".aos" / "work"
 WORK_FILE = WORK_DIR / "work.yaml"
 
 
@@ -393,12 +393,12 @@ def get_or_create_thread_for_cwd(cwd: str, session_id: str,
 
 def find_tasks_by_project_or_cwd(cwd: str) -> list:
     """Find active tasks that match a working directory.
-    Maps cwd to project name (e.g., ~/nuchay → 'nuchay', ~/aosv2 → 'aos-v2')."""
+    Maps cwd to project name (e.g., ~/nuchay → 'nuchay', ~/aos → 'aos-v2')."""
     data = _load()
     dir_name = Path(cwd).name
     # Map common directory names to project IDs
     project_aliases = {
-        "aosv2": "aos-v2",
+        "aos": "aos-v2",
         "aos": "aos-v2",
         "nuchay": "nuchay",
         "chief-ios-app": "chief",

@@ -1,0 +1,29 @@
+{
+  "skill_name": "autonomous-execution",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Open today's daily note in Obsidian and add a heading called '## Ideas' at the end of the file",
+      "expected_output": "Agent should check capabilities.yaml, find Obsidian's URI scheme or REST API as cheapest approach, use it, and verify the heading was added. Should NOT default to Steer OCR as the first attempt.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "Take a screenshot of the AOS dashboard running on port 4096 and save it to /tmp/dashboard-screenshot.png",
+      "expected_output": "Agent should recognize this as a web page interaction, use Chrome MCP or bash (curl/screencapture), not try to visually navigate to it. Should produce an actual PNG file.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "Open System Settings and check what WiFi network this Mac is connected to",
+      "expected_output": "Agent should try bash first (networksetup -getairportnetwork en0 or similar CLI command) since that's zero-token. Should NOT open System Settings GUI unless CLI fails. The WiFi network name should be returned.",
+      "files": []
+    },
+    {
+      "id": 4,
+      "prompt": "Find the most recent file in my Downloads folder and move it to ~/Desktop/",
+      "expected_output": "Agent should use bash (ls -t ~/Downloads | head -1, then mv). Should NOT open Finder or use Steer. Pure CLI task.",
+      "files": []
+    }
+  ]
+}

@@ -12,17 +12,17 @@ You have access to a work tracking system. The SessionStart hook injects current
 
 **Complete a task** — When you finish work that matches an active task (building a feature, fixing a bug, setting up infrastructure), run:
 ```bash
-python3 ~/aosv2/core/work/cli.py done <task_id>
+python3 ~/aos/core/work/cli.py done <task_id>
 ```
 
 **Start a task** — When the user explicitly asks to work on something that matches a todo task:
 ```bash
-python3 ~/aosv2/core/work/cli.py start <task_id>
+python3 ~/aos/core/work/cli.py start <task_id>
 ```
 
 **Link this session** — When working on an active task across multiple sessions, the SessionEnd hook handles this automatically. But if you notice a task is relevant mid-session, you can explicitly link:
 ```bash
-python3 ~/aosv2/core/work/cli.py link <task_id> --session <session_id> --outcome "what was accomplished"
+python3 ~/aos/core/work/cli.py link <task_id> --session <session_id> --outcome "what was accomplished"
 ```
 
 **Suggest tracking** — When a conversation evolves into multi-step work that isn't tracked, suggest:
@@ -48,10 +48,10 @@ python3 ~/aosv2/core/work/cli.py link <task_id> --session <session_id> --outcome
 ## Key Commands
 
 ```bash
-python3 ~/aosv2/core/work/cli.py add "Title" --project X --priority N
-python3 ~/aosv2/core/work/cli.py done <id>
-python3 ~/aosv2/core/work/cli.py start <id>
-python3 ~/aosv2/core/work/cli.py list
-python3 ~/aosv2/core/work/cli.py thread "Exploration title"
-python3 ~/aosv2/core/work/cli.py inbox "Vague thought to triage later"
+python3 ~/aos/core/work/cli.py add "Title" --project X --priority N
+python3 ~/aos/core/work/cli.py done <id>
+python3 ~/aos/core/work/cli.py start <id>
+python3 ~/aos/core/work/cli.py list
+python3 ~/aos/core/work/cli.py thread "Exploration title"
+python3 ~/aos/core/work/cli.py inbox "Vague thought to triage later"
 ```

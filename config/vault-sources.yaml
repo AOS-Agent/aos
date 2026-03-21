@@ -9,14 +9,14 @@
 
 collectors:
   work:
-    source: ~/.aos-v2/work/work.yaml
+    source: ~/.aos/work/work.yaml
     type: work-engine
     section: Work
     enabled: true
     description: "Tasks started, completed, added today"
 
   sessions:
-    source: ~/.aos-v2/logs/sessions.jsonl
+    source: ~/.aos/logs/sessions.jsonl
     type: jsonl-filter
     section: Sessions
     enabled: true
@@ -37,7 +37,7 @@ collectors:
     description: "Sleep, steps, heart rate from HealthKit sync"
 
   inbox:
-    source: ~/.aos-v2/work/work.yaml#inbox
+    source: ~/.aos/work/work.yaml#inbox
     type: work-engine
     section: Ideas & Captures
     enabled: true

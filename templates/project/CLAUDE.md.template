@@ -1,0 +1,28 @@
+# {{PROJECT_NAME}}
+
+A project workspace within the AOS (Agentic Operating System).
+
+## Identity
+- **Project**: {{PROJECT_NAME}}
+- **Operator**: controlled from MacBook Pro / phone via Tailscale + Telegram
+- **System**: `~/aos/` (AOS infrastructure, agents, services)
+
+## Infrastructure
+
+| Service | Port | Check |
+|---------|------|-------|
+| Dashboard | 4096 | `curl http://127.0.0.1:4096/health` |
+| Listen | 7600 | `curl http://127.0.0.1:7600/health` |
+| Bridge | daemon | `launchctl list \| grep agent` |
+
+## Secrets
+```
+~/aos/bin/agent-secret get <NAME>
+~/aos/bin/agent-secret set <NAME>
+```
+
+## Rules
+- Be autonomous — investigate and fix before escalating
+- No secrets in files — use macOS Keychain
+- Web services stay on 127.0.0.1 unless behind Tailscale
+- Log important decisions
