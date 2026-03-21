@@ -477,28 +477,7 @@ PLIST
         _ok "Chrome started"
     fi
 
-    # Claude-in-Chrome extension — provides browser automation MCP tools.
-    # Uses native messaging: Chrome extension ↔ ~/.claude/chrome/chrome-native-host ↔ Claude Code.
-    # Can't install extensions programmatically — clear instructions for the operator.
-    local ext_dir="$HOME/Library/Application Support/Google/Chrome/Default/Extensions/fcoeoabgfenejglbffodgkkbkcdhcgfn"
-    if [[ -d "$ext_dir" ]]; then
-        _skip "Claude Chrome extension"
-    else
-        echo ""
-        _info "Chrome needs the Claude extension for browser automation."
-        _info "Install from: ${CYAN}https://chromewebstore.google.com/detail/claude/fcoeoabgfenejglbffodgkkbkcdhcgfn${RESET}"
-        _info "This lets AOS control web pages, fill forms, take screenshots, etc."
-        echo ""
-        printf "  Press Enter after installing the extension (or 's' to skip): "
-        read -r ext_choice
-        if [[ -d "$ext_dir" ]]; then
-            _ok "Claude Chrome extension"
-        elif [[ "${ext_choice:-}" == "s" ]]; then
-            _info "Skipping — install the extension later from the Chrome Web Store"
-        else
-            _warn "Extension not detected — install it when Chrome is open"
-        fi
-    fi
+    # Chrome extension install deferred to onboarding agent
 }
 
 prereq_obsidian() {
@@ -507,23 +486,9 @@ prereq_obsidian() {
         return 0
     fi
 
-    echo ""
-    echo "  ${BOLD}Install Obsidian?${RESET} (knowledge vault UI)"
-    echo "  AOS uses ~/vault/ for knowledge — Obsidian gives you a visual interface."
-    echo ""
-    printf "  Install? [Y/n]: "
-    read -r obs_choice
-
-    case "${obs_choice:-y}" in
-        [Yy]|"")
-            _info "Installing Obsidian..."
-            brew install --cask obsidian 2>&1 | tail -3
-            [[ -d "/Applications/Obsidian.app" ]] && _ok "Obsidian" || _warn "Obsidian install failed"
-            ;;
-        *)
-            _info "Skipping Obsidian"
-            ;;
-    esac
+    _step "Installing Obsidian..."
+    brew install --cask obsidian 2>&1 | tail -3
+    [[ -d "/Applications/Obsidian.app" ]] && _ok "Obsidian" || _warn "Obsidian install failed"
 }
 
 prereq_superwhisper() {
@@ -531,24 +496,9 @@ prereq_superwhisper() {
     if [[ -d "/Applications/superwhisper.app" ]]; then
         _skip "SuperWhisper"
     else
-        echo ""
-        echo "  ${BOLD}Install SuperWhisper?${RESET} (voice-to-text input)"
-        echo "  Speak to capture ideas, notes, and commands — transcribed locally."
-        echo ""
-        printf "  Install? [Y/n]: "
-        read -r sw_choice
-
-        case "${sw_choice:-y}" in
-            [Yy]|"")
-                _info "Installing SuperWhisper..."
-                brew install --cask superwhisper 2>&1 | tail -3
-                [[ -d "/Applications/superwhisper.app" ]] && _ok "SuperWhisper" || _warn "SuperWhisper install failed"
-                ;;
-            *)
-                _info "Skipping SuperWhisper"
-                return 0
-                ;;
-        esac
+        _step "Installing SuperWhisper..."
+        brew install --cask superwhisper 2>&1 | tail -3
+        [[ -d "/Applications/superwhisper.app" ]] && _ok "SuperWhisper" || _warn "SuperWhisper install failed"
     fi
 
     # Configure defaults: default mode, always show mini recorder, minimized
