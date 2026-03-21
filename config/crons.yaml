@@ -24,7 +24,6 @@ jobs:
     command: bash ~/aosv2/core/bin/auto-commit cron
     every: 30m
     timeout: 120
-    enabled: false  # enable after Part 6 (port auto-commit)
     # ping: https://hc-ping.com/UUID
 
   qmd-reindex:
@@ -42,7 +41,6 @@ jobs:
     command: bash ~/aosv2/core/bin/rotate-logs
     at: "03:00"
     timeout: 60
-    enabled: false  # enable after Part 6 (port rotate-logs)
 
   compile-daily:
     command: python3 ~/aosv2/core/bin/compile-daily
