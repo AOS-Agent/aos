@@ -289,7 +289,7 @@ except py_compile.PyCompileError as e:
         fi
 
         # Write a VS Code workspace task that auto-runs cld on folder open
-        local vscode_dir="$HOME/.vscode"
+        vscode_dir="$HOME/.vscode"
         mkdir -p "$vscode_dir"
         cat > "$vscode_dir/tasks.json" << 'TASKS'
 {
