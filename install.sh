@@ -3,13 +3,33 @@
 #  AOS — Agentic Operating System
 #  Bootstrap installer
 #
-#  Usage:
+#  Usage (one-liner):
+#    curl -fsSL https://raw.githubusercontent.com/hishamalhadi/aos/main/install.sh | bash
+#
+#  Or manually:
+#    git clone https://github.com/hishamalhadi/aos.git ~/aos
 #    bash ~/aos/install.sh
 #
 #  Idempotent. Safe to re-run. Resumes from where it left off.
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 set -euo pipefail
+
+# ── Bootstrap mode ─────────────────────────────────────
+# When piped via curl, stdin is the script — we can't prompt for passwords.
+# So: clone the repo, then exec the local copy with a real terminal.
+if [[ ! -t 0 ]]; then
+    echo ""
+    echo "  Bootstrapping AOS..."
+    echo ""
+    if [[ ! -d "$HOME/aos/.git" ]]; then
+        git clone https://github.com/hishamalhadi/aos.git "$HOME/aos" 2>&1
+    else
+        git -C "$HOME/aos" pull --ff-only 2>&1 || true
+    fi
+    # Re-exec with a real terminal attached
+    exec bash "$HOME/aos/install.sh" "$@" </dev/tty
+fi
 
 # Don't run as root — Homebrew refuses it and files get wrong ownership
 if [[ $EUID -eq 0 ]]; then
