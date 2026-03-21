@@ -219,6 +219,66 @@ def _build_briefing() -> str:
             today_note.write_text(content)
             logger.info(f"Created daily note: {today_note}")
 
+    # ── Agent Trust ──────────────────────────────────────
+    trust_path = Path.home() / ".aos" / "config" / "trust.yaml"
+    trust_log_dir = Path.home() / ".aos" / "logs" / "trust"
+    if trust_path.exists():
+        try:
+            trust_data = yaml.safe_load(trust_path.read_text()) or {}
+            trust_agents = trust_data.get("agents", {})
+            graduation_config = trust_data.get("graduation", {})
+
+            # Count recent trust actions (last 7 days)
+            recent_actions = 0
+            recent_reverts = 0
+            agent_scores = {}
+            for d in range(7):
+                day_str = (now - timedelta(days=d)).strftime("%Y-%m-%d")
+                log_file = trust_log_dir / f"{day_str}.jsonl"
+                if log_file.exists():
+                    import json as _json
+                    for line in log_file.read_text().splitlines():
+                        if not line.strip():
+                            continue
+                        try:
+                            entry = _json.loads(line)
+                            recent_actions += 1
+                            if entry.get("result") == "reverted":
+                                recent_reverts += 1
+                            ag = entry.get("agent", "")
+                            agent_scores[ag] = agent_scores.get(ag, 0) + entry.get("weight", 0)
+                        except _json.JSONDecodeError:
+                            pass
+
+            # Check for graduation candidates
+            grad_candidates = []
+            for ag_name, ag_info in trust_agents.items():
+                caps = ag_info.get("capabilities", {})
+                for cap, cap_level in caps.items():
+                    if cap_level >= 3:
+                        continue
+                    score = agent_scores.get(ag_name, 0)
+                    if cap_level == 1:
+                        threshold = graduation_config.get("1_to_2", {}).get("min_weighted_score", 30)
+                        if score > 0:
+                            pct = min(100, int(score / threshold * 100))
+                            if pct >= 60:
+                                grad_candidates.append(f"{ag_name}/{cap}: {pct}% to L{cap_level + 1}")
+
+            if recent_actions > 0 or grad_candidates:
+                lines.append("<b>Agent Trust</b>")
+                if recent_actions > 0:
+                    lines.append(f"  {recent_actions} actions this week, {recent_reverts} reverts")
+                    top_agents = sorted(agent_scores.items(), key=lambda x: x[1], reverse=True)[:3]
+                    for ag, sc in top_agents:
+                        lines.append(f"  {ag}: {sc:+.1f} score")
+                if grad_candidates:
+                    for gc in grad_candidates:
+                        lines.append(f"  📈 {gc}")
+                lines.append("")
+        except Exception as e:
+            logger.debug(f"Trust digest failed: {e}")
+
     # ── System health ────────────────────────────────────
     import shutil
     usage = shutil.disk_usage("/")

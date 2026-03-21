@@ -6,52 +6,92 @@ description: Work tracking awareness — guides proactive task and thread manage
 
 # Work Awareness
 
-You have access to a work tracking system. The SessionStart hook injects current tasks and threads into your context. Use this information proactively — don't wait for explicit commands.
+You have access to a work tracking system with project-scoped IDs, fuzzy resolution, subtasks, and handoff context. The SessionStart hook injects current tasks and threads into your context. Use this information proactively.
+
+## Task IDs
+
+Tasks use project-scoped IDs: `aos#3`, `chief#1`, `t#1` (unassigned). Subtasks use dot notation: `aos#3.1`, `aos#3.2`.
+
+You can resolve tasks by:
+- Exact ID: `work done aos#3`
+- Fuzzy title: `work done "sse push"`
+- Legacy ID: `work done t14` (backward compat)
+
+When in a project directory, new tasks auto-assign to that project.
 
 ## When to Act
 
-**Complete a task** — When you finish work that matches an active task (building a feature, fixing a bug, setting up infrastructure), run:
+**Complete a task** — When you finish work that matches an active task:
 ```bash
-python3 ~/aos/core/work/cli.py done <task_id>
+python3 ~/aos/core/work/cli.py done "fuzzy search or exact id"
 ```
 
-**Start a task** — When the user explicitly asks to work on something that matches a todo task:
+**Start a task** — When beginning work on a task:
 ```bash
-python3 ~/aos/core/work/cli.py start <task_id>
+python3 ~/aos/core/work/cli.py start "fuzzy search or exact id"
 ```
 
-**Link this session** — When working on an active task across multiple sessions, the SessionEnd hook handles this automatically. But if you notice a task is relevant mid-session, you can explicitly link:
+**Create subtasks** — When you discover a task needs decomposition mid-work:
 ```bash
-python3 ~/aos/core/work/cli.py link <task_id> --session <session_id> --outcome "what was accomplished"
+python3 ~/aos/core/work/cli.py subtask aos#3 "Subtask title"
+python3 ~/aos/core/work/cli.py subtask aos#3 "Already done part" --done
+```
+Subtasks auto-cascade: when all subtasks of a parent are done, the parent auto-completes.
+
+**Write handoff** — Before ending a session where work is in progress. This is the relay baton for the next session:
+```bash
+python3 ~/aos/core/work/cli.py handoff aos#4 \
+    --state "What was accomplished and where things stand" \
+    --next "The specific next step to take" \
+    --files "file1.py,file2.py" \
+    --decisions "Decision 1|Decision 2" \
+    --blockers "Blocker 1|Blocker 2"
 ```
 
-**Suggest tracking** — When a conversation evolves into multi-step work that isn't tracked, suggest:
-- "This has become a multi-step effort. Want me to track it as a task?"
-- Don't auto-create without asking. Suggest once, respect the answer.
+**Get dispatch context** — When picking up a task that has existing handoff context:
+```bash
+python3 ~/aos/core/work/cli.py dispatch aos#4
+```
 
-**Thread awareness** — If the context shows a current thread, you're continuing prior work. Reference it naturally: "Picking up from the work system buildout thread..."
+**Link this session**:
+```bash
+python3 ~/aos/core/work/cli.py link aos#4 --session <session_id> --outcome "what was accomplished"
+```
+
+**Suggest tracking** — When a conversation evolves into multi-step work that isn't tracked, suggest once. Don't auto-create.
+
+**Thread awareness** — If the context shows a current thread, you're continuing prior work. Reference it naturally.
 
 ## When NOT to Act
 
-- Simple questions, chat, explanations — not everything is a task
-- Single-action requests ("restart the bridge") — too small to track
-- When the user says "just do it" or wants speed over ceremony
-- Don't create tasks for tasks (no meta-tracking of tracking)
+- Simple questions, chat, explanations
+- Single-action requests ("restart the bridge")
+- When the user says "just do it" or wants speed
+- Don't create tasks for tasks
 
 ## Quality Standards
 
 - Task titles should be actionable: "Build session linking" not "Session stuff"
-- Use the project field when the work clearly belongs to a project
+- When in a project dir, tasks auto-assign — no need for `--project`
 - Priorities: only set 1 or 2 if genuinely urgent/important. Default is 3.
 - Inbox for vague captures, tasks for clear next actions
+- Handoffs: write for the NEXT agent, not as a log. State + next step + decisions.
 
 ## Key Commands
 
 ```bash
-python3 ~/aos/core/work/cli.py add "Title" --project X --priority N
-python3 ~/aos/core/work/cli.py done <id>
-python3 ~/aos/core/work/cli.py start <id>
+python3 ~/aos/core/work/cli.py add "Title" --priority N
+python3 ~/aos/core/work/cli.py done "fuzzy title or exact id"
+python3 ~/aos/core/work/cli.py start "task"
+python3 ~/aos/core/work/cli.py subtask "parent" "Subtask title"
+python3 ~/aos/core/work/cli.py handoff "task" --state "..." --next "..."
+python3 ~/aos/core/work/cli.py dispatch "task"
+python3 ~/aos/core/work/cli.py show "task"
 python3 ~/aos/core/work/cli.py list
+python3 ~/aos/core/work/cli.py today
+python3 ~/aos/core/work/cli.py next
+python3 ~/aos/core/work/cli.py search "query"
+python3 ~/aos/core/work/cli.py projects
 python3 ~/aos/core/work/cli.py thread "Exploration title"
 python3 ~/aos/core/work/cli.py inbox "Vague thought to triage later"
 ```

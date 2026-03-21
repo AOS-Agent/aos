@@ -1,0 +1,319 @@
+#!/usr/bin/env python3
+"""trust-review — Scan trust logs and recommend graduations.
+
+Usage:
+    trust-review                    Show all agents' trust status + recommendations
+    trust-review promote <agent> <capability> [--to LEVEL]   Apply a promotion
+    trust-review demote <agent> <capability> [--to LEVEL]    Apply a demotion
+
+Reads: ~/.aos/config/trust.yaml, ~/.aos/logs/trust/*.jsonl
+Writes: ~/.aos/config/trust.yaml (on promote/demote)
+"""
+
+import argparse
+import json
+import sys
+from datetime import datetime, timedelta
+from pathlib import Path
+
+import yaml
+
+TRUST_CONFIG = Path.home() / ".aos" / "config" / "trust.yaml"
+TRUST_LOG_DIR = Path.home() / ".aos" / "logs" / "trust"
+
+LEVEL_NAMES = {0: "SHADOW", 1: "APPROVAL", 2: "SEMI-AUTO", 3: "FULL-AUTO"}
+LEVEL_ICONS = {0: "👁", 1: "✋", 2: "⚡", 3: "🤖"}
+
+
+def load_config() -> dict:
+    if not TRUST_CONFIG.exists():
+        return {"agents": {}, "graduation": {}, "promotions": []}
+    return yaml.safe_load(TRUST_CONFIG.read_text()) or {}
+
+
+def save_config(config: dict):
+    TRUST_CONFIG.write_text(yaml.dump(config, default_flow_style=False, allow_unicode=True, sort_keys=False))
+
+
+def load_logs(agent: str = None, days: int = 90) -> list[dict]:
+    entries = []
+    if not TRUST_LOG_DIR.exists():
+        return entries
+
+    cutoff = datetime.now() - timedelta(days=days)
+    for log_file in sorted(TRUST_LOG_DIR.glob("*.jsonl")):
+        try:
+            file_date = datetime.strptime(log_file.stem, "%Y-%m-%d")
+            if file_date < cutoff:
+                continue
+        except ValueError:
+            continue
+        with open(log_file) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if agent and entry.get("agent") != agent:
+                    continue
+                entries.append(entry)
+    return entries
+
+
+def check_graduation(current_level: int, weighted_score: float,
+                     total_actions: int, revert_rate: float,
+                     config: dict) -> dict | None:
+    """Check if an agent/capability qualifies for graduation."""
+    grad = config.get("graduation", {})
+
+    if current_level == 0:
+        thresholds = grad.get("0_to_1", {})
+        min_obs = thresholds.get("min_observations", 20)
+        accuracy = thresholds.get("accuracy_threshold", 0.80)
+        if total_actions >= min_obs and revert_rate <= (1 - accuracy):
+            return {"from": 0, "to": 1, "reason": f"{total_actions} observations, {revert_rate:.0%} revert rate"}
+
+    elif current_level == 1:
+        thresholds = grad.get("1_to_2", {})
+        min_score = thresholds.get("min_weighted_score", 30)
+        max_revert = thresholds.get("max_revert_rate", 0.05)
+        if weighted_score >= min_score and revert_rate <= max_revert:
+            return {"from": 1, "to": 2, "reason": f"score {weighted_score:+.1f}, {revert_rate:.0%} revert rate"}
+
+    elif current_level == 2:
+        thresholds = grad.get("2_to_3", {})
+        min_actions = thresholds.get("min_autonomous_actions", 50)
+        max_revert = thresholds.get("max_revert_rate", 0.02)
+        if total_actions >= min_actions and revert_rate <= max_revert:
+            return {"from": 2, "to": 3, "reason": f"{total_actions} autonomous actions, {revert_rate:.0%} revert rate"}
+
+    return None
+
+
+def check_demotion(current_level: int, revert_rate: float,
+                   recent_entries: list[dict]) -> dict | None:
+    """Check if demotion is warranted."""
+    if current_level == 0:
+        return None
+
+    # High revert rate in recent window (last 7 days)
+    if len(recent_entries) >= 5 and revert_rate > 0.10:
+        return {"from": current_level, "to": current_level - 1,
+                "reason": f"revert rate {revert_rate:.0%} over {len(recent_entries)} recent actions"}
+
+    return None
+
+
+def review(args):
+    """Show all agents' trust status and recommendations."""
+    config = load_config()
+    agents = config.get("agents", {})
+
+    if not agents:
+        print("  No agents in trust config.")
+        return
+
+    print("  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    print("  Trust Review")
+    print("  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    print()
+
+    recommendations = []
+
+    for name, info in agents.items():
+        level = info.get("trust_level", 1)
+        icon = LEVEL_ICONS.get(level, "?")
+        level_name = LEVEL_NAMES.get(level, "?")
+        caps = info.get("capabilities", {})
+
+        print(f"  {icon} {name} — L{level} {level_name}")
+        print(f"    {info.get('note', '')}")
+
+        # Load logs for this agent
+        entries = load_logs(agent=name, days=90)
+        recent = load_logs(agent=name, days=7)
+
+        if entries:
+            total = len(entries)
+            score = sum(e.get("weight", 0) for e in entries)
+            reverts = sum(1 for e in entries if e.get("result") == "reverted")
+            rr = reverts / total if total > 0 else 0
+            metrics = info.get("metrics", {})
+
+            print(f"    Actions: {total}  Score: {score:+.1f}  Reverts: {rr:.0%}")
+
+            # Check per-capability graduation
+            if caps:
+                by_cap = {}
+                for e in entries:
+                    cap = e.get("capability", "unknown")
+                    if cap not in by_cap:
+                        by_cap[cap] = {"weight": 0, "count": 0, "reverts": 0}
+                    by_cap[cap]["weight"] += e.get("weight", 0)
+                    by_cap[cap]["count"] += 1
+                    if e.get("result") == "reverted":
+                        by_cap[cap]["reverts"] += 1
+
+                for cap, cap_level in caps.items():
+                    cap_data = by_cap.get(cap, {"weight": 0, "count": 0, "reverts": 0})
+                    cap_rr = cap_data["reverts"] / cap_data["count"] if cap_data["count"] > 0 else 0
+
+                    grad = check_graduation(cap_level, cap_data["weight"], cap_data["count"], cap_rr, config)
+                    if grad:
+                        rec = f"  📈 {name}/{cap}: L{grad['from']}→L{grad['to']} ({grad['reason']})"
+                        recommendations.append((name, cap, grad))
+                        print(f"    {cap}: L{cap_level} → 📈 ready for L{grad['to']}")
+                    else:
+                        print(f"    {cap}: L{cap_level}")
+
+                # Check demotion on recent entries
+                recent_reverts = sum(1 for e in recent if e.get("result") == "reverted")
+                recent_rr = recent_reverts / len(recent) if recent else 0
+                demo = check_demotion(level, recent_rr, recent)
+                if demo:
+                    print(f"    ⚠️  Demotion signal: {demo['reason']}")
+            else:
+                # Overall graduation check
+                grad = check_graduation(level, score, total, rr, config)
+                if grad:
+                    recommendations.append((name, None, grad))
+                    print(f"    📈 Ready for L{grad['to']}: {grad['reason']}")
+        else:
+            print(f"    No action history yet")
+
+        print()
+
+    # Summary
+    if recommendations:
+        print("  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        print("  Graduation Recommendations")
+        print("  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        for name, cap, grad in recommendations:
+            target = f"{name}/{cap}" if cap else name
+            print(f"  📈 {target}: L{grad['from']} → L{grad['to']} — {grad['reason']}")
+            print(f"     Run: trust-review promote {name} {cap or '<capability>'} --to {grad['to']}")
+        print()
+    else:
+        print("  No graduation recommendations at this time.")
+        print()
+
+
+def promote(args):
+    """Apply a trust promotion."""
+    config = load_config()
+    agents = config.get("agents", {})
+
+    if args.agent not in agents:
+        print(f"  ✗ Agent '{args.agent}' not in trust config")
+        sys.exit(1)
+
+    agent = agents[args.agent]
+    caps = agent.get("capabilities", {})
+
+    if args.capability in caps:
+        old_level = caps[args.capability]
+        new_level = args.to if args.to is not None else old_level + 1
+        if new_level > 3:
+            new_level = 3
+        caps[args.capability] = new_level
+        agent["capabilities"] = caps
+
+        # Update overall trust_level to max of capabilities
+        agent["trust_level"] = max(caps.values())
+    else:
+        old_level = agent.get("trust_level", 1)
+        new_level = args.to if args.to is not None else old_level + 1
+        if new_level > 3:
+            new_level = 3
+        agent["trust_level"] = new_level
+
+    # Record promotion
+    promotions = config.get("promotions", [])
+    promotions.append({
+        "date": datetime.now().strftime("%Y-%m-%d"),
+        "agent": args.agent,
+        "capability": args.capability,
+        "from": old_level,
+        "to": new_level,
+    })
+    config["promotions"] = promotions
+
+    save_config(config)
+    target = f"{args.agent}/{args.capability}" if args.capability else args.agent
+    print(f"  ✓ Promoted {target}: L{old_level} → L{new_level}")
+
+
+def demote(args):
+    """Apply a trust demotion."""
+    config = load_config()
+    agents = config.get("agents", {})
+
+    if args.agent not in agents:
+        print(f"  ✗ Agent '{args.agent}' not in trust config")
+        sys.exit(1)
+
+    agent = agents[args.agent]
+    caps = agent.get("capabilities", {})
+
+    if args.capability in caps:
+        old_level = caps[args.capability]
+        new_level = args.to if args.to is not None else max(0, old_level - 1)
+        caps[args.capability] = new_level
+        agent["capabilities"] = caps
+        agent["trust_level"] = max(caps.values()) if caps else new_level
+    else:
+        old_level = agent.get("trust_level", 1)
+        new_level = args.to if args.to is not None else max(0, old_level - 1)
+        agent["trust_level"] = new_level
+
+    # Record demotion
+    promotions = config.get("promotions", [])
+    promotions.append({
+        "date": datetime.now().strftime("%Y-%m-%d"),
+        "agent": args.agent,
+        "capability": args.capability,
+        "from": old_level,
+        "to": new_level,
+        "type": "demotion",
+    })
+    config["promotions"] = promotions
+
+    save_config(config)
+    target = f"{args.agent}/{args.capability}" if args.capability else args.agent
+    print(f"  ✓ Demoted {target}: L{old_level} → L{new_level}")
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Trust review and graduation")
+    sub = parser.add_subparsers(dest="command")
+
+    # review (default)
+    sub.add_parser("review", help="Show trust status and recommendations")
+
+    # promote
+    pr = sub.add_parser("promote", help="Promote an agent/capability")
+    pr.add_argument("agent")
+    pr.add_argument("capability", nargs="?", default=None)
+    pr.add_argument("--to", type=int, default=None)
+
+    # demote
+    de = sub.add_parser("demote", help="Demote an agent/capability")
+    de.add_argument("agent")
+    de.add_argument("capability", nargs="?", default=None)
+    de.add_argument("--to", type=int, default=None)
+
+    args = parser.parse_args()
+
+    if not args.command or args.command == "review":
+        review(args)
+    elif args.command == "promote":
+        promote(args)
+    elif args.command == "demote":
+        demote(args)
+
+
+if __name__ == "__main__":
+    main()

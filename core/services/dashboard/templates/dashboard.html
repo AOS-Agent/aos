@@ -286,6 +286,87 @@
 .cron-status-label.pending { background: var(--tag-gray-bg); color: var(--tag-gray); }
 .cron-status-label.disabled { background: var(--tag-gray-bg); color: var(--text-faint); }
 
+/* ── Work Activity Timeline ──────────────────── */
+.work-event {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border-light);
+}
+
+.work-event:last-child { border-bottom: none; }
+
+.work-event-icon {
+    width: 24px; height: 24px;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+    margin-top: 1px;
+}
+
+.work-event-icon.completed { background: var(--tag-green-bg, rgba(35,134,54,0.1)); color: var(--tag-green); }
+.work-event-icon.started { background: var(--tag-blue-bg, rgba(35,131,226,0.1)); color: var(--tag-blue); }
+.work-event-icon.created { background: var(--tag-gray-bg); color: var(--text-secondary); }
+.work-event-icon.subtask { background: var(--tag-purple-bg, rgba(103,36,222,0.1)); color: var(--tag-purple); }
+.work-event-icon.handoff { background: var(--tag-purple-bg, rgba(103,36,222,0.1)); color: var(--tag-purple); }
+.work-event-icon.cancelled { background: var(--tag-red-bg, rgba(235,87,87,0.1)); color: var(--tag-red); }
+
+.work-event-content { flex: 1; min-width: 0; }
+
+.work-event-action {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+}
+
+.work-event-verb {
+    color: var(--text-tertiary);
+    text-transform: capitalize;
+}
+
+.work-event-id {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-faint);
+    background: var(--tag-gray-bg);
+    padding: 0 4px;
+    border-radius: 2px;
+}
+
+.work-event-title {
+    font-size: 13px;
+    color: var(--text);
+    margin-top: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.work-event-detail {
+    font-size: 12px;
+    color: var(--text-tertiary);
+    margin-top: 1px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.work-event-meta {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 2px;
+    flex-shrink: 0;
+}
+
+.work-event-time {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-faint);
+}
+
 /* ── Responsive ──────────────────────────────── */
 @media (max-width: 768px) {
     .dash-row-2, .dash-row-3 { grid-template-columns: 1fr; }
@@ -360,44 +441,61 @@
     </div>
 </div>
 
-<!-- RECENT SESSIONS -->
+<!-- WORK ACTIVITY -->
 <div class="card" style="margin-bottom:16px;">
     <div class="card-header" style="margin-bottom:12px;">
-        <span class="card-title">Recent Sessions</span>
-        <a href="/sessions" class="btn" style="font-size:12px;height:24px;padding:0 8px;">View all</a>
+        <span class="card-title">Work Activity</span>
+        <a href="/work" class="btn" style="font-size:12px;height:24px;padding:0 8px;">View all</a>
     </div>
-    {% if recent_sessions %}
-    <div style="display:flex;flex-direction:column;gap:8px;">
-        {% for s in recent_sessions[:6] %}
-        {% if s.status != 'running' %}
-        <div class="session-card {{ 'has-files' if s.file_names else '' }}">
-            <div class="session-header">
-                <div style="display:flex;align-items:center;gap:10px;">
-                    <span class="session-project">{{ s.project }}</span>
-                    {% if s.duration_str %}
-                    <span class="session-duration">{{ s.duration_str }}</span>
-                    {% endif %}
+    {% if work_activity %}
+    <div style="display:flex;flex-direction:column;gap:0;">
+        {% for ev in work_activity[:12] %}
+        <div class="work-event">
+            <div class="work-event-icon
+                {%- if ev.action == 'task_completed' %} completed
+                {%- elif ev.action == 'task_started' %} started
+                {%- elif ev.action == 'task_created' %} created
+                {%- elif ev.action == 'subtask_added' %} subtask
+                {%- elif ev.action == 'handoff_written' %} handoff
+                {%- elif ev.action == 'task_cancelled' %} cancelled
+                {%- endif %}">
+                {% if ev.action == 'task_completed' %}
+                <i data-lucide="check-circle" style="width:12px;height:12px;"></i>
+                {% elif ev.action == 'task_started' %}
+                <i data-lucide="play" style="width:12px;height:12px;"></i>
+                {% elif ev.action == 'task_created' %}
+                <i data-lucide="plus-circle" style="width:12px;height:12px;"></i>
+                {% elif ev.action == 'subtask_added' %}
+                <i data-lucide="git-branch" style="width:12px;height:12px;"></i>
+                {% elif ev.action == 'handoff_written' %}
+                <i data-lucide="arrow-right-circle" style="width:12px;height:12px;"></i>
+                {% elif ev.action == 'task_cancelled' %}
+                <i data-lucide="x-circle" style="width:12px;height:12px;"></i>
+                {% else %}
+                <i data-lucide="circle" style="width:12px;height:12px;"></i>
+                {% endif %}
+            </div>
+            <div class="work-event-content">
+                <div class="work-event-action">
+                    <span class="work-event-verb">{{ ev.action | replace('_', ' ') }}</span>
+                    {% if ev.task_id %}<span class="work-event-id">{{ ev.task_id }}</span>{% endif %}
                 </div>
-                <span class="session-time">{{ s.started_at[11:16] }}</span>
+                {% if ev.title %}
+                <div class="work-event-title">{{ ev.title }}</div>
+                {% endif %}
+                {% if ev.detail %}
+                <div class="work-event-detail">{{ ev.detail }}</div>
+                {% endif %}
             </div>
-            {% if s.file_names %}
-            <div class="session-files">
-                {{ s.file_names[:3] | join(', ') }}{% if s.file_names|length > 3 %} +{{ s.file_names|length - 3 }}{% endif %}
+            <div class="work-event-meta">
+                {% if ev.project %}<span class="tag tag-blue" style="font-size:10px;">{{ ev.project }}</span>{% endif %}
+                <span class="work-event-time">{{ ev.ts[11:16] if ev.ts else '' }}</span>
             </div>
-            {% endif %}
-            {% for action in s.key_actions %}
-            {% if 'commit' in action.action.lower() or 'agent' in action.action.lower() or 'install' in action.action.lower() %}
-            <div class="session-action">
-                {{ action.action }}{% if action.summary %}: {{ action.summary[:60] }}{% endif %}
-            </div>
-            {% endif %}
-            {% endfor %}
         </div>
-        {% endif %}
         {% endfor %}
     </div>
     {% else %}
-    <div class="empty-state">No sessions yet.</div>
+    <div class="empty-state">No work activity yet. Create tasks, complete them, write handoffs -- it all shows up here.</div>
     {% endif %}
 </div>
 

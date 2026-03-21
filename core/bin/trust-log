@@ -1,0 +1,220 @@
+#!/usr/bin/env python3
+"""trust-log — Record and query agent trust actions.
+
+Usage:
+    trust-log record <agent> <capability> <result> [--confidence N] [--action "desc"] [--session ID]
+    trust-log score <agent> [--capability CAP]
+    trust-log history <agent> [--days N] [--capability CAP]
+
+Results: approved, executed, rejected, reverted, escalated
+
+Weights:
+    routine approved/executed = 0.5
+    novel approved/executed   = 2.0
+    complex approved/executed = 3.0
+    rejected                  = -1.0
+    reverted                  = -5.0
+
+Logs to: ~/.aos/logs/trust/YYYY-MM-DD.jsonl
+"""
+
+import argparse
+import json
+import sys
+from datetime import datetime, timedelta
+from pathlib import Path
+
+TRUST_LOG_DIR = Path.home() / ".aos" / "logs" / "trust"
+TRUST_CONFIG = Path.home() / ".aos" / "config" / "trust.yaml"
+
+# Scoring weights
+WEIGHTS = {
+    "approved": 0.5,
+    "executed": 0.5,
+    "rejected": -1.0,
+    "reverted": -5.0,
+    "escalated": 0.0,  # neutral — correct behavior
+}
+
+# Confidence-based weight multiplier
+# High confidence on novel tasks = higher weight
+def action_weight(result: str, confidence: float = 0.5, novel: bool = False) -> float:
+    base = WEIGHTS.get(result, 0.0)
+    if result in ("approved", "executed"):
+        if novel:
+            base = 2.0
+        elif confidence > 0.85:
+            base = 1.0  # routine but confident
+        # else stays 0.5 (routine)
+    return base
+
+
+def record(args):
+    """Record a trust action to the daily log."""
+    TRUST_LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    log_file = TRUST_LOG_DIR / f"{today}.jsonl"
+
+    entry = {
+        "ts": datetime.now().isoformat(),
+        "agent": args.agent,
+        "capability": args.capability,
+        "result": args.result,
+        "confidence": args.confidence,
+        "action": args.action or "",
+        "session": args.session or "",
+        "weight": action_weight(args.result, args.confidence, args.novel),
+    }
+
+    with open(log_file, "a") as f:
+        f.write(json.dumps(entry) + "\n")
+
+    # Print confirmation
+    symbol = {"approved": "✓", "executed": "⚡", "rejected": "✗", "reverted": "↩", "escalated": "↑"}
+    s = symbol.get(args.result, "·")
+    w = entry["weight"]
+    sign = "+" if w >= 0 else ""
+    print(f"  {s} {args.agent}/{args.capability}: {args.result} ({sign}{w})")
+
+
+def load_logs(agent: str = None, days: int = 30, capability: str = None) -> list[dict]:
+    """Load trust log entries, optionally filtered."""
+    entries = []
+    if not TRUST_LOG_DIR.exists():
+        return entries
+
+    cutoff = datetime.now() - timedelta(days=days)
+
+    for log_file in sorted(TRUST_LOG_DIR.glob("*.jsonl")):
+        # Parse date from filename
+        try:
+            file_date = datetime.strptime(log_file.stem, "%Y-%m-%d")
+            if file_date < cutoff:
+                continue
+        except ValueError:
+            continue
+
+        with open(log_file) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+
+                if agent and entry.get("agent") != agent:
+                    continue
+                if capability and entry.get("capability") != capability:
+                    continue
+                entries.append(entry)
+
+    return entries
+
+
+def score(args):
+    """Calculate weighted trust score for an agent."""
+    entries = load_logs(agent=args.agent, days=90, capability=args.capability)
+
+    if not entries:
+        print(f"  No trust history for {args.agent}")
+        return
+
+    total_weight = sum(e.get("weight", 0) for e in entries)
+    total_actions = len(entries)
+    reverts = sum(1 for e in entries if e.get("result") == "reverted")
+    revert_rate = reverts / total_actions if total_actions > 0 else 0
+
+    # Group by capability
+    by_cap = {}
+    for e in entries:
+        cap = e.get("capability", "unknown")
+        if cap not in by_cap:
+            by_cap[cap] = {"weight": 0, "count": 0, "reverts": 0}
+        by_cap[cap]["weight"] += e.get("weight", 0)
+        by_cap[cap]["count"] += 1
+        if e.get("result") == "reverted":
+            by_cap[cap]["reverts"] += 1
+
+    print(f"  Trust score for {args.agent}:")
+    print(f"  ─────────────────────────────")
+    print(f"  Total actions:  {total_actions}")
+    print(f"  Weighted score: {total_weight:+.1f}")
+    print(f"  Revert rate:    {revert_rate:.1%}")
+    print()
+
+    if len(by_cap) > 1 or args.capability:
+        print(f"  By capability:")
+        for cap, data in sorted(by_cap.items()):
+            r = data["reverts"]
+            rr = r / data["count"] if data["count"] > 0 else 0
+            print(f"    {cap:20s}  score={data['weight']:+.1f}  actions={data['count']}  reverts={rr:.0%}")
+
+
+def history(args):
+    """Show recent trust actions for an agent."""
+    entries = load_logs(agent=args.agent, days=args.days, capability=args.capability)
+
+    if not entries:
+        print(f"  No trust history for {args.agent} (last {args.days} days)")
+        return
+
+    symbol = {"approved": "✓", "executed": "⚡", "rejected": "✗", "reverted": "↩", "escalated": "↑"}
+
+    print(f"  Trust history for {args.agent} (last {args.days} days):")
+    print(f"  ─────────────────────────────────────────────")
+
+    for e in entries[-20:]:  # Last 20 entries
+        ts = e.get("ts", "")[:16]
+        s = symbol.get(e.get("result", ""), "·")
+        cap = e.get("capability", "")
+        action = e.get("action", "")
+        w = e.get("weight", 0)
+        sign = "+" if w >= 0 else ""
+        desc = f" — {action}" if action else ""
+        print(f"  {ts}  {s} {cap:20s} ({sign}{w}){desc}")
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Trust action logger and scorer")
+    sub = parser.add_subparsers(dest="command")
+
+    # record
+    rec = sub.add_parser("record", help="Record a trust action")
+    rec.add_argument("agent", help="Agent name")
+    rec.add_argument("capability", help="Capability name")
+    rec.add_argument("result", choices=["approved", "executed", "rejected", "reverted", "escalated"])
+    rec.add_argument("--confidence", type=float, default=0.5, help="Confidence level 0-1")
+    rec.add_argument("--novel", action="store_true", help="Mark as novel action (2x weight)")
+    rec.add_argument("--action", help="Description of the action")
+    rec.add_argument("--session", help="Session ID")
+
+    # score
+    sc = sub.add_parser("score", help="Show trust score")
+    sc.add_argument("agent", help="Agent name")
+    sc.add_argument("--capability", help="Filter by capability")
+
+    # history
+    hi = sub.add_parser("history", help="Show trust history")
+    hi.add_argument("agent", help="Agent name")
+    hi.add_argument("--days", type=int, default=30, help="Days to look back")
+    hi.add_argument("--capability", help="Filter by capability")
+
+    args = parser.parse_args()
+
+    if not args.command:
+        parser.print_help()
+        sys.exit(1)
+
+    if args.command == "record":
+        record(args)
+    elif args.command == "score":
+        score(args)
+    elif args.command == "history":
+        history(args)
+
+
+if __name__ == "__main__":
+    main()

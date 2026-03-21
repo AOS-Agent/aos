@@ -146,8 +146,20 @@ def _load_tasks() -> list[dict]:
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
         tasks = mod.get_all_tasks()
-        # Only return active tasks (not done/cancelled)
-        return [t for t in tasks if t.get("status") not in ("done", "cancelled")]
+        # Only return active tasks (not done/cancelled), top-level only
+        return [t for t in tasks if t.get("status") not in ("done", "cancelled") and not t.get("parent")]
+    except Exception:
+        return []
+
+
+def _load_work_activity(limit: int = 20) -> list[dict]:
+    """Load recent work activity events."""
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("engine", str(Path.home() / "aos" / "core" / "work" / "engine.py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod.get_activity(limit)
     except Exception:
         return []
 
@@ -159,6 +171,7 @@ async def dashboard(request: Request):
     services = _service_status()
     agents = _load_agents()
     tasks = _load_tasks()
+    work_activity = _load_work_activity(20)
     activity = get_recent(30)
     agent_stats = get_agent_stats()
     conv_stats = get_conversation_stats()
@@ -208,8 +221,8 @@ async def dashboard(request: Request):
     tz_name = goals.get("work_hours", {}).get("timezone", "America/Toronto")
     now = datetime.now(ZoneInfo(tz_name))
 
-    # Automations
-    crons = _get_cron_jobs()
+    # Automations — unified from scheduler
+    cron_data = _get_scheduler_crons()
     launch_agents = _get_launch_agents()
 
     # Task count for sidebar badge
@@ -232,11 +245,12 @@ async def dashboard(request: Request):
         "today": today_summary,
         "recent_sessions": recent_sessions,
         "active_sessions": active_sessions,
+        "work_activity": work_activity,
         "last_active_ago": last_active_ago,
         "health_status": health_status,
         "health_text": health_text,
         "now": now.strftime("%Y-%m-%d %H:%M:%S %Z"),
-        "crons": crons,
+        "cron_data": cron_data,
         "launch_agents": launch_agents,
     })
 
@@ -256,6 +270,12 @@ async def api_services():
 @app.get("/api/activity")
 async def api_activity(limit: int = 30):
     return get_recent(limit)
+
+
+@app.get("/api/work/activity")
+async def api_work_activity(limit: int = 30):
+    """Recent work system events (task created, completed, handoff, etc.)."""
+    return _load_work_activity(limit)
 
 
 @app.get("/api/work")
@@ -372,6 +392,50 @@ async def api_create_goal(request: Request):
     )
     return goal
 
+@app.post("/api/tasks/{task_id}/subtasks")
+async def api_create_subtask(task_id: str, request: Request):
+    """Create a subtask under an existing task."""
+    body = await request.json()
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("engine", str(Path.home() / "aos" / "core" / "work" / "engine.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    sub = mod.add_subtask(
+        parent_id=task_id,
+        title=body.get("title", "Untitled"),
+        priority=body.get("priority"),
+        status=body.get("status", "todo"),
+    )
+    return sub or {"error": "Parent task not found"}
+
+@app.put("/api/tasks/{task_id}/handoff")
+async def api_write_handoff(task_id: str, request: Request):
+    """Write handoff context for a task."""
+    body = await request.json()
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("engine", str(Path.home() / "aos" / "core" / "work" / "engine.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    result = mod.write_handoff(
+        task_id=task_id,
+        state=body.get("state", ""),
+        next_step=body.get("next_step"),
+        files_touched=body.get("files_touched"),
+        decisions=body.get("decisions"),
+        blockers=body.get("blockers"),
+    )
+    return result or {"error": "Task not found"}
+
+@app.get("/api/tasks/{task_id}/dispatch")
+async def api_dispatch_prompt(task_id: str):
+    """Get a dispatch prompt for a task (for agent handoff injection)."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("engine", str(Path.home() / "aos" / "core" / "work" / "engine.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    prompt = mod.build_handoff_prompt(task_id)
+    return {"prompt": prompt} if prompt else {"error": "Task not found"}
+
 @app.post("/api/inbox")
 async def api_create_inbox(request: Request):
     body = await request.json()
@@ -408,17 +472,23 @@ async def api_detected_projects():
 
 @app.get("/work", response_class=HTMLResponse)
 async def work_page(request: Request):
-    """Work page — tasks, projects, goals, threads."""
+    """Work page — tasks, projects, goals, threads with subtask trees and handoffs."""
     try:
         import importlib.util
         spec = importlib.util.spec_from_file_location("engine", str(Path.home() / "aos" / "core" / "work" / "engine.py"))
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
+
+        q_spec = importlib.util.spec_from_file_location("query", str(Path.home() / "aos" / "core" / "work" / "query.py"))
+        q_mod = importlib.util.module_from_spec(q_spec)
+        q_spec.loader.exec_module(q_mod)
+
         data = mod.load_all()
         summary_data = mod.summary()
     except Exception:
         data = {"tasks": [], "projects": [], "goals": [], "threads": [], "inbox": []}
         summary_data = {}
+        q_mod = None
 
     tasks = data.get("tasks", [])
     projects_raw = data.get("projects", [])
@@ -426,17 +496,30 @@ async def work_page(request: Request):
     threads = data.get("threads", [])
     inbox = data.get("inbox", [])
 
-    # Group tasks by project
-    project_map = {p["id"]: {**p, "tasks": [], "task_count": 0} for p in projects_raw}
+    # Build task trees (attach subtasks to parents)
+    if q_mod:
+        task_trees = q_mod.build_task_trees(tasks)
+    else:
+        task_trees = [t for t in tasks if not t.get("parent")]
+        for t in task_trees:
+            t["subtasks"] = [s for s in tasks if s.get("parent") == t["id"]]
+
+    # Group top-level tasks by project
+    project_map = {p["id"]: {**p, "tasks": [], "task_count": 0, "progress": {"done": 0, "total": 0, "pct": 0}} for p in projects_raw}
     unassigned = []
 
-    for task in tasks:
+    for task in task_trees:
         proj_id = task.get("project")
         if proj_id and proj_id in project_map:
             project_map[proj_id]["tasks"].append(task)
             project_map[proj_id]["task_count"] += 1
         elif proj_id is None:
             unassigned.append(task)
+
+    # Compute project progress
+    if q_mod:
+        for pid, pdata in project_map.items():
+            pdata["progress"] = q_mod.project_progress(pid, tasks)
 
     # Sort tasks within projects: active first, then todo, then done
     status_order = {"active": 0, "todo": 1, "done": 2, "cancelled": 3}
@@ -445,12 +528,14 @@ async def work_page(request: Request):
 
     unassigned.sort(key=lambda t: (status_order.get(t.get("status", "todo"), 1), t.get("priority", 3)))
 
-    # Summary counts
+    # Summary counts (top-level only)
+    top_level = [t for t in tasks if not t.get("parent")]
     summary = {
-        "active": sum(1 for t in tasks if t.get("status") == "active"),
-        "todo": sum(1 for t in tasks if t.get("status") == "todo"),
-        "done": sum(1 for t in tasks if t.get("status") == "done"),
-        "total": len(tasks),
+        "active": sum(1 for t in top_level if t.get("status") == "active"),
+        "todo": sum(1 for t in top_level if t.get("status") == "todo"),
+        "done": sum(1 for t in top_level if t.get("status") == "done"),
+        "total": len(top_level),
+        "with_handoffs": sum(1 for t in top_level if t.get("handoff")),
     }
 
     # Count active tasks for sidebar badge
@@ -479,7 +564,7 @@ async def work_page(request: Request):
         "inbox": inbox,
         "summary": summary,
         "detected_projects": detected_projects,
-        "all_tasks": tasks,
+        "all_tasks": task_trees,
     })
 
 
@@ -786,85 +871,6 @@ async def api_session_hook(request: Request):
 
 
 # --- Automations ---
-
-def _get_cron_jobs() -> list[dict]:
-    """Parse crontab and return structured cron job info."""
-    jobs = []
-    try:
-        result = subprocess.run(["crontab", "-l"], capture_output=True, text=True, timeout=5)
-        if result.returncode != 0:
-            return []
-        for line in result.stdout.strip().split("\n"):
-            line = line.strip()
-            if not line or line.startswith("#"):
-                continue
-            parts = line.split(None, 5)
-            if len(parts) < 6:
-                continue
-            schedule = " ".join(parts[:5])
-            command = parts[5]
-            # Extract log redirect path
-            log_path = None
-            if ">>" in command:
-                log_path = command.split(">>")[1].strip().split()[0]
-            # Extract script name
-            cmd_parts = command.split(">>")[0].strip().split()
-            script = cmd_parts[-1] if cmd_parts else command
-            name = Path(script).stem
-            # Human-readable schedule
-            human = _cron_to_human(schedule)
-            # Last run from log file mtime
-            last_run = None
-            last_output = ""
-            if log_path:
-                lp = Path(log_path)
-                if lp.exists():
-                    last_run = datetime.fromtimestamp(
-                        lp.stat().st_mtime, tz=ZoneInfo("America/Toronto")
-                    ).isoformat()
-                    # Last few lines of output
-                    try:
-                        lines = lp.read_text().strip().split("\n")
-                        last_output = lines[-1][:120] if lines else ""
-                    except Exception:
-                        pass
-            jobs.append({
-                "name": name,
-                "type": "cron",
-                "schedule": schedule,
-                "schedule_human": human,
-                "command": command.split(">>")[0].strip(),
-                "log_path": log_path,
-                "last_run": last_run,
-                "last_output": last_output,
-                "status": "active",
-            })
-    except Exception:
-        pass
-    return jobs
-
-
-def _cron_to_human(schedule: str) -> str:
-    """Convert a cron schedule to a human-readable string."""
-    mapping = {
-        "*/30 * * * *": "Every 30 min",
-        "0 */2 * * *": "Every 2 hours",
-        "0 * * * *": "Every hour",
-        "*/5 * * * *": "Every 5 min",
-        "*/15 * * * *": "Every 15 min",
-    }
-    if schedule in mapping:
-        return mapping[schedule]
-    parts = schedule.split()
-    if len(parts) == 5:
-        m, h, dom, mon, dow = parts
-        days = {"0": "Sun", "1": "Mon", "2": "Tue", "3": "Wed", "4": "Thu", "5": "Fri", "6": "Sat", "7": "Sun"}
-        if dow != "*" and h != "*":
-            day = days.get(dow, dow)
-            return f"{day} at {h}:{m.zfill(2)}"
-        if h != "*" and m != "*":
-            return f"Daily at {h}:{m.zfill(2)}"
-    return schedule
 
 
 def _get_launch_agents() -> list[dict]:

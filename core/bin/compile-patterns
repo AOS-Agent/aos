@@ -1,47 +1,145 @@
 #!/usr/bin/env python3
 """
-Pattern Compiler — Scans execution logs for repeated successful tasks
-and compiles them into deterministic scripts.
+Pattern Compiler — Learns from session history to compile repeated behaviors
+into zero-token deterministic scripts.
 
-When a task is done the same way 3+ times successfully, it becomes
-a zero-token script — no AI reasoning needed next time.
+The idea: when agents do the same thing 3+ times successfully, extract the
+pattern and make it a script. Next time, no LLM reasoning needed.
 
-Run daily via cron or manually:
-  python3 ~/aos/core/bin/compile-patterns [--dry-run] [--threshold 3]
+Data sources:
+  1. Session exports in ~/vault/ops/sessions/*.md (rich: tools, files, summary)
+  2. Execution logs in ~/.aos/logs/execution/*.jsonl (structured: task, approach, commands)
+
+Output:
+  - Shell scripts in ~/.aos/patterns/{hash}.sh
+  - Pattern docs in ~/vault/ops/patterns/{hash}.md
+  - Registry in ~/.aos/config/patterns.yaml
+  - Telegram notification when new patterns compiled
+
+Run daily at 04:00 via cron, or manually:
+  python3 ~/aos/core/bin/compile-patterns [--dry-run] [--threshold 3] [--verbose]
 """
 
+import hashlib
 import json
 import os
 import re
 import sys
-import hashlib
-import yaml
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
 
-AOSV2 = Path(os.path.expanduser("~/aos"))
-LOG_DIR = Path.home() / ".aos" / "logs" / "execution"
-PATTERNS_DIR = Path.home() / ".aos" / "patterns"
-PATTERNS_YAML = Path.home() / ".aos" / "config" / "patterns.yaml"
-VAULT_PATTERNS = Path.home() / "vault" / "ops" / "patterns"
+try:
+    import yaml
+except ImportError:
+    print("Error: PyYAML required. Install with: pip install pyyaml")
+    sys.exit(1)
+
+# ── Config ────────────────────────────────────────────────
 
 DRY_RUN = "--dry-run" in sys.argv
+VERBOSE = "--verbose" in sys.argv
 THRESHOLD = 3
 
 for i, arg in enumerate(sys.argv):
     if arg == "--threshold" and i + 1 < len(sys.argv):
         THRESHOLD = int(sys.argv[i + 1])
 
+VAULT_SESSIONS = Path.home() / "vault" / "ops" / "sessions"
+EXEC_LOGS = Path.home() / ".aos" / "logs" / "execution"
+PATTERNS_DIR = Path.home() / ".aos" / "patterns"
+PATTERNS_YAML = Path.home() / ".aos" / "config" / "patterns.yaml"
+VAULT_PATTERNS = Path.home() / "vault" / "ops" / "patterns"
+AGENT_SECRET = Path.home() / "aos" / "core" / "bin" / "agent-secret"
 
-def load_logs(days=14):
-    """Load execution log entries from the last N days."""
+
+# ── Session Parsing ───────────────────────────────────────
+
+def parse_session(path: Path) -> dict:
+    """Parse a session export markdown file into structured data."""
+    content = path.read_text()
+
+    # Parse frontmatter
+    fm = {}
+    if content.startswith("---"):
+        end = content.find("---", 3)
+        if end > 0:
+            try:
+                fm = yaml.safe_load(content[3:end]) or {}
+            except Exception:
+                pass
+
+    # Extract tools
+    tools_match = re.search(r"## Tools Used\n\n(.+)", content)
+    tools = []
+    if tools_match:
+        tools_raw = tools_match.group(1).strip()
+        if tools_raw and tools_raw != "(none)":
+            tools = [t.strip() for t in tools_raw.split(",")]
+
+    # Extract files touched
+    files = []
+    files_match = re.search(r"## Files Touched\n\n((?:\s+- .+\n)+)", content)
+    if files_match:
+        for line in files_match.group(1).strip().split("\n"):
+            f = line.strip().lstrip("- ").strip("`").strip()
+            if f:
+                files.append(f)
+
+    # Extract title/summary (strip context injection noise)
+    title_match = re.search(r"^# (.+)$", content, re.MULTILINE)
+    title = title_match.group(1).strip() if title_match else path.stem
+    # Clean context bleed from titles
+    title = re.sub(r"<[^>]+>.*", "", title).strip()
+    title = re.sub(r"\s+", " ", title)
+    if not title or len(title) < 3:
+        title = path.stem
+
+    return {
+        "path": str(path),
+        "date": fm.get("date", ""),
+        "project": fm.get("project", ""),
+        "message_count": fm.get("message_count", 0),
+        "duration_min": fm.get("duration_min", 0),
+        "title": title,
+        "tools": tools,
+        "files": files,
+        "tools_signature": ",".join(sorted(set(tools))),
+    }
+
+
+def load_sessions(days: int = 30) -> list[dict]:
+    """Load session exports from the last N days."""
+    sessions = []
+    if not VAULT_SESSIONS.exists():
+        return sessions
+
+    cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+
+    for f in sorted(VAULT_SESSIONS.glob("*.md")):
+        # Skip if older than cutoff based on filename
+        if f.name < cutoff:
+            continue
+        try:
+            sessions.append(parse_session(f))
+        except Exception as e:
+            if VERBOSE:
+                print(f"  Skip {f.name}: {e}")
+
+    return sessions
+
+
+# ── Execution Log Parsing ─────────────────────────────────
+
+def load_exec_logs(days: int = 30) -> list[dict]:
+    """Load structured execution log entries."""
     entries = []
-    if not LOG_DIR.exists():
+    if not EXEC_LOGS.exists():
         return entries
 
     cutoff = datetime.now() - timedelta(days=days)
-    for f in sorted(LOG_DIR.glob("*.jsonl")):
+
+    for f in sorted(EXEC_LOGS.glob("*.jsonl")):
         try:
             date_str = f.stem
             file_date = datetime.strptime(date_str, "%Y-%m-%d")
@@ -61,105 +159,236 @@ def load_logs(days=14):
     return entries
 
 
-def normalize_task(task_desc):
-    """Normalize task description for clustering."""
-    t = task_desc.lower().strip()
-    t = re.sub(r'\d{4}-\d{2}-\d{2}', 'DATE', t)
-    t = re.sub(r'\d{1,2}:\d{2}', 'TIME', t)
-    t = re.sub(r'\s+', ' ', t)
-    return t
+# ── Pattern Detection ─────────────────────────────────────
+
+def normalize_file_path(path: str) -> str:
+    """Normalize file paths for pattern matching."""
+    home = str(Path.home())
+    path = path.replace(home, "~")
+    # Replace dates in paths
+    path = re.sub(r"\d{4}-\d{2}-\d{2}", "DATE", path)
+    # Replace session IDs
+    path = re.sub(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", "ID", path)
+    return path
 
 
-def task_hash(task_desc):
-    """Generate a stable hash for task clustering."""
-    normalized = normalize_task(task_desc)
-    return hashlib.sha256(normalized.encode()).hexdigest()[:12]
+def extract_file_domain(files: list[str]) -> str:
+    """Get the domain of work from file paths."""
+    domains = Counter()
+    for f in files:
+        normalized = normalize_file_path(f)
+        if "aos/core" in normalized:
+            domains["aos-core"] += 1
+        elif "aos/config" in normalized:
+            domains["aos-config"] += 1
+        elif ".claude/" in normalized:
+            domains["claude-config"] += 1
+        elif "vault/" in normalized:
+            domains["vault"] += 1
+        elif "chief-ios-app" in normalized:
+            domains["chief-app"] += 1
+        elif "nuchay" in normalized:
+            domains["nuchay"] += 1
+        else:
+            domains["other"] += 1
+
+    if domains:
+        return domains.most_common(1)[0][0]
+    return "unknown"
 
 
-def find_compilable_patterns(entries):
-    """Find tasks repeated >= threshold with same successful approach."""
+def detect_tool_patterns(sessions: list[dict]) -> list[dict]:
+    """Find repeated tool combination patterns."""
+    # Group sessions by tool signature + file domain
+    groups = defaultdict(list)
+    for s in sessions:
+        if not s["tools"] or s["tools_signature"] == "":
+            continue
+        domain = extract_file_domain(s["files"])
+        key = (s["tools_signature"], domain)
+        groups[key].append(s)
+
+    patterns = []
+    for (tools_sig, domain), group in groups.items():
+        if len(group) >= THRESHOLD:
+            # This tool combo + domain happens repeatedly
+            patterns.append({
+                "type": "tool_combo",
+                "tools": tools_sig,
+                "domain": domain,
+                "count": len(group),
+                "sessions": [s["path"] for s in group],
+                "titles": [s["title"][:60] for s in group],
+                "avg_messages": sum(s["message_count"] for s in group) // len(group),
+            })
+
+    return patterns
+
+
+def detect_file_patterns(sessions: list[dict]) -> list[dict]:
+    """Find files that get touched together repeatedly."""
+    # Find file co-occurrence
+    pair_counts = Counter()
+    file_sessions = defaultdict(list)
+
+    for s in sessions:
+        normalized = [normalize_file_path(f) for f in s["files"]]
+        unique = sorted(set(normalized))
+
+        for f in unique:
+            file_sessions[f].append(s)
+
+        # Count pairs
+        for i, f1 in enumerate(unique):
+            for f2 in unique[i + 1:]:
+                pair_counts[(f1, f2)] += 1
+
+    patterns = []
+    for (f1, f2), count in pair_counts.most_common(20):
+        if count >= THRESHOLD:
+            patterns.append({
+                "type": "file_pair",
+                "files": [f1, f2],
+                "count": count,
+                "description": f"{f1} and {f2} are edited together",
+            })
+
+    return patterns
+
+
+def detect_exec_patterns(entries: list[dict]) -> list[dict]:
+    """Find repeated successful approaches in execution logs."""
     groups = defaultdict(list)
     for e in entries:
         if not e.get("success"):
             continue
-        key = (normalize_task(e.get("task", "")), e.get("approach", ""))
+        # Clean the task description
+        task = e.get("task", "")
+        # Strip context injection noise
+        task = re.sub(r"<context>.*?</context>", "", task, flags=re.DOTALL)
+        task = re.sub(r"<local-command-caveat>.*?</local-command-caveat>", "", task, flags=re.DOTALL)
+        task = re.sub(r"<system-reminder>.*?</system-reminder>", "", task, flags=re.DOTALL)
+        task = task.strip()[:200]  # Cap length
+
+        if not task:
+            continue
+
+        approach = e.get("approach", "")
+        key = (task.lower(), approach)
         groups[key].append(e)
 
-    compilable = []
+    patterns = []
     for (task, approach), runs in groups.items():
         if len(runs) >= THRESHOLD:
             latest = max(runs, key=lambda r: r.get("timestamp", ""))
-            compilable.append({
+            patterns.append({
+                "type": "exec_pattern",
                 "task": task,
                 "approach": approach,
                 "commands": latest.get("commands", []),
                 "count": len(runs),
-                "latest": latest,
-                "hash": task_hash(task),
             })
 
-    return compilable
+    return patterns
 
 
-def generate_script(pattern):
-    """Generate a shell script from a compiled pattern."""
-    name = pattern["hash"]
-    task = pattern["task"]
-    commands = pattern["commands"]
-    count = pattern["count"]
-    approach = pattern["approach"]
+# ── Pattern Compilation ───────────────────────────────────
 
-    lines = [
-        "#!/bin/bash",
-        f"# Pattern: {name}",
-        f"# Task: {task}",
-        f"# Approach: {approach}",
-        f"# Compiled: {datetime.now().strftime('%Y-%m-%d')} from {count} successful executions",
-        "",
-        "set -e",
-        "",
-    ]
-
-    if commands:
-        for cmd in commands:
-            lines.append(cmd)
+def pattern_hash(pattern: dict) -> str:
+    """Generate a stable hash for a pattern."""
+    if pattern["type"] == "tool_combo":
+        key = f"tools:{pattern['tools']}:domain:{pattern['domain']}"
+    elif pattern["type"] == "file_pair":
+        key = f"files:{':'.join(pattern['files'])}"
+    elif pattern["type"] == "exec_pattern":
+        key = f"exec:{pattern['task']}:{pattern['approach']}"
     else:
-        lines.append(f"# No commands captured. Review logs for task: {task}")
-        lines.append("echo 'Pattern has no compiled commands.'")
-        lines.append("exit 1")
-
-    return "\n".join(lines) + "\n"
+        key = json.dumps(pattern, sort_keys=True)
+    return hashlib.sha256(key.encode()).hexdigest()[:12]
 
 
-def generate_doc(pattern):
-    """Generate a human-readable doc for the pattern."""
+def generate_script(pattern: dict) -> str | None:
+    """Generate a shell script from a pattern. Returns None if not scriptable."""
+    if pattern["type"] == "exec_pattern" and pattern.get("commands"):
+        lines = [
+            "#!/bin/bash",
+            f"# Compiled pattern: {pattern_hash(pattern)}",
+            f"# Task: {pattern['task'][:80]}",
+            f"# Compiled from {pattern['count']} successful executions",
+            f"# Date: {datetime.now().strftime('%Y-%m-%d')}",
+            "",
+            "set -e",
+            "",
+        ]
+        for cmd in pattern["commands"]:
+            lines.append(cmd)
+        return "\n".join(lines) + "\n"
+
+    # Tool combo and file pair patterns don't generate scripts —
+    # they generate insights for the operator and hints for agents.
+    return None
+
+
+def generate_doc(pattern: dict) -> str:
+    """Generate a vault doc for a compiled pattern."""
     today = datetime.now().strftime("%Y-%m-%d")
+    pid = pattern_hash(pattern)
+
+    if pattern["type"] == "tool_combo":
+        # Filter out junk titles (context bleed, too short, XML tags)
+        clean_titles = [
+            t for t in pattern.get("titles", [])
+            if t and len(t) > 5 and not t.startswith("<") and not t.startswith("Read")
+        ]
+        body = (
+            f"**Tools**: {pattern['tools']}\n"
+            f"**Domain**: {pattern['domain']}\n"
+            f"**Occurrences**: {pattern['count']} sessions\n"
+            f"**Avg messages**: {pattern['avg_messages']}\n\n"
+            f"## Sessions\n\n"
+            + "\n".join(f"- {t}" for t in clean_titles[:10])
+        )
+    elif pattern["type"] == "file_pair":
+        body = (
+            f"**Files**: {', '.join(pattern['files'])}\n"
+            f"**Co-occurrence**: {pattern['count']} sessions\n\n"
+            f"These files are frequently edited together. Consider:\n"
+            f"- Creating a skill that handles both\n"
+            f"- Adding a hook that checks one when the other changes\n"
+        )
+    elif pattern["type"] == "exec_pattern":
+        cmds = "\n".join(pattern.get("commands", ["# no commands"]))
+        body = (
+            f"**Task**: {pattern['task']}\n"
+            f"**Approach**: {pattern['approach']}\n"
+            f"**Occurrences**: {pattern['count']}\n\n"
+            f"## Commands\n\n```bash\n{cmds}\n```\n"
+        )
+    else:
+        body = json.dumps(pattern, indent=2)
+
     return (
         f"---\n"
         f'date: "{today}"\n'
         f'type: "compiled-pattern"\n'
-        f'title: "Pattern: {pattern["task"][:60]}"\n'
-        f'pattern_id: "{pattern["hash"]}"\n'
-        f"compiled_from: {pattern['count']}\n"
+        f'pattern_type: "{pattern["type"]}"\n'
+        f'pattern_id: "{pid}"\n'
+        f"compiled_from: {pattern.get('count', 0)}\n"
         f"tags: [ops, pattern, automation]\n"
         f"---\n\n"
-        f"# Pattern: {pattern['task']}\n\n"
-        f"**Approach**: {pattern['approach']}\n"
-        f"**Compiled from**: {pattern['count']} successful executions\n"
-        f"**Script**: `core/bin/patterns/{pattern['hash']}.sh`\n\n"
-        f"## Commands\n\n"
-        f"```bash\n"
-        + "\n".join(pattern.get("commands", ["# no commands captured"]))
-        + "\n```\n"
+        f"# Pattern: {pid}\n\n"
+        f"{body}\n"
     )
 
 
-def update_patterns_yaml(new_patterns):
-    """Add new patterns to patterns.yaml using proper YAML parsing."""
-    yaml_path = PATTERNS_YAML
-    if yaml_path.exists():
+def update_registry(patterns: list[dict]):
+    """Update patterns.yaml with new patterns."""
+    if DRY_RUN:
+        return
+
+    if PATTERNS_YAML.exists():
         try:
-            data = yaml.safe_load(yaml_path.read_text()) or {}
+            data = yaml.safe_load(PATTERNS_YAML.read_text()) or {}
         except Exception:
             data = {}
     else:
@@ -168,95 +397,262 @@ def update_patterns_yaml(new_patterns):
     if not isinstance(data.get("patterns"), list):
         data["patterns"] = []
 
-    existing_names = {entry.get("name") for entry in data["patterns"]}
+    existing_ids = {p.get("id") for p in data["patterns"]}
 
-    for p in new_patterns:
-        name = p["hash"]
-        if name in existing_names:
-            print(f"  Skip {name} — already in patterns.yaml")
+    for p in patterns:
+        pid = pattern_hash(p)
+        if pid in existing_ids:
             continue
 
-        data["patterns"].append({
-            "name": name,
-            "trigger": p["task"],
-            "script": f".aos/patterns/{name}.sh",
-            "compiled_from": p["count"],
+        entry = {
+            "id": pid,
+            "type": p["type"],
+            "count": p.get("count", 0),
             "compiled_date": datetime.now().strftime("%Y-%m-%d"),
             "status": "active",
-        })
-        existing_names.add(name)
+        }
 
-    if not DRY_RUN:
-        yaml_path.parent.mkdir(parents=True, exist_ok=True)
-        yaml_path.write_text(yaml.dump(data, default_flow_style=False, allow_unicode=True))
+        if p["type"] == "tool_combo":
+            entry["tools"] = p["tools"]
+            entry["domain"] = p["domain"]
+        elif p["type"] == "file_pair":
+            entry["files"] = p["files"]
+        elif p["type"] == "exec_pattern":
+            entry["trigger"] = p["task"][:100]
+            entry["script"] = f".aos/patterns/{pid}.sh"
 
+        data["patterns"].append(entry)
+        existing_ids.add(pid)
+
+    PATTERNS_YAML.parent.mkdir(parents=True, exist_ok=True)
+    PATTERNS_YAML.write_text(yaml.dump(data, default_flow_style=False, allow_unicode=True))
+
+
+def notify_telegram(new_patterns: list[dict]):
+    """Send a Telegram notification about new compiled patterns."""
+    if DRY_RUN or not new_patterns:
+        return
+
+    try:
+        import subprocess
+        token = subprocess.run(
+            [str(AGENT_SECRET), "get", "TELEGRAM_BOT_TOKEN"],
+            capture_output=True, text=True
+        ).stdout.strip()
+        chat_id = subprocess.run(
+            [str(AGENT_SECRET), "get", "TELEGRAM_CHAT_ID"],
+            capture_output=True, text=True
+        ).stdout.strip()
+
+        if not token or not chat_id:
+            return
+
+        lines = [f"Compiled {len(new_patterns)} new pattern(s):"]
+        for p in new_patterns[:5]:
+            pid = pattern_hash(p)
+            if p["type"] == "tool_combo":
+                lines.append(f"  {p['domain']}: {p['tools']} ({p['count']}x)")
+            elif p["type"] == "file_pair":
+                lines.append(f"  files: {' + '.join(p['files'][:2])} ({p['count']}x)")
+            elif p["type"] == "exec_pattern":
+                lines.append(f"  task: {p['task'][:50]} ({p['count']}x)")
+
+        msg = "\n".join(lines)
+        import urllib.request
+        import urllib.parse
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        data = urllib.parse.urlencode({"chat_id": chat_id, "text": msg}).encode()
+        urllib.request.urlopen(url, data, timeout=5)
+    except Exception:
+        pass  # Telegram notification is best-effort
+
+
+SKILL_THRESHOLD = 5  # Need 5+ occurrences to auto-generate a skill
+SKILLS_DIR = Path.home() / ".claude" / "skills"
+
+
+def generate_skill(pattern: dict) -> bool:
+    """Auto-generate a skill from a strong tool_combo pattern.
+    Returns True if a new skill was created."""
+    if pattern["type"] != "tool_combo":
+        return False
+    if pattern.get("count", 0) < SKILL_THRESHOLD:
+        return False
+
+    pid = pattern_hash(pattern)
+    domain = pattern["domain"]
+    tools_list = pattern["tools"].split(",")
+    tools_str = ", ".join(tools_list)
+
+    # Build a skill name from domain
+    skill_name = f"pattern-{domain}-{pid[:6]}"
+    skill_dir = SKILLS_DIR / skill_name
+
+    if skill_dir.exists():
+        return False  # Already generated
+
+    # Clean titles for trigger phrases
+    titles = [
+        t for t in pattern.get("titles", [])
+        if t and len(t) > 5 and not t.startswith("<")
+    ]
+    trigger_examples = ", ".join(f'"{t[:40]}"' for t in titles[:3]) if titles else f'"{domain} work"'
+
+    skill_content = f"""---
+name: {skill_name}
+description: >
+  Auto-compiled skill from {pattern['count']} sessions in the {domain} domain.
+  Common tool pattern: {tools_str}.
+  Trigger on work related to {domain}. Examples: {trigger_examples}.
+allowed-tools: {tools_str}
+_compiled: true
+_pattern_id: "{pid}"
+_compiled_date: "{datetime.now().strftime('%Y-%m-%d')}"
+_compiled_from: {pattern['count']}
+---
+
+# {skill_name} -- Auto-Compiled Skill
+
+This skill was automatically generated by the pattern compiler after detecting
+{pattern['count']} sessions with the same tool usage pattern in the **{domain}** domain.
+
+## When to Use
+
+This pattern activates when working on {domain}-related tasks that involve:
+{chr(10).join(f"- {t}" for t in tools_list)}
+
+## Typical Workflow
+
+Based on {pattern['count']} observed sessions (avg {pattern.get('avg_messages', '?')} messages each):
+
+1. The operator requests work in the {domain} domain
+2. Use these tools in combination: {tools_str}
+3. Average session length: {pattern.get('avg_messages', '?')} messages
+
+## Session Examples
+
+{chr(10).join(f"- {t}" for t in titles[:5]) if titles else "- (no clean titles available)"}
+
+## Notes
+
+- This skill was auto-generated. Edit it to add specific instructions.
+- To disable: delete this directory or rename SKILL.md
+- Source pattern: {pid} (compiled {datetime.now().strftime('%Y-%m-%d')})
+"""
+
+    if DRY_RUN:
+        print(f"    Would create skill: {skill_dir}/SKILL.md")
+        return True
+
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "SKILL.md").write_text(skill_content)
+    print(f"    Skill created: {skill_name}")
+    return True
+
+
+# ── Main ──────────────────────────────────────────────────
 
 def main():
-    print(f"Pattern Compiler — scanning logs (threshold: {THRESHOLD})")
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] compile-patterns starting")
     if DRY_RUN:
         print("DRY RUN — no files will be written")
     print()
 
-    entries = load_logs()
-    print(f"Loaded {len(entries)} log entries from last 14 days")
+    # Load data
+    sessions = load_sessions(days=30)
+    exec_entries = load_exec_logs(days=30)
+    print(f"Loaded {len(sessions)} sessions, {len(exec_entries)} execution log entries")
 
-    if not entries:
-        print("No execution log entries found. Nothing to compile.")
+    if not sessions and not exec_entries:
+        print("No data to analyze. Run some sessions first.")
         return
 
-    patterns = find_compilable_patterns(entries)
-    print(f"Found {len(patterns)} compilable patterns (>= {THRESHOLD} occurrences)")
+    # Detect patterns from all sources
+    tool_patterns = detect_tool_patterns(sessions)
+    file_patterns = detect_file_patterns(sessions)
+    exec_patterns = detect_exec_patterns(exec_entries)
 
-    if not patterns:
-        print("No patterns ready for compilation yet.")
-        groups = defaultdict(int)
-        for e in entries:
-            if e.get("success"):
-                groups[normalize_task(e.get("task", ""))] += 1
-        if groups:
-            print("\nProgress toward compilation:")
-            for task, count in sorted(groups.items(), key=lambda x: -x[1]):
-                bar = "\u2588" * count + "\u2591" * (THRESHOLD - count)
-                print(f"  [{bar}] {count}/{THRESHOLD} — {task[:60]}")
+    all_patterns = tool_patterns + file_patterns + exec_patterns
+    print(f"Detected {len(all_patterns)} patterns "
+          f"({len(tool_patterns)} tool, {len(file_patterns)} file, {len(exec_patterns)} exec)")
+
+    if not all_patterns:
+        print("\nNo patterns above threshold yet.")
+
+        # Show progress toward compilation
+        if sessions:
+            tool_progress = Counter()
+            for s in sessions:
+                if s["tools_signature"]:
+                    domain = extract_file_domain(s["files"])
+                    tool_progress[(s["tools_signature"][:40], domain)] += 1
+
+            if tool_progress:
+                print("\nProgress toward compilation:")
+                for (tools, domain), count in tool_progress.most_common(8):
+                    bar = "\u2588" * count + "\u2591" * max(0, THRESHOLD - count)
+                    print(f"  [{bar}] {count}/{THRESHOLD} — {domain}: {tools}")
         return
 
+    # Compile patterns
     PATTERNS_DIR.mkdir(parents=True, exist_ok=True)
     VAULT_PATTERNS.mkdir(parents=True, exist_ok=True)
 
     new_patterns = []
-    for p in patterns:
-        name = p["hash"]
-        script_path = PATTERNS_DIR / f"{name}.sh"
+    for p in all_patterns:
+        pid = pattern_hash(p)
 
-        if script_path.exists():
-            print(f"  Skip {name} — script already exists")
+        # Check if already compiled
+        doc_path = VAULT_PATTERNS / f"{pid}.md"
+        if doc_path.exists():
+            if VERBOSE:
+                print(f"  Skip {pid} — already compiled")
             continue
 
-        print(f"  Compiling: {p['task'][:60]}...")
+        print(f"  Compiling: {p['type']} — {pid}")
 
+        # Generate script (if applicable)
         script = generate_script(p)
-        doc = generate_doc(p)
+        if script:
+            script_path = PATTERNS_DIR / f"{pid}.sh"
+            if not DRY_RUN:
+                script_path.write_text(script)
+                script_path.chmod(0o755)
+                print(f"    Script: {script_path}")
+            else:
+                print(f"    Would write script: {script_path}")
 
-        if DRY_RUN:
-            print(f"    Would write: {script_path}")
-        else:
-            script_path.write_text(script)
-            script_path.chmod(0o755)
-            # Write doc to vault
-            doc_path = VAULT_PATTERNS / f"{name}.md"
+        # Generate doc
+        doc = generate_doc(p)
+        if not DRY_RUN:
             doc_path.write_text(doc)
-            print(f"    Written: {script_path}")
+            print(f"    Doc: {doc_path}")
+        else:
+            print(f"    Would write doc: {doc_path}")
 
         new_patterns.append(p)
 
+    # Auto-generate skills from strong patterns
+    skills_created = 0
+    for p in all_patterns:
+        if generate_skill(p):
+            skills_created += 1
+    if skills_created:
+        print(f"\n  Auto-generated {skills_created} skill(s) from strong patterns.")
+
+    # Update registry
     if new_patterns:
-        update_patterns_yaml(new_patterns)
-        print(f"\nCompiled {len(new_patterns)} new patterns.")
+        update_registry(new_patterns)
+        notify_telegram(new_patterns)
+        print(f"\nCompiled {len(new_patterns)} new pattern(s).")
     else:
         print("\nNo new patterns to compile.")
 
-    existing = list(PATTERNS_DIR.glob("*.sh")) if PATTERNS_DIR.exists() else []
-    print(f"\nTotal compiled patterns: {len(existing)}")
+    # Summary
+    existing_docs = list(VAULT_PATTERNS.glob("*.md")) if VAULT_PATTERNS.exists() else []
+    existing_scripts = list(PATTERNS_DIR.glob("*.sh")) if PATTERNS_DIR.exists() else []
+    print(f"\nTotal: {len(existing_docs)} patterns documented, {len(existing_scripts)} scripts compiled")
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] compile-patterns done")
 
 
 if __name__ == "__main__":

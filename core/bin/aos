@@ -2,6 +2,7 @@
 # AOS CLI — entry point for system management
 #
 # Usage:
+#   aos start           Open editor with Claude Code (first run = onboarding)
 #   aos migrate         Run pending migrations
 #   aos status          Show migration version + pending
 #   aos discover        Scan machine for existing setup
@@ -266,6 +267,50 @@ except py_compile.PyCompileError as e:
         fi
         ;;
 
+    start)
+        # Open the operator's IDE with Claude Code ready.
+        # On first run (no onboarding.yaml), Chief dispatches Sahib automatically.
+        EDITOR_FILE="$HOME/.aos/config/editor"
+        EDITOR_CMD=""
+
+        if [[ -f "$EDITOR_FILE" ]]; then
+            EDITOR_CMD=$(cat "$EDITOR_FILE")
+        else
+            # Auto-detect
+            command -v cursor &>/dev/null && EDITOR_CMD="cursor"
+            command -v code &>/dev/null && EDITOR_CMD="code"
+        fi
+
+        if [[ -z "$EDITOR_CMD" ]]; then
+            echo "No editor configured. Falling back to terminal."
+            echo "Run 'aos start' again after installing an editor,"
+            echo "or set one: echo 'code' > ~/.aos/config/editor"
+            echo ""
+            exec cld "$@"
+        fi
+
+        # Check Claude Code auth — run 'claude auth' if not yet signed in
+        if command -v claude &>/dev/null; then
+            if [[ ! -f "$HOME/.claude/.credentials.json" ]] && [[ ! -f "$HOME/.claude/credentials.json" ]]; then
+                echo "Claude Code needs to be authorized first."
+                echo "A browser window will open for sign-in..."
+                echo ""
+                claude auth login 2>/dev/null || claude --version 2>/dev/null || true
+                echo ""
+            fi
+        fi
+
+        # Open editor to home directory (the AOS workspace root)
+        echo "Opening $EDITOR_CMD..."
+        "$EDITOR_CMD" "$HOME"
+
+        echo ""
+        echo "Your editor is opening. Look for Claude Code in the sidebar."
+        if [[ ! -f "$HOME/.aos/config/onboarding.yaml" ]]; then
+            echo "Sahib is waiting to walk you through setup."
+        fi
+        ;;
+
     deploy)
         SERVICES_SRC="$AOS_DIR/core/services"
         SERVICES_DST="$HOME/.aos/services"
@@ -316,12 +361,37 @@ print('\n'.join(deps))
         echo "  ✓ Deploy complete"
         ;;
 
+    activate)
+        # Activate a catalog agent
+        shift
+        bash "$AOS_DIR/core/bin/activate-agent" "$@"
+        ;;
+
+    deactivate)
+        # Deactivate a catalog agent
+        shift
+        bash "$AOS_DIR/core/bin/activate-agent" --deactivate "$@"
+        ;;
+
+    trust)
+        # Trust review and management
+        shift
+        python3 "$AOS_DIR/core/bin/trust-review" "$@"
+        ;;
+
+    trust-log)
+        # Log a trust action
+        shift
+        python3 "$AOS_DIR/core/bin/trust-log" "$@"
+        ;;
+
     help|--help|-h)
         echo "AOS — Agentic Operating System"
         echo ""
         echo "Usage: aos <command>"
         echo ""
         echo "Commands:"
+        echo "  start           Open editor with Claude Code ready"
         echo "  update          Pull latest + migrate + sync"
         echo "  check-update    Check if updates are available"
         echo "  status          Show migration version + pending"
@@ -329,6 +399,10 @@ print('\n'.join(deps))
         echo "  deploy          Deploy service venvs (all or: aos deploy bridge)"
         echo "  sync-skills     Re-sync skill symlinks (--all for developer)"
         echo "  sync-agents     Re-sync agent symlinks"
+        echo "  activate        Activate a catalog agent (aos activate engineer)"
+        echo "  deactivate      Deactivate a catalog agent"
+        echo "  trust           Review agent trust levels"
+        echo "  trust-log       Log agent trust actions"
         echo "  migrate         Run pending migrations"
         echo "  discover        Scan machine for existing setup"
         echo "  version         Show current version"

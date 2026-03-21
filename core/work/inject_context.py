@@ -19,6 +19,8 @@ import os
 from datetime import date
 from pathlib import Path
 
+import yaml
+
 # Add work engine to path
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__))))
 
@@ -111,6 +113,16 @@ def main():
 
     if inbox_count > 0:
         lines.append(f"**Inbox:** {inbox_count} items awaiting triage")
+
+    # Memory proposals from reconciler
+    memory_proposals_file = Path.home() / ".aos" / "work" / "memory-proposals.yaml"
+    if memory_proposals_file.exists():
+        try:
+            proposals = yaml.safe_load(memory_proposals_file.read_text()) or []
+            if proposals:
+                lines.append(f"**Memory proposals ({len(proposals)}):** Significant sessions detected that may need memory updates. Review with `cat ~/.aos/work/memory-proposals.yaml` and update MEMORY.md if needed.")
+        except Exception:
+            pass
 
     if not lines:
         lines.append("No active tasks or urgent items.")

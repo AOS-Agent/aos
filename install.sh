@@ -25,6 +25,38 @@ LOG_DIR="$USER_DIR/logs"
 INSTALL_LOG="$LOG_DIR/install.log"
 MACHINE_ID_FILE="$USER_DIR/.machine-id"
 
+# ── Modes ──────────────────────────────────────────
+DRY_RUN=false
+CHECKPOINT_FILE="$HOME/.aos/.install-checkpoint"
+
+for arg in "$@"; do
+    case "$arg" in
+        --dry-run)  DRY_RUN=true ;;
+        --resume)   ;; # default behavior — checkpoints handle resume
+        --clean)    rm -f "$HOME/.aos/.install-checkpoint" 2>/dev/null ;;
+    esac
+done
+
+# Checkpoint helpers — track completed phases for resume
+_checkpoint_done() {
+    mkdir -p "$(dirname "$CHECKPOINT_FILE")"
+    echo "$1" >> "$CHECKPOINT_FILE"
+}
+_checkpoint_skip() {
+    [[ -f "$CHECKPOINT_FILE" ]] && grep -qx "$1" "$CHECKPOINT_FILE" 2>/dev/null
+}
+
+# Network check — fail fast if offline
+_check_network() {
+    if ! curl -sfm 5 https://brew.sh >/dev/null 2>&1; then
+        _warn "No internet connection detected"
+        _info "Some install steps require network access (Homebrew, pip, git clone)"
+        printf "\n  Continue anyway? [y/N]: "
+        read -r net_choice
+        [[ "${net_choice:-n}" =~ ^[Yy]$ ]] || exit 1
+    fi
+}
+
 # ── Colors ──────────────────────────────────────────
 if [[ -t 1 ]] && command -v tput &>/dev/null && [[ $(tput colors 2>/dev/null || echo 0) -ge 256 ]]; then
     # Rich palette for 256+ color terminals
@@ -57,7 +89,7 @@ fi
 INSTALL_START=$(date +%s)
 STEP_START=$INSTALL_START
 _STEP_NUM=0
-_TOTAL_STEPS=6
+_TOTAL_STEPS=7
 
 _timer_start() { STEP_START=$(date +%s); }
 _timer_elapsed() {
@@ -295,11 +327,13 @@ prereq_gh() {
 prereq_editor() {
     # Check if any supported editor is already installed
     local found=""
-    command -v code &>/dev/null && found="VS Code"
-    [[ -d "/Applications/Cursor.app" ]] && found="Cursor"
-    [[ -d "/Applications/Antigravity.app" ]] && found="Antigravity"
+    local editor_cmd=""
+    command -v code &>/dev/null && found="VS Code" && editor_cmd="code"
+    [[ -d "/Applications/Cursor.app" ]] && found="Cursor" && editor_cmd="cursor"
+    [[ -d "/Applications/Antigravity.app" ]] && found="Antigravity" && editor_cmd="antigravity"
 
     if [[ -n "$found" ]]; then
+        _save_editor "$editor_cmd"
         _skip "$found"
         return 0
     fi
@@ -319,12 +353,22 @@ prereq_editor() {
         1)
             _info "Installing VS Code..."
             brew install --cask visual-studio-code 2>&1 | tail -3
-            command -v code &>/dev/null && _ok "VS Code" || _warn "VS Code install failed"
+            if command -v code &>/dev/null; then
+                _ok "VS Code"
+                _save_editor "code"
+            else
+                _warn "VS Code install failed"
+            fi
             ;;
         2)
             _info "Installing Cursor..."
             brew install --cask cursor 2>&1 | tail -3
-            [[ -d "/Applications/Cursor.app" ]] && _ok "Cursor" || _warn "Cursor install failed"
+            if [[ -d "/Applications/Cursor.app" ]]; then
+                _ok "Cursor"
+                _save_editor "cursor"
+            else
+                _warn "Cursor install failed"
+            fi
             ;;
         3)
             _info "Antigravity is not available via Homebrew."
@@ -335,6 +379,80 @@ prereq_editor() {
             _info "Skipping editor install"
             ;;
     esac
+}
+
+_save_editor() {
+    # Persist editor choice so 'aos start' knows what to open
+    local cmd="$1"
+    mkdir -p "$USER_DIR/config"
+    echo "$cmd" > "$USER_DIR/config/editor"
+}
+
+prereq_chrome() {
+    # Google Chrome — required for browser automation via Claude-in-Chrome MCP
+    if [[ -d "/Applications/Google Chrome.app" ]]; then
+        _skip "Google Chrome"
+    else
+        _step "Installing Google Chrome..."
+        brew install --cask google-chrome 2>&1 | tail -3
+        [[ -d "/Applications/Google Chrome.app" ]] && _ok "Google Chrome" || _warn "Chrome install failed"
+    fi
+
+    # Ensure Chrome starts at login — MCP needs Chrome running
+    local chrome_plist="$HOME/Library/LaunchAgents/com.agent.chrome.plist"
+    if [[ -f "$chrome_plist" ]]; then
+        _skip "Chrome LaunchAgent"
+    else
+        cat > "$chrome_plist" << 'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.agent.chrome</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>open</string>
+        <string>-a</string>
+        <string>Google Chrome</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+</dict>
+</plist>
+PLIST
+        launchctl load "$chrome_plist" 2>/dev/null
+        _ok "Chrome LaunchAgent (starts at login)"
+    fi
+
+    # Start Chrome now if not running
+    if ! pgrep -x "Google Chrome" &>/dev/null; then
+        open -a "Google Chrome" &>/dev/null
+        _ok "Chrome started"
+    fi
+
+    # Claude-in-Chrome extension — provides browser automation MCP tools.
+    # Uses native messaging: Chrome extension ↔ ~/.claude/chrome/chrome-native-host ↔ Claude Code.
+    # Can't install extensions programmatically — clear instructions for the operator.
+    local ext_dir="$HOME/Library/Application Support/Google/Chrome/Default/Extensions/fcoeoabgfenejglbffodgkkbkcdhcgfn"
+    if [[ -d "$ext_dir" ]]; then
+        _skip "Claude Chrome extension"
+    else
+        echo ""
+        _info "Chrome needs the Claude extension for browser automation."
+        _info "Install from: ${CYAN}https://chromewebstore.google.com/detail/claude/fcoeoabgfenejglbffodgkkbkcdhcgfn${RESET}"
+        _info "This lets AOS control web pages, fill forms, take screenshots, etc."
+        echo ""
+        printf "  Press Enter after installing the extension (or 's' to skip): "
+        read -r ext_choice
+        if [[ -d "$ext_dir" ]]; then
+            _ok "Claude Chrome extension"
+        elif [[ "${ext_choice:-}" == "s" ]]; then
+            _info "Skipping — install the extension later from the Chrome Web Store"
+        else
+            _warn "Extension not detected — install it when Chrome is open"
+        fi
+    fi
 }
 
 prereq_obsidian() {
@@ -362,6 +480,73 @@ prereq_obsidian() {
     esac
 }
 
+prereq_superwhisper() {
+    # SuperWhisper — voice-to-text transcription (local Whisper model)
+    if [[ -d "/Applications/superwhisper.app" ]]; then
+        _skip "SuperWhisper"
+    else
+        echo ""
+        echo "  ${BOLD}Install SuperWhisper?${RESET} (voice-to-text input)"
+        echo "  Speak to capture ideas, notes, and commands — transcribed locally."
+        echo ""
+        printf "  Install? [Y/n]: "
+        read -r sw_choice
+
+        case "${sw_choice:-y}" in
+            [Yy]|"")
+                _info "Installing SuperWhisper..."
+                brew install --cask superwhisper 2>&1 | tail -3
+                [[ -d "/Applications/superwhisper.app" ]] && _ok "SuperWhisper" || _warn "SuperWhisper install failed"
+                ;;
+            *)
+                _info "Skipping SuperWhisper"
+                return 0
+                ;;
+        esac
+    fi
+
+    # Configure defaults: default mode, always show mini recorder, minimized
+    if [[ -d "/Applications/superwhisper.app" ]]; then
+        defaults write com.superduper.superwhisper activeModeKey -string "default"
+        defaults write com.superduper.superwhisper alwaysShowMiniRecorder -bool true
+        defaults write com.superduper.superwhisper isMinimized -bool true
+        _ok "SuperWhisper configured (default mode, mini recorder)"
+    fi
+
+    # Ensure SuperWhisper starts at login
+    local sw_plist="$HOME/Library/LaunchAgents/com.agent.superwhisper.plist"
+    if [[ -f "$sw_plist" ]]; then
+        _skip "SuperWhisper LaunchAgent"
+    elif [[ -d "/Applications/superwhisper.app" ]]; then
+        cat > "$sw_plist" << 'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.agent.superwhisper</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>open</string>
+        <string>-a</string>
+        <string>superwhisper</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+</dict>
+</plist>
+PLIST
+        launchctl load "$sw_plist" 2>/dev/null
+        _ok "SuperWhisper LaunchAgent (starts at login)"
+    fi
+
+    # Start SuperWhisper now if not running
+    if [[ -d "/Applications/superwhisper.app" ]] && ! pgrep -x "superwhisper" &>/dev/null; then
+        open -a "superwhisper" &>/dev/null
+        _ok "SuperWhisper started"
+    fi
+}
+
 prereq_jq() {
     if command -v jq &>/dev/null; then
         _skip "jq"
@@ -372,6 +557,34 @@ prereq_jq() {
     brew install jq 2>&1 | tail -1
     command -v jq &>/dev/null || _die "jq install failed"
     _ok "jq"
+}
+
+prereq_ffmpeg() {
+    if command -v ffmpeg &>/dev/null; then
+        _skip "ffmpeg"
+        return 0
+    fi
+
+    _step "Installing ffmpeg..."
+    brew install ffmpeg 2>&1 | tail -3
+    command -v ffmpeg &>/dev/null || _die "ffmpeg install failed"
+    _ok "ffmpeg"
+}
+
+prereq_mlx_whisper() {
+    # mlx-whisper — Apple Silicon optimized local transcription
+    if python3 -c "import mlx_whisper" 2>/dev/null; then
+        _skip "mlx-whisper"
+        return 0
+    fi
+
+    _step "Installing mlx-whisper (Apple Silicon transcription)..."
+    pip3 install --quiet mlx-whisper 2>&1 | tail -3
+    if python3 -c "import mlx_whisper" 2>/dev/null; then
+        _ok "mlx-whisper"
+    else
+        _warn "mlx-whisper — install failed (non-critical, faster-whisper used as fallback)"
+    fi
 }
 
 prereq_claude() {
@@ -405,6 +618,44 @@ prereq_claude() {
         _info "Install manually: https://docs.anthropic.com/en/docs/claude-code"
         _info "The install will continue — Claude Code is needed for onboarding, not bootstrap."
     fi
+}
+
+prereq_claude_auth() {
+    # Claude Code needs authentication before first use.
+    # Check if already authenticated (settings or credentials exist).
+    if ! command -v claude &>/dev/null; then
+        _info "Claude Code not installed — skipping auth"
+        return 0
+    fi
+
+    # Check if already authenticated by looking for credential markers
+    if [[ -f "$HOME/.claude/.credentials.json" ]] || [[ -f "$HOME/.claude/credentials.json" ]]; then
+        _skip "Claude Code auth"
+        return 0
+    fi
+
+    echo ""
+    echo "  ${BOLD}Claude Code needs to be authorized.${RESET}"
+    echo "  This opens a browser window for you to sign in."
+    echo ""
+    printf "  Authorize now? [Y/n]: "
+    read -r auth_choice
+
+    case "${auth_choice:-y}" in
+        [Yy]|"")
+            _info "Starting Claude Code auth — a browser window will open..."
+            # Run claude with a simple command to trigger auth flow
+            # The auth flow is interactive — claude handles it
+            claude --version &>/dev/null
+            # Just opening claude briefly triggers auth if needed
+            echo ""
+            _info "If a browser window opened, complete sign-in there."
+            _info "If auth didn't trigger, you'll be prompted when you first run ${BRAND}aos start${RESET}"
+            ;;
+        *)
+            _info "Skipping auth — you'll be prompted when you first run aos start"
+            ;;
+    esac
 }
 
 prereq_ssh() {
@@ -483,10 +734,15 @@ run_prereqs() {
     prereq_bun
     prereq_qmd
     prereq_jq
+    prereq_ffmpeg
+    prereq_mlx_whisper
     prereq_gh
     prereq_editor
+    prereq_chrome
+    prereq_superwhisper
     prereq_obsidian
     prereq_claude
+    prereq_claude_auth
 
     _step "Remote access"
 
@@ -715,10 +971,51 @@ OPERATOR
     echo ""
     _ok "Migrations complete"
 
-    # Sync agents
+    # Sync agents (system agents: chief, steward, advisor)
     _step "Syncing agents..."
     echo ""
     bash "$AOS_DIR/core/bin/aos" sync-agents 2>&1 | sed 's/^/  /'
+
+    # Activate onboard agent from catalog
+    if [[ ! -f "$HOME/.claude/agents/onboard.md" ]]; then
+        bash "$AOS_DIR/core/bin/activate-agent" onboard 2>&1 | sed 's/^/  /'
+    else
+        echo "  ✓ Onboard agent already active"
+    fi
+
+    # Initialize trust config if not present
+    if [[ ! -f "$USER_DIR/config/trust.yaml" ]]; then
+        _step "Initializing trust configuration..."
+        cp "$AOS_DIR/config/defaults/trust.yaml" "$USER_DIR/config/trust.yaml" 2>/dev/null || {
+            # No default template — create minimal trust config
+            cat > "$USER_DIR/config/trust.yaml" << 'TRUST'
+# Trust Configuration — Per-capability trust levels
+# Levels: 0=SHADOW, 1=APPROVAL, 2=SEMI-AUTO, 3=FULL-AUTO
+agents: {}
+graduation:
+  0_to_1:
+    min_observations: 20
+    accuracy_threshold: 0.80
+    requires_human_approval: true
+  1_to_2:
+    min_weighted_score: 30
+    max_revert_rate: 0.05
+    requires_human_approval: true
+  2_to_3:
+    min_autonomous_actions: 50
+    max_revert_rate: 0.02
+    requires_human_approval: true
+always_escalate:
+  - financial_commitment
+  - delete_production_data
+  - external_communication_new_contact
+promotions: []
+TRUST
+        }
+        _ok "Trust configuration initialized"
+    else
+        _skip "Trust configuration"
+    fi
 
     # Sync skills — prompt for developer mode
     _step "Installing skills..."
@@ -777,6 +1074,18 @@ print('\n'.join(deps))
             _ok "Service $name"
         fi
     done
+
+    # Post-deploy: download NLTK tokenizer data for memory service
+    local memory_venv="$services_dst/memory/.venv/bin/python"
+    if [[ -f "$memory_venv" ]]; then
+        if "$memory_venv" -c "import nltk; nltk.data.find('tokenizers/punkt')" 2>/dev/null; then
+            _skip "NLTK data (punkt)"
+        else
+            _info "Downloading NLTK tokenizer data..."
+            "$memory_venv" -c "import nltk; nltk.download('punkt', quiet=True); nltk.download('punkt_tab', quiet=True)" 2>/dev/null
+            _ok "NLTK data (punkt)"
+        fi
+    fi
 
     # Install LaunchAgents from templates
     install_launchagents
@@ -1287,165 +1596,231 @@ run_discovery() {
 }
 
 run_health_gate() {
-    _step "Running health check..."
-    echo ""
+    # ── Scorecard: structured health verification ──────────────
+    # Every check is categorized. The final scorecard shows pass/warn/fail counts
+    # and tells you exactly what needs attention.
 
-    local errors=0
+    local pass=0 warn=0 fail=0
+    local warnings=() failures=()
 
-    # Core checks
-    [[ -d "$USER_DIR" ]]                   && _ok "User data dir"          || { _fail "User data dir missing"; ((errors++)); }
-    [[ -f "$USER_DIR/.version" ]]          && _ok "Migrations applied"     || { _fail "Migrations not run"; ((errors++)); }
-    [[ -f "$USER_DIR/.machine-id" ]]       && _ok "Machine ID"             || { _fail "No machine ID"; ((errors++)); }
-    [[ -f "$USER_DIR/events.jsonl" ]]      && _ok "Event bus"              || { _fail "Event bus missing"; ((errors++)); }
-    [[ -f "$USER_DIR/work/work.yaml" ]]    && _ok "Work system"            || { _fail "work.yaml missing"; ((errors++)); }
+    _check() {
+        # Usage: _check "label" "test command" [critical]
+        # critical = "critical" means failure blocks onboarding
+        local label="$1" cmd="$2" severity="${3:-warn}"
+        if eval "$cmd" 2>/dev/null; then
+            _ok "$label"
+            ((pass++))
+        elif [[ "$severity" == "critical" ]]; then
+            _fail "$label"
+            ((fail++))
+            failures+=("$label")
+        else
+            _warn "$label"
+            ((warn++))
+            warnings+=("$label")
+        fi
+    }
 
-    # Context files
-    [[ -f "$HOME/CLAUDE.md" ]]             && _ok "Root CLAUDE.md"         || { _fail "~/CLAUDE.md missing"; ((errors++)); }
-    [[ -f "$HOME/.claude/CLAUDE.md" ]]     && _ok "Global CLAUDE.md"       || { _fail "~/.claude/CLAUDE.md missing"; ((errors++)); }
+    # ── Core data ──────────────────────────────────────────────
+    _step "Core data"
+    _check "User data dir"      "[[ -d '$USER_DIR' ]]"                 critical
+    _check "Machine ID"         "[[ -f '$USER_DIR/.machine-id' ]]"     critical
+    _check "Migrations applied" "[[ -f '$USER_DIR/.version' ]]"        critical
+    _check "Event bus"          "[[ -f '$USER_DIR/events.jsonl' ]]"    critical
+    _check "Work system"        "[[ -f '$USER_DIR/work/work.yaml' ]]"  critical
 
-    # Vault & projects
-    [[ -d "$HOME/vault" ]]                 && _ok "Knowledge vault"        || { _fail "~/vault/ missing"; ((errors++)); }
-    [[ -d "$HOME/project" ]]               && _ok "Projects directory"     || { _warn "~/project/ missing"; }
+    # ── Context files ──────────────────────────────────────────
+    _step "Context files"
+    _check "Root CLAUDE.md"     "[[ -f '$HOME/CLAUDE.md' ]]"           critical
+    _check "Global CLAUDE.md"   "[[ -f '$HOME/.claude/CLAUDE.md' ]]"   critical
+    _check "Operator profile"   "[[ -f '$USER_DIR/config/operator.yaml' ]]"
+    _check "Knowledge vault"    "[[ -d '$HOME/vault' ]]"               critical
+    _check "Projects directory" "[[ -d '$HOME/project' ]]"
 
-    # Git config
-    local git_name git_email
-    git_name=$(git config --global user.name 2>/dev/null || echo "")
-    git_email=$(git config --global user.email 2>/dev/null || echo "")
-    [[ -n "$git_name" ]]                   && _ok "Git name: $git_name"    || { _warn "Git name not set"; }
-    [[ -n "$git_email" ]]                  && _ok "Git email: $git_email"  || { _warn "Git email not set"; }
+    # ── Git config ─────────────────────────────────────────────
+    _step "Git config"
+    _check "Git name"           "[[ -n \"\$(git config --global user.name 2>/dev/null)\" ]]"
+    _check "Git email"          "[[ -n \"\$(git config --global user.email 2>/dev/null)\" ]]"
 
-    # Settings — agent, env vars, hooks
+    # ── Settings.json ──────────────────────────────────────────
+    _step "Claude Code settings"
+    _check "settings.json exists" "[[ -f '$HOME/.claude/settings.json' ]]" critical
     if [[ -f "$HOME/.claude/settings.json" ]]; then
-        local settings_check
-        settings_check=$(python3 -c "
+        _check "Agent = Chief" "python3 -c \"
 import json
 with open('$HOME/.claude/settings.json') as f:
     s = json.load(f)
-issues = []
-if s.get('agent') != 'chief': issues.append('agent not chief')
-env = s.get('env', {})
-if 'CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS' not in env: issues.append('no agent-teams env')
-hooks = s.get('hooks', {})
-for h in ['SessionStart', 'PostCompact', 'Stop', 'SessionEnd']:
-    if not hooks.get(h): issues.append(f'no {h} hook')
-print('|'.join(issues) if issues else 'OK')
-" 2>/dev/null || echo "parse error")
-
-        if [[ "$settings_check" == "OK" ]]; then
-            _ok "Settings: agent=chief, teams, hooks (3/3)"
-        else
-            IFS='|' read -ra issues <<< "$settings_check"
-            for issue in "${issues[@]}"; do
-                _warn "Settings: $issue"
-            done
-        fi
-    else
-        _fail "settings.json missing"; ((errors++))
+assert s.get('agent') == 'chief'
+\"" critical
+        _check "Agent teams enabled" "python3 -c \"
+import json
+with open('$HOME/.claude/settings.json') as f:
+    s = json.load(f)
+assert 'CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS' in s.get('env', {})
+\""
+        for hook_name in SessionStart PostCompact Stop SessionEnd; do
+            _check "Hook: $hook_name" "python3 -c \"
+import json
+with open('$HOME/.claude/settings.json') as f:
+    s = json.load(f)
+assert s.get('hooks', {}).get('$hook_name')
+\"" critical
+        done
     fi
 
-    # Operator profile
-    [[ -f "$USER_DIR/config/operator.yaml" ]] && _ok "Operator profile" || { _warn "Operator profile missing"; }
-
-    # Log directories
-    [[ -d "$USER_DIR/logs/crons" ]]           && _ok "Cron log directory" || { _warn "Cron log dir missing"; }
-
-    # Agent symlinks
+    # ── Agents ─────────────────────────────────────────────────
+    _step "Agents"
     for agent in chief steward advisor; do
-        local link="$HOME/.claude/agents/${agent}.md"
-        if [[ -L "$link" ]] || [[ -f "$link" ]]; then
-            _ok "Agent $agent"
-        else
-            _fail "Agent $agent not installed"
-            ((errors++))
-        fi
+        _check "Agent $agent" "[[ -f '$HOME/.claude/agents/${agent}.md' ]]" critical
     done
+    _check "Onboard agent" "[[ -f '$HOME/.claude/agents/onboard.md' ]]"
 
-    # Skills — check default skills are symlinked
+    # ── Skills ─────────────────────────────────────────────────
+    _step "Skills"
     local default_skills="recall work review step-by-step obsidian-cli extract telegram-admin bridge-ops marketing diagram session-analysis frontend-design architect skill-creator skill-scanner"
-    local skill_count=0
-    local skill_missing=0
+    local skill_count=0 skill_missing=0
     for skill_name in $default_skills; do
-        local link="$HOME/.claude/skills/$skill_name"
-        if [[ -L "$link" ]]; then
+        if [[ -L "$HOME/.claude/skills/$skill_name" ]]; then
             ((skill_count++))
         else
-            _fail "Skill $skill_name not linked"
             ((skill_missing++))
-            ((errors++))
         fi
     done
     if [[ "$skill_missing" -eq 0 ]]; then
         _ok "All $skill_count default skills linked"
+        ((pass++))
+    else
+        _fail "$skill_missing of $((skill_count + skill_missing)) skills missing"
+        ((fail++))
+        failures+=("$skill_missing skills missing")
     fi
 
-    # Check developer skills if opted in
     if [[ -f "$USER_DIR/config/developer-mode" ]]; then
         local dev_count=0
         for skill_name in systematic-debugging verification-before-completion requesting-code-review receiving-code-review executing-plans writing-plans dispatching-parallel-agents writing-skills autonomous-execution; do
-            local link="$HOME/.claude/skills/$skill_name"
-            [[ -L "$link" ]] && ((dev_count++))
+            [[ -L "$HOME/.claude/skills/$skill_name" ]] && ((dev_count++))
         done
-        _ok "$dev_count developer skills linked"
+        _ok "$dev_count developer skills"
+        ((pass++))
     fi
 
-    # Services
+    # ── Services ───────────────────────────────────────────────
+    _step "Services"
     for svc in bridge dashboard listen memory; do
-        local venv="$USER_DIR/services/$svc/.venv/bin/python"
-        if [[ -f "$venv" ]]; then
-            _ok "Service $svc"
-        else
-            _warn "Service $svc — no venv"
-        fi
+        _check "Service $svc venv" "[[ -f '$USER_DIR/services/$svc/.venv/bin/python' ]]" critical
     done
 
-    # LaunchAgents — verify scheduler and core services are loaded
-    local la_loaded=0
+    # NLTK data (memory service dependency)
+    _check "NLTK tokenizer data" "'$USER_DIR/services/memory/.venv/bin/python' -c 'import nltk; nltk.data.find(\"tokenizers/punkt\")'"
+
+    # ── LaunchAgents ───────────────────────────────────────────
+    _step "LaunchAgents"
     for la in com.aos.scheduler com.aos.bridge com.aos.dashboard com.aos.listen; do
-        if launchctl list 2>/dev/null | grep -q "$la"; then
-            ((la_loaded++))
-        else
-            _warn "LaunchAgent $la — not loaded"
-        fi
+        _check "LaunchAgent $la" "launchctl list 2>/dev/null | grep -q '$la'"
     done
-    [[ "$la_loaded" -eq 4 ]] && _ok "All $la_loaded core LaunchAgents loaded"
 
-    # Scheduler — verify crons.yaml exists and scheduler can find it
-    [[ -f "$AOS_DIR/config/crons.yaml" ]]    && _ok "Cron definitions (crons.yaml)" || { _warn "crons.yaml missing"; }
+    # ── Cron scripts ───────────────────────────────────────────
+    _step "Scheduled jobs"
+    _check "crons.yaml" "[[ -f '$AOS_DIR/config/crons.yaml' ]]"
 
-    # QMD — vault search
-    if [[ -f "$HOME/.bun/bin/qmd" ]] || command -v qmd &>/dev/null; then
-        _ok "QMD (vault search)"
+    # Validate every enabled cron job references a script that exists
+    local cron_errors=0
+    if [[ -f "$AOS_DIR/config/crons.yaml" ]]; then
+        while IFS= read -r cmd_line; do
+            # Extract the actual binary/script path from the command
+            local script_path
+            script_path=$(echo "$cmd_line" | sed 's|^[a-z]*[0-9]* ||' | awk '{print $2}')
+            # Expand ~ to $HOME
+            script_path="${script_path/#\~/$HOME}"
+            if [[ -n "$script_path" ]] && [[ ! -f "$script_path" ]]; then
+                ((cron_errors++))
+                _log "CRON MISSING: $script_path (from: $cmd_line)"
+            fi
+        done < <(python3 -c "
+import yaml
+with open('$AOS_DIR/config/crons.yaml') as f:
+    data = yaml.safe_load(f)
+for name, job in (data.get('jobs') or {}).items():
+    if job.get('enabled', True) is not False:
+        print(job.get('command', ''))
+" 2>/dev/null)
+    fi
+    if [[ "$cron_errors" -eq 0 ]]; then
+        _ok "All cron scripts exist"
+        ((pass++))
     else
-        _warn "QMD — not installed (vault search unavailable)"
+        _warn "$cron_errors cron script(s) missing — check install log"
+        ((warn++))
+        warnings+=("$cron_errors cron scripts missing")
     fi
 
-    # Remote access
-    if sudo systemsetup -getremotelogin 2>/dev/null | grep -qi "on"; then
-        _ok "SSH (Remote Login)"
-    else
-        _warn "SSH — Remote Login not enabled"
-    fi
+    # Make all bin scripts executable
+    chmod +x "$AOS_DIR/core/bin/"* 2>/dev/null
+    _ok "Bin scripts executable"
+    ((pass++))
 
-    if command -v tailscale &>/dev/null; then
-        _ok "Tailscale installed"
-    else
-        _warn "Tailscale — not installed"
-    fi
+    # ── Tools ──────────────────────────────────────────────────
+    _step "Tools & dependencies"
+    _check "Homebrew"       "command -v brew"           critical
+    _check "Python 3.11+"   "python3 -c 'import sys; assert sys.version_info >= (3, 11)'" critical
+    _check "uv"             "command -v uv"             critical
+    _check "bun"            "command -v bun"
+    _check "jq"             "command -v jq"
+    _check "ffmpeg"         "command -v ffmpeg"
+    _check "gh"             "command -v gh"
+    _check "QMD"            "[[ -f '$HOME/.bun/bin/qmd' ]] || command -v qmd"
+    _check "Claude Code"    "command -v claude"         critical
+    _check "mlx-whisper"    "python3 -c 'import mlx_whisper'"
 
-    if launchctl list 2>/dev/null | grep -q "claude-remote"; then
-        _ok "Claude Remote"
-    else
-        _warn "Claude Remote — not running"
-    fi
+    # ── Apps ───────────────────────────────────────────────────
+    _step "Applications"
+    _check "Google Chrome"  "[[ -d '/Applications/Google Chrome.app' ]]"
+    _check "SuperWhisper"   "[[ -d '/Applications/superwhisper.app' ]]"
+    _check "Obsidian"       "[[ -d '/Applications/Obsidian.app' ]]"
 
+    # ── Remote access ──────────────────────────────────────────
+    _step "Remote access"
+    _check "SSH"            "sudo systemsetup -getremotelogin 2>/dev/null | grep -qi on"
+    _check "Tailscale"      "command -v tailscale"
+    _check "Claude Remote"  "launchctl list 2>/dev/null | grep -q claude-remote"
+
+    # ── Scorecard ──────────────────────────────────────────────
     echo ""
-    if [[ "$errors" -eq 0 ]]; then
-        _ok "All health checks passed"
-    else
-        _fail "$errors check(s) failed — see above"
+    echo "  ${MUTED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+    echo ""
+    echo "  ${BOLD}Scorecard${RESET}"
+    echo ""
+    printf "    ${GREEN}%-6s${RESET} %d passed\n" "PASS" "$pass"
+    if [[ "$warn" -gt 0 ]]; then
+        printf "    ${YELLOW}%-6s${RESET} %d warnings\n" "WARN" "$warn"
+        for w in "${warnings[@]}"; do
+            echo "    ${MUTED}  - $w${RESET}"
+        done
     fi
+    if [[ "$fail" -gt 0 ]]; then
+        printf "    ${RED}%-6s${RESET} %d failures\n" "FAIL" "$fail"
+        for f in "${failures[@]}"; do
+            echo "    ${MUTED}  - $f${RESET}"
+        done
+    fi
+    echo ""
 
-    return "$errors"
+    # Save scorecard to install log
+    _log "SCORECARD: pass=$pass warn=$warn fail=$fail"
+
+    if [[ "$fail" -gt 0 ]]; then
+        _fail "$fail critical failure(s) — fix and re-run: bash ~/aos/install.sh"
+        echo ""
+        return 1
+    elif [[ "$warn" -gt 0 ]]; then
+        _ok "System operational ($warn non-critical warning(s))"
+        echo ""
+        return 0
+    else
+        _ok "All checks passed — system fully operational"
+        echo ""
+        return 0
+    fi
 }
 
 print_handoff() {
@@ -1475,24 +1850,28 @@ except: print('Operator')
     echo "  ${MUTED}────────────────────────────────────────────────────${RESET}"
     echo ""
 
-    if command -v claude &>/dev/null; then
+    if command -v cld &>/dev/null || command -v claude &>/dev/null; then
         echo "  ${BOLD}Get started:${RESET}"
         echo ""
-        echo "    ${BRAND}${BOLD}\$ claude${RESET}"
+        echo "    ${BRAND}${BOLD}\$ aos start${RESET}"
         echo ""
-        echo "  ${MUTED}Chief is your default agent. Open a terminal,${RESET}"
-        echo "  ${MUTED}type claude, and Chief handles the rest.${RESET}"
+        echo "  ${MUTED}Opens your editor with Claude Code ready.${RESET}"
+        echo "  ${MUTED}Sahib will walk you through the rest.${RESET}"
     else
-        echo "  ${BOLD}Next:${RESET} Install Claude Code, then run ${BRAND}claude${RESET}"
+        echo "  ${BOLD}Next:${RESET} Install Claude Code, then run ${BRAND}aos start${RESET}"
         echo "  ${MUTED}https://docs.anthropic.com/en/docs/claude-code${RESET}"
     fi
 
     echo ""
     echo "  ${MUTED}────────────────────────────────────────────────────${RESET}"
     echo ""
-    echo "  ${MUTED}aos status      check migration status${RESET}"
-    echo "  ${MUTED}aos self-test   verify system health${RESET}"
-    echo "  ${MUTED}aos update      pull latest + migrate${RESET}"
+    echo "  ${MUTED}aos status        check migration status${RESET}"
+    echo "  ${MUTED}aos self-test     verify system health${RESET}"
+    echo "  ${MUTED}aos update        pull latest + migrate${RESET}"
+    echo ""
+    echo "  ${MUTED}Installer options:${RESET}"
+    echo "  ${MUTED}  --dry-run       preview what would be installed${RESET}"
+    echo "  ${MUTED}  --clean         ignore checkpoints, full re-install${RESET}"
     echo ""
     echo "  ${MUTED}Log: $INSTALL_LOG${RESET}"
     echo ""
@@ -1514,34 +1893,96 @@ main() {
     # Show banner
     _banner
 
+    # Dry-run mode — show what would happen
+    if [[ "$DRY_RUN" == true ]]; then
+        echo "  ${YELLOW}DRY RUN${RESET} — showing what would be installed"
+        echo ""
+        echo "  ${BOLD}Phase 1:${RESET} Prerequisites (Homebrew, Python, uv, bun, jq, ffmpeg, gh, mlx-whisper)"
+        echo "  ${BOLD}Phase 2:${RESET} Repository clone/update, PATH setup, git config"
+        echo "  ${BOLD}Phase 3:${RESET} User data bootstrap, migrations, agents, skills"
+        echo "  ${BOLD}Phase 4:${RESET} Service venvs (bridge, dashboard, listen, memory)"
+        echo "  ${BOLD}Phase 5:${RESET} macOS provisioning (dock, desktop, terminal, preferences)"
+        echo "  ${BOLD}Phase 6:${RESET} Apps (Chrome, SuperWhisper, Obsidian, Claude Code)"
+        echo "  ${BOLD}Phase 7:${RESET} Health scorecard — verify everything works"
+        echo ""
+        if [[ -f "$CHECKPOINT_FILE" ]]; then
+            local completed
+            completed=$(wc -l < "$CHECKPOINT_FILE" | tr -d ' ')
+            echo "  ${MUTED}Resume point: $completed phase(s) already completed${RESET}"
+            echo "  ${MUTED}Completed: $(tr '\n' ', ' < "$CHECKPOINT_FILE" | sed 's/,$//')${RESET}"
+        fi
+        echo ""
+        echo "  ${MUTED}Run without --dry-run to install.${RESET}"
+        echo ""
+        exit 0
+    fi
+
+    # Network check — fail fast
+    _check_network
+
     # Part 1: Prerequisites
-    _phase "Prerequisites"
-    run_prereqs
+    if _checkpoint_skip "prereqs"; then
+        _phase "Prerequisites"
+        _skip "Already completed (resuming)"
+    else
+        _phase "Prerequisites"
+        run_prereqs
+        _checkpoint_done "prereqs"
+    fi
 
     # Part 2: Repo & PATH
-    _phase "Repository & PATH"
-    setup_repo
-    setup_path
-    setup_git_config
+    if _checkpoint_skip "repo"; then
+        _phase "Repository & PATH"
+        _skip "Already completed (resuming)"
+    else
+        _phase "Repository & PATH"
+        setup_repo
+        setup_path
+        setup_git_config
+        _checkpoint_done "repo"
+    fi
 
     # Part 3: Bootstrap (migrations)
-    _phase "Bootstrap"
-    run_bootstrap
+    if _checkpoint_skip "bootstrap"; then
+        _phase "Bootstrap"
+        _skip "Already completed (resuming)"
+    else
+        _phase "Bootstrap"
+        run_bootstrap
+        _checkpoint_done "bootstrap"
+    fi
 
     # Part 4: Services
-    _phase "Services"
-    deploy_services
+    if _checkpoint_skip "services"; then
+        _phase "Services"
+        _skip "Already completed (resuming)"
+    else
+        _phase "Services"
+        deploy_services
+        _checkpoint_done "services"
+    fi
 
     # Part 5: macOS provisioning
-    _phase "System configuration"
-    run_provisioning
+    if _checkpoint_skip "provisioning"; then
+        _phase "System configuration"
+        _skip "Already completed (resuming)"
+    else
+        _phase "System configuration"
+        run_provisioning
+        _checkpoint_done "provisioning"
+    fi
 
-    # Part 6: Health gate + Handoff
-    _phase "Health check"
+    # Part 6: Discovery
+    _phase "Discovery"
     run_discovery
+
+    # Part 7: Health scorecard + Handoff
+    _phase "Health scorecard"
     run_health_gate
     print_handoff
 
+    # Clean checkpoint on success — next run starts fresh
+    rm -f "$CHECKPOINT_FILE" 2>/dev/null
     _log "Install complete"
 }
 

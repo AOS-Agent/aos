@@ -1,0 +1,533 @@
+#!/usr/bin/env python3
+"""reconcile-sessions — Match sessions to work items and memory.
+
+TWO MODES:
+  1. Hook mode (SessionEnd) — reads transcript from stdin, reconciles immediately
+  2. Cron mode (every 2h) — reads vault exports as catch-up
+
+This is the "loop closer" — ensures work done in sessions gets reflected
+in the work system and memory without agents needing to remember.
+
+Usage:
+    reconcile-sessions                     Cron mode (last 4 hours)
+    reconcile-sessions --hook              Hook mode (reads stdin)
+    reconcile-sessions --since 2026-03-20  From a specific date
+    reconcile-sessions --dry-run           Show what would change
+"""
+
+import argparse
+import json
+import os
+import re
+import sys
+import fcntl
+from datetime import datetime, timedelta
+from pathlib import Path
+
+import yaml
+
+# Paths
+VAULT_SESSIONS = Path.home() / "vault" / "ops" / "sessions"
+WORK_FILE = Path.home() / ".aos" / "work" / "work.yaml"
+RECONCILE_LOG = Path.home() / ".aos" / "logs" / "reconcile-sessions.jsonl"
+RECONCILE_STATE = Path.home() / ".aos" / "work" / ".reconciled-sessions.json"
+MEMORY_PROPOSALS = Path.home() / ".aos" / "work" / "memory-proposals.yaml"
+LOCK_FILE = Path.home() / ".aos" / "work" / ".reconcile.lock"
+
+# Project name normalization — maps session project names to task project names
+# Session exports use Claude Code's directory-based naming: -Users-username-dirname
+# Tasks use human-friendly names: aos-v2, nuchay, chief
+PROJECT_ALIASES = {}
+
+
+def _build_project_aliases():
+    """Build project alias map from projects.yaml and common patterns."""
+    global PROJECT_ALIASES
+    import getpass
+    user = getpass.getuser()
+
+    # Standard mappings
+    PROJECT_ALIASES = {
+        f"-Users-{user}-aos": "aos-v2",
+        f"-users-{user}-aos": "aos-v2",
+        "aos": "aos-v2",
+        f"-Users-{user}-nuchay": "nuchay",
+        f"-users-{user}-nuchay": "nuchay",
+        "nuchay": "nuchay",
+        f"-Users-{user}-chief-ios-app": "chief",
+        f"-users-{user}-chief-ios-app": "chief",
+        "chief-ios-app": "chief",
+    }
+
+    # Also read from projects.yaml if it exists
+    for config_path in [
+        Path.home() / ".aos" / "config" / "projects.yaml",
+        Path.home() / "aos" / "config" / "projects.yaml",
+    ]:
+        if config_path.exists():
+            try:
+                data = yaml.safe_load(config_path.read_text()) or {}
+                for name, proj in data.get("projects", {}).items():
+                    if isinstance(proj, dict):
+                        raw_path = proj.get("path", "")
+                        if raw_path:
+                            dirname = Path(raw_path).expanduser().name
+                            PROJECT_ALIASES[f"-Users-{user}-{dirname}"] = name
+                            PROJECT_ALIASES[dirname] = name
+            except Exception:
+                pass
+
+
+def normalize_project(session_project: str) -> str:
+    """Normalize a session project name to match task project names."""
+    if not session_project:
+        return ""
+    # Direct match
+    if session_project in PROJECT_ALIASES:
+        return PROJECT_ALIASES[session_project]
+    # Case-insensitive match
+    lower = session_project.lower()
+    for alias, target in PROJECT_ALIASES.items():
+        if alias.lower() == lower:
+            return target
+    # Strip -Users-username- prefix and try again
+    stripped = re.sub(r'^-Users-[^-]+-', '', session_project)
+    if stripped in PROJECT_ALIASES:
+        return PROJECT_ALIASES[stripped]
+    return session_project
+
+
+# Add work engine to path
+sys.path.insert(0, str(Path.home() / "aos" / "core" / "work"))
+
+
+def load_reconciled() -> set:
+    try:
+        if RECONCILE_STATE.exists():
+            return set(json.loads(RECONCILE_STATE.read_text()))
+    except Exception:
+        pass
+    return set()
+
+
+def save_reconciled(reconciled: set):
+    RECONCILE_STATE.parent.mkdir(parents=True, exist_ok=True)
+    recent = sorted(reconciled)[-500:]
+    RECONCILE_STATE.write_text(json.dumps(recent))
+
+
+def log_action(action: dict):
+    RECONCILE_LOG.parent.mkdir(parents=True, exist_ok=True)
+    action["ts"] = datetime.now().isoformat(timespec="seconds")
+    with open(RECONCILE_LOG, "a") as f:
+        f.write(json.dumps(action) + "\n")
+
+
+def session_from_hook_input(hook_input: dict) -> dict | None:
+    """Build a session dict from SessionEnd hook input."""
+    session_id = hook_input.get("session_id", "")
+    if not session_id:
+        return None
+
+    cwd = hook_input.get("cwd", "")
+    transcript = hook_input.get("transcript", "")
+    tool_results = hook_input.get("tool_use_results", [])
+
+    if not transcript and not tool_results:
+        return None
+
+    # Extract files modified from tool results
+    files_touched = []
+    tools_used = set()
+    for result in tool_results:
+        tool_name = result.get("tool_name", "")
+        if tool_name:
+            tools_used.add(tool_name)
+        inp = result.get("input", {})
+        if isinstance(inp, dict):
+            fp = inp.get("file_path", "")
+            if fp:
+                files_touched.append(fp)
+
+    # Estimate message count from transcript
+    # Each "Human:" or "Assistant:" marks a message
+    msg_count = len(re.findall(r'\n(?:Human|Assistant):', transcript))
+
+    # Use first 500 chars of transcript as summary (skip system prompts)
+    summary = transcript
+    # Strip common noise
+    summary = re.sub(r'<local-command-caveat>.*?</local-command-stdout>', '', summary, flags=re.DOTALL)
+    summary = re.sub(r'<system-reminder>.*?</system-reminder>', '', summary, flags=re.DOTALL)
+    summary = summary.strip()[:500]
+
+    # Derive project from cwd
+    project_name = Path(cwd).name if cwd else ""
+
+    return {
+        "session_id": session_id,
+        "date": datetime.now().strftime("%Y-%m-%d"),
+        "project": project_name,
+        "title": summary[:80] if summary else "",
+        "message_count": max(msg_count, 1),
+        "summary": summary,
+        "files_touched": files_touched,
+        "tools_used": list(tools_used),
+        "source": "hook",
+    }
+
+
+def load_sessions_from_vault(since: str = None, hours: int = 4) -> list[dict]:
+    """Load session export files from vault."""
+    sessions = []
+    if not VAULT_SESSIONS.exists():
+        return sessions
+
+    if since:
+        cutoff = datetime.strptime(since, "%Y-%m-%d")
+    else:
+        cutoff = datetime.now() - timedelta(hours=hours)
+
+    for path in sorted(VAULT_SESSIONS.glob("*.md")):
+        name = path.stem
+        try:
+            date_str = "-".join(name.split("-")[:3])
+            file_date = datetime.strptime(date_str, "%Y-%m-%d")
+            if file_date < cutoff:
+                continue
+        except (ValueError, IndexError):
+            continue
+
+        content = path.read_text()
+
+        meta = {}
+        if content.startswith("---"):
+            end = content.find("---", 3)
+            if end > 0:
+                try:
+                    meta = yaml.safe_load(content[3:end]) or {}
+                except yaml.YAMLError:
+                    pass
+
+        summary = ""
+        files_touched = []
+        tools_used = []
+
+        summary_match = re.search(r"## Summary\s*\n(.*?)(?=\n## |\Z)", content, re.DOTALL)
+        if summary_match:
+            raw_summary = summary_match.group(1).strip()
+            # Clean garbage summaries
+            if raw_summary.startswith("<local-command-caveat>"):
+                # Try to find real content after the caveat
+                clean = re.sub(r'<local-command-caveat>.*?</local-command-stdout>', '', raw_summary, flags=re.DOTALL)
+                clean = re.sub(r'<command-\w+>.*?</command-\w+>', '', clean, flags=re.DOTALL)
+                summary = clean.strip()
+            else:
+                summary = raw_summary
+
+        files_match = re.search(r"## Files Touched\s*\n(.*?)(?=\n## |\Z)", content, re.DOTALL)
+        if files_match:
+            files_touched = [
+                line.strip().lstrip("- `").rstrip("`")
+                for line in files_match.group(1).strip().split("\n")
+                if line.strip().startswith("-")
+            ]
+
+        tools_match = re.search(r"## Tools Used\s*\n(.*?)(?=\n## |\Z)", content, re.DOTALL)
+        if tools_match:
+            tools_used = [t.strip() for t in tools_match.group(1).strip().split(",")]
+
+        sessions.append({
+            "session_id": meta.get("session_id", name),
+            "date": meta.get("date", date_str),
+            "project": meta.get("project", ""),
+            "title": meta.get("title", ""),
+            "message_count": meta.get("message_count", 0),
+            "summary": summary,
+            "files_touched": files_touched,
+            "tools_used": tools_used,
+            "source": "vault",
+        })
+
+    return sessions
+
+
+def match_session_to_tasks(session: dict, tasks: list[dict]) -> list[dict]:
+    """Find tasks that a session likely worked on or completed."""
+    matches = []
+    summary_lower = session.get("summary", "").lower()
+    title_lower = session.get("title", "").lower()
+    raw_project = session.get("project", "")
+    normalized_project = normalize_project(raw_project)
+    files = session.get("files_touched", [])
+    files_lower = " ".join(f.lower() for f in files)
+
+    for task in tasks:
+        if task.get("status") in ("done", "cancelled"):
+            continue
+
+        score = 0
+        reasons = []
+
+        task_title_lower = task.get("title", "").lower()
+        task_project = task.get("project", "").lower()
+        task_tags = [t.lower() for t in task.get("tags", [])]
+
+        # Project match (using normalized name)
+        if task_project and normalized_project:
+            if task_project == normalized_project.lower():
+                score += 2
+                reasons.append(f"project: {normalized_project}")
+            elif task_project in normalized_project.lower() or normalized_project.lower() in task_project:
+                score += 1
+                reasons.append("partial project match")
+
+        # Title keyword overlap (skip common words)
+        stop_words = {"build", "system", "with", "from", "that", "this", "work", "make", "update"}
+        task_words = set(re.findall(r'\w{4,}', task_title_lower)) - stop_words
+        summary_words = set(re.findall(r'\w{4,}', summary_lower + " " + title_lower)) - stop_words
+        overlap = task_words & summary_words
+        if len(overlap) >= 2:
+            score += min(len(overlap), 4)  # Cap keyword contribution
+            reasons.append(f"keywords: {', '.join(sorted(overlap)[:3])}")
+
+        # File path evidence — strongest signal
+        # Did we modify files that are clearly related to the task?
+        task_keywords = set(re.findall(r'\w{3,}', task_title_lower))
+        file_relevance = sum(1 for kw in task_keywords if kw in files_lower)
+        if file_relevance >= 2:
+            score += 2
+            reasons.append(f"file paths match {file_relevance} keywords")
+
+        # Explicit task ID mention in summary
+        task_id = task.get("id", "")
+        if task_id and task_id in summary_lower:
+            score += 5
+            reasons.append(f"task {task_id} mentioned in transcript")
+
+        # "done" or "complete" near task-related words in summary
+        if any(w in summary_lower for w in ["completed", "finished", "done with", "all done"]):
+            if overlap:
+                score += 2
+                reasons.append("completion language + keyword match")
+
+        # Tool diversity + file count — signals substantial work
+        tool_count = len(session.get("tools_used", []))
+        file_count = len(files)
+        if tool_count >= 4 and file_count >= 5 and score > 0:
+            score += 1
+            reasons.append(f"{tool_count} tools, {file_count} files")
+
+        if score >= 3:
+            matches.append({
+                "task": task,
+                "score": score,
+                "reasons": reasons,
+                "completion_likely": score >= 6,  # Raised threshold from 5 to 6
+            })
+
+    # Deduplicate — only return best match per task
+    seen_tasks = set()
+    deduped = []
+    for match in sorted(matches, key=lambda m: m["score"], reverse=True):
+        tid = match["task"]["id"]
+        if tid not in seen_tasks:
+            seen_tasks.add(tid)
+            deduped.append(match)
+
+    return deduped
+
+
+def detect_significant_work(session: dict) -> dict | None:
+    """Detect if a session did significant architectural work."""
+    files = session.get("files_touched", [])
+    tools = session.get("tools_used", [])
+    messages = session.get("message_count", 0)
+    summary = session.get("summary", "")
+
+    # Skip garbage summaries
+    if not summary or len(summary) < 20:
+        return None
+
+    signals = []
+
+    if len(files) >= 10:
+        signals.append(f"touched {len(files)} files")
+    if messages >= 15:
+        signals.append(f"{messages} messages")
+    if "Write" in tools and len([f for f in files if f.endswith((".py", ".sh"))]) >= 3:
+        signals.append("created multiple scripts")
+
+    arch_keywords = [
+        "trust system", "agent catalog", "onboarding", "reconcil",
+        "new service", "migration", "refactor", "architecture",
+        "integration", "hook", "cron", "dashboard", "work engine",
+    ]
+    found = [kw for kw in arch_keywords if kw in summary.lower()]
+    if found:
+        signals.append(f"architectural: {', '.join(found[:3])}")
+
+    if len(signals) >= 2:
+        return {
+            "session_id": session["session_id"],
+            "date": session["date"],
+            "project": normalize_project(session.get("project", "")),
+            "title": session.get("title", "")[:80],
+            "summary": summary[:300],
+            "signals": signals,
+        }
+    return None
+
+
+def acquire_lock() -> bool:
+    """File-based lock to prevent race conditions with other hooks."""
+    try:
+        LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
+        lock_fd = open(LOCK_FILE, "w")
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return True
+    except (IOError, OSError):
+        return False
+
+
+def reconcile_sessions(sessions: list[dict], dry_run: bool = False, quiet: bool = False):
+    """Core reconciliation logic — works with sessions from any source."""
+    if not sessions:
+        if not quiet:
+            print("  No sessions to reconcile.")
+        return
+
+    reconciled = load_reconciled()
+    new_sessions = [s for s in sessions if s["session_id"] not in reconciled]
+
+    if not new_sessions:
+        if not quiet:
+            print(f"  All {len(sessions)} sessions already reconciled.")
+        return
+
+    # File lock to prevent race with other hooks
+    if not dry_run and not acquire_lock():
+        if not quiet:
+            print("  Another reconciliation is running. Skipping.")
+        return
+
+    try:
+        import engine
+        tasks = engine.get_all_tasks()
+    except ImportError:
+        if not quiet:
+            print("  Work engine not available.")
+        return
+
+    completed_ids = set()
+    linked = []
+    memory_proposals = []
+
+    for session in new_sessions:
+        matches = match_session_to_tasks(session, tasks)
+
+        for match in matches:
+            task = match["task"]
+            tid = task["id"]
+
+            # Skip if already completed in this run (dedup across sessions)
+            if tid in completed_ids:
+                continue
+
+            if match["completion_likely"] and task["status"] in ("active", "todo"):
+                if dry_run:
+                    print(f"  Would complete: {tid} — {task['title']}")
+                    print(f"    Score: {match['score']}, Reasons: {', '.join(match['reasons'])}")
+                else:
+                    engine.complete_task(tid)
+                    completed_ids.add(tid)
+                    log_action({
+                        "action": "auto_complete",
+                        "task_id": tid,
+                        "task_title": task["title"],
+                        "session_id": session["session_id"],
+                        "score": match["score"],
+                        "reasons": match["reasons"],
+                        "source": session.get("source", "unknown"),
+                    })
+                    if not quiet:
+                        print(f"  ✓ Completed {tid}: {task['title']}")
+            elif match["score"] >= 3:
+                if not dry_run:
+                    try:
+                        engine.link_session_to_task(tid, session["session_id"])
+                        linked.append(tid)
+                    except Exception:
+                        pass
+
+        sig = detect_significant_work(session)
+        if sig:
+            memory_proposals.append(sig)
+
+        reconciled.add(session["session_id"])
+
+    # Write memory proposals (append, keep last 30)
+    if memory_proposals:
+        MEMORY_PROPOSALS.parent.mkdir(parents=True, exist_ok=True)
+        existing = []
+        if MEMORY_PROPOSALS.exists():
+            try:
+                existing = yaml.safe_load(MEMORY_PROPOSALS.read_text()) or []
+                if not isinstance(existing, list):
+                    existing = []
+            except Exception:
+                existing = []
+
+        # Deduplicate by session_id
+        existing_ids = {e.get("session_id") for e in existing}
+        new_proposals = [p for p in memory_proposals if p["session_id"] not in existing_ids]
+        existing.extend(new_proposals)
+        existing = existing[-30:]
+
+        MEMORY_PROPOSALS.write_text(
+            yaml.dump(existing, default_flow_style=False, allow_unicode=True)
+        )
+
+        if not quiet and new_proposals:
+            print(f"  📝 {len(new_proposals)} sessions flagged for memory update")
+            for mp in new_proposals:
+                print(f"     {mp['date']}: {mp['title'][:60]}")
+
+    if not dry_run:
+        save_reconciled(reconciled)
+
+    if not quiet:
+        print(f"\n  Reconciled {len(new_sessions)} sessions: "
+              f"{len(completed_ids)} completed, {len(linked)} linked, "
+              f"{len(memory_proposals)} memory proposals")
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Session-to-work reconciler")
+    parser.add_argument("--hook", action="store_true",
+                       help="Hook mode: read session from stdin (SessionEnd)")
+    parser.add_argument("--since", help="Reconcile sessions since date (YYYY-MM-DD)")
+    parser.add_argument("--dry-run", action="store_true", help="Show what would change")
+    parser.add_argument("--quiet", "-q", action="store_true", help="Minimal output")
+    args = parser.parse_args()
+
+    _build_project_aliases()
+
+    if args.hook:
+        # Hook mode — read current session from stdin
+        try:
+            raw = sys.stdin.read()
+            hook_input = json.loads(raw) if raw.strip() else {}
+        except (json.JSONDecodeError, Exception):
+            return  # Silent fail for hooks
+
+        session = session_from_hook_input(hook_input)
+        if session:
+            reconcile_sessions([session], dry_run=args.dry_run, quiet=args.quiet)
+    else:
+        # Cron mode — read from vault exports
+        sessions = load_sessions_from_vault(since=args.since, hours=4)
+        reconcile_sessions(sessions, dry_run=args.dry_run, quiet=args.quiet)
+
+
+if __name__ == "__main__":
+    main()

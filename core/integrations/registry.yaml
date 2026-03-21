@@ -1,99 +1,277 @@
 # AOS Integration Registry
 # Each integration has a directory in core/integrations/ with a manifest.yaml
-# Activated during onboarding or later via Advisor recommendation
+# Activated during onboarding or later via 'aos integrate <name>'
+#
+# Tiers:
+#   1. auto    — Apple native apps, already on macOS. Just need permission grant.
+#   2. builtin — Ship with AOS, have setup scripts. Core to the system.
+#   3. catalog — Common SaaS tools. Templates provided, operator activates.
+#   4. custom  — Anything else. Operator names it, Sahib helps configure.
+#
+# Setup interface (all setup.sh scripts follow this):
+#   setup.sh              — interactive setup (prompts for input)
+#   setup.sh --check      — health check only (no prompts, exit 0/1)
+#   setup.sh --configure  — non-interactive (reads from env/args)
 
-integrations:
+# ─── Tier 1: Apple Native ─────────────────────────────────
+# Already on the Mac. Access via AppleScript, EventKit, or file system.
+# Setup = permission acknowledgment + optional config.
 
-  telegram:
-    name: Telegram
-    category: communication
-    status: available
-    priority: high
-    description: Primary messaging interface. Operator sends commands, agents respond.
-    provides:
-      - messaging (send/receive)
-      - slash commands
-      - heartbeat alerts
-    requires:
-      - bot_token (secret)
-      - chat_id (config)
-
-  whatsapp:
-    name: WhatsApp
-    category: communication
-    status: available
-    priority: medium
-    description: WhatsApp messaging via whatsmeow bridge. Read and send messages.
-    provides:
-      - messaging (send/receive)
-      - contact lookup
-    requires:
-      - whatsmeow service running
-      - QR code pairing (interactive)
-
-  email:
-    name: Email
-    category: communication
-    status: planned
-    priority: medium
-    description: Email reading and sending via IMAP/SMTP or API.
-    provides:
-      - inbox reading
-      - email sending
-      - auto-reply (with trust)
-    requires:
-      - email credentials (secret)
-      - IMAP/SMTP config
+apple_native:
 
   calendar:
     name: Calendar
+    tier: 1
     category: productivity
-    status: planned
+    status: available
+    description: Read and create events, schedule awareness, conflict detection.
+    access: applescript
+    provides: [event reading, event creation, schedule awareness]
+    requires: [calendar permission]
+
+  notes:
+    name: Notes
+    tier: 1
+    category: knowledge
+    status: available
+    description: Read and create Apple Notes. Quick capture from agents.
+    access: applescript
+    provides: [note reading, note creation, search]
+    requires: [notes permission]
+
+  reminders:
+    name: Reminders
+    tier: 1
+    category: productivity
+    status: available
+    description: Create and manage reminders and lists.
+    access: applescript
+    provides: [reminder creation, list management, due dates]
+    requires: [reminders permission]
+
+  messages:
+    name: Messages (iMessage)
+    tier: 1
+    category: communication
+    status: available
+    description: Send and read iMessages. Already working via AppleScript.
+    access: applescript
+    provides: [send message, read recent, contact lookup]
+    requires: [messages permission]
+
+  mail:
+    name: Mail
+    tier: 1
+    category: communication
+    status: available
+    description: Read and compose email via Apple Mail app.
+    access: applescript
+    provides: [inbox reading, email composing, search]
+    requires: [mail permission, accounts configured in Mail.app]
+
+  voice_memos:
+    name: Voice Memos
+    tier: 1
+    category: input
+    status: available
+    description: Access voice recordings for transcription and capture.
+    access: filesystem
+    provides: [recording access, transcription input]
+    requires: [voice memos sync path]
+
+  contacts:
+    name: Contacts
+    tier: 1
+    category: data
+    status: available
+    description: Look up contact info. Already working via contacts_reader.py.
+    access: script
+    provides: [contact lookup, phone/email resolution]
+    requires: []
+
+# ─── Tier 2: Built-in ─────────────────────────────────────
+# Ship with AOS. Have setup scripts and manifests.
+# Core integrations that most operators will use.
+
+builtin:
+
+  telegram:
+    name: Telegram
+    tier: 2
+    category: communication
+    status: available
+    priority: high
+    description: Primary command interface. Talk to agents from your phone.
+    provides: [messaging, slash commands, heartbeat alerts]
+    requires: [bot_token, chat_id]
+    setup: core/integrations/telegram/setup.sh
+
+  whatsapp:
+    name: WhatsApp
+    tier: 2
+    category: communication
+    status: available
     priority: medium
-    description: Calendar access for scheduling and awareness.
-    provides:
-      - event reading
-      - schedule awareness
-      - conflict detection
-    requires:
-      - calendar API credentials
+    description: Read and send WhatsApp messages via whatsmeow bridge.
+    provides: [messaging, contact lookup, message history]
+    requires: [whatsmeow service, QR pairing]
+    setup: core/integrations/whatsapp/setup.sh
+
+  email:
+    name: Email Accounts
+    tier: 2
+    category: communication
+    status: available
+    priority: medium
+    description: IMAP/SMTP email. Supports multiple accounts.
+    provides: [inbox reading, email sending, auto-reply]
+    requires: [credentials per account]
+    setup: core/integrations/email/setup.sh
 
   obsidian:
     name: Obsidian Vault
+    tier: 2
     category: knowledge
     status: available
     priority: high
-    description: Knowledge vault with daily notes, sessions, ideas, materials.
-    provides:
-      - note storage
-      - daily notes
-      - QMD search integration
-    requires:
-      - vault_path (config)
+    description: Knowledge vault with daily notes, sessions, QMD search.
+    provides: [note storage, daily notes, search, backlinks]
+    requires: [vault_path]
+    setup: core/integrations/obsidian/setup.sh
+
+  github:
+    name: GitHub
+    tier: 2
+    category: development
+    status: available
+    priority: medium
+    description: Repos, PRs, issues via gh CLI.
+    provides: [repo management, PR workflow, issue tracking]
+    requires: [gh auth]
+    setup: core/integrations/github/setup.sh
 
   health:
     name: HealthKit Sync
+    tier: 2
     category: personal
     status: available
     priority: low
     description: Health metrics from iOS via HealthSync app.
-    provides:
-      - sleep data
-      - activity metrics
-      - mood/energy tracking
-    requires:
-      - HealthSync iOS app
-      - sync endpoint
+    provides: [sleep data, activity metrics, energy tracking]
+    requires: [HealthSync iOS app, sync endpoint]
+    setup: core/integrations/health/setup.sh
+
+# ─── Tier 3: Catalog ──────────────────────────────────────
+# Common SaaS tools. We provide config templates.
+# Operator picks what they use, Sahib helps connect.
+
+catalog:
+
+  notion:
+    name: Notion
+    tier: 3
+    category: productivity
+    status: available
+    description: Pages, databases, and blocks via Notion API or MCP plugin.
+    access: api
+    provides: [page CRUD, database queries, block editing]
+    requires: [api_token or MCP plugin]
+    setup_hint: "Enable Notion plugin in Claude Code, or provide API token"
+
+  linear:
+    name: Linear
+    tier: 3
+    category: project_management
+    status: available
+    description: Issue tracking and project management.
+    access: api
+    provides: [issue CRUD, project views, cycle tracking]
+    requires: [api_key]
+    setup_hint: "Get API key from Linear Settings > API"
+
+  slack:
+    name: Slack
+    tier: 3
+    category: communication
+    status: available
+    description: Workspace messaging, channels, and threads.
+    access: api
+    provides: [messaging, channel management, file sharing]
+    requires: [bot_token, workspace]
+    setup_hint: "Create Slack app at api.slack.com, get Bot User OAuth Token"
+
+  discord:
+    name: Discord
+    tier: 3
+    category: communication
+    status: available
+    description: Server messaging and management via bot.
+    access: api
+    provides: [messaging, channel management]
+    requires: [bot_token, server_id]
+    setup_hint: "Create bot at discord.com/developers, get token"
+
+  google_suite:
+    name: Google Workspace
+    tier: 3
+    category: productivity
+    status: available
+    description: Gmail, Docs, Sheets, Drive via mcp-gsuite.
+    access: mcp
+    provides: [email, docs, sheets, drive]
+    requires: [OAuth credentials]
+    setup_hint: "Configure mcp-gsuite in vendor/"
+
+  clickup:
+    name: ClickUp
+    tier: 3
+    category: project_management
+    status: available
+    description: Task and project management.
+    access: api
+    provides: [task CRUD, list management, time tracking]
+    requires: [api_key]
+    setup_hint: "Get API key from ClickUp Settings > Apps"
+
+  todoist:
+    name: Todoist
+    tier: 3
+    category: productivity
+    status: available
+    description: Personal task management.
+    access: api
+    provides: [task CRUD, project management, labels]
+    requires: [api_token]
+    setup_hint: "Get token from todoist.com/app/settings/integrations/developer"
+
+  plane:
+    name: Plane
+    tier: 3
+    category: project_management
+    status: available
+    description: Self-hosted project management (open source).
+    access: api
+    provides: [issue CRUD, project views, cycles]
+    requires: [instance URL, api_token]
+    setup_hint: "Self-hosted on :8880 or provide instance URL"
 
   superwhisper:
     name: SuperWhisper
+    tier: 3
     category: input
-    status: planned
-    priority: low
+    status: available
     description: Voice-to-text transcription for quick captures.
-    provides:
-      - voice input
-      - transcription
-    requires:
-      - SuperWhisper app installed
-      - hotkey configured
+    access: app
+    provides: [voice input, transcription]
+    requires: [app installed, hotkey configured]
+    setup_hint: "Install SuperWhisper, configure hotkey in System Settings"
+
+# ─── Tier 4: Custom ───────────────────────────────────────
+# Not predefined. Operator says "I also use X" and Sahib
+# helps configure it. Stored in ~/.aos/config/custom_integrations.yaml
+#
+# Custom integrations follow one of these patterns:
+#   - API: operator provides base URL + API key
+#   - MCP: operator points to an MCP server
+#   - Web: operator gives a URL, Chrome MCP handles it
+#   - App: native/electron app, Steer or AppleScript handles it

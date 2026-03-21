@@ -47,8 +47,10 @@ class AgentRegistry:
 
     def __init__(self, workspace: Path):
         self.workspace = workspace
-        self.agents_dir = workspace / ".claude" / "agents"
-        self.trust_path = workspace / "config" / "trust.yaml"
+        # Agents are installed globally at ~/.claude/agents/
+        self.agents_dir = Path.home() / ".claude" / "agents"
+        # Trust config lives in user data at ~/.aos/config/
+        self.trust_path = Path.home() / ".aos" / "config" / "trust.yaml"
         self._cache: list[dict] | None = None
         self._cache_time: float = 0
         self._cache_ttl: float = 5.0  # seconds
@@ -74,17 +76,30 @@ class AgentRegistry:
 
         body = text[end + 3:].strip()
         meta["_body"] = body
-        meta["_path"] = str(path.relative_to(self.workspace))
+        try:
+            meta["_path"] = str(path.relative_to(self.workspace))
+        except ValueError:
+            meta["_path"] = str(path)
         return meta
 
     def _load_trust(self) -> dict:
-        """Load trust levels from config/trust.yaml."""
+        """Load trust data from config/trust.yaml.
+
+        Returns dict of agent_name -> {trust_level, capabilities, metrics}.
+        """
         if not self.trust_path.exists():
             return {}
         try:
             data = yaml.safe_load(self.trust_path.read_text()) or {}
             agents = data.get("agents", {})
-            return {name: info.get("trust_level", 1) for name, info in agents.items()}
+            result = {}
+            for name, info in agents.items():
+                result[name] = {
+                    "trust_level": info.get("trust_level", 1),
+                    "capabilities": info.get("capabilities", {}),
+                    "metrics": info.get("metrics", {}),
+                }
+            return result
         except Exception:
             return {}
 
@@ -106,6 +121,7 @@ class AgentRegistry:
                 continue
 
             name = meta["name"]
+            trust_data = trust_levels.get(name, {})
             agents.append({
                 "name": name,
                 "arabic_name": meta.get("arabic_name", ""),
@@ -116,7 +132,9 @@ class AgentRegistry:
                 "project": meta.get("project", ""),
                 "model": meta.get("model", "sonnet"),
                 "tools": meta.get("tools", []),
-                "trust_level": trust_levels.get(name, 1),
+                "trust_level": trust_data.get("trust_level", 1) if isinstance(trust_data, dict) else trust_data,
+                "capabilities": trust_data.get("capabilities", {}) if isinstance(trust_data, dict) else {},
+                "trust_metrics": trust_data.get("metrics", {}) if isinstance(trust_data, dict) else {},
                 "_path": meta.get("_path", ""),
             })
 
@@ -138,6 +156,7 @@ class AgentRegistry:
             return None
 
         trust_levels = self._load_trust()
+        trust_data = trust_levels.get(name, {})
         return {
             "name": meta.get("name", name),
             "arabic_name": meta.get("arabic_name", ""),
@@ -148,7 +167,9 @@ class AgentRegistry:
             "project": meta.get("project", ""),
             "model": meta.get("model", "sonnet"),
             "tools": meta.get("tools", []),
-            "trust_level": trust_levels.get(name, 1),
+            "trust_level": trust_data.get("trust_level", 1) if isinstance(trust_data, dict) else trust_data,
+            "capabilities": trust_data.get("capabilities", {}) if isinstance(trust_data, dict) else {},
+            "trust_metrics": trust_data.get("metrics", {}) if isinstance(trust_data, dict) else {},
             "body": meta.get("_body", ""),
             "_path": meta.get("_path", ""),
         }

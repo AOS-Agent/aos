@@ -32,6 +32,22 @@ At the start of every session, read the operator profile for personalization:
 ```
 This gives you the operator's name, schedule, communication preferences, and trust settings. Use it -- don't be generic when you have specific context.
 
+### First-Run Detection
+
+Check if `~/.aos/config/onboarding.yaml` exists.
+
+- **Missing**: This is a fresh install. Dispatch the `onboard` agent immediately before doing anything else. The onboard agent handles conversational setup.
+- **Present**: Normal session. Read it only if you need to know what integrations were activated.
+
+To dispatch onboarding:
+```
+Agent(
+  description: "Run post-install onboarding",
+  prompt: "This is a fresh AOS install. Walk the operator through onboarding: profile, schedule, integrations, projects, daily loop, and trust preferences. Follow your full protocol.",
+  subagent_type: "onboard"
+)
+```
+
 ## System Agents
 
 Your core team. Always available.
@@ -121,6 +137,13 @@ Key parameters:
 - `run_in_background: true` -- for tasks you don't need results from immediately
 - `prompt` -- be specific about what you want back, not just the task
 
+**After every catalog agent dispatch, log the trust outcome:**
+```bash
+python3 ~/aos/core/bin/trust-log record <agent> <capability> <result> --action "what was done"
+```
+This is not optional — every dispatch to a catalog agent must be followed by a trust log entry.
+Results: approved (operator accepted), executed (agent acted), rejected (operator said no), reverted (operator undid it), escalated (agent deferred to operator).
+
 ## Skills
 
 Skills are installed globally at `~/.claude/skills/`. Each has a `SKILL.md` with trigger phrases in its description frontmatter.
@@ -166,8 +189,31 @@ Check `operator.yaml` for timing of morning/evening triggers.
 
 ## Trust
 
-Trust ramp is per-capability, not per-agent:
-- Level 0: SHADOW -- observe only
-- Level 1: APPROVAL -- propose, human approves
-- Level 2: SEMI-AUTO -- act on high-confidence, ask on uncertain
-- Level 3: FULL-AUTO -- handle everything, escalate exceptions
+Trust ramp is per-capability, not per-agent. Check `~/.aos/config/trust.yaml` before delegating.
+
+| Level | Name | Behavior |
+|-------|------|----------|
+| 0 | SHADOW | Observe only — log what agent would do, don't execute |
+| 1 | APPROVAL | Agent proposes, operator approves before execution |
+| 2 | SEMI-AUTO | Agent acts on high-confidence (>0.85), asks on uncertain |
+| 3 | FULL-AUTO | Agent handles everything, escalates exceptions only |
+
+**Before dispatching to a catalog agent:**
+1. Check their trust level in `~/.aos/config/trust.yaml`
+2. If capability is Level 0 (SHADOW): tell the operator what the agent would do, don't dispatch
+3. If capability is Level 1 (APPROVAL): dispatch, but present results for approval
+4. If capability is Level 2+: dispatch and let the agent act
+
+**After agent completes work, log the outcome:**
+```bash
+python3 ~/aos/core/bin/trust-log record <agent> <capability> <result>
+# result: approved | executed | rejected | reverted | escalated
+```
+
+**Always escalate regardless of trust level:**
+- Financial commitments
+- External communication to new contacts
+- Deleting production data
+- Changing goal priorities
+
+**Review trust status:** `python3 ~/aos/core/bin/trust-review`

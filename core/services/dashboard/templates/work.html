@@ -154,6 +154,10 @@
 .project-name { font-size: 14px; font-weight: 600; color: var(--text); flex: 1; }
 .project-count { font-size: 12px; color: var(--text-faint); font-family: var(--font-mono); }
 
+/* Project progress bar */
+.project-progress { width: 60px; height: 3px; background: var(--tag-gray-bg); border-radius: 2px; }
+.project-progress-fill { height: 100%; border-radius: 2px; background: var(--tag-green); transition: width 0.3s; }
+
 .task-list { list-style: none; }
 
 .task-item {
@@ -195,9 +199,29 @@
 .task-sessions { display: flex; gap: 2px; }
 .task-session-dot { width: 4px; height: 4px; border-radius: 50%; background: var(--tag-blue); }
 
+/* Handoff indicator */
+.task-handoff {
+    width: 14px; height: 14px;
+    color: var(--tag-purple);
+    flex-shrink: 0;
+    cursor: help;
+}
+
+/* Subtask progress inline */
+.task-subtask-progress {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-tertiary);
+    background: var(--tag-gray-bg);
+    padding: 0 5px;
+    border-radius: 2px;
+    flex-shrink: 0;
+}
+
 /* Subtasks */
 .subtask-list { padding-left: 28px; }
-.subtask-item { font-size: 13px; }
+.subtask-item { font-size: 13px; min-height: 28px; }
+.subtask-item .task-id { font-size: 10px; }
 
 /* ═══ BOARD VIEW (Kanban) ════════════════════════ */
 
@@ -241,6 +265,22 @@
 .board-card-title { font-size: 13px; color: var(--text); margin-bottom: 6px; }
 .board-card-meta { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 
+/* Board card subtask progress */
+.board-subtask-bar { width: 100%; height: 2px; background: var(--tag-gray-bg); border-radius: 1px; margin-top: 6px; }
+.board-subtask-fill { height: 100%; border-radius: 1px; background: var(--tag-green); transition: width 0.3s; }
+
+/* Board card handoff indicator */
+.board-card-handoff {
+    font-size: 11px;
+    color: var(--tag-purple);
+    margin-top: 6px;
+    padding-top: 6px;
+    border-top: 1px solid var(--border-light);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
 /* ═══ TABLE VIEW ═════════════════════════════════ */
 
 .work-table { width: 100%; border-collapse: collapse; }
@@ -277,6 +317,26 @@
 
 .detected-hint { font-size: 12px; color: var(--text-faint); margin-bottom: 8px; }
 
+/* ── Handoff tooltip ───────────────────────────── */
+.handoff-tooltip {
+    display: none;
+    position: absolute;
+    z-index: 100;
+    background: var(--bg-page);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px;
+    max-width: 360px;
+    box-shadow: rgba(15,15,15,0.1) 0 2px 8px;
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.handoff-tooltip.visible { display: block; }
+.handoff-tooltip-label { font-weight: 600; color: var(--text-tertiary); text-transform: uppercase; font-size: 10px; letter-spacing: 0.5px; margin-top: 8px; }
+.handoff-tooltip-label:first-child { margin-top: 0; }
+.handoff-tooltip-text { color: var(--text-secondary); white-space: pre-wrap; }
+
 @media (max-width: 900px) {
     .work-layout { grid-template-columns: 1fr; }
     .board-view.active { flex-direction: column; }
@@ -308,9 +368,9 @@
     <div class="add-task-row">
         <select class="add-task-select" id="add-task-priority">
             <option value="3">Priority 3</option>
-            <option value="1">P1 — Urgent</option>
-            <option value="2">P2 — Important</option>
-            <option value="4">P4 — Low</option>
+            <option value="1">P1 -- Urgent</option>
+            <option value="2">P2 -- Important</option>
+            <option value="4">P4 -- Low</option>
         </select>
         <select class="add-task-select" id="add-task-project">
             <option value="">No project</option>
@@ -330,7 +390,12 @@
                 <div class="project-header" onclick="toggleProject(this)">
                     <i data-lucide="chevron-down" class="project-toggle" style="width:16px;height:16px;"></i>
                     <span class="project-name">{{ project.title }}</span>
-                    <span class="project-count">{{ project.task_count }}</span>
+                    {% if project.progress and project.progress.total > 0 %}
+                    <div class="project-progress">
+                        <div class="project-progress-fill" style="width:{{ project.progress.pct }}%"></div>
+                    </div>
+                    {% endif %}
+                    <span class="project-count">{{ project.progress.done if project.progress else 0 }}/{{ project.progress.total if project.progress else project.task_count }}</span>
                 </div>
                 <ul class="task-list project-tasks">
                     {% for task in project.tasks %}
@@ -338,13 +403,20 @@
                         <div class="task-priority p{{ task.priority or 3 }}"></div>
                         <div class="task-check {{ task.status }}" onclick="toggleTask('{{ task.id }}','{{ task.status }}')"></div>
                         <span class="task-title">{{ task.title }}</span>
+                        {% if task.subtasks %}
+                        {% set sub_done = task.subtasks|selectattr('status','equalto','done')|list|length %}
+                        <span class="task-subtask-progress">{{ sub_done }}/{{ task.subtasks|length }}</span>
+                        {% endif %}
+                        {% if task.handoff %}
+                        <i data-lucide="arrow-right-circle" class="task-handoff" title="Has handoff context" onclick="event.stopPropagation();showHandoff(this, '{{ task.id }}')" style="width:14px;height:14px;"></i>
+                        {% endif %}
                         {% if task.sessions %}<div class="task-sessions" title="{{ task.sessions|length }} sessions">{% for s in task.sessions[:5] %}<div class="task-session-dot"></div>{% endfor %}</div>{% endif %}
                         <span class="task-id">{{ task.id }}</span>
                     </li>
                     {% if task.subtasks %}
                     <ul class="subtask-list">
                         {% for sub in task.subtasks %}
-                        <li class="task-item subtask-item{% if sub.status == 'done' %} done{% endif %}" data-id="{{ sub.id }}">
+                        <li class="task-item subtask-item{% if sub.status == 'done' %} done{% endif %}" data-id="{{ sub.id }}" data-status="{{ sub.status }}">
                             <div class="task-check {{ sub.status }}" onclick="toggleTask('{{ sub.id }}','{{ sub.status }}')"></div>
                             <span class="task-title">{{ sub.title }}</span>
                             <span class="task-id">{{ sub.id }}</span>
@@ -370,6 +442,9 @@
                         <div class="task-priority p{{ task.priority or 3 }}"></div>
                         <div class="task-check {{ task.status }}" onclick="toggleTask('{{ task.id }}','{{ task.status }}')"></div>
                         <span class="task-title">{{ task.title }}</span>
+                        {% if task.handoff %}
+                        <i data-lucide="arrow-right-circle" class="task-handoff" title="Has handoff context" style="width:14px;height:14px;"></i>
+                        {% endif %}
                         <span class="task-id">{{ task.id }}</span>
                     </li>
                     {% endfor %}
@@ -391,7 +466,12 @@
                     <div class="board-card-meta">
                         <span class="tag tag-{{ 'red' if task.priority == 1 else 'orange' if task.priority == 2 else 'gray' }}">P{{ task.priority or 3 }}</span>
                         {% if task.project %}<span class="tag tag-blue">{{ task.project }}</span>{% endif %}
+                        <span class="task-id">{{ task.id }}</span>
                     </div>
+                    {% if task.subtasks %}
+                    {% set sub_done = task.subtasks|selectattr('status','equalto','done')|list|length %}
+                    <div class="board-subtask-bar"><div class="board-subtask-fill" style="width:{{ (sub_done / task.subtasks|length * 100)|int }}%"></div></div>
+                    {% endif %}
                 </div>
                 {% endfor %}
             </div>
@@ -407,8 +487,19 @@
                     <div class="board-card-meta">
                         <span class="tag tag-{{ 'red' if task.priority == 1 else 'orange' if task.priority == 2 else 'gray' }}">P{{ task.priority or 3 }}</span>
                         {% if task.project %}<span class="tag tag-blue">{{ task.project }}</span>{% endif %}
-                        {% if task.sessions %}<span class="tag tag-purple">{{ task.sessions|length }} sessions</span>{% endif %}
+                        {% if task.sessions %}<span class="tag tag-purple">{{ task.sessions|length }}s</span>{% endif %}
+                        <span class="task-id">{{ task.id }}</span>
                     </div>
+                    {% if task.subtasks %}
+                    {% set sub_done = task.subtasks|selectattr('status','equalto','done')|list|length %}
+                    <div class="board-subtask-bar"><div class="board-subtask-fill" style="width:{{ (sub_done / task.subtasks|length * 100)|int }}%"></div></div>
+                    {% endif %}
+                    {% if task.handoff %}
+                    <div class="board-card-handoff">
+                        <i data-lucide="arrow-right-circle" style="width:10px;height:10px;display:inline;vertical-align:middle;"></i>
+                        {{ task.handoff.next_step[:80] if task.handoff.next_step else task.handoff.state[:80] }}...
+                    </div>
+                    {% endif %}
                 </div>
                 {% endfor %}
             </div>
@@ -423,6 +514,7 @@
                     <div class="board-card-title" style="color:var(--text-faint);text-decoration:line-through;">{{ task.title }}</div>
                     <div class="board-card-meta">
                         {% if task.project %}<span class="tag tag-gray">{{ task.project }}</span>{% endif %}
+                        <span class="task-id">{{ task.id }}</span>
                     </div>
                 </div>
                 {% endfor %}
@@ -436,11 +528,12 @@
                     <tr>
                         <th style="width:30px;"></th>
                         <th>Title</th>
+                        <th style="width:90px;">ID</th>
                         <th style="width:60px;">Priority</th>
                         <th style="width:100px;">Status</th>
                         <th style="width:120px;">Project</th>
-                        <th style="width:80px;">Created</th>
-                        <th style="width:60px;">Sessions</th>
+                        <th style="width:80px;">Progress</th>
+                        <th style="width:40px;"></th>
                     </tr>
                 </thead>
                 <tbody>
@@ -448,11 +541,17 @@
                     <tr class="{% if task.status == 'done' %}hidden-done{% endif %}" {% if task.status == 'done' %}style="display:none;"{% endif %} data-id="{{ task.id }}">
                         <td><div class="task-check {{ task.status }}" onclick="toggleTask('{{ task.id }}','{{ task.status }}')" style="width:14px;height:14px;"></div></td>
                         <td class="title-cell" {% if task.status == 'done' %}style="color:var(--text-faint);text-decoration:line-through;"{% endif %}>{{ task.title }}</td>
+                        <td><span class="task-id">{{ task.id }}</span></td>
                         <td><span class="tag tag-{{ 'red' if task.priority == 1 else 'orange' if task.priority == 2 else 'yellow' if task.priority == 3 else 'gray' }}">P{{ task.priority or 3 }}</span></td>
                         <td><span class="tag tag-{{ 'green' if task.status == 'done' else 'blue' if task.status == 'active' else 'gray' }}">{{ task.status }}</span></td>
                         <td>{% if task.project %}<span class="tag tag-blue">{{ task.project }}</span>{% endif %}</td>
-                        <td style="font-family:var(--font-mono);font-size:12px;color:var(--text-tertiary);">{{ task.created }}</td>
-                        <td style="font-family:var(--font-mono);font-size:12px;color:var(--text-tertiary);">{{ task.sessions|length if task.sessions else '' }}</td>
+                        <td>
+                            {% if task.subtasks %}
+                            {% set sub_done = task.subtasks|selectattr('status','equalto','done')|list|length %}
+                            <span class="task-subtask-progress">{{ sub_done }}/{{ task.subtasks|length }}</span>
+                            {% endif %}
+                        </td>
+                        <td>{% if task.handoff %}<i data-lucide="arrow-right-circle" style="width:12px;height:12px;color:var(--tag-purple);" title="Has handoff"></i>{% endif %}</td>
                     </tr>
                     {% endfor %}
                 </tbody>
@@ -467,6 +566,9 @@
             <div class="stat-row"><span class="stat-label">Active</span><span class="stat-val" style="color:var(--tag-blue);">{{ summary.active or 0 }}</span></div>
             <div class="stat-row"><span class="stat-label">Todo</span><span class="stat-val">{{ summary.todo or 0 }}</span></div>
             <div class="stat-row"><span class="stat-label">Done</span><span class="stat-val" style="color:var(--tag-green);">{{ summary.done or 0 }}</span></div>
+            {% if summary.with_handoffs %}
+            <div class="stat-row"><span class="stat-label">With handoffs</span><span class="stat-val" style="color:var(--tag-purple);">{{ summary.with_handoffs }}</span></div>
+            {% endif %}
             <div class="stat-row" style="border-top:1px solid var(--border-light);padding-top:6px;margin-top:4px;">
                 <span class="stat-label">Total</span><span class="stat-val">{{ summary.total or 0 }}</span>
             </div>
@@ -522,15 +624,38 @@
             {% for p in projects %}
             <div class="stat-row">
                 <span class="stat-label">{{ p.title }}</span>
-                <span class="stat-val" style="font-size:12px;">{{ p.task_count }}</span>
+                <span class="stat-val" style="font-size:12px;">
+                    {% if p.progress and p.progress.total > 0 %}
+                    {{ p.progress.done }}/{{ p.progress.total }} ({{ p.progress.pct }}%)
+                    {% else %}
+                    {{ p.task_count }}
+                    {% endif %}
+                </span>
             </div>
             {% endfor %}
         </div>
     </div>
 </div>
+
+<!-- Handoff tooltip (shared, positioned dynamically) -->
+<div class="handoff-tooltip" id="handoff-tooltip"></div>
 {% endblock %}
 
 {% block scripts %}
+// ── Handoff data embedded from server ────────────
+const handoffData = {
+    {% for task in all_tasks if task.handoff %}
+    '{{ task.id }}': {
+        state: {{ task.handoff.state|tojson if task.handoff.state else '""' }},
+        next_step: {{ task.handoff.next_step|tojson if task.handoff.next_step else '""' }},
+        files: {{ task.handoff.files_touched|tojson if task.handoff.files_touched else '[]' }},
+        decisions: {{ task.handoff.decisions|tojson if task.handoff.decisions else '[]' }},
+        blockers: {{ task.handoff.blockers|tojson if task.handoff.blockers else '[]' }},
+        updated: {{ task.handoff.updated|tojson if task.handoff.updated else '""' }}
+    },
+    {% endfor %}
+};
+
 // ── View switching ──────────────────────────────
 function switchView(view) {
     document.querySelectorAll('.view-tab').forEach(t => t.classList.toggle('active', t.dataset.view === view));
@@ -559,21 +684,70 @@ function toggleDone() {
 
 // ── Toggle project collapse ─────────────────────
 function toggleProject(header) {
-    const tasks = header.nextElementSibling;
+    const section = header.closest('.project-section');
+    const lists = section.querySelectorAll('.task-list, .subtask-list');
     const icon = header.querySelector('.project-toggle');
-    if (tasks.style.display === 'none') {
-        tasks.style.display = '';
-        icon.classList.remove('collapsed');
-    } else {
-        tasks.style.display = 'none';
-        icon.classList.add('collapsed');
+    const isCollapsed = icon.classList.contains('collapsed');
+    lists.forEach(l => { l.style.display = isCollapsed ? '' : 'none'; });
+    icon.classList.toggle('collapsed');
+}
+
+// ── Handoff tooltip ─────────────────────────────
+function showHandoff(el, taskId) {
+    const data = handoffData[taskId];
+    if (!data) return;
+
+    const tooltip = document.getElementById('handoff-tooltip');
+    let html = '';
+
+    if (data.state) {
+        html += '<div class="handoff-tooltip-label">State</div>';
+        html += '<div class="handoff-tooltip-text">' + escapeHtml(data.state.substring(0, 300)) + '</div>';
     }
+    if (data.next_step) {
+        html += '<div class="handoff-tooltip-label">Next Step</div>';
+        html += '<div class="handoff-tooltip-text">' + escapeHtml(data.next_step.substring(0, 200)) + '</div>';
+    }
+    if (data.files && data.files.length) {
+        html += '<div class="handoff-tooltip-label">Files</div>';
+        html += '<div class="handoff-tooltip-text">' + data.files.map(escapeHtml).join(', ') + '</div>';
+    }
+    if (data.blockers && data.blockers.length) {
+        html += '<div class="handoff-tooltip-label">Blockers</div>';
+        html += '<div class="handoff-tooltip-text" style="color:var(--tag-red);">' + data.blockers.map(escapeHtml).join(', ') + '</div>';
+    }
+    if (data.updated) {
+        html += '<div style="margin-top:8px;font-size:10px;color:var(--text-faint);">Updated: ' + escapeHtml(data.updated) + '</div>';
+    }
+
+    tooltip.innerHTML = html;
+
+    // Position near the element
+    const rect = el.getBoundingClientRect();
+    tooltip.style.top = (rect.bottom + window.scrollY + 4) + 'px';
+    tooltip.style.left = Math.min(rect.left, window.innerWidth - 380) + 'px';
+    tooltip.classList.add('visible');
+
+    // Close on click outside
+    setTimeout(() => {
+        document.addEventListener('click', closeHandoff, {once: true});
+    }, 10);
+}
+
+function closeHandoff() {
+    document.getElementById('handoff-tooltip').classList.remove('visible');
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
 }
 
 // ── Task CRUD ───────────────────────────────────
 async function toggleTask(id, currentStatus) {
     const newStatus = currentStatus === 'done' ? 'todo' : currentStatus === 'active' ? 'done' : 'active';
-    await fetch('/api/tasks/' + id, {
+    await fetch('/api/tasks/' + encodeURIComponent(id), {
         method: 'PATCH',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({status: newStatus})

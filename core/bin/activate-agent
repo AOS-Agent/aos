@@ -1,0 +1,210 @@
+#!/usr/bin/env bash
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  activate-agent — Install a catalog agent template
+#
+#  Usage:
+#    activate-agent <name>        Copy template → ~/.claude/agents/
+#    activate-agent --list        Show available catalog agents
+#    activate-agent --update <n>  Re-copy from template (overwrites)
+#    activate-agent --status      Show installed vs available
+#
+#  Catalog agents are COPIED (not symlinked) so the system repo
+#  can update without breaking active agents. Source tracking
+#  frontmatter (_source) is injected for update awareness.
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+set -euo pipefail
+
+CATALOG_DIR="$HOME/aos/templates/agents"
+INSTALL_DIR="$HOME/.claude/agents"
+SYSTEM_DIR="$HOME/aos/core/agents"
+
+# ── Colors ────────────────────────────────────────────
+if [[ -t 1 ]] && command -v tput &>/dev/null; then
+    GREEN=$(tput setaf 2)
+    YELLOW=$(tput setaf 3)
+    RED=$(tput setaf 1)
+    DIM=$(tput dim)
+    BOLD=$(tput bold)
+    RESET=$(tput sgr0)
+else
+    GREEN="" YELLOW="" RED="" DIM="" BOLD="" RESET=""
+fi
+
+_ok()   { echo "  ${GREEN}✓${RESET} $1"; }
+_warn() { echo "  ${YELLOW}⚠${RESET} $1"; }
+_err()  { echo "  ${RED}✗${RESET} $1" >&2; }
+_dim()  { echo "  ${DIM}$1${RESET}"; }
+
+# ── Helpers ───────────────────────────────────────────
+
+get_frontmatter_field() {
+    local file="$1" field="$2"
+    sed -n '/^---$/,/^---$/p' "$file" | grep "^${field}:" | head -1 | sed "s/^${field}:[[:space:]]*//" | tr -d '"'
+}
+
+list_catalog() {
+    echo "${BOLD}Available catalog agents:${RESET}"
+    echo ""
+    for tmpl in "$CATALOG_DIR"/*.md; do
+        [[ -f "$tmpl" ]] || continue
+        local name
+        name=$(basename "$tmpl" .md)
+        local desc
+        desc=$(get_frontmatter_field "$tmpl" "description")
+        local role
+        role=$(get_frontmatter_field "$tmpl" "role")
+
+        local status=""
+        if [[ -f "$INSTALL_DIR/$name.md" ]]; then
+            status=" ${GREEN}[installed]${RESET}"
+        fi
+
+        printf "  ${BOLD}%-14s${RESET} %s%s\n" "$name" "${desc:0:60}" "$status"
+    done
+    echo ""
+}
+
+show_status() {
+    echo "${BOLD}Agent status:${RESET}"
+    echo ""
+
+    # System agents
+    echo "  ${DIM}── System (symlinked) ──${RESET}"
+    for agent in "$SYSTEM_DIR"/*.md; do
+        [[ -f "$agent" ]] || continue
+        local name
+        name=$(basename "$agent" .md)
+        if [[ -L "$INSTALL_DIR/$name.md" ]]; then
+            _ok "$name"
+        else
+            _warn "$name ${DIM}(not linked)${RESET}"
+        fi
+    done
+
+    echo ""
+    echo "  ${DIM}── Catalog (copied) ──${RESET}"
+    for tmpl in "$CATALOG_DIR"/*.md; do
+        [[ -f "$tmpl" ]] || continue
+        local name
+        name=$(basename "$tmpl" .md)
+        if [[ -f "$INSTALL_DIR/$name.md" ]] && [[ ! -L "$INSTALL_DIR/$name.md" ]]; then
+            local source
+            source=$(get_frontmatter_field "$INSTALL_DIR/$name.md" "_source")
+            _ok "$name ${DIM}(${source:-no source tag})${RESET}"
+        else
+            _dim "$name — not activated"
+        fi
+    done
+    echo ""
+}
+
+inject_source_tag() {
+    local file="$1" source_tag="$2"
+    # Insert _source line before the closing --- frontmatter
+    if grep -q "^_source:" "$file" 2>/dev/null; then
+        sed -i '' "s|^_source:.*|_source: $source_tag|" "$file"
+    else
+        # Find the closing --- (second occurrence) and insert before it
+        local tmp
+        tmp=$(mktemp)
+        awk -v tag="_source: $source_tag" '
+            /^---$/ { count++ }
+            count == 2 && /^---$/ { print tag }
+            { print }
+        ' "$file" > "$tmp"
+        mv "$tmp" "$file"
+    fi
+}
+
+activate() {
+    local name="$1"
+    local force="${2:-false}"
+    local tmpl="$CATALOG_DIR/$name.md"
+    local target="$INSTALL_DIR/$name.md"
+
+    # Validate template exists
+    if [[ ! -f "$tmpl" ]]; then
+        _err "No catalog template found: $name"
+        echo ""
+        _dim "Available: $(ls "$CATALOG_DIR"/*.md 2>/dev/null | xargs -I{} basename {} .md | tr '\n' ' ')"
+        exit 1
+    fi
+
+    # Check for system agent conflict
+    if [[ -L "$target" ]]; then
+        _err "$name is a system agent (symlinked). Cannot overwrite."
+        exit 1
+    fi
+
+    # Check if already installed
+    if [[ -f "$target" ]] && [[ "$force" != "true" ]]; then
+        _warn "$name is already installed at $target"
+        _dim "Use --update $name to overwrite from catalog template"
+        exit 0
+    fi
+
+    # Copy template
+    mkdir -p "$INSTALL_DIR"
+    cp "$tmpl" "$target"
+
+    # Inject source tracking
+    local version="1.0"
+    inject_source_tag "$target" "catalog/${name}@${version}"
+
+    if [[ "$force" == "true" ]]; then
+        _ok "Updated $name from catalog template"
+    else
+        _ok "Activated $name → ~/.claude/agents/$name.md"
+    fi
+}
+
+deactivate() {
+    local name="$1"
+    local target="$INSTALL_DIR/$name.md"
+
+    if [[ -L "$target" ]]; then
+        _err "$name is a system agent (symlinked). Use deactivate-agent only for catalog agents."
+        exit 1
+    fi
+
+    if [[ ! -f "$target" ]]; then
+        _warn "$name is not installed"
+        exit 0
+    fi
+
+    rm "$target"
+    _ok "Deactivated $name"
+}
+
+# ── Main ──────────────────────────────────────────────
+
+case "${1:-}" in
+    --list|-l)
+        list_catalog
+        ;;
+    --status|-s)
+        show_status
+        ;;
+    --update|-u)
+        [[ -z "${2:-}" ]] && { _err "Usage: activate-agent --update <name>"; exit 1; }
+        activate "$2" true
+        ;;
+    --deactivate|-d)
+        [[ -z "${2:-}" ]] && { _err "Usage: activate-agent --deactivate <name>"; exit 1; }
+        deactivate "$2"
+        ;;
+    --help|-h|"")
+        echo "Usage: activate-agent <name|--list|--status|--update NAME|--deactivate NAME>"
+        echo ""
+        echo "  <name>            Activate a catalog agent"
+        echo "  --list, -l        Show available catalog agents"
+        echo "  --status, -s      Show installed vs available"
+        echo "  --update, -u      Re-copy from template (overwrites)"
+        echo "  --deactivate, -d  Remove an installed catalog agent"
+        echo "  --help, -h        Show this help"
+        ;;
+    *)
+        activate "$1" false
+        ;;
+esac

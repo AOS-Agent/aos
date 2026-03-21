@@ -3,15 +3,21 @@ AOS Work Engine — Read/write work files.
 
 Data lives at ~/.aos/work/work.yaml (small mode).
 This module handles CRUD for tasks, projects, goals, threads, and inbox.
+
+v2: Project-scoped IDs, fuzzy resolution, subtasks, handoff context.
 """
 
 import os
+import re
 import yaml
 from datetime import datetime, date
 from pathlib import Path
+from difflib import SequenceMatcher
 
 WORK_DIR = Path.home() / ".aos" / "work"
 WORK_FILE = WORK_DIR / "work.yaml"
+ACTIVITY_FILE = WORK_DIR / "activity.yaml"
+MAX_ACTIVITY = 100  # Keep last N events
 
 
 def _load() -> dict:
@@ -36,7 +42,7 @@ def _save(data: dict) -> None:
 
 def _empty_work() -> dict:
     return {
-        "version": "1.0",
+        "version": "2.0",
         "tasks": [],
         "projects": [],
         "goals": [],
@@ -45,8 +51,65 @@ def _empty_work() -> dict:
     }
 
 
+# ── ID Generation ─────────────────────────────────────
+
+def _project_prefix(project_id: str | None) -> str:
+    """Derive short prefix from project ID.
+
+    aos-v2 -> aos
+    nuchay -> nch
+    chief  -> chief
+    None   -> t  (unaffiliated)
+    """
+    if not project_id:
+        return "t"
+    # Use the project's short_id if defined, otherwise derive
+    data = _load()
+    for p in data["projects"]:
+        if p["id"] == project_id:
+            if p.get("short_id"):
+                return p["short_id"]
+            break
+    # Derive: strip common suffixes, take first word
+    clean = re.sub(r'[-_]v\d+$', '', project_id)  # aos-v2 -> aos
+    return clean
+
+
+def _next_scoped_id(tasks: list, prefix: str) -> str:
+    """Generate next project-scoped ID: aos#1, aos#2, chief#1, t#1, etc."""
+    max_num = 0
+    pattern = f"{prefix}#"
+    for task in tasks:
+        task_id = task.get("id", "")
+        if task_id.startswith(pattern):
+            # Extract the number part (before any .N subtask suffix)
+            rest = task_id[len(pattern):]
+            base_num = rest.split(".")[0]
+            try:
+                num = int(base_num)
+                max_num = max(max_num, num)
+            except ValueError:
+                pass
+    return f"{prefix}#{max_num + 1}"
+
+
+def _next_subtask_id(tasks: list, parent_id: str) -> str:
+    """Generate next subtask ID: aos#3.1, aos#3.2, etc."""
+    max_num = 0
+    pattern = f"{parent_id}."
+    for task in tasks:
+        task_id = task.get("id", "")
+        if task_id.startswith(pattern):
+            try:
+                num = int(task_id[len(pattern):])
+                max_num = max(max_num, num)
+            except ValueError:
+                pass
+    return f"{parent_id}.{max_num + 1}"
+
+
 def _next_id(items: list, prefix: str) -> str:
-    """Generate next sequential ID (t1, t2, ... or p1, p2, ...)."""
+    """Legacy ID generation for non-task entities (p1, g1, th1, i1)."""
     max_num = 0
     for item in items:
         item_id = item.get("id", "")
@@ -59,6 +122,127 @@ def _next_id(items: list, prefix: str) -> str:
     return f"{prefix}{max_num + 1}"
 
 
+# ── Fuzzy Resolution ──────────────────────────────────
+
+def resolve_task(query_str: str, tasks: list = None) -> dict | None:
+    """Resolve a task by exact ID, partial ID, or fuzzy title match.
+
+    Priority:
+    1. Exact ID match (aos#3, t#1, t14)
+    2. Partial ID match (aos#3 matches aos#3.1, aos#3.2)
+    3. Project-scoped shorthand (3 -> aos#3 if in aos context)
+    4. Fuzzy title match ("sse push" -> "SSE push from work engine")
+
+    Returns the best matching task or None.
+    """
+    if tasks is None:
+        tasks = _load()["tasks"]
+
+    if not query_str or not tasks:
+        return None
+
+    query_str = query_str.strip()
+
+    # 1. Exact ID match
+    for t in tasks:
+        if t["id"] == query_str:
+            return t
+
+    # 1b. Legacy ID match (t14 -> find task even if renamed)
+    for t in tasks:
+        if t.get("_legacy_id") == query_str:
+            return t
+
+    # 2. Fuzzy title match
+    query_lower = query_str.lower()
+
+    # First try substring match
+    substring_matches = []
+    for t in tasks:
+        title_lower = t.get("title", "").lower()
+        if query_lower in title_lower:
+            substring_matches.append(t)
+
+    if len(substring_matches) == 1:
+        return substring_matches[0]
+
+    # If multiple substring matches, pick best by similarity
+    if substring_matches:
+        best = max(substring_matches,
+                   key=lambda t: SequenceMatcher(None, query_lower, t["title"].lower()).ratio())
+        return best
+
+    # Full fuzzy match across all tasks
+    scored = []
+    for t in tasks:
+        title_lower = t.get("title", "").lower()
+        # Check individual words
+        query_words = query_lower.split()
+        word_hits = sum(1 for w in query_words if w in title_lower)
+
+        # Sequence similarity
+        seq_ratio = SequenceMatcher(None, query_lower, title_lower).ratio()
+
+        # Combined score
+        score = (word_hits / max(len(query_words), 1)) * 0.6 + seq_ratio * 0.4
+        if score > 0.3:  # Minimum threshold
+            scored.append((t, score))
+
+    if scored:
+        scored.sort(key=lambda x: x[1], reverse=True)
+        return scored[0][0]
+
+    return None
+
+
+def resolve_task_in_project(query_str: str, project_id: str = None) -> dict | None:
+    """Resolve with project context. If query is just a number, scope to project."""
+    tasks = _load()["tasks"]
+
+    # If query is just a number and we have project context
+    if query_str.isdigit() and project_id:
+        prefix = _project_prefix(project_id)
+        scoped_id = f"{prefix}#{query_str}"
+        for t in tasks:
+            if t["id"] == scoped_id:
+                return t
+
+    return resolve_task(query_str, tasks)
+
+
+# ── Context Detection ─────────────────────────────────
+
+# Directory -> project mapping
+_PROJECT_DIRS = {
+    "aos": "aos-v2",
+    "nuchay": "nuchay",
+    "chief-ios-app": "chief",
+}
+
+
+def detect_project_from_cwd(cwd: str = None) -> str | None:
+    """Detect project from current working directory."""
+    if cwd is None:
+        cwd = os.getcwd()
+    dir_name = Path(cwd).name
+
+    # Direct mapping
+    if dir_name in _PROJECT_DIRS:
+        return _PROJECT_DIRS[dir_name]
+
+    # Check if cwd is inside a known project directory
+    cwd_path = Path(cwd)
+    for dir_name, project_id in _PROJECT_DIRS.items():
+        project_path = Path.home() / dir_name
+        try:
+            cwd_path.relative_to(project_path)
+            return project_id
+        except ValueError:
+            continue
+
+    return None
+
+
 def _today() -> str:
     return date.today().isoformat()
 
@@ -67,16 +251,80 @@ def _now() -> str:
     return datetime.now().isoformat(timespec="seconds")
 
 
-# --- Task CRUD ---
+# ── Activity Log ──────────────────────────────────────
+
+def _log_activity(action: str, task_id: str = None, title: str = None,
+                  project: str = None, detail: str = None) -> None:
+    """Append an event to the activity log. Fire-and-forget."""
+    try:
+        WORK_DIR.mkdir(parents=True, exist_ok=True)
+        events = []
+        if ACTIVITY_FILE.exists():
+            with open(ACTIVITY_FILE, "r") as f:
+                events = yaml.safe_load(f) or []
+
+        event = {
+            "ts": _now(),
+            "action": action,
+        }
+        if task_id:
+            event["task_id"] = task_id
+        if title:
+            event["title"] = title
+        if project:
+            event["project"] = project
+        if detail:
+            event["detail"] = detail
+
+        events.insert(0, event)
+        events = events[:MAX_ACTIVITY]
+
+        with open(ACTIVITY_FILE, "w") as f:
+            yaml.dump(events, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+    except Exception:
+        pass  # Activity log is best-effort
+
+
+def get_activity(limit: int = 30) -> list:
+    """Get recent work activity events."""
+    if not ACTIVITY_FILE.exists():
+        return []
+    try:
+        with open(ACTIVITY_FILE, "r") as f:
+            events = yaml.safe_load(f) or []
+        return events[:limit]
+    except Exception:
+        return []
+
+
+# ── Task CRUD ─────────────────────────────────────────
 
 def add_task(title: str, priority: int = 3, project: str = None,
              status: str = "todo", tags: list = None, source: str = "manual",
              due: str = None, energy: str = None, context: str = None,
              parent: str = None) -> dict:
-    """Add a new task. Returns the created task."""
+    """Add a new task with project-scoped ID."""
     data = _load()
+
+    # If parent specified, this is a subtask
+    if parent:
+        # Find parent task to inherit project
+        parent_task = None
+        for t in data["tasks"]:
+            if t["id"] == parent:
+                parent_task = t
+                break
+
+        if parent_task and not project:
+            project = parent_task.get("project")
+
+        task_id = _next_subtask_id(data["tasks"], parent)
+    else:
+        prefix = _project_prefix(project)
+        task_id = _next_scoped_id(data["tasks"], prefix)
+
     task = {
-        "id": _next_id(data["tasks"], "t"),
+        "id": task_id,
         "title": title,
         "status": status,
         "priority": priority,
@@ -97,23 +345,84 @@ def add_task(title: str, priority: int = 3, project: str = None,
         task["parent"] = parent
     data["tasks"].append(task)
     _save(data)
+    if parent:
+        _log_activity("subtask_added", task["id"], title, project, detail=f"under {parent}")
+    else:
+        _log_activity("task_created", task["id"], title, project)
     return task
 
 
-def complete_task(task_id: str) -> dict | None:
-    """Mark a task as done. Returns the updated task or None."""
+def add_subtask(parent_id: str, title: str, priority: int = None,
+                status: str = "todo") -> dict | None:
+    """Add a subtask to an existing task. Inherits project and priority from parent."""
     data = _load()
-    for task in data["tasks"]:
-        if task["id"] == task_id:
-            task["status"] = "done"
-            task["completed"] = _now()
-            _save(data)
-            return task
-    return None
+    parent = None
+    for t in data["tasks"]:
+        if t["id"] == parent_id:
+            parent = t
+            break
+    if not parent:
+        return None
+
+    if priority is None:
+        priority = parent.get("priority", 3)
+
+    return add_task(
+        title=title,
+        priority=priority,
+        project=parent.get("project"),
+        status=status,
+        parent=parent_id,
+        source="subtask",
+    )
+
+
+def complete_task(task_id: str) -> dict | None:
+    """Mark a task as done. Auto-cascades parent if all siblings done."""
+    data = _load()
+    task = None
+    for t in data["tasks"]:
+        if t["id"] == task_id:
+            t["status"] = "done"
+            t["completed"] = _now()
+            task = t
+            break
+
+    if not task:
+        return None
+
+    # Cascade: check if parent should auto-complete
+    parent_id = task.get("parent")
+    if parent_id:
+        _cascade_parent(data, parent_id)
+
+    _save(data)
+    _log_activity("task_completed", task["id"], task.get("title"), task.get("project"))
+    return task
+
+
+def _cascade_parent(data: dict, parent_id: str) -> None:
+    """If all subtasks of parent are done, mark parent as done too."""
+    subtasks = [t for t in data["tasks"] if t.get("parent") == parent_id]
+    if not subtasks:
+        return
+
+    all_done = all(t.get("status") == "done" for t in subtasks)
+    if all_done:
+        for t in data["tasks"]:
+            if t["id"] == parent_id:
+                if t.get("status") != "done":
+                    t["status"] = "done"
+                    t["completed"] = _now()
+                    t["auto_completed"] = True
+                    # Cascade up further if this parent also has a parent
+                    if t.get("parent"):
+                        _cascade_parent(data, t["parent"])
+                break
 
 
 def update_task(task_id: str, **fields) -> dict | None:
-    """Update arbitrary fields on a task. Returns updated task or None."""
+    """Update arbitrary fields on a task."""
     data = _load()
     for task in data["tasks"]:
         if task["id"] == task_id:
@@ -135,20 +444,26 @@ def start_task(task_id: str) -> dict | None:
             task["status"] = "active"
             task["started"] = _now()
             _save(data)
+            _log_activity("task_started", task["id"], task.get("title"), task.get("project"))
             return task
     return None
 
 
 def cancel_task(task_id: str) -> dict | None:
     """Cancel a task."""
-    return update_task(task_id, status="cancelled")
+    result = update_task(task_id, status="cancelled")
+    if result:
+        _log_activity("task_cancelled", result["id"], result.get("title"), result.get("project"))
+    return result
 
 
 def delete_task(task_id: str) -> bool:
-    """Permanently remove a task."""
+    """Permanently remove a task and its subtasks."""
     data = _load()
     before = len(data["tasks"])
-    data["tasks"] = [t for t in data["tasks"] if t["id"] != task_id]
+    # Delete the task and any subtasks
+    data["tasks"] = [t for t in data["tasks"]
+                     if t["id"] != task_id and t.get("parent") != task_id]
     if len(data["tasks"]) < before:
         _save(data)
         return True
@@ -156,7 +471,7 @@ def delete_task(task_id: str) -> bool:
 
 
 def get_task(task_id: str) -> dict | None:
-    """Get a single task by ID."""
+    """Get a single task by exact ID."""
     data = _load()
     for task in data["tasks"]:
         if task["id"] == task_id:
@@ -169,10 +484,121 @@ def get_all_tasks() -> list:
     return _load()["tasks"]
 
 
-# --- Project CRUD ---
+def get_subtasks(parent_id: str) -> list:
+    """Get all subtasks of a parent task."""
+    data = _load()
+    return [t for t in data["tasks"] if t.get("parent") == parent_id]
+
+
+def get_task_tree(task_id: str) -> dict | None:
+    """Get a task with its subtasks attached."""
+    data = _load()
+    task = None
+    for t in data["tasks"]:
+        if t["id"] == task_id:
+            task = dict(t)
+            break
+    if not task:
+        return None
+    task["subtasks"] = [t for t in data["tasks"] if t.get("parent") == task_id]
+    return task
+
+
+# ── Handoff Context ───────────────────────────────────
+
+def write_handoff(task_id: str, state: str, next_step: str = None,
+                  files_touched: list = None, decisions: list = None,
+                  blockers: list = None) -> dict | None:
+    """Write handoff context for a task. Called by agents before session end."""
+    data = _load()
+    for task in data["tasks"]:
+        if task["id"] == task_id:
+            handoff = {
+                "updated": _now(),
+                "state": state,
+            }
+            if next_step:
+                handoff["next_step"] = next_step
+            if files_touched:
+                handoff["files_touched"] = files_touched
+            if decisions:
+                handoff["decisions"] = decisions
+            if blockers:
+                handoff["blockers"] = blockers
+            task["handoff"] = handoff
+            _save(data)
+            _log_activity("handoff_written", task["id"], task.get("title"), task.get("project"),
+                          detail=next_step[:80] if next_step else None)
+            return task
+    return None
+
+
+def get_handoff(task_id: str) -> dict | None:
+    """Get handoff context for a task."""
+    task = get_task(task_id)
+    if task:
+        return task.get("handoff")
+    return None
+
+
+def build_handoff_prompt(task_id: str) -> str | None:
+    """Build a dispatch prompt section from a task's handoff context.
+
+    Used by Chief when dispatching agents to continue work on a task.
+    Returns a formatted string ready to inject into an agent prompt.
+    """
+    task = get_task(task_id)
+    if not task:
+        return None
+
+    handoff = task.get("handoff")
+    lines = []
+    lines.append(f"Task: {task['id']} -- {task['title']}")
+
+    if task.get("project"):
+        lines.append(f"Project: {task['project']}")
+
+    if handoff:
+        lines.append("")
+        lines.append("CONTEXT FROM PREVIOUS SESSION:")
+        lines.append(handoff.get("state", "No state recorded."))
+
+        if handoff.get("next_step"):
+            lines.append("")
+            lines.append("NEXT STEP:")
+            lines.append(handoff["next_step"])
+
+        if handoff.get("files_touched"):
+            lines.append("")
+            lines.append("FILES TOUCHED:")
+            for f in handoff["files_touched"]:
+                lines.append(f"  - {f}")
+
+        if handoff.get("decisions"):
+            lines.append("")
+            lines.append("DECISIONS ALREADY MADE (don't revisit):")
+            for d in handoff["decisions"]:
+                lines.append(f"  - {d}")
+
+        if handoff.get("blockers"):
+            lines.append("")
+            lines.append("BLOCKERS:")
+            for b in handoff["blockers"]:
+                lines.append(f"  - {b}")
+    else:
+        lines.append("")
+        lines.append("No previous handoff context. Starting fresh.")
+
+    lines.append("")
+    lines.append("When stopping, update the handoff with: work handoff <task_id> --state '...' --next '...'")
+
+    return "\n".join(lines)
+
+
+# ── Project CRUD ──────────────────────────────────────
 
 def add_project(title: str, goal: str = None, done_when: str = None,
-                appetite: str = None) -> dict:
+                appetite: str = None, short_id: str = None) -> dict:
     data = _load()
     project = {
         "id": _next_id(data["projects"], "p"),
@@ -186,6 +612,8 @@ def add_project(title: str, goal: str = None, done_when: str = None,
         project["done_when"] = done_when
     if appetite:
         project["appetite"] = appetite
+    if short_id:
+        project["short_id"] = short_id
     data["projects"].append(project)
     _save(data)
     return project
@@ -221,7 +649,7 @@ def delete_project(project_id: str) -> bool:
     return False
 
 
-# --- Goal CRUD ---
+# ── Goal CRUD ─────────────────────────────────────────
 
 def add_goal(title: str, goal_type: str = "committed", weight: float = None) -> dict:
     data = _load()
@@ -267,7 +695,7 @@ def delete_goal(goal_id: str) -> bool:
     return False
 
 
-# --- Thread CRUD ---
+# ── Thread CRUD ───────────────────────────────────────
 
 def add_thread(title: str, session_id: str = None) -> dict:
     data = _load()
@@ -337,7 +765,7 @@ def find_thread_by_cwd(cwd: str) -> dict | None:
     return None
 
 
-# --- Inbox ---
+# ── Inbox ─────────────────────────────────────────────
 
 def add_inbox(text: str, source: str = "manual", confidence: float = None) -> dict:
     data = _load()
@@ -380,21 +808,19 @@ def delete_inbox(inbox_id: str) -> bool:
     return False
 
 
-# --- Session Linking ---
+# ── Session Linking ───────────────────────────────────
 
 def link_session_to_task(task_id: str, session_id: str, outcome: str = None,
                          date_str: str = None) -> dict | None:
-    """Link a session to a task. Multiple sessions can link to the same task
-    (multi-session work). Same session won't be linked twice."""
+    """Link a session to a task."""
     data = _load()
     for task in data["tasks"]:
         if task["id"] == task_id:
             if "sessions" not in task:
                 task["sessions"] = []
-            # Dedup — don't link same session twice
+            # Dedup
             existing_ids = {s["id"] for s in task["sessions"]}
             if session_id in existing_ids:
-                # Update outcome if provided
                 if outcome:
                     for s in task["sessions"]:
                         if s["id"] == session_id:
@@ -415,14 +841,12 @@ def link_session_to_task(task_id: str, session_id: str, outcome: str = None,
 
 def link_session_to_thread(thread_id: str, session_id: str,
                            notes: str = None) -> dict | None:
-    """Link a session to a thread. Threads accumulate sessions across
-    multiple sittings — this is the continuity layer."""
+    """Link a session to a thread."""
     data = _load()
     for thread in data["threads"]:
         if thread["id"] == thread_id:
             if "sessions" not in thread:
                 thread["sessions"] = []
-            # Dedup
             if session_id not in thread["sessions"]:
                 thread["sessions"].append(session_id)
             if notes:
@@ -439,16 +863,12 @@ def link_session_to_thread(thread_id: str, session_id: str,
 
 def get_or_create_thread_for_cwd(cwd: str, session_id: str,
                                   title: str = None) -> dict:
-    """Find an active thread for this working directory, or create one.
-    This is the auto-continuity mechanism — work in the same directory
-    across sessions automatically accumulates under one thread."""
+    """Find an active thread for this working directory, or create one."""
     thread = find_thread_by_cwd(cwd)
     if thread:
         link_session_to_thread(thread["id"], session_id)
         return thread
-    # Create new thread
     data = _load()
-    # Derive title from cwd if not provided
     if not title:
         dir_name = Path(cwd).name
         title = f"Work in {dir_name}"
@@ -467,24 +887,56 @@ def get_or_create_thread_for_cwd(cwd: str, session_id: str,
 
 
 def find_tasks_by_project_or_cwd(cwd: str) -> list:
-    """Find active tasks that match a working directory.
-    Maps cwd to project name (e.g., ~/nuchay → 'nuchay', ~/aos → 'aos')."""
+    """Find active tasks that match a working directory."""
     data = _load()
-    dir_name = Path(cwd).name
-    # Map common directory names to project IDs
-    project_aliases = {
-        "aos": "aos",
-        "nuchay": "nuchay",
-        "chief-ios-app": "chief",
-    }
-    project_id = project_aliases.get(dir_name, dir_name)
+    project_id = detect_project_from_cwd(cwd)
+    if not project_id:
+        return []
     active_tasks = [t for t in data["tasks"]
                     if t.get("project") == project_id
                     and t.get("status") in ("active", "todo")]
     return active_tasks
 
 
-# --- Bulk accessors ---
+# ── Migration ─────────────────────────────────────────
+
+def migrate_task_ids() -> dict:
+    """Migrate old t1, t2, ... IDs to new project-scoped IDs.
+
+    Returns mapping of old_id -> new_id.
+    """
+    data = _load()
+    id_map = {}
+
+    # First pass: rename all tasks
+    for task in data["tasks"]:
+        old_id = task["id"]
+        # Skip if already in new format
+        if "#" in old_id:
+            continue
+
+        project = task.get("project")
+        prefix = _project_prefix(project)
+        new_id = _next_scoped_id(data["tasks"], prefix)
+
+        # Store legacy ID for backward compat
+        task["_legacy_id"] = old_id
+        task["id"] = new_id
+        id_map[old_id] = new_id
+
+    # Second pass: update parent references
+    for task in data["tasks"]:
+        if task.get("parent") and task["parent"] in id_map:
+            task["parent"] = id_map[task["parent"]]
+
+    # Third pass: update session links in threads
+    # (sessions reference task IDs in some places)
+
+    _save(data)
+    return id_map
+
+
+# ── Bulk accessors ────────────────────────────────────
 
 def load_all() -> dict:
     """Load entire work file. Use for dashboards/reviews."""
@@ -495,10 +947,12 @@ def summary() -> dict:
     """Quick summary stats."""
     data = _load()
     tasks = data["tasks"]
+    # Exclude subtasks from top-level counts
+    top_level = [t for t in tasks if not t.get("parent")]
     return {
-        "total_tasks": len(tasks),
-        "by_status": _count_by(tasks, "status"),
-        "by_priority": _count_by(tasks, "priority"),
+        "total_tasks": len(top_level),
+        "by_status": _count_by(top_level, "status"),
+        "by_priority": _count_by(top_level, "priority"),
         "projects": len(data["projects"]),
         "goals": len(data["goals"]),
         "threads": len(data["threads"]),

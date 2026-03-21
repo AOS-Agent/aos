@@ -1,22 +1,20 @@
 #!/usr/bin/env python3
 """
-AOS Work CLI — Thin wrapper around the work engine.
+AOS Work CLI — v2 with project-scoped IDs, fuzzy resolution, subtasks, and handoffs.
 
 Usage:
-    python3 cli.py add "Buy groceries"
-    python3 cli.py add "Fix login" --priority 2 --project website
-    python3 cli.py list
-    python3 cli.py list --status active
-    python3 cli.py list --project aos
-    python3 cli.py done t1
-    python3 cli.py start t2
-    python3 cli.py cancel t3
-    python3 cli.py show t1
-    python3 cli.py search "groceries"
-    python3 cli.py summary
-    python3 cli.py inbox "Look into WebSocket approach"
-    python3 cli.py projects
-    python3 cli.py goals
+    work add "Buy groceries"
+    work add "Fix login" --priority 2 --project website
+    work add "Fix login" (auto-detects project from cwd)
+    work list
+    work list --project aos-v2
+    work done "sse push"              (fuzzy resolve)
+    work done aos#3                   (exact ID)
+    work start 3                      (scoped to cwd project)
+    work subtask aos#3 "Base variables and typography"
+    work handoff aos#3 --state "Extracted base vars..." --next "Component styles"
+    work show aos#3                   (shows task + subtasks + handoff)
+    work migrate                      (migrate old t1,t2 IDs to new format)
 """
 
 import sys
@@ -30,6 +28,35 @@ import engine
 import query
 
 
+# ── Resolution helpers ────────────────────────────────
+
+def _resolve(query_str: str, require: bool = True) -> dict | None:
+    """Resolve a task from user input. Supports exact ID, fuzzy title, and scoped shorthand."""
+    # Detect project from cwd for scoped resolution
+    project_id = engine.detect_project_from_cwd()
+    task = engine.resolve_task_in_project(query_str, project_id)
+
+    if not task and require:
+        print(f"Could not resolve task: '{query_str}'")
+        # Suggest close matches
+        tasks = engine.get_all_tasks()
+        matches = query.search_tasks(tasks, query_str)
+        if matches:
+            print("  Did you mean:")
+            for m in matches[:3]:
+                print(f"    {m['id']}  {m['title']}")
+        sys.exit(1)
+
+    return task
+
+
+def _auto_project() -> str | None:
+    """Auto-detect project from current directory."""
+    return engine.detect_project_from_cwd()
+
+
+# ── Commands ──────────────────────────────────────────
+
 def cmd_add(args):
     if not args:
         print("Usage: add <title> [--priority N] [--project ID] [--tags t1,t2] [--due DATE] [--energy low|medium|high]")
@@ -37,7 +64,7 @@ def cmd_add(args):
 
     title_parts = []
     priority = 3
-    project = None
+    project = _auto_project()  # Auto-detect from cwd
     tags = None
     due = None
     energy = None
@@ -49,8 +76,11 @@ def cmd_add(args):
             priority = int(args[i + 1])
             i += 2
         elif args[i] == "--project" and i + 1 < len(args):
-            project = args[i + 1]
+            project = args[i + 1]  # Explicit overrides auto-detect
             i += 2
+        elif args[i] == "--no-project":
+            project = None
+            i += 1
         elif args[i] == "--tags" and i + 1 < len(args):
             tags = args[i + 1].split(",")
             i += 2
@@ -74,56 +104,115 @@ def cmd_add(args):
 
     task = engine.add_task(title, priority=priority, project=project,
                            tags=tags, due=due, energy=energy, status=status)
-    print(f"Created {task['id']}: {task['title']} [{task['status']}]")
+    proj_info = f" [{task.get('project', '')}]" if task.get("project") else ""
+    print(f"Created {task['id']}: {task['title']}{proj_info}")
 
 
 def cmd_done(args):
     if not args:
-        print("Usage: done <task_id>")
+        print("Usage: done <task_id or search>")
         sys.exit(1)
-    task = engine.complete_task(args[0])
-    if task:
-        print(f"Completed {task['id']}: {task['title']}")
+    query_str = " ".join(args)
+    task = _resolve(query_str)
+    result = engine.complete_task(task["id"])
+    if result:
+        print(f"Completed {result['id']}: {result['title']}")
+        if result.get("auto_completed"):
+            print(f"  (auto-completed by subtask cascade)")
     else:
-        print(f"Task {args[0]} not found")
+        print(f"Task {task['id']} not found")
         sys.exit(1)
 
 
 def cmd_start(args):
     if not args:
-        print("Usage: start <task_id>")
+        print("Usage: start <task_id or search>")
         sys.exit(1)
-    task = engine.start_task(args[0])
-    if task:
-        print(f"Started {task['id']}: {task['title']}")
+    query_str = " ".join(args)
+    task = _resolve(query_str)
+    result = engine.start_task(task["id"])
+    if result:
+        print(f"Started {result['id']}: {result['title']}")
     else:
-        print(f"Task {args[0]} not found")
+        print(f"Task {task['id']} not found")
         sys.exit(1)
 
 
 def cmd_cancel(args):
     if not args:
-        print("Usage: cancel <task_id>")
+        print("Usage: cancel <task_id or search>")
         sys.exit(1)
-    task = engine.cancel_task(args[0])
-    if task:
-        print(f"Cancelled {task['id']}: {task['title']}")
+    query_str = " ".join(args)
+    task = _resolve(query_str)
+    result = engine.cancel_task(task["id"])
+    if result:
+        print(f"Cancelled {result['id']}: {result['title']}")
     else:
-        print(f"Task {args[0]} not found")
+        print(f"Task {task['id']} not found")
         sys.exit(1)
 
 
 def cmd_show(args):
     if not args:
-        print("Usage: show <task_id>")
+        print("Usage: show <task_id or search>")
         sys.exit(1)
-    task = engine.get_task(args[0])
-    if task:
-        for key, val in task.items():
-            print(f"  {key}: {val}")
-    else:
-        print(f"Task {args[0]} not found")
+    query_str = " ".join(args)
+    task = _resolve(query_str)
+    tree = engine.get_task_tree(task["id"])
+    if not tree:
+        print(f"Task not found")
         sys.exit(1)
+
+    # Display task details
+    print(f"\n  {tree['id']}  {tree['title']}")
+    print(f"  {'=' * 50}")
+    print(f"  Status:   {tree.get('status', '?')}")
+    print(f"  Priority: P{tree.get('priority', 3)}")
+    if tree.get("project"):
+        print(f"  Project:  {tree['project']}")
+    if tree.get("created"):
+        print(f"  Created:  {tree['created']}")
+    if tree.get("started"):
+        print(f"  Started:  {tree['started']}")
+    if tree.get("completed"):
+        print(f"  Done:     {tree['completed']}")
+    if tree.get("due"):
+        print(f"  Due:      {tree['due']}")
+    if tree.get("sessions"):
+        print(f"  Sessions: {len(tree['sessions'])}")
+
+    # Subtasks
+    subtasks = tree.get("subtasks", [])
+    if subtasks:
+        done = sum(1 for s in subtasks if s.get("status") == "done")
+        print(f"\n  Subtasks ({done}/{len(subtasks)}):")
+        for sub in subtasks:
+            marker = "x" if sub.get("status") == "done" else ">" if sub.get("status") == "active" else " "
+            print(f"    [{marker}] {sub['id']}  {sub['title']}")
+
+    # Handoff
+    handoff = tree.get("handoff")
+    if handoff:
+        print(f"\n  Handoff (updated {handoff.get('updated', '?')}):")
+        if handoff.get("state"):
+            for line in handoff["state"].strip().split("\n"):
+                print(f"    {line}")
+        if handoff.get("next_step"):
+            print(f"\n  Next step:")
+            for line in handoff["next_step"].strip().split("\n"):
+                print(f"    {line}")
+        if handoff.get("files_touched"):
+            print(f"\n  Files: {', '.join(handoff['files_touched'])}")
+        if handoff.get("decisions"):
+            print(f"\n  Decisions:")
+            for d in handoff["decisions"]:
+                print(f"    - {d}")
+        if handoff.get("blockers"):
+            print(f"\n  Blockers:")
+            for b in handoff["blockers"]:
+                print(f"    ! {b}")
+
+    print()
 
 
 def cmd_list(args):
@@ -134,6 +223,7 @@ def cmd_list(args):
     project = None
     priority = None
     sort_by = "priority"
+    show_all = False
 
     i = 0
     while i < len(args):
@@ -149,8 +239,17 @@ def cmd_list(args):
         elif args[i] == "--sort" and i + 1 < len(args):
             sort_by = args[i + 1]
             i += 2
+        elif args[i] == "--all":
+            show_all = True
+            i += 1
         else:
             i += 1
+
+    # Auto-detect project from cwd if not specified
+    if not project and not show_all:
+        auto_proj = _auto_project()
+        # Don't auto-filter — just note it for display
+        # (show all tasks, but highlight the current project)
 
     if status:
         tasks = query.filter_tasks(tasks, status=status)
@@ -163,20 +262,166 @@ def cmd_list(args):
     if not status:
         tasks = [t for t in tasks if t.get("status") not in ("done", "cancelled")]
 
-    tasks = query.sort_tasks(tasks, by=sort_by)
+    # Build trees (subtasks nested under parents)
+    trees = query.build_task_trees(tasks)
+    trees = query.sort_tasks(trees, by=sort_by)
 
-    if not tasks:
+    if not trees:
         print("No tasks found.")
         return
 
-    # Print formatted list
+    # Group by project for display
+    by_project = {}
+    unassigned = []
+    for t in trees:
+        proj = t.get("project")
+        if proj:
+            by_project.setdefault(proj, []).append(t)
+        else:
+            unassigned.append(t)
+
+    # Display
+    for proj_id, proj_tasks in sorted(by_project.items()):
+        progress = query.project_progress(proj_id, engine.get_all_tasks())
+        print(f"\n  [{proj_id}] ({progress['done']}/{progress['total']})")
+        _print_task_list(proj_tasks)
+
+    if unassigned:
+        print(f"\n  [unassigned]")
+        _print_task_list(unassigned)
+
+
+def _print_task_list(tasks: list, indent: int = 4):
+    """Print tasks with subtask trees."""
     for t in tasks:
         p = t.get("priority", 0)
         priority_marker = {1: "!!", 2: "!", 3: " ", 4: "~", 0: "?"}
         marker = priority_marker.get(p, " ")
-        proj = f" [{t['project']}]" if t.get("project") else ""
+        status_icon = {"active": ">", "todo": " ", "done": "x", "cancelled": "-"}.get(t.get("status"), "?")
+
         due = f" (due {t['due']})" if t.get("due") else ""
-        print(f"  {marker} {t['id']:4s}  {t['status']:9s}  {t['title']}{proj}{due}")
+        sessions = len(t.get("sessions", []))
+        sess = f" [{sessions}s]" if sessions > 0 else ""
+        handoff_marker = " *" if t.get("handoff") else ""
+
+        # Subtask progress
+        subtasks = t.get("subtasks", [])
+        sub_info = ""
+        if subtasks:
+            sub_done = sum(1 for s in subtasks if s.get("status") == "done")
+            sub_info = f" ({sub_done}/{len(subtasks)})"
+
+        prefix = " " * indent
+        print(f"{prefix}{marker} [{status_icon}] {t['id']:12s}  {t['title']}{sub_info}{due}{sess}{handoff_marker}")
+
+        # Print subtasks
+        for sub in subtasks:
+            sub_status = {"active": ">", "todo": " ", "done": "x", "cancelled": "-"}.get(sub.get("status"), "?")
+            sub_prefix = " " * (indent + 4)
+            print(f"{sub_prefix}  [{sub_status}] {sub['id']:14s}  {sub['title']}")
+
+
+def cmd_subtask(args):
+    """Add a subtask to an existing task."""
+    if len(args) < 2:
+        print("Usage: subtask <parent_id or search> <title> [--done] [--active]")
+        sys.exit(1)
+
+    parent_query = args[0]
+    title_parts = []
+    status = "todo"
+    priority = None
+
+    i = 1
+    while i < len(args):
+        if args[i] == "--done":
+            status = "done"
+            i += 1
+        elif args[i] == "--active":
+            status = "active"
+            i += 1
+        elif args[i] == "--priority" and i + 1 < len(args):
+            priority = int(args[i + 1])
+            i += 2
+        else:
+            title_parts.append(args[i])
+            i += 1
+
+    title = " ".join(title_parts)
+    if not title:
+        print("Error: subtask title is required")
+        sys.exit(1)
+
+    parent = _resolve(parent_query)
+    sub = engine.add_subtask(parent["id"], title, priority=priority, status=status)
+    if sub:
+        print(f"Created {sub['id']}: {sub['title']} (under {parent['id']})")
+    else:
+        print(f"Failed to create subtask")
+        sys.exit(1)
+
+
+def cmd_handoff(args):
+    """Write handoff context for a task."""
+    if not args:
+        print("Usage: handoff <task_id or search> --state '...' [--next '...'] [--files f1,f2] [--decisions d1,d2] [--blockers b1,b2]")
+        sys.exit(1)
+
+    task_query = args[0]
+    state = None
+    next_step = None
+    files = None
+    decisions = None
+    blockers = None
+
+    i = 1
+    while i < len(args):
+        if args[i] == "--state" and i + 1 < len(args):
+            state = args[i + 1]
+            i += 2
+        elif args[i] == "--next" and i + 1 < len(args):
+            next_step = args[i + 1]
+            i += 2
+        elif args[i] == "--files" and i + 1 < len(args):
+            files = [f.strip() for f in args[i + 1].split(",")]
+            i += 2
+        elif args[i] == "--decisions" and i + 1 < len(args):
+            decisions = [d.strip() for d in args[i + 1].split("|")]
+            i += 2
+        elif args[i] == "--blockers" and i + 1 < len(args):
+            blockers = [b.strip() for b in args[i + 1].split("|")]
+            i += 2
+        else:
+            i += 1
+
+    if not state:
+        print("Error: --state is required")
+        sys.exit(1)
+
+    task = _resolve(task_query)
+    result = engine.write_handoff(
+        task["id"], state=state, next_step=next_step,
+        files_touched=files, decisions=decisions, blockers=blockers
+    )
+    if result:
+        print(f"Handoff written for {result['id']}: {result['title']}")
+    else:
+        print(f"Failed to write handoff")
+        sys.exit(1)
+
+
+def cmd_dispatch(args):
+    """Generate a dispatch prompt for a task (for Chief to inject into agent prompts)."""
+    if not args:
+        print("Usage: dispatch <task_id or search>")
+        sys.exit(1)
+    query_str = " ".join(args)
+    task = _resolve(query_str)
+    prompt = engine.build_handoff_prompt(task["id"])
+    if prompt:
+        print(prompt)
+    else:
+        print(f"No dispatch prompt available for {task['id']}")
 
 
 def cmd_search(args):
@@ -189,7 +434,8 @@ def cmd_search(args):
         print("No matching tasks.")
         return
     for t in results:
-        print(f"  {t['id']:4s}  {t['status']:9s}  {t['title']}")
+        proj = f" [{t['project']}]" if t.get("project") else ""
+        print(f"  {t['id']:12s}  {t['status']:9s}  {t['title']}{proj}")
 
 
 def cmd_summary(args):
@@ -222,10 +468,14 @@ def cmd_projects(args):
     if not projects:
         print("No projects.")
         return
+    all_tasks = engine.get_all_tasks()
     for p in projects:
         status = p.get("status", "?")
         goal = f" -> {p['goal']}" if p.get("goal") else ""
-        print(f"  {p['id']:12s}  {status:10s}  {p['title']}{goal}")
+        progress = query.project_progress(p["id"], all_tasks)
+        pct = f" ({progress['pct']}%)" if progress['total'] > 0 else ""
+        counts = f" [{progress['done']}/{progress['total']}]"
+        print(f"  {p['id']:12s}  {status:10s}  {p['title']}{goal}{counts}{pct}")
 
 
 def cmd_goals(args):
@@ -244,7 +494,7 @@ def cmd_link(args):
         print("Usage: link <task_id|thread_id> [--session ID] [--outcome TEXT]")
         sys.exit(1)
 
-    target_id = args[0]
+    target_query = args[0]
     session_id = None
     outcome = None
 
@@ -260,7 +510,6 @@ def cmd_link(args):
             i += 1
 
     if not session_id:
-        # Try to read current session from context file
         context_file = os.path.join(os.path.expanduser("~"), ".aos", "work", ".session-context.json")
         if os.path.exists(context_file):
             try:
@@ -272,28 +521,28 @@ def cmd_link(args):
             print("Error: --session ID required (no active session detected)")
             sys.exit(1)
 
-    if target_id.startswith("th"):
-        result = engine.link_session_to_thread(target_id, session_id, notes=outcome)
+    if target_query.startswith("th"):
+        result = engine.link_session_to_thread(target_query, session_id, notes=outcome)
         if result:
             count = len(result.get("sessions", []))
-            print(f"Linked session to thread {target_id}: {result['title']} ({count} sessions total)")
+            print(f"Linked session to thread {target_query}: {result['title']} ({count} sessions total)")
         else:
-            print(f"Thread {target_id} not found")
+            print(f"Thread {target_query} not found")
             sys.exit(1)
     else:
-        result = engine.link_session_to_task(target_id, session_id, outcome=outcome)
+        task = _resolve(target_query)
+        result = engine.link_session_to_task(task["id"], session_id, outcome=outcome)
         if result:
             count = len(result.get("sessions", []))
-            print(f"Linked session to task {target_id}: {result['title']} ({count} sessions)")
+            print(f"Linked session to task {result['id']}: {result['title']} ({count} sessions)")
         else:
-            print(f"Task {target_id} not found")
+            print(f"Task not found")
             sys.exit(1)
 
 
 def cmd_thread(args):
     """Create or manage threads."""
     if not args:
-        # List active threads
         threads = engine.get_all_threads()
         active = [t for t in threads if t.get("status") in ("exploring", "active")]
         if not active:
@@ -306,7 +555,6 @@ def cmd_thread(args):
             print(f"  {t['id']:6s}  {t['status']:10s}  {t['title']}  ({sessions} sessions, last: {last}) {cwd_short}")
         return
 
-    # Create new thread
     title = " ".join(args)
     thread = engine.add_thread(title)
     print(f"Created {thread['id']}: {thread['title']} [{thread['status']}]")
@@ -335,7 +583,7 @@ def cmd_promote(args):
 
     project = engine.promote_thread(thread_id, project_title=title, goal=goal)
     if project:
-        print(f"Promoted thread {thread_id} → project {project['id']}: {project['title']}")
+        print(f"Promoted thread {thread_id} -> project {project['id']}: {project['title']}")
     else:
         print(f"Thread {thread_id} not found")
         sys.exit(1)
@@ -349,7 +597,7 @@ def cmd_threads(args):
         return
     for t in threads:
         sessions = len(t.get("sessions", []))
-        promoted = f" → {t['promoted_to']}" if t.get("promoted_to") else ""
+        promoted = f" -> {t['promoted_to']}" if t.get("promoted_to") else ""
         print(f"  {t['id']:6s}  {t['status']:10s}  {t['title']}  ({sessions} sessions){promoted}")
 
 
@@ -364,7 +612,6 @@ def cmd_metrics(args):
     week = work_metrics.compute_current_week(tasks)
     goal_health = work_metrics.compute_goal_health(goals, tasks)
 
-    # Save snapshot
     save = "--no-save" not in args
     if save:
         path = work_metrics.save_weekly_snapshot(week)
@@ -376,7 +623,7 @@ def cmd_metrics(args):
 
 
 def cmd_today(args):
-    """Show today's work plan — due today, active, high priority."""
+    """Show today's work plan."""
     from datetime import date as _date
     today = _date.today().isoformat()
     tasks = engine.get_all_tasks()
@@ -389,42 +636,45 @@ def cmd_today(args):
         query.filter_tasks(tasks, status="todo"), priority=2
     )
 
-    # Dedup (a task could be both active and due)
+    # Tasks with stale handoffs
+    stale = query.stale_handoffs(tasks)
+
     seen = set()
     sections = []
 
     if due:
-        section_tasks = []
-        for t in due:
-            if t["id"] not in seen:
-                seen.add(t["id"])
-                section_tasks.append(t)
+        section_tasks = [t for t in due if t["id"] not in seen]
+        for t in section_tasks:
+            seen.add(t["id"])
         if section_tasks:
             sections.append(("Due today / overdue", section_tasks))
 
     if active:
-        section_tasks = []
-        for t in active:
-            if t["id"] not in seen:
-                seen.add(t["id"])
-                section_tasks.append(t)
+        section_tasks = [t for t in active if t["id"] not in seen]
+        for t in section_tasks:
+            seen.add(t["id"])
         if section_tasks:
             sections.append(("In progress", section_tasks))
 
     if high_todo:
-        section_tasks = []
-        for t in high_todo:
-            if t["id"] not in seen:
-                seen.add(t["id"])
-                section_tasks.append(t)
+        section_tasks = [t for t in high_todo if t["id"] not in seen]
+        for t in section_tasks:
+            seen.add(t["id"])
         if section_tasks:
             sections.append(("High priority (ready)", section_tasks))
+
+    if stale:
+        section_tasks = [t for t in stale if t["id"] not in seen]
+        for t in section_tasks:
+            seen.add(t["id"])
+        if section_tasks:
+            sections.append(("Stale handoffs (needs attention)", section_tasks))
 
     if not sections:
         print("Nothing pressing today. Check `work list` for all tasks.")
         return
 
-    print(f"Today — {today}")
+    print(f"Today -- {today}")
     print("=" * 40)
     for label, items in sections:
         print(f"\n  {label}:")
@@ -435,41 +685,42 @@ def cmd_today(args):
             due_str = f" (due {t['due']})" if t.get("due") else ""
             sessions = len(t.get("sessions", []))
             sess_str = f" [{sessions}s]" if sessions > 0 else ""
-            print(f"    {marker} {t['id']:4s}  {t['title']}{proj}{due_str}{sess_str}")
+            handoff_str = " *" if t.get("handoff") else ""
+            print(f"    {marker} {t['id']:12s}  {t['title']}{proj}{due_str}{sess_str}{handoff_str}")
 
 
 def cmd_next(args):
     """Suggest what to work on next based on priority, energy, and context."""
     tasks = engine.get_all_tasks()
 
-    # Get todo and active tasks
-    candidates = [t for t in tasks if t.get("status") in ("todo", "active")]
+    # Only top-level tasks
+    candidates = [t for t in tasks
+                  if t.get("status") in ("todo", "active") and not t.get("parent")]
     if not candidates:
-        print("No tasks to suggest. Inbox empty too." if not engine.get_inbox() else
+        print("No tasks to suggest." if not engine.get_inbox() else
               f"No tasks, but {len(engine.get_inbox())} inbox items to triage.")
         return
 
-    # Score each task
     def score(t):
         s = 0
-        # Priority (higher priority = higher score)
         p = t.get("priority", 3)
-        s += (5 - p) * 10  # P1=40, P2=30, P3=20, P4=10
+        s += (5 - p) * 10
 
-        # Active tasks get a boost (momentum)
         if t.get("status") == "active":
             s += 15
 
-        # Overdue tasks get a big boost
         from datetime import date as _date
         today = _date.today().isoformat()
         if t.get("due") and t["due"] <= today:
             s += 25
 
-        # Tasks with sessions get a small boost (continuity)
         sessions = len(t.get("sessions", []))
         if sessions > 0:
             s += min(sessions * 3, 12)
+
+        # Boost tasks with handoff (continuity)
+        if t.get("handoff"):
+            s += 10
 
         return s
 
@@ -488,6 +739,8 @@ def cmd_next(args):
         reasons = []
         if status == "active":
             reasons.append("in progress")
+        if t.get("handoff"):
+            reasons.append("has handoff")
         if t.get("due"):
             from datetime import date as _date
             if t["due"] <= _date.today().isoformat():
@@ -496,17 +749,30 @@ def cmd_next(args):
                 reasons.append(f"due {t['due']}")
         if sessions > 0:
             reasons.append("has momentum")
-        reason_str = f"  — {', '.join(reasons)}" if reasons else ""
-        print(f"  {i}. {marker} {t['id']:4s}  {t['title']}{proj}{sess_str}{reason_str}")
+        reason_str = f"  -- {', '.join(reasons)}" if reasons else ""
+        print(f"  {i}. {marker} {t['id']:12s}  {t['title']}{proj}{sess_str}{reason_str}")
 
 
 def cmd_drift(args):
-    """Show drift analysis — goal weights vs actual work distribution."""
+    """Show drift analysis."""
     import metrics as work_metrics
 
     data = engine.load_all()
     drift = work_metrics.compute_drift(data["goals"], data["tasks"])
     print(work_metrics.format_drift_display(drift))
+
+
+def cmd_migrate(args):
+    """Migrate old t1,t2,... IDs to new project-scoped format."""
+    print("Migrating task IDs to project-scoped format...")
+    id_map = engine.migrate_task_ids()
+    if not id_map:
+        print("  No tasks need migration (already using new format).")
+        return
+    print(f"  Migrated {len(id_map)} tasks:")
+    for old, new in id_map.items():
+        print(f"    {old} -> {new}")
+    print("\n  Old IDs are preserved as _legacy_id for backward compatibility.")
 
 
 def cmd_json(args):
@@ -535,6 +801,10 @@ COMMANDS = {
     "thread": cmd_thread,
     "threads": cmd_threads,
     "promote": cmd_promote,
+    "subtask": cmd_subtask,
+    "handoff": cmd_handoff,
+    "dispatch": cmd_dispatch,
+    "migrate": cmd_migrate,
     "json": cmd_json,
 }
 
@@ -542,13 +812,13 @@ COMMANDS = {
 def main():
     if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help"):
         print("Usage: work <command> [args]")
-        print(f"Commands: {', '.join(COMMANDS.keys())}")
+        print(f"Commands: {', '.join(sorted(COMMANDS.keys()))}")
         sys.exit(0)
 
     cmd = sys.argv[1]
     if cmd not in COMMANDS:
         print(f"Unknown command: {cmd}")
-        print(f"Available: {', '.join(COMMANDS.keys())}")
+        print(f"Available: {', '.join(sorted(COMMANDS.keys()))}")
         sys.exit(1)
 
     COMMANDS[cmd](sys.argv[2:])
