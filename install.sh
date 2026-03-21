@@ -4,14 +4,28 @@
 #  Bootstrap installer
 #
 #  Usage:
-#    curl -fsSL https://raw.githubusercontent.com/<org>/aos/main/install.sh | bash
-#    — or —
-#    cd ~/aos && bash install.sh
+#    bash ~/aos/install.sh
 #
 #  Idempotent. Safe to re-run. Resumes from where it left off.
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 set -euo pipefail
+
+# Don't run as root — Homebrew refuses it and files get wrong ownership
+if [[ $EUID -eq 0 ]]; then
+    echo "Don't run with sudo. Just:"
+    echo ""
+    echo "  bash ~/aos/install.sh"
+    echo ""
+    echo "It will ask for your password when it needs it."
+    exit 1
+fi
+
+# Cache sudo upfront — one password prompt, then it's good for the whole install
+echo "AOS needs admin access for Homebrew, SSH, and system config."
+echo ""
+sudo true
+echo ""
 
 # ── Version ──────────────────────────────────────────
 AOS_VERSION="0.1.0"
@@ -1947,18 +1961,7 @@ main() {
     # Network check — fail fast
     _check_network
 
-    # Front-load sudo — ask once, keep the ticket alive for the entire install.
-    # Homebrew, SSH setup, and macOS provisioning all need it.
-    if ! sudo -n true 2>/dev/null; then
-        echo ""
-        echo "  ${BOLD}AOS needs admin access to install system tools.${RESET}"
-        echo "  ${MUTED}You'll only be asked once.${RESET}"
-        echo ""
-        if ! sudo -v; then
-            _die "Admin access is required. Run from an interactive terminal."
-        fi
-    fi
-    # Keep sudo ticket alive in background (refreshes every 50s)
+    # Keep sudo alive — install can take 20+ minutes, ticket expires in 5
     ( while true; do sudo -n true 2>/dev/null; sleep 50; done ) &
     SUDO_KEEPALIVE_PID=$!
     trap "kill $SUDO_KEEPALIVE_PID 2>/dev/null" EXIT
