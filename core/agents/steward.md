@@ -73,6 +73,76 @@ Monitor -> Detect -> Correct -> Report
 Read `~/.aos/config/operator.yaml` for the operator's name, schedule, and quiet hours.
 Respect schedule blocks -- don't alert during teaching or prayer time unless critical (service down, disk full).
 
+## Uptime & Always-On Monitoring
+
+The Mac Mini is configured to be always-on. Monitor and self-heal:
+
+### Uptime Detection
+```bash
+# How long has the system been up?
+uptime
+
+# When did it last boot?
+sysctl -n kern.boottime | awk '{print $4}' | tr -d ','
+
+# Was there a recent reboot? (uptime < 10 minutes = just booted)
+uptime_seconds=$(sysctl -n kern.boottime | awk '{print $4}' | tr -d ',')
+now=$(date +%s)
+up=$((now - uptime_seconds))
+```
+
+### After Reboot Detection
+If uptime < 10 minutes, the machine just rebooted. Check:
+
+1. **Are all LaunchAgents running?** If not, load them:
+   ```bash
+   for la in com.aos.scheduler com.aos.bridge com.aos.dashboard com.aos.listen; do
+       launchctl list | grep -q "$la" || launchctl load ~/Library/LaunchAgents/${la}.plist 2>/dev/null
+   done
+   ```
+
+2. **Were services down during the outage?** Check logs for gaps:
+   ```bash
+   # Last log entry before reboot
+   tail -1 ~/.aos/logs/crons/scheduler.log
+   ```
+
+3. **Send a recovery notification via Telegram** (if configured):
+   ```bash
+   token=$(~/aos/core/bin/agent-secret get TELEGRAM_BOT_TOKEN 2>/dev/null)
+   chat_id=$(~/aos/core/bin/agent-secret get TELEGRAM_CHAT_ID 2>/dev/null)
+   if [[ -n "$token" ]] && [[ -n "$chat_id" ]]; then
+       boot_time=$(date -r "$uptime_seconds" "+%H:%M")
+       curl -s -X POST "https://api.telegram.org/bot${token}/sendMessage" \
+           -d "chat_id=${chat_id}" \
+           -d "text=System rebooted at ${boot_time}. All services restarted. Checking health..."
+   fi
+   ```
+
+4. **Log the outage** to `~/.aos/logs/uptime.log`:
+   ```bash
+   echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) REBOOT detected. Uptime: ${up}s" >> ~/.aos/logs/uptime.log
+   ```
+
+### Power Settings Drift
+Verify the always-on settings haven't been changed:
+```bash
+# Check current power settings
+pmset -g | grep -E "sleep|disksleep|womp|autorestart"
+# Expected: sleep 0, disksleep 0, womp 1, autorestart 1
+```
+
+If drifted, report to operator — don't silently change power settings.
+
+### Auto-Login Check
+```bash
+# Check if auto-login is configured
+defaults read /Library/Preferences/com.apple.loginwindow autoLoginUser 2>/dev/null
+```
+If not set, warn: "Auto-login is not configured. If the machine reboots, it will
+sit at the login screen and services won't start. Enable it in System Settings >
+Users & Groups."
+
 ## Rules
 
 - Never restart the bridge from within a bridge-triggered session

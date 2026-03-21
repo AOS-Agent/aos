@@ -2005,6 +2005,12 @@ for name, job in (data.get('jobs') or {}).items():
     _check "SuperWhisper"   "[[ -d '/Applications/superwhisper.app' ]]"
     _check "Obsidian"       "[[ -d '/Applications/Obsidian.app' ]]"
 
+    # ── Always-on ─────────────────────────────────────────────
+    _step "Always-on configuration"
+    _check "System sleep disabled"    "pmset -g 2>/dev/null | grep -q 'sleep.*0'"
+    _check "Auto-restart on power"    "pmset -g 2>/dev/null | grep -q 'autorestart.*1'"
+    _check "Auto-login configured"    "defaults read /Library/Preferences/com.apple.loginwindow autoLoginUser 2>/dev/null"
+
     # ── Remote access ──────────────────────────────────────────
     _step "Remote access"
     _check "SSH"            "sudo -n systemsetup -getremotelogin 2>/dev/null | grep -qi on"

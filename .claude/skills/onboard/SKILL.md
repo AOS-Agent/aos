@@ -344,9 +344,34 @@ If yes: `~/aos/core/bin/telemetry opt-in`
 
 `python3 ~/aos/core/work/cli.py start "remote access"`
 
-"This machine needs to be reachable from your other devices — your laptop, your phone,
-wherever you are. Two things to set up: SSH (for direct access on your network) and
-Tailscale (for access from anywhere in the world)."
+"This machine is meant to run 24/7 — even when no one's sitting in front of it. We need
+to set up three things: auto-login so it recovers from power outages, SSH so you can reach
+it from other devices, and Tailscale so you can reach it from anywhere in the world."
+
+### Auto-Login
+
+"If the power goes out and the Mac restarts, it needs to log in automatically. Otherwise
+it sits at the login screen and none of your agents or services start. Let me open
+System Settings for you."
+
+AskUserQuestion:
+- question: "Let me open Users & Groups — you'll enable automatic login."
+- options: ["Open it", "I'll do it myself"]
+
+If "Open it":
+```bash
+open "x-apple.systempreferences:com.apple.preferences.users"
+```
+
+Walk through:
+1. "Click the info button (i) next to your user account"
+2. "Look for 'Automatically log in as' or check Login Options at the bottom"
+3. "Enable automatic login for your account"
+4. "You'll need to enter your password to confirm"
+5. "Note: if FileVault is on, auto-login won't work — that's a trade-off between
+   security and availability. For a headless machine, auto-login is usually the right call."
+
+Verify by asking them to confirm it's enabled.
 
 ### SSH / Remote Login
 

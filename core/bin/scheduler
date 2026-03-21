@@ -31,6 +31,75 @@ STATUS_FILE      = LOGS_DIR / "status.json"
 HEALTHCHECKS_CFG = HOME / ".aos" / "config" / "healthchecks.yaml"
 
 DEFAULT_TIMEOUT = 120  # seconds
+UPTIME_LOG       = HOME / ".aos" / "logs" / "uptime.log"
+LAST_BOOT_FILE   = LOGS_DIR / ".last-boot"
+
+# ── Reboot Detection ─────────────────────────────────────────────────────────
+
+def check_reboot():
+    """Detect if the machine just rebooted. Run once per boot, not every 5 min."""
+    try:
+        import ctypes
+        import struct
+
+        # Get boot time from sysctl
+        result = subprocess.run(["sysctl", "-n", "kern.boottime"],
+                                capture_output=True, text=True, timeout=5)
+        # Parse: "{ sec = 1711036800, usec = 0 } ..."
+        boot_sec = int(result.stdout.split("sec =")[1].split(",")[0].strip())
+        boot_time = datetime.fromtimestamp(boot_sec)
+        boot_key = boot_time.strftime("%Y-%m-%dT%H:%M:%S")
+
+        # Check if we've already handled this boot
+        LAST_BOOT_FILE.parent.mkdir(parents=True, exist_ok=True)
+        if LAST_BOOT_FILE.exists() and LAST_BOOT_FILE.read_text().strip() == boot_key:
+            return  # Already handled
+
+        # New boot detected — how long ago?
+        uptime_seconds = int(time.time()) - boot_sec
+
+        # Log it
+        UPTIME_LOG.parent.mkdir(parents=True, exist_ok=True)
+        with open(UPTIME_LOG, "a") as f:
+            f.write(f"{ts()} REBOOT detected. Boot at {boot_key}. Uptime: {uptime_seconds}s\n")
+
+        log(f"Reboot detected — boot at {boot_key}, uptime {uptime_seconds}s")
+
+        # Ensure all LaunchAgents are loaded
+        for la in ["com.aos.bridge", "com.aos.dashboard", "com.aos.listen"]:
+            result = subprocess.run(["launchctl", "list"], capture_output=True, text=True, timeout=5)
+            if la not in result.stdout:
+                plist = HOME / "Library" / "LaunchAgents" / f"{la}.plist"
+                if plist.exists():
+                    subprocess.run(["launchctl", "load", str(plist)], capture_output=True, timeout=5)
+                    log(f"Loaded {la} after reboot")
+
+        # Send Telegram notification if configured
+        try:
+            token_result = subprocess.run(
+                [str(HOME / "aos" / "core" / "bin" / "agent-secret"), "get", "TELEGRAM_BOT_TOKEN"],
+                capture_output=True, text=True, timeout=5)
+            chat_result = subprocess.run(
+                [str(HOME / "aos" / "core" / "bin" / "agent-secret"), "get", "TELEGRAM_CHAT_ID"],
+                capture_output=True, text=True, timeout=5)
+            token = token_result.stdout.strip()
+            chat_id = chat_result.stdout.strip()
+            if token and chat_id:
+                msg = f"System rebooted at {boot_time.strftime('%H:%M')}. Services restarted. Uptime: {uptime_seconds}s."
+                data = json.dumps({"chat_id": chat_id, "text": msg}).encode()
+                req = urllib.request.Request(
+                    f"https://api.telegram.org/bot{token}/sendMessage",
+                    data=data, headers={"Content-Type": "application/json"}, method="POST")
+                urllib.request.urlopen(req, timeout=10)
+                log("Sent reboot notification to Telegram")
+        except Exception:
+            pass  # Telegram notification is best-effort
+
+        # Mark this boot as handled
+        LAST_BOOT_FILE.write_text(boot_key)
+
+    except Exception as e:
+        log(f"Reboot detection error: {e}")
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -365,6 +434,9 @@ def main():
     # Ensure directories exist
     LOGS_DIR.mkdir(parents=True, exist_ok=True)
     LOCKS_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Check for reboot — runs once per boot, self-heals services
+    check_reboot()
 
     jobs   = load_crons()
     status = load_status()
