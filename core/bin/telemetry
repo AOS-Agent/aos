@@ -1,0 +1,274 @@
+#!/usr/bin/env bash
+# ─── AOS Anonymous Telemetry ─────────────────────────────
+#
+# Opt-in anonymous usage telemetry. No PII ever.
+# Tracks phase timings, skip rates, completion rates, errors.
+# Helps improve AOS for everyone.
+#
+# Usage:
+#   telemetry event <flow> <phase> <action> [duration_ms]
+#     Actions: start, complete, skip, error
+#
+#   telemetry report              # show local stats
+#   telemetry push                # push to GitHub Discussions (anonymized)
+#   telemetry opt-in              # enable telemetry
+#   telemetry opt-out             # disable telemetry
+#   telemetry status              # show opt-in state
+#
+# Data model (what gets stored):
+#   {
+#     "machine_hash": "a7f3...",   # SHA256 of machine-id (not reversible)
+#     "aos_version": "15",
+#     "macos": "26.2",
+#     "arch": "arm64",
+#     "flow": "onboard",
+#     "phase": "integrations",
+#     "action": "complete",
+#     "duration_ms": 45200,
+#     "timestamp": "2026-03-21T..."
+#   }
+#
+# What is NEVER stored:
+#   - Names, emails, phone numbers
+#   - File paths, file contents
+#   - Error messages (only error count per phase)
+#   - API keys, tokens, secrets
+#   - IP addresses
+#   - Anything that could identify the operator
+
+set -euo pipefail
+
+AOS_DIR="$HOME/aos"
+USER_DIR="$HOME/.aos"
+TELEMETRY_DIR="$USER_DIR/telemetry"
+TELEMETRY_LOG="$TELEMETRY_DIR/events.jsonl"
+OPT_FILE="$USER_DIR/config/telemetry-opt-in"
+
+mkdir -p "$TELEMETRY_DIR" "$USER_DIR/config"
+
+# ── Colors ────────────────────────────────────────────────
+if [[ -t 1 ]]; then
+    GREEN=$'\033[32m' YELLOW=$'\033[33m' BOLD=$'\033[1m' DIM=$'\033[2m' RESET=$'\033[0m'
+else
+    GREEN="" YELLOW="" BOLD="" DIM="" RESET=""
+fi
+
+_is_opted_in() {
+    [[ -f "$OPT_FILE" ]] && return 0
+    return 1
+}
+
+_machine_hash() {
+    # Irreversible hash of machine-id — identifies the machine without revealing it
+    local machine_id
+    machine_id=$(cat "$USER_DIR/.machine-id" 2>/dev/null || echo "unknown")
+    echo -n "$machine_id" | shasum -a 256 | cut -d' ' -f1 | head -c 12
+}
+
+_record_event() {
+    local flow="$1" phase="$2" action="$3" duration_ms="${4:-0}"
+
+    TEL_MACHINE_HASH="$(_machine_hash)" \
+    TEL_USER_DIR="$USER_DIR" \
+    TEL_FLOW="$flow" \
+    TEL_PHASE="$phase" \
+    TEL_ACTION="$action" \
+    TEL_DURATION="$duration_ms" \
+    TEL_LOG="$TELEMETRY_LOG" \
+    python3 -c "
+import json, os, platform
+from datetime import datetime
+from pathlib import Path
+
+user_dir = os.environ['TEL_USER_DIR']
+version_file = Path(user_dir) / '.version'
+
+event = {
+    'machine_hash': os.environ['TEL_MACHINE_HASH'],
+    'aos_version': version_file.read_text().strip() if version_file.exists() else 'unknown',
+    'macos': platform.mac_ver()[0],
+    'arch': platform.machine(),
+    'flow': os.environ['TEL_FLOW'],
+    'phase': os.environ['TEL_PHASE'],
+    'action': os.environ['TEL_ACTION'],
+    'duration_ms': int(os.environ.get('TEL_DURATION', '0')),
+    'ts': datetime.now(datetime.UTC).isoformat() + 'Z',
+}
+
+log_path = Path(os.environ['TEL_LOG'])
+with open(log_path, 'a') as f:
+    f.write(json.dumps(event) + '\n')
+" 2>/dev/null
+}
+
+_report() {
+    if [[ ! -f "$TELEMETRY_LOG" ]] || [[ ! -s "$TELEMETRY_LOG" ]]; then
+        echo "  ${DIM}No telemetry data yet${RESET}"
+        return 0
+    fi
+
+    TEL_LOG="$TELEMETRY_LOG" python3 -c "
+import json, os
+from pathlib import Path
+from collections import defaultdict
+
+events = []
+for line in Path(os.environ['TEL_LOG']).read_text().splitlines():
+    if line.strip():
+        events.append(json.loads(line))
+
+if not events:
+    print('  No events')
+    exit()
+
+# Group by flow
+flows = defaultdict(list)
+for e in events:
+    flows[e['flow']].append(e)
+
+for flow, evts in flows.items():
+    print(f'\n  {flow}')
+    print(f'  {\"─\" * 40}')
+
+    phases = defaultdict(lambda: {'starts': 0, 'completes': 0, 'skips': 0, 'errors': 0, 'durations': []})
+    for e in evts:
+        p = phases[e['phase']]
+        action = e['action']
+        if action == 'start': p['starts'] += 1
+        elif action == 'complete':
+            p['completes'] += 1
+            if e.get('duration_ms', 0) > 0:
+                p['durations'].append(e['duration_ms'])
+        elif action == 'skip': p['skips'] += 1
+        elif action == 'error': p['errors'] += 1
+
+    for phase, stats in phases.items():
+        avg_ms = int(sum(stats['durations']) / len(stats['durations'])) if stats['durations'] else 0
+        avg_s = f'{avg_ms/1000:.1f}s' if avg_ms else '-'
+        err = f'  err:{stats[\"errors\"]}' if stats['errors'] else ''
+        skip = f'  skip:{stats[\"skips\"]}' if stats['skips'] else ''
+        print(f'    {phase:<20} done:{stats[\"completes\"]}  avg:{avg_s}{skip}{err}')
+
+total = len(events)
+print(f'\n  Total events: {total}')
+" 2>/dev/null
+}
+
+_push() {
+    if ! _is_opted_in; then
+        echo "  ${YELLOW}Telemetry not opted in${RESET}"
+        echo "  ${DIM}Run: aos telemetry opt-in${RESET}"
+        return 1
+    fi
+
+    if [[ ! -f "$TELEMETRY_LOG" ]] || [[ ! -s "$TELEMETRY_LOG" ]]; then
+        echo "  ${DIM}No telemetry data to push${RESET}"
+        return 0
+    fi
+
+    local repo
+    repo=$(cd "$AOS_DIR" 2>/dev/null && git remote get-url origin 2>/dev/null | sed 's|.*github.com[:/]||;s|\.git$||' || echo "")
+
+    if [[ -z "$repo" ]]; then
+        echo "  ${DIM}No GitHub remote — telemetry stays local${RESET}"
+        return 0
+    fi
+
+    # Aggregate stats (never send raw events)
+    local summary
+    summary=$(TEL_LOG="$TELEMETRY_LOG" python3 -c "
+import json, os
+from pathlib import Path
+from collections import defaultdict
+
+events = []
+for line in Path(os.environ['TEL_LOG']).read_text().splitlines():
+    if line.strip():
+        events.append(json.loads(line))
+
+# Aggregate by flow+phase
+agg = defaultdict(lambda: {'complete': 0, 'skip': 0, 'error': 0, 'durations': []})
+for e in events:
+    key = f'{e[\"flow\"]}/{e[\"phase\"]}'
+    a = e['action']
+    if a in ('complete', 'skip', 'error'):
+        agg[key][a] += 1
+    if a == 'complete' and e.get('duration_ms', 0) > 0:
+        agg[key]['durations'].append(e['duration_ms'])
+
+lines = ['## Telemetry Report', '', f'Machine: \`{events[0][\"machine_hash\"]}\`', f'Events: {len(events)}', '']
+for key, stats in sorted(agg.items()):
+    avg = int(sum(stats['durations'])/len(stats['durations'])) if stats['durations'] else 0
+    lines.append(f'- **{key}**: done={stats[\"complete\"]} skip={stats[\"skip\"]} err={stats[\"error\"]} avg={avg}ms')
+
+lines.append('')
+lines.append('---')
+lines.append('Anonymous telemetry from AOS feedback system')
+print('\n'.join(lines))
+" 2>/dev/null)
+
+    if [[ -n "$summary" ]]; then
+        echo "$summary"
+        echo ""
+        echo "  ${DIM}(Would push to GitHub Discussions — not yet implemented)${RESET}"
+        # TODO: gh api to create discussion in repo
+    fi
+}
+
+# ── Main ──────────────────────────────────────────────────
+
+case "${1:---help}" in
+    event)
+        if ! _is_opted_in; then
+            exit 0  # Silent no-op when not opted in
+        fi
+        shift
+        flow="${1:-unknown}"
+        phase="${2:-unknown}"
+        action="${3:-unknown}"
+        duration_ms="${4:-0}"
+        _record_event "$flow" "$phase" "$action" "$duration_ms"
+        ;;
+
+    report)
+        _report
+        ;;
+
+    push)
+        _push
+        ;;
+
+    opt-in)
+        touch "$OPT_FILE"
+        echo "  ${GREEN}Telemetry opted in${RESET}"
+        echo "  ${DIM}Anonymous usage data helps improve AOS.${RESET}"
+        echo "  ${DIM}No personal data is ever collected. Opt out anytime: aos telemetry opt-out${RESET}"
+        ;;
+
+    opt-out)
+        rm -f "$OPT_FILE"
+        echo "  ${GREEN}Telemetry opted out${RESET}"
+        echo "  ${DIM}Local data kept at $TELEMETRY_DIR — delete it if you want: rm -rf $TELEMETRY_DIR${RESET}"
+        ;;
+
+    status)
+        if _is_opted_in; then
+            echo "  ${GREEN}Opted in${RESET}"
+            count=$(wc -l < "$TELEMETRY_LOG" 2>/dev/null | tr -d ' ' || echo "0")
+            echo "  ${DIM}$count events recorded locally${RESET}"
+        else
+            echo "  ${DIM}Not opted in${RESET}"
+        fi
+        ;;
+
+    --help|-h|"")
+        echo "Usage: telemetry <command>"
+        echo ""
+        echo "  event <flow> <phase> <action> [ms]   Record event"
+        echo "  report                                Show local stats"
+        echo "  push                                  Push aggregated stats"
+        echo "  opt-in                                Enable telemetry"
+        echo "  opt-out                               Disable telemetry"
+        echo "  status                                Show opt-in state"
+        ;;
+esac

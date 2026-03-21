@@ -3,15 +3,26 @@
 import json
 import sqlite3
 import time
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
 DB_PATH = Path.home() / ".aos" / "data" / "dashboard" / "activity.db"
 
 
+@contextmanager
+def _db():
+    """Context manager for DB connections — guarantees close on exception."""
+    conn = _get_db()
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
 def _get_db() -> sqlite3.Connection:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(DB_PATH))
+    conn = sqlite3.connect(str(DB_PATH), timeout=10)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("""

@@ -41,10 +41,10 @@ Operator (MacBook / Phone)
 
 | Service | Type | Port | LaunchAgent | Code |
 |---------|------|------|-------------|------|
-| Bridge | Daemon | — | `com.agent.bridge` | `apps/bridge/` |
-| Dashboard | HTTP | 4096 | `com.agent.dashboard` | `apps/dashboard/` |
-| Listen | HTTP | 7600 | `com.agent.listen` | `apps/listen/` |
-| Memory | MCP (stdio) | — | on-demand | `apps/memory/` |
+| Bridge | Daemon | — | `com.aos.bridge` | `core/services/bridge/` |
+| Dashboard | HTTP | 4096 | `com.aos.dashboard` | `core/services/dashboard/` |
+| Listen | HTTP | 7600 | `com.aos.listen` | `core/services/listen/` |
+| Memory | MCP (stdio) | — | on-demand | `core/services/memory/` |
 
 All HTTP services bound to `127.0.0.1`. Remote access via Tailscale only.
 
@@ -55,7 +55,7 @@ Claude Code is the execution engine. The system does not use LangGraph, Papercli
 - **Telegram message** → Bridge dispatches to Claude CLI (`claude -p`) with project-specific `--cwd` and `--agent`
 - **HTTP job** → Listen spawns a Claude Code worker process, tracks via YAML
 - **Agent invocation** → Claude Code's built-in subagent system (`.claude/agents/*.md` with YAML frontmatter)
-- **Memory queries** → MCP server (`apps/memory/`) exposes semantic search to any Claude session
+- **Memory queries** → MCP server (`core/services/memory/`) exposes semantic search to any Claude session
 
 ## Delegation Model
 

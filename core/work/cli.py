@@ -551,7 +551,8 @@ def cmd_link(args):
         context_file = os.path.join(os.path.expanduser("~"), ".aos", "work", ".session-context.json")
         if os.path.exists(context_file):
             try:
-                ctx = json.load(open(context_file))
+                with open(context_file) as f:
+                    ctx = json.load(f)
                 session_id = ctx.get("session_id")
             except Exception:
                 pass

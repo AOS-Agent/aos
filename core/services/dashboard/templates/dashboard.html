@@ -9,6 +9,68 @@
 .dash-row-2 { grid-template-columns: 1fr 1fr; }
 .dash-row-3 { grid-template-columns: 1fr 1fr 1fr; }
 
+/* ── Attention Bar ───────────────────────────── */
+.attention-bar {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    margin-bottom: 16px;
+    overflow: hidden;
+}
+
+.attention-bar.has-errors { border-color: #D44C47; }
+.attention-bar.has-warnings { border-color: #CB912F; }
+
+.attention-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 16px;
+    font-size: 13px;
+    border-bottom: 1px solid var(--border-light);
+}
+
+.attention-item:last-child { border-bottom: none; }
+.attention-item.error { color: #D44C47; }
+.attention-item.warning { color: #CB912F; }
+
+.attention-icon { width: 16px; height: 16px; flex-shrink: 0; }
+.attention-text { flex: 1; font-weight: 500; }
+.attention-detail { font-size: 12px; color: var(--text-tertiary); font-weight: 400; }
+.attention-link { font-size: 12px; color: var(--text-faint); text-decoration: none; }
+.attention-link:hover { color: var(--text-secondary); }
+
+.all-clear {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 16px;
+    font-size: 13px;
+    color: #448361;
+}
+
+/* ── Morning Context ─────────────────────────── */
+.morning-row {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    flex-wrap: wrap;
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+
+.morning-item {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.morning-item i { width: 14px; height: 14px; color: var(--text-faint); }
+
+.prayer-next {
+    font-weight: 600;
+    color: var(--orange);
+}
+
 /* ── Stat Cards ──────────────────────────────── */
 .stat-card {
     border: 1px solid var(--border);
@@ -29,11 +91,7 @@
     margin-bottom: 8px;
 }
 
-.stat-card-values {
-    display: flex;
-    gap: 16px;
-    flex-wrap: wrap;
-}
+.stat-card-values { display: flex; gap: 16px; flex-wrap: wrap; }
 
 .stat-num {
     font-family: var(--font-mono);
@@ -43,11 +101,7 @@
 }
 
 .stat-num.accent { color: var(--orange); }
-
-.stat-num-label {
-    font-size: 12px;
-    color: var(--text-tertiary);
-}
+.stat-num-label { font-size: 12px; color: var(--text-tertiary); }
 
 .stat-meta {
     font-family: var(--font-mono);
@@ -56,87 +110,40 @@
     margin-top: 6px;
 }
 
-/* ── Health Card ─────────────────────────────── */
-.health-row {
+/* ── Momentum ────────────────────────────────── */
+.momentum-task {
     display: flex;
     align-items: center;
-    gap: 8px;
-    margin-bottom: 6px;
+    gap: 10px;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border-light);
 }
 
-.health-metrics {
-    display: flex;
-    gap: 16px;
-    font-family: var(--font-mono);
-    font-size: 12px;
-    color: var(--text-tertiary);
+.momentum-task:last-child { border-bottom: none; }
+
+.momentum-priority {
+    width: 3px;
+    height: 20px;
+    border-radius: 2px;
+    flex-shrink: 0;
 }
 
-/* ── Session Cards ───────────────────────────── */
-.session-card {
-    padding: 12px 16px;
-    border: 1px solid var(--border-light);
-    border-left: 3px solid var(--border);
-    border-radius: var(--radius);
-    transition: background 0.08s;
-}
-
-.session-card:hover { background: rgba(55, 53, 47, 0.02); }
-.session-card.has-files { border-left-color: var(--orange); }
-
-.session-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 4px;
-}
-
-.session-project {
-    font-weight: 600;
-    font-size: 14px;
-    color: var(--orange);
-}
-
-.session-duration {
-    font-family: var(--font-mono);
-    font-size: 12px;
-    color: var(--text-tertiary);
-}
-
-.session-time {
-    font-family: var(--font-mono);
-    font-size: 12px;
-    color: var(--text-faint);
-}
-
-.session-files {
-    font-size: 13px;
-    color: var(--text-secondary);
-    margin-bottom: 2px;
-}
-
-.session-action {
-    font-family: var(--font-mono);
-    font-size: 12px;
-    color: var(--text-tertiary);
-}
-
-/* ── Tool Badges ─────────────────────────────── */
-.tool-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 3px;
+.momentum-id {
     font-family: var(--font-mono);
     font-size: 11px;
-    padding: 1px 6px;
-    border-radius: var(--radius);
-    background: var(--tag-gray-bg);
-    color: var(--tag-gray);
+    color: var(--text-faint);
+    width: 65px;
+    flex-shrink: 0;
 }
 
+.momentum-title {
+    flex: 1;
+    font-size: 14px;
+    color: var(--text);
+}
 
-/* ── Activity Feed ───────────────────────────── */
-.feed { max-height: 400px; overflow-y: auto; }
+/* ── Unified Feed ────────────────────────────── */
+.feed { max-height: 500px; overflow-y: auto; }
 .feed::-webkit-scrollbar { width: 4px; }
 .feed::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
 
@@ -150,21 +157,29 @@
 
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 
-.feed-dot {
-    width: 6px; height: 6px;
+.feed-icon {
+    width: 24px; height: 24px;
     border-radius: 50%;
-    margin-top: 6px;
+    display: flex; align-items: center; justify-content: center;
     flex-shrink: 0;
+    margin-top: 1px;
 }
+
+.feed-icon.work-completed { background: rgba(68,131,97,0.1); color: #448361; }
+.feed-icon.work-started { background: rgba(51,126,169,0.1); color: #337EA9; }
+.feed-icon.work-created { background: var(--tag-gray-bg); color: var(--text-secondary); }
+.feed-icon.work-subtask { background: rgba(144,101,176,0.1); color: #9065B0; }
+.feed-icon.work-handoff { background: rgba(144,101,176,0.1); color: #9065B0; }
+.feed-icon.work-cancelled { background: rgba(212,76,71,0.1); color: #D44C47; }
+.feed-icon.session { background: rgba(51,126,169,0.1); color: #337EA9; }
+.feed-icon.system { background: var(--tag-gray-bg); color: var(--text-tertiary); }
+.feed-icon.telegram { background: rgba(217,115,13,0.1); color: #D9730D; }
 
 .feed-content { flex: 1; min-width: 0; }
 
-.feed-action {
-    font-size: 13px;
-    color: var(--text);
-}
+.feed-action { font-size: 13px; color: var(--text); }
 
-.agent-tag {
+.feed-label {
     font-weight: 600;
     font-size: 13px;
 }
@@ -178,95 +193,7 @@
     text-overflow: ellipsis;
 }
 
-.feed-time {
-    font-family: var(--font-mono);
-    font-size: 11px;
-    color: var(--text-faint);
-    flex-shrink: 0;
-}
-
-.feed-status {
-    font-family: var(--font-mono);
-    font-size: 10px;
-    padding: 0 5px;
-    border-radius: var(--radius);
-}
-
-.feed-status.completed { background: var(--tag-green-bg); color: var(--tag-green); }
-.feed-status.running { background: var(--tag-blue-bg); color: var(--tag-blue); }
-.feed-status.failed { background: var(--tag-red-bg); color: var(--tag-red); }
-
-
-/* ── Work Activity Timeline ──────────────────── */
-.work-event {
-    display: flex;
-    align-items: flex-start;
-    gap: 10px;
-    padding: 8px 0;
-    border-bottom: 1px solid var(--border-light);
-}
-
-.work-event:last-child { border-bottom: none; }
-
-.work-event-icon {
-    width: 24px; height: 24px;
-    border-radius: 50%;
-    display: flex; align-items: center; justify-content: center;
-    flex-shrink: 0;
-    margin-top: 1px;
-}
-
-.work-event-icon.completed { background: var(--tag-green-bg, rgba(35,134,54,0.1)); color: var(--tag-green); }
-.work-event-icon.started { background: var(--tag-blue-bg, rgba(35,131,226,0.1)); color: var(--tag-blue); }
-.work-event-icon.created { background: var(--tag-gray-bg); color: var(--text-secondary); }
-.work-event-icon.subtask { background: var(--tag-purple-bg, rgba(103,36,222,0.1)); color: var(--tag-purple); }
-.work-event-icon.handoff { background: var(--tag-purple-bg, rgba(103,36,222,0.1)); color: var(--tag-purple); }
-.work-event-icon.cancelled { background: var(--tag-red-bg, rgba(235,87,87,0.1)); color: var(--tag-red); }
-.work-event-icon.untracked { background: var(--tag-yellow-bg, rgba(203,145,47,0.1)); color: var(--tag-yellow); }
-.work-event-icon.session { background: var(--tag-gray-bg); color: var(--text-tertiary); }
-
-.work-event-content { flex: 1; min-width: 0; }
-
-.work-event-action {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 12px;
-}
-
-.work-event-verb {
-    color: var(--text-tertiary);
-    text-transform: capitalize;
-}
-
-.work-event-id {
-    font-family: var(--font-mono);
-    font-size: 11px;
-    color: var(--text-faint);
-    background: var(--tag-gray-bg);
-    padding: 0 4px;
-    border-radius: 2px;
-}
-
-.work-event-title {
-    font-size: 13px;
-    color: var(--text);
-    margin-top: 2px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-.work-event-detail {
-    font-size: 12px;
-    color: var(--text-tertiary);
-    margin-top: 1px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-.work-event-meta {
+.feed-meta {
     display: flex;
     flex-direction: column;
     align-items: flex-end;
@@ -274,22 +201,109 @@
     flex-shrink: 0;
 }
 
-.work-event-time {
+.feed-time {
     font-family: var(--font-mono);
     font-size: 11px;
     color: var(--text-faint);
 }
 
+.feed-tag {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    padding: 0 5px;
+    border-radius: var(--radius);
+}
+
+/* ── Health Row ──────────────────────────────── */
+.health-metrics {
+    display: flex;
+    gap: 16px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-tertiary);
+}
+
 /* ── Responsive ──────────────────────────────── */
 @media (max-width: 768px) {
     .dash-row-2, .dash-row-3 { grid-template-columns: 1fr; }
+    .morning-row { gap: 12px; }
 }
 {% endblock %}
 
 {% block content %}
-<!-- TODAY + HEALTH -->
-<div class="dash-row dash-row-2">
-    <div class="stat-card" onclick="window.location='/sessions'">
+<!-- ═══════════════ ZONE 1: ATTENTION ═══════════════ -->
+{% if attention %}
+<div class="attention-bar {{ 'has-errors' if attention|selectattr('type','equalto','error')|list else 'has-warnings' if attention|selectattr('type','equalto','warning')|list else '' }}">
+    {% for item in attention %}
+    <div class="attention-item {{ item.type }}">
+        <i data-lucide="{{ item.icon }}" class="attention-icon"></i>
+        <span class="attention-text">{{ item.text }}</span>
+        {% if item.detail %}<span class="attention-detail">{{ item.detail }}</span>{% endif %}
+        {% if item.link %}<a href="{{ item.link }}" class="attention-link">View</a>{% endif %}
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="attention-bar">
+    <div class="all-clear">
+        <i data-lucide="check-circle" style="width:14px;height:14px;"></i>
+        All clear
+        <span style="color:var(--text-faint);font-size:12px;margin-left:auto;">
+            <span id="stat-disk-value">Disk {{ health.disk_pct }}%</span>
+            &middot;
+            <span id="stat-ram-value">RAM {{ health.ram_pct }}%</span>
+        </span>
+    </div>
+</div>
+{% endif %}
+
+<!-- ═══════════ MORNING CONTEXT ═══════════ -->
+{% if morning %}
+<div class="card" style="margin-bottom:16px;padding:12px 16px;">
+    <div class="morning-row">
+        {% if morning.weather %}
+        <span class="morning-item">
+            <i data-lucide="cloud"></i>
+            {{ morning.weather.condition }} {{ morning.weather.temp_high }}
+        </span>
+        {% endif %}
+        {% if morning.prayer_times %}
+        {% set prayers = [
+            ('Fajr', morning.prayer_times.fajr),
+            ('Sunrise', morning.prayer_times.sunrise),
+            ('Dhuhr', morning.prayer_times.dhuhr),
+            ('Asr', morning.prayer_times.asr),
+            ('Maghrib', morning.prayer_times.maghrib),
+            ('Isha', morning.prayer_times.isha)
+        ] %}
+        <span class="morning-item">
+            <i data-lucide="moon"></i>
+            {% set ns = namespace(found=false) %}
+            {% for name, time in prayers %}
+                {% if not ns.found and time > now[11:16] %}
+                    <span class="prayer-next">{{ name }} {{ time }}</span>
+                    {% set ns.found = true %}
+                {% endif %}
+            {% endfor %}
+            {% if not ns.found %}
+                <span style="color:var(--text-faint);">Isha passed</span>
+            {% endif %}
+        </span>
+        {% endif %}
+        {% if morning.date %}
+        <span class="morning-item" style="margin-left:auto;">
+            <i data-lucide="calendar"></i>
+            {{ now[:10] }}
+        </span>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
+
+<!-- ═══════════════ ZONE 2: MOMENTUM ═══════════════ -->
+<div class="dash-row dash-row-3">
+    <!-- Today -->
+    <div class="stat-card" onclick="window.location='/history'">
         <div class="stat-card-label">Today</div>
         <div class="stat-card-values">
             <div>
@@ -312,39 +326,84 @@
         {% endif %}
     </div>
 
-    <div class="stat-card" id="health-card">
-        <div class="stat-card-label">Health</div>
-        <div class="health-row">
-            <div class="status-dot {{ 'online' if health_status == 'ok' else 'warning' if health_status == 'warning' else 'offline' }}" id="health-dot"
-                 style="width:8px;height:8px;border-radius:50;{% if health_status == 'ok' %}background:var(--tag-green);{% elif health_status == 'warning' %}background:var(--tag-yellow);{% else %}background:var(--tag-red);{% endif %}"></div>
+    <!-- Weekly Throughput -->
+    <div class="stat-card" onclick="window.location='/work'">
+        <div class="stat-card-label">This Week</div>
+        <div class="stat-card-values">
+            <div>
+                <div class="stat-num accent">{{ weekly.throughput|default(0) }}</div>
+                <div class="stat-num-label">completed</div>
+            </div>
+            <div>
+                <div class="stat-num">{{ weekly.wip_current|default(0) }}</div>
+                <div class="stat-num-label">in progress</div>
+            </div>
+        </div>
+        {% if weekly.created %}
+        <div class="stat-meta">{{ weekly.created }} created</div>
+        {% endif %}
+    </div>
+
+    <!-- System -->
+    <div class="stat-card" onclick="window.location='/crons'" id="health-card">
+        <div class="stat-card-label">System</div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+            <div id="health-dot" style="width:8px;height:8px;border-radius:3px;{% if health_status == 'ok' %}background:#448361;{% elif health_status == 'warning' %}background:#CB912F;{% else %}background:#D44C47;{% endif %}"></div>
             <span style="font-size:14px;" id="health-text">{{ health_text }}</span>
         </div>
         <div class="health-metrics">
-            <span id="stat-disk-value" {% if health.disk_pct > 85 %}style="color:var(--tag-red);"{% endif %}>Disk {{ health.disk_pct }}%</span>
-            <span id="stat-ram-value">RAM {{ health.ram_pct }}%</span>
+            {% set cs = cron_data.summary %}
+            <span>{{ cs.ok }}/{{ cs.enabled }} crons ok</span>
+            {% if attention %}<span style="color:#CB912F;">{{ attention|length }} alert{{ 's' if attention|length != 1 }}</span>{% endif %}
         </div>
     </div>
 </div>
 
-<!-- WORK ACTIVITY -->
+<!-- Active Tasks -->
+{% if tasks %}
 <div class="card" style="margin-bottom:16px;">
-    <div class="card-header" style="margin-bottom:12px;">
-        <span class="card-title">Work Activity</span>
-        <a href="/work" class="btn" style="font-size:12px;height:24px;padding:0 8px;">View all</a>
+    <div class="card-header" style="margin-bottom:4px;">
+        <span class="card-title">Open Tasks</span>
+        <a href="/work" class="btn" style="font-size:12px;height:24px;padding:0 8px;">{{ tasks|length }} total</a>
     </div>
-    {% if work_activity %}
-    <div style="display:flex;flex-direction:column;gap:0;">
-        {% for ev in work_activity[:12] %}
-        <div class="work-event">
-            <div class="work-event-icon
-                {%- if ev.action == 'task_completed' %} completed
-                {%- elif ev.action == 'task_started' %} started
-                {%- elif ev.action == 'task_created' %} created
-                {%- elif ev.action == 'subtask_added' %} subtask
-                {%- elif ev.action == 'handoff_written' %} handoff
-                {%- elif ev.action == 'task_cancelled' %} cancelled
-                {%- elif ev.action == 'session_untracked' %} untracked
-                {%- elif ev.action == 'session_end' %} session
+    {% for task in tasks %}
+    <div class="momentum-task">
+        <div class="momentum-priority" style="{% if task.priority == 1 %}background:#D44C47;{% elif task.priority == 2 %}background:#D9730D;{% else %}background:var(--border);{% endif %}"></div>
+        <span class="momentum-id">{{ task.id }}</span>
+        <span class="momentum-title">{{ task.title }}</span>
+        {% if task.handoff %}
+        <i data-lucide="arrow-right-circle" style="width:12px;height:12px;color:#9065B0;flex-shrink:0;" title="Has handoff"></i>
+        {% endif %}
+        {% if task.status == 'active' %}
+        <span class="tag tag-blue" style="font-size:10px;">active</span>
+        {% endif %}
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+<!-- ═══════════════ ZONE 3: UNIFIED FEED ═══════════════ -->
+<div class="card">
+    <div class="card-header" style="margin-bottom:8px;">
+        <span class="card-title">Activity</span>
+    </div>
+    <div class="feed" id="activity-feed">
+        {# Merge work_activity and activity into one chronological feed #}
+        {# Work events first (already sorted by time desc) #}
+        {% set ns = namespace(count=0) %}
+
+        {% for ev in work_activity[:15] %}
+        {% set ns.count = ns.count + 1 %}
+        <div class="feed-item">
+            <div class="feed-icon
+                {%- if ev.action == 'task_completed' %} work-completed
+                {%- elif ev.action == 'task_started' %} work-started
+                {%- elif ev.action == 'task_created' %} work-created
+                {%- elif ev.action == 'subtask_added' %} work-subtask
+                {%- elif ev.action == 'handoff_written' %} work-handoff
+                {%- elif ev.action == 'task_cancelled' %} work-cancelled
+                {%- elif ev.action == 'session_end' or ev.action == 'session_untracked' %} session
+                {%- else %} system
                 {%- endif %}">
                 {% if ev.action == 'task_completed' %}
                 <i data-lucide="check-circle" style="width:12px;height:12px;"></i>
@@ -358,138 +417,73 @@
                 <i data-lucide="arrow-right-circle" style="width:12px;height:12px;"></i>
                 {% elif ev.action == 'task_cancelled' %}
                 <i data-lucide="x-circle" style="width:12px;height:12px;"></i>
-                {% elif ev.action == 'session_untracked' %}
-                <i data-lucide="alert-triangle" style="width:12px;height:12px;"></i>
-                {% elif ev.action == 'session_end' %}
+                {% elif ev.action == 'session_end' or ev.action == 'session_untracked' %}
                 <i data-lucide="log-out" style="width:12px;height:12px;"></i>
                 {% else %}
                 <i data-lucide="circle" style="width:12px;height:12px;"></i>
                 {% endif %}
             </div>
-            <div class="work-event-content">
-                <div class="work-event-action">
-                    <span class="work-event-verb">{{ ev.action | replace('_', ' ') }}</span>
-                    {% if ev.task_id %}<span class="work-event-id">{{ ev.task_id }}</span>{% endif %}
+            <div class="feed-content">
+                <div class="feed-action">
+                    <span class="feed-label" style="color:{% if 'completed' in ev.action %}#448361{% elif 'started' in ev.action %}#337EA9{% elif 'cancelled' in ev.action %}#D44C47{% else %}var(--text-secondary){% endif %};">
+                        {{ ev.action | replace('_', ' ') }}
+                    </span>
+                    {% if ev.task_id %}<span style="font-family:var(--font-mono);font-size:11px;color:var(--text-faint);background:var(--tag-gray-bg);padding:0 4px;border-radius:2px;margin-left:4px;">{{ ev.task_id }}</span>{% endif %}
                 </div>
                 {% if ev.title %}
-                <div class="work-event-title">{{ ev.title }}</div>
+                <div class="feed-summary" style="color:var(--text);">{{ ev.title }}</div>
                 {% endif %}
                 {% if ev.detail %}
-                <div class="work-event-detail">{{ ev.detail }}</div>
+                <div class="feed-summary">{{ ev.detail }}</div>
                 {% endif %}
             </div>
-            <div class="work-event-meta">
+            <div class="feed-meta">
                 {% if ev.project %}<span class="tag tag-blue" style="font-size:10px;">{{ ev.project }}</span>{% endif %}
-                <span class="work-event-time">{{ ev.ts[11:16] if ev.ts else '' }}</span>
+                <span class="feed-time">{{ ev.ts[11:16] if ev.ts else '' }}</span>
             </div>
         </div>
         {% endfor %}
-    </div>
-    {% else %}
-    <div class="empty-state">No work activity yet. Create tasks, complete them, write handoffs -- it all shows up here.</div>
-    {% endif %}
-</div>
 
-<!-- AUTOMATIONS — unified summary -->
-<div class="dash-row dash-row-2" style="margin-bottom:16px;">
-    <div class="stat-card" onclick="window.location='/crons'">
-        <div class="stat-card-label">Scheduled Jobs</div>
-        <div class="stat-card-values" id="cron-summary-vals">
-            {% set s = cron_data.summary %}
-            <div>
-                <div class="stat-num" style="color:var(--tag-green);">{{ s.ok }}</div>
-                <div class="stat-num-label">ok</div>
-            </div>
-            {% if s.failed %}
-            <div>
-                <div class="stat-num" style="color:var(--tag-red);">{{ s.failed }}</div>
-                <div class="stat-num-label">failed</div>
-            </div>
-            {% endif %}
-            {% if s.stale %}
-            <div>
-                <div class="stat-num" style="color:var(--tag-yellow);">{{ s.stale }}</div>
-                <div class="stat-num-label">stale</div>
-            </div>
-            {% endif %}
-        </div>
-        <div class="stat-meta">{{ s.enabled }} of {{ s.total }} enabled</div>
-    </div>
-
-    <div class="stat-card">
-        <div class="stat-card-label">Services</div>
-        <div style="display:flex;flex-direction:column;gap:4px;margin-top:4px;">
-            {% for la in launch_agents %}
-            <div style="display:flex;align-items:center;justify-content:space-between;">
-                <span style="display:flex;align-items:center;gap:6px;font-size:13px;">
-                    <span style="width:6px;height:6px;border-radius:50%;{% if la.status == 'running' %}background:var(--tag-green);{% else %}background:var(--tag-red);{% endif %}"></span>
-                    {{ la.name }}
-                </span>
-                <button class="btn" onclick="event.stopPropagation();restartAgent('{{ la.name }}')" id="la-btn-{{ la.name }}" style="font-size:11px;height:20px;padding:0 6px;">Restart</button>
-            </div>
-            {% endfor %}
-        </div>
-    </div>
-</div>
-
-<!-- ACTIVITY FEED -->
-<div class="card">
-    <div class="card-header" style="margin-bottom:8px;">
-        <span class="card-title">Activity</span>
-    </div>
-    <div class="feed" id="activity-feed">
-        {% set ns = namespace(count=0) %}
+        {# System activity (bridge, sessions, telegram) — skip noise #}
         {% for item in activity %}
-        {% if not (item.agent == 'ops' and item.action == 'heartbeat') and ns.count < 15 %}
+        {% if not (item.agent == 'ops' and item.action == 'heartbeat') and ns.count < 25 %}
         {% set ns.count = ns.count + 1 %}
         <div class="feed-item" data-id="{{ item.id }}">
-            <div class="feed-dot" style="background:{{ 'var(--tag-blue)' if item.agent == 'claude' else 'var(--orange)' if item.agent == 'telegram' else 'var(--text-faint)' }};"></div>
+            <div class="feed-icon {{ 'telegram' if item.agent == 'telegram' else 'session' if item.agent == 'claude' else 'system' }}">
+                {% if item.agent == 'telegram' %}
+                <i data-lucide="message-circle" style="width:12px;height:12px;"></i>
+                {% elif item.agent == 'claude' %}
+                <i data-lucide="terminal" style="width:12px;height:12px;"></i>
+                {% elif item.agent == 'git' %}
+                <i data-lucide="git-commit" style="width:12px;height:12px;"></i>
+                {% else %}
+                <i data-lucide="activity" style="width:12px;height:12px;"></i>
+                {% endif %}
+            </div>
             <div class="feed-content">
                 <div class="feed-action">
-                    <span class="agent-tag" style="color:{{ 'var(--tag-blue)' if item.agent == 'claude' else 'var(--orange)' if item.agent == 'telegram' else 'var(--text-secondary)' }};">
-                        {{ item.agent if item.agent != 'claude' else item.action }}
+                    <span class="feed-label" style="color:{{ 'var(--orange)' if item.agent == 'telegram' else '#337EA9' if item.agent == 'claude' else 'var(--text-secondary)' }};">
+                        {{ item.agent }}
                     </span>
-                    {% if item.agent != 'claude' %} {{ item.action | replace('_', ' ') }}{% endif %}
+                    <span style="color:var(--text-tertiary);">{{ item.action | replace('_', ' ') }}</span>
                 </div>
                 {% if item.summary %}
                 <div class="feed-summary">{{ item.summary }}</div>
                 {% endif %}
             </div>
-            <div style="display:flex;flex-direction:column;align-items:flex-end;gap:2px;">
-                <span class="feed-status {{ item.status }}">{{ item.status }}</span>
+            <div class="feed-meta">
+                <span class="feed-tag" style="background:{% if item.status == 'completed' %}rgba(68,131,97,0.1);color:#448361{% elif item.status == 'running' %}rgba(51,126,169,0.1);color:#337EA9{% elif item.status == 'failed' %}rgba(212,76,71,0.1);color:#D44C47{% else %}var(--tag-gray-bg);color:var(--text-tertiary){% endif %};">{{ item.status }}</span>
                 <span class="feed-time">{{ item.timestamp[11:16] }}</span>
             </div>
         </div>
         {% endif %}
         {% endfor %}
-        {% if not activity %}
+
+        {% if not work_activity and not activity %}
         <div class="empty-state" id="empty-feed">Waiting for activity...</div>
         {% endif %}
     </div>
 </div>
-
-<!-- TASKS (from work system) -->
-{% if tasks %}
-<div class="card" style="margin-top:16px;">
-    <div class="card-header" style="margin-bottom:8px;">
-        <span class="card-title">Open Tasks <span style="font-family:var(--font-mono);font-size:12px;color:var(--text-faint);">{{ tasks|length }}</span></span>
-        <a href="/work" class="btn" style="font-size:12px;height:24px;padding:0 8px;">View all</a>
-    </div>
-    {% for task in tasks %}
-    <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border-light);">
-        <div style="width:3px;height:16px;border-radius:2px;{% if task.priority == 1 %}background:var(--tag-red);{% elif task.priority == 2 %}background:var(--tag-orange);{% else %}background:var(--tag-gray-bg);{% endif %}"></div>
-        <span style="font-family:var(--font-mono);font-size:11px;color:var(--text-faint);width:70px;flex-shrink:0;">{{ task.id }}</span>
-        <span style="flex:1;font-size:14px;">{{ task.title }}</span>
-        {% if task.handoff %}
-        <i data-lucide="arrow-right-circle" style="width:12px;height:12px;color:var(--tag-purple);flex-shrink:0;" title="Has handoff"></i>
-        {% endif %}
-        {% if task.status == 'active' %}
-        <span class="tag tag-blue" style="font-size:10px;">active</span>
-        {% endif %}
-    </div>
-    {% endfor %}
-</div>
-{% endif %}
 {% endblock %}
 
 {% block scripts %}
@@ -499,116 +493,105 @@ function escapeHtml(text) {
     return d.innerHTML;
 }
 
-function createFeedItem(item) {
-    if (item.agent === 'ops' && item.action === 'heartbeat') return null;
-    const isBot = item.agent === 'claude';
-    const isTg = item.agent === 'telegram';
-    const color = isBot ? 'var(--tag-blue)' : isTg ? 'var(--orange)' : 'var(--text-faint)';
-    const label = isBot ? escapeHtml(item.action) : `${escapeHtml(item.agent)} ${escapeHtml(item.action.replace(/_/g, ' '))}`;
-    const summary = item.summary ? `<div class="feed-summary">${escapeHtml(item.summary)}</div>` : '';
-    const time = (item.timestamp || '').slice(11, 16);
+// SSE — live updates
+const sse = new EventSource('/api/stream');
 
-    const html = `<div class="feed-item" data-id="${item.id}">
-        <div class="feed-dot" style="background:${color};"></div>
+sse.addEventListener('work', (e) => {
+    const ev = JSON.parse(e.data);
+    const feed = document.getElementById('activity-feed');
+    if (!feed) return;
+
+    const iconMap = {
+        task_completed: {cls: 'work-completed', icon: 'check-circle', color: '#448361'},
+        task_started: {cls: 'work-started', icon: 'play', color: '#337EA9'},
+        task_created: {cls: 'work-created', icon: 'plus-circle', color: 'var(--text-secondary)'},
+        subtask_added: {cls: 'work-subtask', icon: 'git-branch', color: '#9065B0'},
+        handoff_written: {cls: 'work-handoff', icon: 'arrow-right-circle', color: '#9065B0'},
+        task_cancelled: {cls: 'work-cancelled', icon: 'x-circle', color: '#D44C47'},
+    };
+    const info = iconMap[ev.action] || {cls: 'system', icon: 'circle', color: 'var(--text-secondary)'};
+    const time = (ev.ts || new Date().toISOString()).slice(11, 16);
+
+    const html = `<div class="feed-item" style="animation:fadeIn 0.3s ease;">
+        <div class="feed-icon ${info.cls}"><i data-lucide="${info.icon}" style="width:12px;height:12px;"></i></div>
         <div class="feed-content">
-            <div class="feed-action"><span class="agent-tag" style="color:${color};">${label}</span></div>
-            ${summary}
+            <div class="feed-action">
+                <span class="feed-label" style="color:${info.color};">${escapeHtml((ev.action||'').replace(/_/g, ' '))}</span>
+                ${ev.task_id ? `<span style="font-family:var(--font-mono);font-size:11px;color:var(--text-faint);background:var(--tag-gray-bg);padding:0 4px;border-radius:2px;margin-left:4px;">${escapeHtml(ev.task_id)}</span>` : ''}
+            </div>
+            ${ev.title ? `<div class="feed-summary" style="color:var(--text);">${escapeHtml(ev.title)}</div>` : ''}
+            ${ev.detail ? `<div class="feed-summary">${escapeHtml(ev.detail)}</div>` : ''}
         </div>
-        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:2px;">
-            <span class="feed-status ${item.status}">${item.status}</span>
+        <div class="feed-meta">
+            ${ev.project ? `<span class="tag tag-blue" style="font-size:10px;">${escapeHtml(ev.project)}</span>` : ''}
             <span class="feed-time">${time}</span>
         </div>
     </div>`;
     const t = document.createElement('template');
     t.innerHTML = html.trim();
-    return t.content.firstChild;
-}
+    const el = t.content.firstChild;
+    const empty = feed.querySelector('.empty-state');
+    if (empty) empty.remove();
+    feed.insertBefore(el, feed.firstChild);
+    while (feed.children.length > 30) feed.removeChild(feed.lastChild);
+    lucide.createIcons();
+});
 
-function updateHealth(health) {
-    const d = document.querySelector('#stat-disk-value');
-    const r = document.querySelector('#stat-ram-value');
-    if (d) { d.textContent = 'Disk ' + health.disk_pct + '%'; d.style.color = health.disk_pct > 85 ? 'var(--tag-red)' : ''; }
-    if (r) { r.textContent = 'RAM ' + health.ram_pct + '%'; }
-}
-
-
-// SSE
-const sse = new EventSource('/api/stream');
 sse.addEventListener('activity', (e) => {
     const item = JSON.parse(e.data);
+    if (item.agent === 'ops' && item.action === 'heartbeat') return;
     const feed = document.getElementById('activity-feed');
-    const empty = document.getElementById('empty-feed');
-    if (empty) empty.remove();
-    if (feed.querySelector(`[data-id="${item.id}"]`)) return;
-    const el = createFeedItem(item);
-    if (el) feed.insertBefore(el, feed.firstChild);
-    while (feed.children.length > 50) feed.removeChild(feed.lastChild);
-});
-sse.addEventListener('work', (e) => {
-    const ev = JSON.parse(e.data);
-    const container = document.querySelector('.work-event')?.closest('div[style*="flex-direction"]');
-    if (!container) return;
+    if (!feed || feed.querySelector(`[data-id="${item.id}"]`)) return;
 
-    const iconMap = {
-        task_completed: {cls: 'completed', icon: 'check-circle'},
-        task_started: {cls: 'started', icon: 'play'},
-        task_created: {cls: 'created', icon: 'plus-circle'},
-        subtask_added: {cls: 'subtask', icon: 'git-branch'},
-        handoff_written: {cls: 'handoff', icon: 'arrow-right-circle'},
-        task_cancelled: {cls: 'cancelled', icon: 'x-circle'},
-    };
-    const info = iconMap[ev.action] || {cls: '', icon: 'circle'};
-    const time = (ev.ts || new Date().toISOString()).slice(11, 16);
+    const isBot = item.agent === 'claude';
+    const isTg = item.agent === 'telegram';
+    const iconCls = isTg ? 'telegram' : isBot ? 'session' : 'system';
+    const iconName = isTg ? 'message-circle' : isBot ? 'terminal' : 'activity';
+    const color = isTg ? 'var(--orange)' : isBot ? '#337EA9' : 'var(--text-secondary)';
+    const time = (item.timestamp || '').slice(11, 16);
+    const statusColors = {completed:'rgba(68,131,97,0.1);color:#448361',running:'rgba(51,126,169,0.1);color:#337EA9',failed:'rgba(212,76,71,0.1);color:#D44C47'};
+    const sc = statusColors[item.status] || 'var(--tag-gray-bg);color:var(--text-tertiary)';
 
-    const html = `<div class="work-event" style="animation:fadeIn 0.3s ease;">
-        <div class="work-event-icon ${info.cls}"><i data-lucide="${info.icon}" style="width:12px;height:12px;"></i></div>
-        <div class="work-event-content">
-            <div class="work-event-action">
-                <span class="work-event-verb">${escapeHtml((ev.action||'').replace(/_/g, ' '))}</span>
-                ${ev.task_id ? `<span class="work-event-id">${escapeHtml(ev.task_id)}</span>` : ''}
+    const html = `<div class="feed-item" data-id="${item.id}" style="animation:fadeIn 0.3s ease;">
+        <div class="feed-icon ${iconCls}"><i data-lucide="${iconName}" style="width:12px;height:12px;"></i></div>
+        <div class="feed-content">
+            <div class="feed-action">
+                <span class="feed-label" style="color:${color};">${escapeHtml(item.agent)}</span>
+                <span style="color:var(--text-tertiary);">${escapeHtml((item.action||'').replace(/_/g,' '))}</span>
             </div>
-            ${ev.title ? `<div class="work-event-title">${escapeHtml(ev.title)}</div>` : ''}
-            ${ev.detail ? `<div class="work-event-detail">${escapeHtml(ev.detail)}</div>` : ''}
+            ${item.summary ? `<div class="feed-summary">${escapeHtml(item.summary)}</div>` : ''}
         </div>
-        <div class="work-event-meta">
-            ${ev.project ? `<span class="tag tag-blue" style="font-size:10px;">${escapeHtml(ev.project)}</span>` : ''}
-            <span class="work-event-time">${time}</span>
+        <div class="feed-meta">
+            <span class="feed-tag" style="background:${sc};">${item.status}</span>
+            <span class="feed-time">${time}</span>
         </div>
     </div>`;
     const t = document.createElement('template');
     t.innerHTML = html.trim();
-    container.insertBefore(t.content.firstChild, container.firstChild);
-    while (container.children.length > 12) container.removeChild(container.lastChild);
-    const empty = container.querySelector('.empty-state');
-    if (empty) empty.remove();
+    feed.insertBefore(t.content.firstChild, feed.firstChild);
+    while (feed.children.length > 30) feed.removeChild(feed.lastChild);
     lucide.createIcons();
-
-    // Also update task count in Open Tasks section
-    const taskCard = document.querySelector('.card-title span[style*="font-mono"]');
-    if (taskCard && (ev.action === 'task_created' || ev.action === 'task_completed')) {
-        const n = parseInt(taskCard.textContent) + (ev.action === 'task_created' ? 1 : -1);
-        taskCard.textContent = Math.max(0, n);
-    }
 });
-sse.addEventListener('health', (e) => updateHealth(JSON.parse(e.data)));
+
+sse.addEventListener('health', (e) => {
+    const h = JSON.parse(e.data);
+    const d = document.querySelector('#stat-disk-value');
+    const r = document.querySelector('#stat-ram-value');
+    if (d) { d.textContent = 'Disk ' + h.disk_pct + '%'; d.style.color = h.disk_pct > 85 ? '#D44C47' : ''; }
+    if (r) { r.textContent = 'RAM ' + h.ram_pct + '%'; }
+});
+
 sse.addEventListener('services', (e) => {
     const svcs = JSON.parse(e.data);
     const on = Object.values(svcs).filter(s=>s.status==='online').length;
     const dot = document.querySelector('#health-dot');
     const txt = document.querySelector('#health-text');
     if (dot && txt) {
-        if (on === Object.keys(svcs).length) { dot.style.background='var(--tag-green)'; txt.textContent='All systems operational'; }
-        else { const off = Object.entries(svcs).filter(([,s])=>s.status!=='online').map(([n])=>n[0].toUpperCase()+n.slice(1)); dot.style.background='var(--tag-red)'; txt.textContent=off.join(', ')+' offline'; }
+        if (on === Object.keys(svcs).length) { dot.style.background='#448361'; txt.textContent='All systems operational'; }
+        else { const off = Object.entries(svcs).filter(([,s])=>s.status!=='online').map(([n])=>n[0].toUpperCase()+n.slice(1)); dot.style.background='#D44C47'; txt.textContent=off.join(', ')+' offline'; }
     }
 });
 
-// Controls
-async function restartAgent(name) {
-    const b = document.getElementById('la-btn-'+name); b.textContent='...'; b.disabled=true;
-    try { const r = await fetch('/api/automations/launchagent/'+name+'/restart',{method:'POST'}); const d=await r.json(); b.textContent=d.ok?'Done':'Fail'; }
-    catch(e) { b.textContent='Err'; }
-    setTimeout(()=>{b.textContent='Restart';b.disabled=false;},2000);
-}
-
-setTimeout(() => location.reload(), 60000);
+// Auto-refresh every 2 minutes
+setTimeout(() => location.reload(), 120000);
 {% endblock %}

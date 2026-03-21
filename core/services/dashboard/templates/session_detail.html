@@ -1,0 +1,256 @@
+{% extends "base.html" %}
+
+{% block title %}Session — {{ session.session_id[:8] }}{% endblock %}
+{% block page_title %}Session Detail{% endblock %}
+
+{% block styles %}
+.back-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 13px;
+    color: var(--text-tertiary);
+    text-decoration: none;
+    margin-bottom: 16px;
+}
+.back-link:hover { color: var(--text); }
+
+.session-hero {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+    margin-bottom: 16px;
+}
+
+.session-hero-top {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+
+.session-hero-id {
+    font-family: var(--font-mono);
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text);
+}
+
+.session-hero-project {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--orange);
+}
+
+.session-meta-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 12px;
+}
+
+.meta-item-label {
+    font-size: 12px;
+    color: var(--text-tertiary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 2px;
+}
+
+.meta-item-value {
+    font-family: var(--font-mono);
+    font-size: 14px;
+    color: var(--text);
+}
+
+/* ── Tool breakdown ─────────────────────────── */
+.tool-bar {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 12px;
+}
+
+.tool-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    padding: 2px 8px;
+    border-radius: var(--radius);
+    background: var(--tag-gray-bg);
+    color: var(--text-secondary);
+}
+
+.tool-chip-count {
+    font-weight: 600;
+    color: var(--text);
+}
+
+/* ── Files ──────────────────────────────────── */
+.file-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 0;
+    border-bottom: 1px solid var(--border-light);
+    font-size: 13px;
+}
+
+.file-item:last-child { border-bottom: none; }
+
+.file-path {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-secondary);
+    word-break: break-all;
+}
+
+/* ── Activity timeline ──────────────────────── */
+.timeline-item {
+    display: flex;
+    gap: 10px;
+    padding: 6px 0;
+    border-bottom: 1px solid var(--border-light);
+}
+
+.timeline-item:last-child { border-bottom: none; }
+
+.timeline-dot {
+    width: 8px; height: 8px;
+    border-radius: 3px;
+    margin-top: 5px;
+    flex-shrink: 0;
+}
+
+.timeline-content { flex: 1; min-width: 0; }
+
+.timeline-action {
+    font-size: 13px;
+    color: var(--text);
+}
+
+.timeline-summary {
+    font-size: 12px;
+    color: var(--text-tertiary);
+    margin-top: 1px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.timeline-time {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-faint);
+    flex-shrink: 0;
+}
+
+@media (max-width: 768px) {
+    .session-meta-grid { grid-template-columns: 1fr 1fr; }
+}
+{% endblock %}
+
+{% block content %}
+<a href="/history?channel=cli" class="back-link">
+    <i data-lucide="arrow-left" style="width:14px;height:14px;"></i>
+    Back to history
+</a>
+
+<!-- Hero -->
+<div class="session-hero">
+    <div class="session-hero-top">
+        <span class="session-hero-id">{{ session.session_id[:8] }}</span>
+        {% if session.project %}
+        <span class="session-hero-project">{{ session.project }}</span>
+        {% endif %}
+        <span class="tag tag-{{ 'green' if session.status == 'completed' else 'blue' if session.status == 'running' else 'red' }}">{{ session.status }}</span>
+        {% if session.agent_name %}
+        <span class="tag tag-gray">{{ session.agent_name }}</span>
+        {% endif %}
+    </div>
+
+    <div class="session-meta-grid">
+        <div>
+            <div class="meta-item-label">Started</div>
+            <div class="meta-item-value">{{ session.started_at[:16] if session.started_at else '—' }}</div>
+        </div>
+        <div>
+            <div class="meta-item-label">Ended</div>
+            <div class="meta-item-value">{{ session.ended_at[:16] if session.ended_at else '—' }}</div>
+        </div>
+        <div>
+            <div class="meta-item-label">Tools Used</div>
+            <div class="meta-item-value">{{ session.total_tools }}</div>
+        </div>
+        <div>
+            <div class="meta-item-label">Files</div>
+            <div class="meta-item-value">{{ session.files_modified|length if session.files_modified else 0 }}</div>
+        </div>
+        {% if session.working_dir %}
+        <div style="grid-column: 1 / -1;">
+            <div class="meta-item-label">Working Dir</div>
+            <div class="meta-item-value" style="font-size:12px;">{{ session.working_dir }}</div>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Tool breakdown -->
+    {% if session.tools_used %}
+    <div class="tool-bar">
+        {% for tool, count in (session.tools_used.items() if session.tools_used is mapping else []) %}
+        <span class="tool-chip">
+            {{ tool }} <span class="tool-chip-count">{{ count }}</span>
+        </span>
+        {% endfor %}
+    </div>
+    {% endif %}
+</div>
+
+<!-- Files Modified -->
+{% set files = session.files_modified if session.files_modified else [] %}
+{% if files %}
+<div class="card" style="margin-bottom:16px;">
+    <div class="card-title" style="margin-bottom:8px;">Files Modified</div>
+    {% for f in files %}
+    <div class="file-item">
+        <i data-lucide="file-text" style="width:14px;height:14px;color:var(--text-faint);flex-shrink:0;"></i>
+        <span class="file-path">{{ f.split('/')[-1] }}</span>
+        <span style="font-family:var(--font-mono);font-size:11px;color:var(--text-faint);margin-left:auto;">{{ '/'.join(f.split('/')[:-1]) }}</span>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+<!-- Activity Timeline -->
+{% if activity %}
+<div class="card">
+    <div class="card-title" style="margin-bottom:8px;">Timeline <span style="font-family:var(--font-mono);font-size:12px;color:var(--text-faint);">{{ activity|length }} events</span></div>
+    <div style="max-height:500px;overflow-y:auto;">
+        {% for ev in activity %}
+        <div class="timeline-item">
+            <div class="timeline-dot" style="background:{% if ev.status == 'completed' %}#448361{% elif ev.status == 'running' %}#337EA9{% elif ev.status == 'failed' %}#D44C47{% else %}var(--border){% endif %};"></div>
+            <div class="timeline-content">
+                <div class="timeline-action">
+                    <span style="font-weight:500;">{{ ev.action | replace('_', ' ') }}</span>
+                </div>
+                {% if ev.summary %}
+                <div class="timeline-summary">{{ ev.summary }}</div>
+                {% endif %}
+            </div>
+            <span class="timeline-time">{{ ev.timestamp[11:19] if ev.timestamp else '' }}</span>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% else %}
+<div class="card">
+    <div class="empty-state">No activity recorded for this session.</div>
+</div>
+{% endif %}
+
+<!-- Full Session ID -->
+<div style="margin-top:16px;font-family:var(--font-mono);font-size:11px;color:var(--text-faint);">
+    Full ID: {{ session.session_id }}
+</div>
+{% endblock %}

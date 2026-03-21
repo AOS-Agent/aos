@@ -1,0 +1,398 @@
+#!/usr/bin/env bash
+# ─── AOS Feedback & Bug Reporting ─────────────────────────
+#
+# Captures feedback, bugs, and issues with full context.
+# Files to GitHub Issues when remote is available, otherwise
+# queues locally for later submission.
+#
+# Usage:
+#   feedback "something broke during onboarding"
+#   feedback --phase onboard --error "telegram setup failed" --log /tmp/err.log
+#   feedback --list                    # show queued issues
+#   feedback --push                    # push local queue to GitHub
+#   feedback --auto "error message"    # non-interactive (for agent use)
+#
+# Called by:
+#   - Agents/skills when errors occur (automatic capture)
+#   - Operator directly when something feels off
+#   - Session close hook (optional satisfaction prompt)
+
+set -euo pipefail
+
+AOS_DIR="$HOME/aos"
+QUEUE_DIR="$HOME/.aos/feedback"
+QUEUE_FILE="$QUEUE_DIR/queue.jsonl"
+LOG_DIR="$HOME/.aos/logs"
+
+mkdir -p "$QUEUE_DIR" "$LOG_DIR"
+
+# ── Colors ────────────────────────────────────────────────
+if [[ -t 1 ]]; then
+    GREEN=$'\033[32m' RED=$'\033[31m' YELLOW=$'\033[33m'
+    CYAN=$'\033[36m' BOLD=$'\033[1m' DIM=$'\033[2m' RESET=$'\033[0m'
+else
+    GREEN="" RED="" YELLOW="" CYAN="" BOLD="" DIM="" RESET=""
+fi
+
+# ── Helpers ───────────────────────────────────────────────
+
+_has_remote() {
+    cd "$AOS_DIR" 2>/dev/null && git remote -v 2>/dev/null | grep -q "origin" && return 0
+    return 1
+}
+
+_get_repo() {
+    cd "$AOS_DIR" 2>/dev/null && git remote get-url origin 2>/dev/null | sed 's|.*github.com[:/]||;s|\.git$||' || echo ""
+}
+
+_collect_context() {
+    # Collect system context for the report
+    python3 -c "
+import json, subprocess, os, platform
+from datetime import datetime
+from pathlib import Path
+
+ctx = {
+    'timestamp': datetime.now().isoformat(),
+    'macos': platform.mac_ver()[0],
+    'arch': platform.machine(),
+    'python': platform.python_version(),
+}
+
+# AOS version
+version_file = Path.home() / '.aos' / '.version'
+if version_file.exists():
+    ctx['aos_version'] = version_file.read_text().strip()
+
+# Onboarding state (phases only — no operator name)
+onboard = Path.home() / '.aos' / 'config' / 'onboarding.yaml'
+if onboard.exists():
+    import yaml
+    data = yaml.safe_load(onboard.read_text()) or {}
+    ctx['onboarding'] = {
+        'completed': data.get('completed', 'unknown'),
+        'phases': data.get('phases', {}),
+    }
+else:
+    ctx['onboarding'] = 'not_started'
+
+# Recent errors from logs
+log_dir = Path.home() / '.aos' / 'logs'
+for log_name in ['bridge.log', 'dashboard.log', 'install.log']:
+    log_path = log_dir / log_name
+    if log_path.exists():
+        lines = log_path.read_text().splitlines()
+        errors = [l for l in lines[-50:] if 'error' in l.lower() or 'fail' in l.lower() or 'traceback' in l.lower()]
+        if errors:
+            ctx[f'recent_errors_{log_name}'] = errors[-5:]
+
+# Service status
+try:
+    result = subprocess.run(['launchctl', 'list'], capture_output=True, text=True, timeout=5)
+    services = [l for l in result.stdout.splitlines() if 'com.aos' in l or 'com.agent' in l]
+    ctx['services'] = services
+except Exception:
+    pass
+
+print(json.dumps(ctx, indent=2))
+" 2>/dev/null || echo "{}"
+}
+
+_queue_issue() {
+    local title="$1" body="$2" labels="${3:-bug}" phase="${4:-}" error_log="${5:-}"
+
+    # Collect context to temp file to avoid shell quoting issues
+    local ctx_file
+    ctx_file=$(mktemp)
+    _collect_context > "$ctx_file"
+
+    # Pass all values via env vars + temp file — no shell interpolation in python
+    FEEDBACK_TITLE="$title" \
+    FEEDBACK_BODY="$body" \
+    FEEDBACK_LABELS="$labels" \
+    FEEDBACK_PHASE="$phase" \
+    FEEDBACK_ERROR_LOG="$error_log" \
+    FEEDBACK_CTX_FILE="$ctx_file" \
+    FEEDBACK_QUEUE_FILE="$QUEUE_FILE" \
+    python3 -c "
+import json, os
+from datetime import datetime
+from pathlib import Path
+
+ctx_file = Path(os.environ['FEEDBACK_CTX_FILE'])
+try:
+    context = json.loads(ctx_file.read_text())
+except Exception:
+    context = {}
+ctx_file.unlink(missing_ok=True)
+
+entry = {
+    'id': datetime.now().strftime('%Y%m%d%H%M%S'),
+    'timestamp': datetime.now().isoformat(),
+    'title': os.environ['FEEDBACK_TITLE'],
+    'body': os.environ['FEEDBACK_BODY'],
+    'labels': os.environ['FEEDBACK_LABELS'].split(','),
+    'phase': os.environ['FEEDBACK_PHASE'] or None,
+    'error_log': os.environ['FEEDBACK_ERROR_LOG'] or None,
+    'context': context,
+    'status': 'queued',
+}
+
+queue_path = Path(os.environ['FEEDBACK_QUEUE_FILE'])
+with open(queue_path, 'a') as f:
+    f.write(json.dumps(entry) + '\n')
+
+print(entry['id'])
+"
+}
+
+_scrub_pii() {
+    # Strips personal data before pushing to GitHub.
+    # Input: JSON string on stdin. Output: scrubbed JSON on stdout.
+    python3 -c "
+import json, sys, os, re
+from pathlib import Path
+
+data = json.load(sys.stdin)
+home = str(Path.home())
+username = Path.home().name
+
+# Patterns to scrub
+def scrub(text):
+    if not isinstance(text, str):
+        return text
+    # Replace home directory paths with ~
+    text = text.replace(home, '~')
+    # Replace username references
+    text = re.sub(r'\b' + re.escape(username) + r'\b', '<user>', text)
+    # Strip email addresses
+    text = re.sub(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', '<email>', text)
+    # Strip phone numbers (10+ digits, with optional separators)
+    text = re.sub(r'[\+]?[\d\s\-\(\)]{10,}', '<phone>', text)
+    # Strip IP addresses (except localhost)
+    text = re.sub(r'\b(?!127\.0\.0\.1)(?!0\.0\.0\.0)\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b', '<ip>', text)
+    # Strip API tokens / secrets (long mixed-case alphanumeric strings)
+    # Exclude: git SHAs (40 hex), short hashes, UUIDs — only match strings with mixed case+digits
+    def _redact_if_secret(m):
+        val = m.group(0)
+        # Skip pure hex strings (git SHAs, short hashes)
+        if re.fullmatch(r'[0-9a-f]+', val) or re.fullmatch(r'[0-9A-F]+', val):
+            return val
+        # Skip UUID-like patterns (32 hex chars that were part of a UUID)
+        if re.fullmatch(r'[0-9a-fA-F]+', val) and len(val) in (32, 40):
+            return val
+        return '<redacted>'
+    text = re.sub(r'\b[A-Za-z0-9]{40,}\b', _redact_if_secret, text)
+    # Strip Telegram bot tokens (digits:alphanumeric)
+    text = re.sub(r'\d{8,}:[A-Za-z0-9_-]{30,}', '<bot-token>', text)
+    return text
+
+def scrub_deep(obj):
+    if isinstance(obj, str):
+        return scrub(obj)
+    elif isinstance(obj, dict):
+        # Remove entire keys that are personal
+        skip_keys = {'operator_name', 'name', 'email', 'git_name', 'git_email', 'chat_id'}
+        return {k: scrub_deep(v) for k, v in obj.items() if k not in skip_keys}
+    elif isinstance(obj, list):
+        return [scrub_deep(item) for item in obj]
+    return obj
+
+print(json.dumps(scrub_deep(data)))
+"
+}
+
+_push_to_github() {
+    local repo
+    repo=$(_get_repo)
+    if [[ -z "$repo" ]]; then
+        echo "  ${RED}No GitHub remote configured${RESET}"
+        echo "  ${DIM}Add one: cd ~/aos && git remote add origin git@github.com:user/aos.git${RESET}"
+        return 1
+    fi
+
+    if [[ ! -f "$QUEUE_FILE" ]]; then
+        echo "  ${DIM}No queued feedback${RESET}"
+        return 0
+    fi
+
+    local pushed=0 failed=0
+    while IFS= read -r line; do
+        local status
+        status=$(echo "$line" | python3 -c "import json,sys; print(json.load(sys.stdin).get('status','queued'))")
+        [[ "$status" == "pushed" ]] && continue
+
+        # Scrub PII before building the issue
+        local scrubbed
+        scrubbed=$(echo "$line" | _scrub_pii)
+
+        local title labels
+        title=$(echo "$scrubbed" | python3 -c "import json,sys; print(json.load(sys.stdin)['title'])")
+        labels=$(echo "$scrubbed" | python3 -c "import json,sys; print(','.join(json.load(sys.stdin).get('labels',['bug'])))")
+
+        # Build issue body with scrubbed context
+        body=$(echo "$scrubbed" | python3 -c "
+import json, sys
+entry = json.load(sys.stdin)
+parts = []
+parts.append(entry.get('body', ''))
+parts.append('')
+parts.append('## Context')
+ctx = entry.get('context', {})
+parts.append(f'- **AOS version**: {ctx.get(\"aos_version\", \"unknown\")}')
+parts.append(f'- **macOS**: {ctx.get(\"macos\", \"unknown\")} ({ctx.get(\"arch\", \"unknown\")})')
+parts.append(f'- **Timestamp**: {entry.get(\"timestamp\", \"unknown\")}')
+if entry.get('phase'):
+    parts.append(f'- **Phase**: {entry[\"phase\"]}')
+if entry.get('error_log'):
+    parts.append(f'\n## Error Log\n\`\`\`\n{entry[\"error_log\"]}\n\`\`\`')
+errors = {k: v for k, v in ctx.items() if k.startswith('recent_errors')}
+if errors:
+    parts.append('\n## Recent Log Errors')
+    for k, v in errors.items():
+        parts.append(f'\n### {k}')
+        for line in v:
+            parts.append(f'  {line}')
+parts.append('\n---')
+parts.append('Filed automatically by AOS feedback system')
+print('\n'.join(parts))
+")
+
+        if gh issue create --repo "$repo" --title "$title" --body "$body" --label "$labels" 2>/dev/null; then
+            ((pushed++))
+        else
+            ((failed++))
+        fi
+    done < "$QUEUE_FILE"
+
+    if [[ $pushed -gt 0 ]]; then
+        echo "  ${GREEN}Pushed $pushed issue(s) to GitHub${RESET}"
+        # Mark all as pushed
+        python3 -c "
+import json
+from pathlib import Path
+path = Path('$QUEUE_FILE')
+lines = path.read_text().splitlines()
+updated = []
+for line in lines:
+    entry = json.loads(line)
+    entry['status'] = 'pushed'
+    updated.append(json.dumps(entry))
+path.write_text('\n'.join(updated) + '\n')
+"
+    fi
+    [[ $failed -gt 0 ]] && echo "  ${RED}$failed issue(s) failed to push${RESET}"
+}
+
+_list_queue() {
+    if [[ ! -f "$QUEUE_FILE" ]] || [[ ! -s "$QUEUE_FILE" ]]; then
+        echo "  ${DIM}No queued feedback${RESET}"
+        return 0
+    fi
+
+    echo ""
+    echo "  ${BOLD}Queued Feedback${RESET}"
+    echo ""
+    python3 -c "
+import json
+from pathlib import Path
+path = Path('$QUEUE_FILE')
+for line in path.read_text().splitlines():
+    if not line.strip():
+        continue
+    entry = json.loads(line)
+    status = entry.get('status', 'queued')
+    icon = '  ' if status == 'queued' else '  '
+    labels = ', '.join(entry.get('labels', []))
+    phase = f' [{entry[\"phase\"]}]' if entry.get('phase') else ''
+    print(f'{icon} {entry[\"id\"]}  {entry[\"title\"]}{phase}  ({labels})  [{status}]')
+"
+    echo ""
+}
+
+# ── Main ──────────────────────────────────────────────────
+
+case "${1:---help}" in
+    --list|-l)
+        _list_queue
+        ;;
+    --push|-p)
+        _push_to_github
+        ;;
+    --auto)
+        # Non-interactive — for agent/skill use
+        shift
+        title="${1:-AOS error}"
+        phase="${2:-}"
+        error_log="${3:-}"
+        body="Automatically captured error during ${phase:-system operation}."
+        id=$(_queue_issue "$title" "$body" "bug,auto-captured" "$phase" "$error_log")
+        echo "$id"
+        # Try to push immediately if remote exists
+        if _has_remote; then
+            _push_to_github 2>/dev/null
+        fi
+        ;;
+    --help|-h)
+        echo "Usage:"
+        echo "  feedback \"description\"                  Interactive report"
+        echo "  feedback --auto \"title\" [phase] [log]   Non-interactive (agent use)"
+        echo "  feedback --list                          Show queued issues"
+        echo "  feedback --push                          Push queue to GitHub"
+        ;;
+    *)
+        # Interactive — operator describing an issue
+        description="$*"
+
+        echo ""
+        echo "  ${BOLD}Filing feedback${RESET}"
+        echo ""
+
+        # Ask for category
+        echo "  What kind of issue?"
+        echo ""
+        echo "    1) Bug — something broke"
+        echo "    2) Friction — something was confusing or slow"
+        echo "    3) Missing — expected something that wasn't there"
+        echo "    4) Suggestion — idea for improvement"
+        echo ""
+        printf "  Choice [1]: "
+        read -r category_choice
+
+        case "${category_choice:-1}" in
+            1) labels="bug" ;;
+            2) labels="friction" ;;
+            3) labels="missing-feature" ;;
+            4) labels="enhancement" ;;
+            *) labels="bug" ;;
+        esac
+
+        # Ask for phase/context
+        printf "  ${DIM}Where did this happen? (e.g., onboarding, dashboard, bridge, or blank):${RESET} "
+        read -r phase
+
+        # Build title
+        title="[${labels}] ${description}"
+
+        # Build body
+        printf "  ${DIM}Any details? (or blank to skip):${RESET} "
+        read -r details
+
+        body="${description}"
+        [[ -n "$details" ]] && body="${body}\n\n${details}"
+
+        id=$(_queue_issue "$title" "$body" "$labels" "$phase" "")
+
+        echo ""
+        echo "  ${GREEN}Queued${RESET} as $id"
+
+        # Try to push
+        if _has_remote; then
+            echo "  ${DIM}Pushing to GitHub...${RESET}"
+            _push_to_github
+        else
+            echo "  ${DIM}No GitHub remote — queued locally. Push later with: feedback --push${RESET}"
+        fi
+        echo ""
+        ;;
+esac

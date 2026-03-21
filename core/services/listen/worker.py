@@ -93,11 +93,12 @@ def main():
     sys_prompt = sys_prompt_file.read_text().replace("{{JOB_ID}}", job_id)
 
     # Write system prompt to a temp file to avoid shell escaping issues
-    sys_prompt_tmp = Path(f"/tmp/steer-sysprompt-{job_id}.txt")
+    import tempfile
+    sys_prompt_tmp = Path(tempfile.mktemp(prefix=f"aos-sysprompt-{job_id}-", suffix=".txt"))
     sys_prompt_tmp.write_text(sys_prompt)
 
     # Write user prompt to a temp file to avoid tmux send-keys truncation
-    prompt_tmp = Path(f"/tmp/steer-prompt-{job_id}.txt")
+    prompt_tmp = Path(tempfile.mktemp(prefix=f"aos-prompt-{job_id}-", suffix=".txt"))
     prompt_tmp.write_text(f"/listen-drive-and-steer-user-prompt {prompt}")
 
     session_name = f"job-{job_id}"
@@ -116,9 +117,7 @@ def main():
     start_time = time.time()
 
     # Strip CLAUDECODE from env so nested claude doesn't conflict
-    env_clean = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
-    os.environ.clear()
-    os.environ.update(env_clean)
+    os.environ.pop("CLAUDECODE", None)
 
     try:
         # Open headed Terminal window with tmux session

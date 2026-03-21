@@ -75,6 +75,6 @@ setup:
       command: "agent-secret set TELEGRAM_CHAT_ID <chat_id>"
     - description: Install bridge service
       type: command
-      command: "core/integrations/telegram/install.sh"
+      command: "core/integrations/telegram/setup.sh"
     - description: Verify
       type: health_check

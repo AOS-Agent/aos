@@ -37,11 +37,11 @@
         <div class="sidebar-section">
             <div class="sidebar-label">System</div>
             <ul class="sidebar-nav">
+                <li><a href="/history" class="sidebar-link{% if active_page == 'history' %} active{% endif %}">
+                    <i data-lucide="history"></i> <span>History</span>
+                </a></li>
                 <li><a href="/agents" class="sidebar-link{% if active_page == 'agents' %} active{% endif %}">
                     <i data-lucide="bot"></i> <span>Agents</span>
-                </a></li>
-                <li><a href="/sessions" class="sidebar-link{% if active_page == 'sessions' %} active{% endif %}">
-                    <i data-lucide="terminal"></i> <span>Sessions</span>
                 </a></li>
                 <li><a href="/crons" class="sidebar-link{% if active_page == 'crons' %} active{% endif %}">
                     <i data-lucide="clock"></i> <span>Automations</span>
@@ -49,21 +49,18 @@
             </ul>
         </div>
 
+        {% block sidebar_extra %}{% endblock %}
+
+        <div class="sidebar-spacer"></div>
+
         <div class="sidebar-section">
-            <div class="sidebar-label">Data</div>
+            <div class="sidebar-label">Ops</div>
             <ul class="sidebar-nav">
-                <li><a href="/conversations" class="sidebar-link{% if active_page == 'conversations' %} active{% endif %}">
-                    <i data-lucide="message-square"></i> <span>Conversations</span>
-                </a></li>
                 <li><a href="/logs" class="sidebar-link{% if active_page == 'logs' %} active{% endif %}">
                     <i data-lucide="scroll-text"></i> <span>Logs</span>
                 </a></li>
             </ul>
         </div>
-
-        {% block sidebar_extra %}{% endblock %}
-
-        <div class="sidebar-spacer"></div>
 
         <div class="sidebar-footer">
             <div class="sidebar-status">

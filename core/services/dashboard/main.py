@@ -33,6 +33,7 @@ app = FastAPI(title="AOS Dashboard")
 # ── In-memory SSE event bus ──────────────────────────
 # Each connected SSE client gets a Queue. Work mutations broadcast to all.
 _sse_subscribers: list[asyncio.Queue] = []
+_MAX_SSE_SUBSCRIBERS = 50
 
 
 def _broadcast_work_event(event: dict):
@@ -51,6 +52,16 @@ if static_dir.exists():
     app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+
+
+def _work_mod(name: str = "engine"):
+    """Import a work system module by name (engine, query, detect_projects)."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        name, str(Path.home() / "aos" / "core" / "work" / f"{name}.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
 
 def _load_yaml(path: str) -> dict:
@@ -84,7 +95,13 @@ def _system_health() -> dict:
                     pages[parts[0].strip()] = int(parts[1].strip().rstrip("."))
                 except ValueError:
                     pass
-        page_size = 16384
+        # Parse page size from vm_stat header (e.g. "page size of 16384 bytes")
+        header = result.stdout.strip().split("\n")[0] if result.stdout else ""
+        page_size = 16384  # fallback
+        for word in header.split():
+            if word.isdigit():
+                page_size = int(word)
+                break
         active = pages.get("Pages active", 0) * page_size
         wired = pages.get("Pages wired down", 0) * page_size
         free = pages.get("Pages free", 0) * page_size
@@ -154,9 +171,10 @@ def _get_attention_items(services: dict, cron_data: dict, tasks: list[dict], hea
     """Build attention items — things that need the operator's attention right now."""
     items = []
 
-    # Services down
+    # Services down (skip on-demand services like memory MCP)
+    on_demand = {"memory"}
     for name, svc in services.items():
-        if svc["status"] != "online":
+        if svc["status"] != "online" and name not in on_demand:
             items.append({"type": "error", "icon": "alert-triangle", "text": f"{name.capitalize()} is offline", "detail": svc.get("detail", ""), "link": "/crons"})
 
     # Failed crons
@@ -225,10 +243,7 @@ def _load_agents() -> list[dict]:
 def _load_tasks() -> list[dict]:
     """Load tasks from v2 work engine."""
     try:
-        import importlib.util
-        spec = importlib.util.spec_from_file_location("engine", str(Path.home() / "aos" / "core" / "work" / "engine.py"))
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
+        mod = _work_mod("engine")
         tasks = mod.get_all_tasks()
         # Only return active tasks (not done/cancelled), top-level only
         return [t for t in tasks if t.get("status") not in ("done", "cancelled") and not t.get("parent")]
@@ -239,10 +254,7 @@ def _load_tasks() -> list[dict]:
 def _load_work_activity(limit: int = 20) -> list[dict]:
     """Load recent work activity events."""
     try:
-        import importlib.util
-        spec = importlib.util.spec_from_file_location("engine", str(Path.home() / "aos" / "core" / "work" / "engine.py"))
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
+        mod = _work_mod("engine")
         return mod.get_activity(limit)
     except Exception:
         return []
@@ -250,40 +262,12 @@ def _load_work_activity(limit: int = 20) -> list[dict]:
 
 @app.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request):
-    state = _load_yaml("config/state.yaml")
     health = _system_health()
     services = _service_status()
-    agents = _load_agents()
     tasks = _load_tasks()
     work_activity = _load_work_activity(20)
     activity = get_recent(30)
-    agent_stats = get_agent_stats()
-    conv_stats = get_conversation_stats()
-    session_stats = get_session_stats()
     today_summary = get_today_summary()
-    recent_sessions = get_recent_sessions_enriched(limit=10)
-
-    # Active sessions for "Now" section
-    active_sessions = [s for s in recent_sessions if s["status"] == "running"]
-    # Last completed session for "last active X ago"
-    last_completed = next((s for s in recent_sessions if s["status"] == "completed"), None)
-
-    # Compute "last active ago" string
-    last_active_ago = ""
-    if last_completed and last_completed.get("ended_at"):
-        try:
-            ended = datetime.fromisoformat(last_completed["ended_at"])
-            delta = (datetime.now(ended.tzinfo or __import__('datetime').timezone.utc) - ended).total_seconds()
-            if delta < 60:
-                last_active_ago = "just now"
-            elif delta < 3600:
-                last_active_ago = f"{int(delta // 60)}m ago"
-            elif delta < 86400:
-                last_active_ago = f"{int(delta // 3600)}h ago"
-            else:
-                last_active_ago = f"{int(delta // 86400)}d ago"
-        except Exception:
-            pass
 
     # Overall system health status
     online_count = sum(1 for s in services.values() if s["status"] == "online")
@@ -325,21 +309,11 @@ async def dashboard(request: Request):
         "request": request,
         "active_page": "dashboard",
         "task_count": active_task_count if active_task_count else None,
-        "state": state,
         "health": health,
-        "services": services,
-        "agents": agents,
         "tasks": tasks,
-        "clickup_tasks": [],
         "activity": activity,
-        "agent_stats": {s["agent"]: s for s in agent_stats},
-        "conv_stats": conv_stats,
-        "session_stats": session_stats,
         "today": today_summary,
-        "recent_sessions": recent_sessions,
-        "active_sessions": active_sessions,
         "work_activity": work_activity,
-        "last_active_ago": last_active_ago,
         "health_status": health_status,
         "health_text": health_text,
         "now": now.strftime("%Y-%m-%d %H:%M:%S %Z"),
@@ -378,10 +352,7 @@ async def api_work_activity(limit: int = 30):
 async def api_work():
     """Return v2 work system data."""
     try:
-        import importlib.util
-        spec = importlib.util.spec_from_file_location("engine", str(Path.home() / "aos" / "core" / "work" / "engine.py"))
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
+        mod = _work_mod("engine")
         data = mod.load_all()
         summary = mod.summary()
         return {"tasks": data["tasks"], "projects": data["projects"], "goals": data["goals"], "threads": data["threads"], "inbox": data["inbox"], "summary": summary}
@@ -401,10 +372,7 @@ async def api_work_notify(request: Request):
 async def api_create_task(request: Request):
     """Create a new task."""
     body = await request.json()
-    import importlib.util
-    spec = importlib.util.spec_from_file_location("engine", str(Path.home() / "aos" / "core" / "work" / "engine.py"))
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+    mod = _work_mod("engine")
     task = mod.add_task(
         title=body.get("title", "Untitled"),
         priority=body.get("priority", 3),
@@ -419,10 +387,7 @@ async def api_create_task(request: Request):
 async def api_update_task(task_id: str, request: Request):
     """Update a task (status, title, priority, project, etc.)."""
     body = await request.json()
-    import importlib.util
-    spec = importlib.util.spec_from_file_location("engine", str(Path.home() / "aos" / "core" / "work" / "engine.py"))
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+    mod = _work_mod("engine")
 
     # Handle special status transitions
     status = body.pop("status", None)
@@ -446,20 +411,14 @@ async def api_update_task(task_id: str, request: Request):
 
 @app.delete("/api/tasks/{task_id}")
 async def api_delete_task(task_id: str):
-    import importlib.util
-    spec = importlib.util.spec_from_file_location("engine", str(Path.home() / "aos" / "core" / "work" / "engine.py"))
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+    mod = _work_mod("engine")
     ok = mod.delete_task(task_id)
     return {"ok": ok}
 
 @app.post("/api/projects")
 async def api_create_project(request: Request):
     body = await request.json()
-    import importlib.util
-    spec = importlib.util.spec_from_file_location("engine", str(Path.home() / "aos" / "core" / "work" / "engine.py"))
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+    mod = _work_mod("engine")
     project = mod.add_project(
         title=body.get("title", "Untitled"),
         goal=body.get("goal"),
@@ -470,29 +429,20 @@ async def api_create_project(request: Request):
 @app.patch("/api/projects/{project_id}")
 async def api_update_project(project_id: str, request: Request):
     body = await request.json()
-    import importlib.util
-    spec = importlib.util.spec_from_file_location("engine", str(Path.home() / "aos" / "core" / "work" / "engine.py"))
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+    mod = _work_mod("engine")
     result = mod.update_project(project_id, **body)
     return result or {"error": "Project not found"}
 
 @app.delete("/api/projects/{project_id}")
 async def api_delete_project(project_id: str):
-    import importlib.util
-    spec = importlib.util.spec_from_file_location("engine", str(Path.home() / "aos" / "core" / "work" / "engine.py"))
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+    mod = _work_mod("engine")
     ok = mod.delete_project(project_id)
     return {"ok": ok}
 
 @app.post("/api/goals")
 async def api_create_goal(request: Request):
     body = await request.json()
-    import importlib.util
-    spec = importlib.util.spec_from_file_location("engine", str(Path.home() / "aos" / "core" / "work" / "engine.py"))
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+    mod = _work_mod("engine")
     goal = mod.add_goal(
         title=body.get("title", "Untitled"),
         weight=body.get("weight"),
@@ -503,10 +453,7 @@ async def api_create_goal(request: Request):
 async def api_create_subtask(task_id: str, request: Request):
     """Create a subtask under an existing task."""
     body = await request.json()
-    import importlib.util
-    spec = importlib.util.spec_from_file_location("engine", str(Path.home() / "aos" / "core" / "work" / "engine.py"))
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+    mod = _work_mod("engine")
     sub = mod.add_subtask(
         parent_id=task_id,
         title=body.get("title", "Untitled"),
@@ -519,10 +466,7 @@ async def api_create_subtask(task_id: str, request: Request):
 async def api_write_handoff(task_id: str, request: Request):
     """Write handoff context for a task."""
     body = await request.json()
-    import importlib.util
-    spec = importlib.util.spec_from_file_location("engine", str(Path.home() / "aos" / "core" / "work" / "engine.py"))
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+    mod = _work_mod("engine")
     result = mod.write_handoff(
         task_id=task_id,
         state=body.get("state", ""),
@@ -536,29 +480,20 @@ async def api_write_handoff(task_id: str, request: Request):
 @app.get("/api/tasks/{task_id}/dispatch")
 async def api_dispatch_prompt(task_id: str):
     """Get a dispatch prompt for a task (for agent handoff injection)."""
-    import importlib.util
-    spec = importlib.util.spec_from_file_location("engine", str(Path.home() / "aos" / "core" / "work" / "engine.py"))
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+    mod = _work_mod("engine")
     prompt = mod.build_handoff_prompt(task_id)
     return {"prompt": prompt} if prompt else {"error": "Task not found"}
 
 @app.post("/api/inbox")
 async def api_create_inbox(request: Request):
     body = await request.json()
-    import importlib.util
-    spec = importlib.util.spec_from_file_location("engine", str(Path.home() / "aos" / "core" / "work" / "engine.py"))
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+    mod = _work_mod("engine")
     item = mod.add_inbox(text=body.get("text", ""))
     return item
 
 @app.delete("/api/inbox/{inbox_id}")
 async def api_delete_inbox(inbox_id: str):
-    import importlib.util
-    spec = importlib.util.spec_from_file_location("engine", str(Path.home() / "aos" / "core" / "work" / "engine.py"))
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+    mod = _work_mod("engine")
     ok = mod.delete_inbox(inbox_id)
     return {"ok": ok}
 
@@ -567,11 +502,7 @@ async def api_delete_inbox(inbox_id: str):
 async def api_detected_projects():
     """Auto-detect projects from session patterns and directories."""
     try:
-        import importlib.util
-        spec = importlib.util.spec_from_file_location(
-            "detect", str(Path.home() / "aos" / "core" / "work" / "detect_projects.py"))
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
+        mod = _work_mod("detect_projects")
         return mod.detect()
     except Exception as e:
         return {"error": str(e)}
@@ -581,14 +512,9 @@ async def api_detected_projects():
 async def work_page(request: Request):
     """Work page — tasks, projects, goals, threads with subtask trees and handoffs."""
     try:
-        import importlib.util
-        spec = importlib.util.spec_from_file_location("engine", str(Path.home() / "aos" / "core" / "work" / "engine.py"))
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
+        mod = _work_mod("engine")
 
-        q_spec = importlib.util.spec_from_file_location("query", str(Path.home() / "aos" / "core" / "work" / "query.py"))
-        q_mod = importlib.util.module_from_spec(q_spec)
-        q_spec.loader.exec_module(q_mod)
+        q_mod = _work_mod("query")
 
         data = mod.load_all()
         summary_data = mod.summary()
@@ -651,11 +577,7 @@ async def work_page(request: Request):
     # Auto-detect untracked projects
     detected_projects = []
     try:
-        import importlib.util
-        spec = importlib.util.spec_from_file_location(
-            "detect", str(Path.home() / "aos" / "core" / "work" / "detect_projects.py"))
-        det_mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(det_mod)
+        det_mod = _work_mod("detect_projects")
         detected_projects = det_mod.detect()
     except Exception:
         pass
@@ -748,7 +670,10 @@ async def api_stream(request: Request):
         if recent:
             last_id = recent[0]["id"]
 
-        # Subscribe to work event bus
+        # Subscribe to work event bus (bounded to prevent memory exhaustion)
+        if len(_sse_subscribers) >= _MAX_SSE_SUBSCRIBERS:
+            yield f"event: error\ndata: {{\"message\": \"too many connections\"}}\n\n"
+            return
         queue: asyncio.Queue = asyncio.Queue(maxsize=100)
         _sse_subscribers.append(queue)
 
@@ -831,22 +756,137 @@ async def api_get_conversations(limit: int = 50, agent: str = None):
     return get_conversations(limit=limit, agent=agent)
 
 
-@app.get("/conversations", response_class=HTMLResponse)
-async def conversations_page(request: Request):
-    convs = get_conversations(limit=100)
-    stats = get_conversation_stats()
-    agents = _load_agents()
-    # Get telegram config for agents
-    projects_config = _load_yaml("config/projects.yaml")
+@app.get("/conversations")
+async def conversations_page():
+    """Redirect to unified history page, filtered to messages."""
+    from starlette.responses import RedirectResponse
+    return RedirectResponse(url="/history?channel=telegram", status_code=302)
 
-    return templates.TemplateResponse("conversations.html", {
+
+# --- History (unified sessions + conversations) ---
+
+
+def _get_history(limit: int = 100, channel: str = None, query: str = None) -> list[dict]:
+    """Merge sessions and conversations into one chronological timeline."""
+    from activity import _get_db
+    conn = _get_db()
+    try:
+        return _get_history_inner(conn, limit, channel, query)
+    finally:
+        conn.close()
+
+
+def _get_history_inner(conn, limit: int, channel: str, query: str) -> list[dict]:
+    items = []
+
+    # Load sessions
+    if channel in (None, "all", "cli"):
+        rows = conn.execute(
+            "SELECT * FROM sessions ORDER BY started_at DESC LIMIT ?",
+            (limit * 2,)
+        ).fetchall()
+        for r in rows:
+            d = dict(r)
+            files = json.loads(d["files_modified"]) if isinstance(d["files_modified"], str) else (d["files_modified"] or [])
+            tools = json.loads(d["tools_used"]) if isinstance(d["tools_used"], str) else (d["tools_used"] or {})
+            # Build summary text for search
+            file_names = [f.split("/")[-1] for f in files] if files else []
+            tool_names = list(tools.keys()) if tools else []
+            summary = " ".join(file_names + tool_names + [d.get("project") or ""])
+
+            items.append({
+                "type": "session",
+                "channel": "cli",
+                "ts": d["started_at"] or "",
+                "session_id": d["session_id"],
+                "project": d.get("project") or (d["working_dir"].split("/")[-1] if d.get("working_dir") else None),
+                "status": d["status"],
+                "total_tools": d["total_tools"] or 0,
+                "files": file_names,
+                "tools": tools,
+                "duration_s": _iso_duration_seconds(d["started_at"], d["ended_at"]),
+                "summary": summary,
+                "working_dir": d.get("working_dir"),
+            })
+
+    # Load conversations
+    if channel in (None, "all", "telegram", "slack"):
+        where = ""
+        params = [limit * 2]
+        if channel and channel not in ("all",):
+            where = "WHERE channel = ?"
+            params = [channel, limit * 2]
+        rows = conn.execute(
+            f"SELECT * FROM conversations {where} ORDER BY timestamp DESC LIMIT ?",
+            params,
+        ).fetchall()
+        for r in rows:
+            d = dict(r)
+            msg = d.get("message", "") or ""
+            resp = d.get("response", "") or ""
+            items.append({
+                "type": "conversation",
+                "channel": d.get("channel", "telegram"),
+                "ts": d["timestamp"] or "",
+                "message": msg[:200],
+                "response": resp[:300],
+                "full_message": msg,
+                "full_response": resp,
+                "topic": d.get("topic_name"),
+                "duration_ms": d.get("duration_ms"),
+                "agent": d.get("agent"),
+                "conv_id": d["id"],
+                "summary": f"{msg} {resp}",
+            })
+
+    # Filter by search query
+    if query:
+        q = query.lower()
+        items = [i for i in items if q in (i.get("summary") or "").lower()
+                 or q in (i.get("message") or "").lower()
+                 or q in (i.get("response") or "").lower()
+                 or q in (i.get("project") or "").lower()]
+
+    # Sort by timestamp descending
+    items.sort(key=lambda i: i.get("ts", ""), reverse=True)
+    return items[:limit]
+
+
+def _iso_duration_seconds(start: str, end: str) -> int | None:
+    """Compute duration in seconds between two ISO timestamps."""
+    if not start or not end:
+        return None
+    try:
+        s = datetime.fromisoformat(start)
+        e = datetime.fromisoformat(end)
+        return max(0, int((e - s).total_seconds()))
+    except Exception:
+        return None
+
+
+@app.get("/history", response_class=HTMLResponse)
+async def history_page(request: Request, channel: str = None, q: str = None):
+    items = _get_history(limit=150, channel=channel, query=q)
+    # Stats
+    from activity import _db
+    with _db() as conn:
+        session_count = conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
+        conv_count = conn.execute("SELECT COUNT(*) FROM conversations").fetchone()[0]
+    return templates.TemplateResponse("history.html", {
         "request": request,
-        "active_page": "conversations",
-        "conversations": convs,
-        "stats": stats,
-        "agents": agents,
-        "projects_config": projects_config,
+        "active_page": "history",
+        "items": items,
+        "session_count": session_count,
+        "conv_count": conv_count,
+        "total_count": session_count + conv_count,
+        "current_channel": channel or "all",
+        "current_query": q or "",
     })
+
+
+@app.get("/api/history")
+async def api_history(limit: int = 100, channel: str = None, q: str = None):
+    return _get_history(limit=limit, channel=channel, query=q)
 
 
 # --- Sessions ---
@@ -873,15 +913,24 @@ templates.env.globals["duration"] = _duration_filter
 templates.env.filters["replace_home"] = lambda path: path.replace(str(Path.home()) + "/", "~/") if path else ""
 
 
-@app.get("/sessions", response_class=HTMLResponse)
-async def sessions_page(request: Request):
-    sessions = get_sessions(limit=100)
-    stats = get_session_stats()
-    return templates.TemplateResponse("sessions.html", {
+@app.get("/sessions")
+async def sessions_page():
+    """Redirect to unified history page, filtered to CLI sessions."""
+    from starlette.responses import RedirectResponse
+    return RedirectResponse(url="/history?channel=cli", status_code=302)
+
+
+@app.get("/sessions/{session_id}", response_class=HTMLResponse)
+async def session_detail_page(request: Request, session_id: str):
+    s = get_session(session_id)
+    if not s:
+        return HTMLResponse("<h1>Session not found</h1>", status_code=404)
+    activity = get_session_activity(session_id, limit=200)
+    return templates.TemplateResponse("session_detail.html", {
         "request": request,
-        "active_page": "sessions",
-        "sessions": sessions,
-        "stats": stats,
+        "active_page": "history",
+        "session": s,
+        "activity": activity,
     })
 
 
@@ -1286,6 +1335,14 @@ def _tail_merged(paths: list[Path], n: int = 300) -> list[str]:
         return m.group(1) if m else "9999"
     all_lines.sort(key=sort_key)
     return all_lines[-n:]
+
+
+@app.get("/docs", response_class=HTMLResponse)
+async def docs_page(request: Request):
+    return templates.TemplateResponse("docs.html", {
+        "request": request,
+        "active_page": "docs",
+    })
 
 
 @app.get("/logs", response_class=HTMLResponse)

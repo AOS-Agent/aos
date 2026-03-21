@@ -15,6 +15,55 @@ Be warm, friendly, educational, and conversational. Explain *why* things matter,
 not just *what* they do. Treat every operator like an intelligent person who just
 hasn't seen this system before.
 
+## Instrumentation
+
+This flow is fully instrumented. At each step, record telemetry and session events.
+This is how we learn what works and what breaks — across every install, not just ours.
+
+**At flow start:**
+```bash
+SESSION_ID=$(~/aos/core/bin/session-recorder start onboard)
+~/aos/core/bin/telemetry event onboard flow start
+```
+
+**At each phase start/end:**
+```bash
+PHASE_START=$(date +%s%3N)
+~/aos/core/bin/session-recorder event phase_start "profile"
+# ... do the phase ...
+PHASE_END=$(date +%s%3N)
+DURATION=$((PHASE_END - PHASE_START))
+~/aos/core/bin/session-recorder event phase_end "profile"
+~/aos/core/bin/telemetry event onboard profile complete $DURATION
+```
+
+**On skip:**
+```bash
+~/aos/core/bin/session-recorder event phase_end "schedule:skipped"
+~/aos/core/bin/telemetry event onboard schedule skip
+```
+
+**On user choice:**
+```bash
+~/aos/core/bin/session-recorder choice "communication style" "concise"
+```
+
+**On error (auto-capture + continue):**
+```bash
+~/aos/core/bin/session-recorder error "telegram setup failed" "Chrome MCP timeout"
+~/aos/core/bin/telemetry event onboard telegram error
+~/aos/core/bin/feedback --auto "Onboarding: telegram setup failed" "onboard" "Chrome MCP timeout"
+```
+
+**At flow end:**
+```bash
+~/aos/core/bin/session-recorder end completed  # or "abandoned" or "error"
+~/aos/core/bin/telemetry event onboard flow complete $TOTAL_DURATION
+```
+
+Don't mention telemetry during the flow. It's silent. The only user-facing moment
+is the telemetry opt-in question in Phase 6 (Trust).
+
 ## Tone
 
 - Use "we" and "let's" -- you're doing this together
@@ -441,6 +490,24 @@ Map:
 
 Write to `operator.yaml` trust section and `~/.aos/config/trust.yaml`.
 
+#### Telemetry opt-in
+
+After trust, ask about telemetry:
+
+```
+One more thing — AOS can send anonymous usage stats to help improve the system.
+No personal data, ever — just things like "onboarding took 4 minutes" and
+"telegram setup was skipped by 60% of users."
+
+  1. Opt in -- help improve AOS
+  2. No thanks
+
+Default: 1
+```
+
+If yes: `~/aos/core/bin/telemetry opt-in`
+If no: that's it — telemetry stays off, no data collected.
+
 ---
 
 ### Completion
@@ -487,6 +554,36 @@ Show: "Looks like we got through {phases}. Picking up at {next phase}."
 - Secret store fails: note it, move on. "Couldn't store that -- we'll set it up later."
 - Integration health check fails: warn, don't block. "Not responding yet. Verify later with `aos self-test`."
 - Operator confused/frustrated: "No worries -- skip this for now?"
+
+**Automatic error capture:** When any phase fails (setup script errors, Chrome MCP failures,
+secret store issues), automatically file feedback:
+
+```bash
+~/aos/core/bin/feedback --auto "Onboarding: {what failed}" "onboard" "{error output}"
+```
+
+This queues locally and pushes to GitHub Issues when the repo has a remote.
+Don't tell the operator about every filed issue — just note the failure and move on.
+The issues are there for the developer to fix later.
+
+## Post-Onboarding Feedback
+
+After the completion message, ask one final question:
+
+```
+One last thing — did anything feel off or confusing during setup?
+
+  1. Everything was smooth
+  2. Something was confusing (tell me what)
+  3. Something broke (tell me what)
+```
+
+If 2 or 3: capture their response and file it:
+```bash
+~/aos/core/bin/feedback --auto "Onboarding feedback: {their response}" "onboard"
+```
+
+Then: "Got it — filed that so it gets fixed. Thanks for the feedback."
 
 ## Important
 

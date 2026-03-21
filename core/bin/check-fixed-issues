@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+# ─── Check Fixed Issues ──────────────────────────────────
+#
+# Runs during `aos update`. Checks if any issues the operator
+# reported have been closed since the last update.
+# Shows: "3 issues you reported were fixed in this update"
+#
+# How it works:
+# 1. Reads local feedback queue for pushed issues
+# 2. Checks GitHub for their status
+# 3. Reports any that were closed since last check
+# 4. Updates local state
+#
+# Usage:
+#   check-fixed-issues        # run check
+#   check-fixed-issues --quiet  # exit code only (0=fixes found, 1=none)
+
+set -euo pipefail
+
+AOS_DIR="$HOME/aos"
+USER_DIR="$HOME/.aos"
+QUEUE_FILE="$USER_DIR/feedback/queue.jsonl"
+FIXED_LOG="$USER_DIR/feedback/fixed.jsonl"
+LAST_CHECK="$USER_DIR/feedback/.last-fix-check"
+
+# ── Colors ────────────────────────────────────────────────
+if [[ -t 1 ]]; then
+    GREEN=$'\033[32m' CYAN=$'\033[36m' BOLD=$'\033[1m' DIM=$'\033[2m' RESET=$'\033[0m'
+else
+    GREEN="" CYAN="" BOLD="" DIM="" RESET=""
+fi
+
+QUIET=false
+[[ "${1:-}" == "--quiet" ]] && QUIET=true
+
+_get_repo() {
+    cd "$AOS_DIR" 2>/dev/null && git remote get-url origin 2>/dev/null | sed 's|.*github.com[:/]||;s|\.git$||' || echo ""
+}
+
+main() {
+    local repo
+    repo=$(_get_repo)
+    [[ -z "$repo" ]] && exit 1
+
+    if [[ ! -f "$QUEUE_FILE" ]]; then
+        exit 1
+    fi
+
+    # Get pushed issue titles
+    local pushed_titles
+    pushed_titles=$(python3 -c "
+import json
+from pathlib import Path
+
+path = Path('$QUEUE_FILE')
+titles = []
+for line in path.read_text().splitlines():
+    if not line.strip():
+        continue
+    entry = json.loads(line)
+    if entry.get('status') == 'pushed':
+        titles.append(entry.get('title', ''))
+for t in titles:
+    print(t)
+" 2>/dev/null)
+
+    [[ -z "$pushed_titles" ]] && exit 1
+
+    # Check GitHub for closed issues matching our titles
+    local fixed=()
+    while IFS= read -r title; do
+        [[ -z "$title" ]] && continue
+
+        # Search for closed issues with this title
+        local search_result
+        search_result=$(gh issue list --repo "$repo" --state closed --search "$title" --json title,number,closedAt --limit 3 2>/dev/null || echo "[]")
+
+        local matches
+        matches=$(echo "$search_result" | python3 -c "
+import json, sys
+from pathlib import Path
+from datetime import datetime
+
+issues = json.load(sys.stdin)
+last_check_file = Path('$LAST_CHECK')
+if last_check_file.exists():
+    last_check = last_check_file.read_text().strip()
+else:
+    last_check = '2000-01-01T00:00:00Z'
+
+for issue in issues:
+    closed_at = issue.get('closedAt', '')
+    if closed_at > last_check:
+        print(f'#{issue[\"number\"]}: {issue[\"title\"]}')
+" 2>/dev/null)
+
+        while IFS= read -r match; do
+            [[ -n "$match" ]] && fixed+=("$match")
+        done <<< "$matches"
+    done <<< "$pushed_titles"
+
+    # Update last check timestamp
+    date -u +%Y-%m-%dT%H:%M:%SZ > "$LAST_CHECK"
+
+    if [[ ${#fixed[@]} -eq 0 ]]; then
+        exit 1
+    fi
+
+    # Log fixes
+    for fix in "${fixed[@]}"; do
+        python3 -c "
+import json
+from datetime import datetime
+from pathlib import Path
+entry = {'ts': datetime.now(datetime.UTC).isoformat() + 'Z', 'issue': '''$fix'''}
+path = Path('$FIXED_LOG')
+with open(path, 'a') as f:
+    f.write(json.dumps(entry) + '\n')
+" 2>/dev/null
+    done
+
+    if ! $QUIET; then
+        echo ""
+        echo "  ${GREEN}${BOLD}${#fixed[@]} issue(s) you reported were fixed:${RESET}"
+        echo ""
+        for fix in "${fixed[@]}"; do
+            echo "    ${GREEN}${fix}${RESET}"
+        done
+        echo ""
+    fi
+
+    exit 0
+}
+
+main

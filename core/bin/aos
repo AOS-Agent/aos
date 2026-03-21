@@ -32,6 +32,8 @@ case "${1:-help}" in
     update)
         # Full update: pull + migrate + sync
         bash "$AOS_DIR/core/bin/check-update" --apply
+        # Check if any reported issues were fixed in this update
+        bash "$AOS_DIR/core/bin/check-fixed-issues" 2>/dev/null || true
         ;;
 
     check-update)
@@ -385,6 +387,21 @@ print('\n'.join(deps))
         python3 "$AOS_DIR/core/bin/trust-log" "$@"
         ;;
 
+    feedback)
+        shift
+        bash "$AOS_DIR/core/bin/feedback" "$@"
+        ;;
+
+    telemetry)
+        shift
+        bash "$AOS_DIR/core/bin/telemetry" "$@"
+        ;;
+
+    sessions)
+        shift
+        bash "$AOS_DIR/core/bin/session-recorder" "$@"
+        ;;
+
     help|--help|-h)
         echo "AOS — Agentic Operating System"
         echo ""
@@ -404,6 +421,9 @@ print('\n'.join(deps))
         echo "  trust           Review agent trust levels"
         echo "  trust-log       Log agent trust actions"
         echo "  migrate         Run pending migrations"
+        echo "  feedback         Report a bug or issue (auto-files to GitHub)"
+        echo "  telemetry        Anonymous usage telemetry (opt-in/out/report)"
+        echo "  sessions         View recorded onboarding/setup sessions"
         echo "  discover        Scan machine for existing setup"
         echo "  version         Show current version"
         echo ""

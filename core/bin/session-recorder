@@ -1,0 +1,396 @@
+#!/usr/bin/env bash
+# ─── AOS Session Recorder ────────────────────────────────
+#
+# Records structured event logs during flows (onboarding, setup, etc.)
+# Produces a replayable trace that developer agents can use to
+# understand what happened and reproduce issues.
+#
+# Usage:
+#   session-recorder start <flow>                  # start recording
+#   session-recorder event <action> [detail]       # record an event
+#   session-recorder error <message> [context]     # record an error
+#   session-recorder choice <question> <answer>    # record a user choice
+#   session-recorder end [outcome]                 # end recording
+#   session-recorder show [session_id]             # display a session
+#   session-recorder replay [session_id]           # format for agent consumption
+#
+# The recorder writes to ~/.aos/feedback/sessions/<id>.jsonl
+# Each line is a timestamped event. The full session is a replayable trace.
+#
+# Event types:
+#   flow_start    — flow began (onboard, install, etc.)
+#   flow_end      — flow completed/aborted
+#   phase_start   — entered a phase
+#   phase_end     — completed a phase
+#   action        — something happened (ran a script, wrote a file)
+#   choice        — user made a selection
+#   error         — something went wrong
+#   note          — context annotation
+
+set -euo pipefail
+
+USER_DIR="$HOME/.aos"
+SESSION_DIR="$USER_DIR/feedback/sessions"
+CURRENT_FILE="$USER_DIR/feedback/.current-session"
+
+mkdir -p "$SESSION_DIR"
+
+# ── Colors ────────────────────────────────────────────────
+if [[ -t 1 ]]; then
+    GREEN=$'\033[32m' RED=$'\033[31m' DIM=$'\033[2m' BOLD=$'\033[1m' RESET=$'\033[0m'
+else
+    GREEN="" RED="" DIM="" BOLD="" RESET=""
+fi
+
+_write_event() {
+    local session_id type detail
+    session_id=$(cat "$CURRENT_FILE" 2>/dev/null || echo "")
+
+    if [[ -z "$session_id" ]]; then
+        return 1
+    fi
+
+    type="$1"
+    detail="$2"
+
+    local session_file="$SESSION_DIR/${session_id}.jsonl"
+
+    python3 -c "
+import json, os
+from datetime import datetime
+
+event = {
+    'ts': datetime.now(datetime.UTC).isoformat() + 'Z',
+    'type': os.environ['EVENT_TYPE'],
+    'detail': os.environ['EVENT_DETAIL'],
+}
+with open(os.environ['SESSION_FILE'], 'a') as f:
+    f.write(json.dumps(event) + '\n')
+" 2>/dev/null <<< "" # stdin consumed
+}
+
+# Export for python subprocess
+export EVENT_TYPE="" EVENT_DETAIL="" SESSION_FILE=""
+
+_start() {
+    local flow="$1"
+    local session_id
+    session_id="$(date +%Y%m%d-%H%M%S)-${flow}"
+
+    echo "$session_id" > "$CURRENT_FILE"
+
+    SESSION_FILE="$SESSION_DIR/${session_id}.jsonl"
+    EVENT_TYPE="flow_start" EVENT_DETAIL="$flow" python3 -c "
+import json, os, platform
+from datetime import datetime
+from pathlib import Path
+
+event = {
+    'ts': datetime.now(datetime.UTC).isoformat() + 'Z',
+    'type': 'flow_start',
+    'flow': os.environ.get('EVENT_DETAIL', 'unknown'),
+    'aos_version': Path(os.path.expanduser('~/.aos/.version')).read_text().strip() if Path(os.path.expanduser('~/.aos/.version')).exists() else 'unknown',
+    'macos': platform.mac_ver()[0],
+    'arch': platform.machine(),
+}
+with open(os.environ['SESSION_FILE'], 'a') as f:
+    f.write(json.dumps(event) + '\n')
+"
+    echo "$session_id"
+}
+
+_event() {
+    local action="$1" detail="${2:-}"
+    local session_id
+    session_id=$(cat "$CURRENT_FILE" 2>/dev/null || echo "")
+    [[ -z "$session_id" ]] && return 1
+
+    SESSION_FILE="$SESSION_DIR/${session_id}.jsonl" \
+    EVENT_TYPE="$action" \
+    EVENT_DETAIL="$detail" \
+    python3 -c "
+import json, os
+from datetime import datetime
+event = {
+    'ts': datetime.now(datetime.UTC).isoformat() + 'Z',
+    'type': os.environ['EVENT_TYPE'],
+    'detail': os.environ['EVENT_DETAIL'],
+}
+with open(os.environ['SESSION_FILE'], 'a') as f:
+    f.write(json.dumps(event) + '\n')
+" 2>/dev/null
+}
+
+_error() {
+    local message="$1" context="${2:-}"
+    local session_id
+    session_id=$(cat "$CURRENT_FILE" 2>/dev/null || echo "")
+    [[ -z "$session_id" ]] && return 1
+
+    SESSION_FILE="$SESSION_DIR/${session_id}.jsonl" \
+    EVENT_MESSAGE="$message" \
+    EVENT_CONTEXT="$context" \
+    python3 -c "
+import json, os
+from datetime import datetime
+event = {
+    'ts': datetime.now(datetime.UTC).isoformat() + 'Z',
+    'type': 'error',
+    'message': os.environ.get('EVENT_MESSAGE', ''),
+    'context': os.environ.get('EVENT_CONTEXT', ''),
+}
+with open(os.environ['SESSION_FILE'], 'a') as f:
+    f.write(json.dumps(event) + '\n')
+" 2>/dev/null
+}
+
+_choice() {
+    local question="$1" answer="$2"
+    local session_id
+    session_id=$(cat "$CURRENT_FILE" 2>/dev/null || echo "")
+    [[ -z "$session_id" ]] && return 1
+
+    SESSION_FILE="$SESSION_DIR/${session_id}.jsonl" \
+    EVENT_QUESTION="$question" \
+    EVENT_ANSWER="$answer" \
+    python3 -c "
+import json, os
+from datetime import datetime
+event = {
+    'ts': datetime.now(datetime.UTC).isoformat() + 'Z',
+    'type': 'choice',
+    'question': os.environ.get('EVENT_QUESTION', ''),
+    'answer': os.environ.get('EVENT_ANSWER', ''),
+}
+with open(os.environ['SESSION_FILE'], 'a') as f:
+    f.write(json.dumps(event) + '\n')
+" 2>/dev/null
+}
+
+_end() {
+    local outcome="${1:-completed}"
+    local session_id
+    session_id=$(cat "$CURRENT_FILE" 2>/dev/null || echo "")
+    [[ -z "$session_id" ]] && return 1
+
+    SESSION_FILE="$SESSION_DIR/${session_id}.jsonl" \
+    python3 -c "
+import json, os
+from datetime import datetime
+from pathlib import Path
+
+# Calculate total duration
+session_file = Path(os.environ['SESSION_FILE'])
+lines = session_file.read_text().splitlines()
+if lines:
+    first = json.loads(lines[0])
+    start_ts = first['ts']
+else:
+    start_ts = 'unknown'
+
+event = {
+    'ts': datetime.now(datetime.UTC).isoformat() + 'Z',
+    'type': 'flow_end',
+    'outcome': '$outcome',
+    'start_ts': start_ts,
+    'event_count': len(lines),
+}
+with open(os.environ['SESSION_FILE'], 'a') as f:
+    f.write(json.dumps(event) + '\n')
+" 2>/dev/null
+
+    rm -f "$CURRENT_FILE"
+    echo "$session_id"
+}
+
+_show() {
+    local session_id="${1:-}"
+
+    if [[ -z "$session_id" ]]; then
+        # Show current or most recent
+        session_id=$(cat "$CURRENT_FILE" 2>/dev/null || ls -t "$SESSION_DIR"/*.jsonl 2>/dev/null | head -1 | xargs basename 2>/dev/null | sed 's/.jsonl//' || echo "")
+    fi
+
+    if [[ -z "$session_id" ]]; then
+        echo "  ${DIM}No sessions found${RESET}"
+        return 1
+    fi
+
+    local session_file="$SESSION_DIR/${session_id}.jsonl"
+    if [[ ! -f "$session_file" ]]; then
+        echo "  ${RED}Session not found: $session_id${RESET}"
+        return 1
+    fi
+
+    echo ""
+    echo "  ${BOLD}Session: $session_id${RESET}"
+    echo "  ${DIM}─────────────────────────────────────────${RESET}"
+
+    python3 -c "
+import json
+from pathlib import Path
+
+for line in Path('$session_file').read_text().splitlines():
+    if not line.strip():
+        continue
+    e = json.loads(line)
+    ts = e['ts'][11:19]  # HH:MM:SS
+    t = e['type']
+
+    if t == 'flow_start':
+        print(f'  {ts}  >> {e.get(\"flow\", \"?\")} started  (AOS {e.get(\"aos_version\", \"?\")})')
+    elif t == 'flow_end':
+        print(f'  {ts}  << {e.get(\"outcome\", \"?\")}  ({e.get(\"event_count\", 0)} events)')
+    elif t == 'error':
+        print(f'  {ts}  !! {e.get(\"message\", \"?\")}')
+    elif t == 'choice':
+        print(f'  {ts}  ?? {e.get(\"question\", \"?\")}  =>  {e.get(\"answer\", \"?\")}')
+    elif t == 'phase_start':
+        print(f'  {ts}  -> {e.get(\"detail\", \"?\")}')
+    elif t == 'phase_end':
+        print(f'  {ts}  <- {e.get(\"detail\", \"?\")}')
+    else:
+        print(f'  {ts}  -- {e.get(\"detail\", t)}')
+" 2>/dev/null
+
+    echo ""
+}
+
+_replay() {
+    # Format session as a structured summary for developer agents
+    local session_id="${1:-}"
+
+    if [[ -z "$session_id" ]]; then
+        session_id=$(ls -t "$SESSION_DIR"/*.jsonl 2>/dev/null | head -1 | xargs basename 2>/dev/null | sed 's/.jsonl//' || echo "")
+    fi
+
+    local session_file="$SESSION_DIR/${session_id}.jsonl"
+    if [[ ! -f "$session_file" ]]; then
+        echo "Session not found"
+        return 1
+    fi
+
+    python3 -c "
+import json
+from pathlib import Path
+
+events = []
+for line in Path('$session_file').read_text().splitlines():
+    if line.strip():
+        events.append(json.loads(line))
+
+if not events:
+    print('Empty session')
+    exit()
+
+# Build replay summary
+print('# Session Replay: $session_id')
+print()
+
+flow_start = next((e for e in events if e['type'] == 'flow_start'), {})
+print(f'Flow: {flow_start.get(\"flow\", \"unknown\")}')
+print(f'AOS: {flow_start.get(\"aos_version\", \"?\")}  macOS: {flow_start.get(\"macos\", \"?\")}  {flow_start.get(\"arch\", \"?\")}')
+print()
+
+print('## Timeline')
+print()
+for e in events:
+    t = e['type']
+    ts = e['ts'][11:19]
+    if t == 'flow_start':
+        print(f'{ts} START {e.get(\"flow\", \"\")}')
+    elif t == 'flow_end':
+        print(f'{ts} END outcome={e.get(\"outcome\", \"\")}')
+    elif t == 'error':
+        print(f'{ts} ERROR {e.get(\"message\", \"\")}')
+        if e.get('context'):
+            print(f'        context: {e[\"context\"]}')
+    elif t == 'choice':
+        print(f'{ts} CHOICE \"{e.get(\"question\", \"\")}\" => \"{e.get(\"answer\", \"\")}\"')
+    elif t in ('phase_start', 'phase_end'):
+        direction = 'ENTER' if t == 'phase_start' else 'EXIT'
+        print(f'{ts} {direction} {e.get(\"detail\", \"\")}')
+    else:
+        print(f'{ts} {t.upper()} {e.get(\"detail\", \"\")}')
+
+# Errors summary
+errors = [e for e in events if e['type'] == 'error']
+if errors:
+    print()
+    print('## Errors')
+    for e in errors:
+        print(f'- {e.get(\"message\", \"\")}')
+        if e.get('context'):
+            print(f'  Context: {e[\"context\"]}')
+
+# Choices summary
+choices = [e for e in events if e['type'] == 'choice']
+if choices:
+    print()
+    print('## User Choices')
+    for e in choices:
+        print(f'- {e.get(\"question\", \"\")}: **{e.get(\"answer\", \"\")}**')
+" 2>/dev/null
+}
+
+_list_sessions() {
+    echo ""
+    echo "  ${BOLD}Recorded Sessions${RESET}"
+    echo ""
+
+    local found=0
+    for f in $(ls -t "$SESSION_DIR"/*.jsonl 2>/dev/null); do
+        local name
+        name=$(basename "$f" .jsonl)
+        local lines
+        lines=$(wc -l < "$f" | tr -d ' ')
+        local has_error=""
+        grep -q '"type": "error"' "$f" 2>/dev/null && has_error=" ${RED}(has errors)${RESET}"
+        echo "  $name  ${DIM}($lines events)${RESET}${has_error}"
+        ((found++))
+    done
+
+    [[ $found -eq 0 ]] && echo "  ${DIM}No sessions recorded${RESET}"
+    echo ""
+}
+
+# ── Main ──────────────────────────────────────────────────
+
+case "${1:---help}" in
+    start)
+        shift; _start "${1:-unknown}"
+        ;;
+    event)
+        shift; _event "${1:-action}" "${2:-}"
+        ;;
+    error)
+        shift; _error "${1:-unknown error}" "${2:-}"
+        ;;
+    choice)
+        shift; _choice "${1:-}" "${2:-}"
+        ;;
+    end)
+        shift; _end "${1:-completed}"
+        ;;
+    show)
+        shift; _show "${1:-}"
+        ;;
+    replay)
+        shift; _replay "${1:-}"
+        ;;
+    list)
+        _list_sessions
+        ;;
+    --help|-h|"")
+        echo "Usage: session-recorder <command>"
+        echo ""
+        echo "  start <flow>                Start recording a session"
+        echo "  event <action> [detail]     Record an event"
+        echo "  error <message> [context]   Record an error"
+        echo "  choice <question> <answer>  Record a user choice"
+        echo "  end [outcome]               End recording"
+        echo "  show [session_id]           Display a session"
+        echo "  replay [session_id]         Format for agent consumption"
+        echo "  list                        List all sessions"
+        ;;
+esac

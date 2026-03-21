@@ -38,7 +38,7 @@ Captured during v1→v2 migration (2026-03-21).
   core/agents/      Agent source
   core/bin/         Utility scripts
   .claude/skills/   Skill protocols
-  config/defaults/  Shipped defaults
+  config/           System configuration
 
 ~/.aos/             INSTANCE — never in git, machine-specific
   services/         Service DEPLOYMENTS (.venv, data, runtime state)

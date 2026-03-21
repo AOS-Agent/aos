@@ -7,8 +7,10 @@ This module handles CRUD for tasks, projects, goals, threads, and inbox.
 v2: Project-scoped IDs, fuzzy resolution, subtasks, handoff context.
 """
 
+import fcntl
 import os
 import re
+import tempfile
 import yaml
 import urllib.request
 from datetime import datetime, date
@@ -23,12 +25,21 @@ ACTIVITY_FILE = WORK_DIR / "activity.yaml"
 MAX_ACTIVITY = 100  # Keep last N events
 
 
+LOCK_FILE = WORK_DIR / ".work.lock"
+
+
 def _load() -> dict:
-    """Load work.yaml and return parsed dict."""
+    """Load work.yaml with shared lock to prevent reading mid-write."""
     if not WORK_FILE.exists():
         return _empty_work()
-    with open(WORK_FILE, "r") as f:
-        data = yaml.safe_load(f) or {}
+    WORK_DIR.mkdir(parents=True, exist_ok=True)
+    with open(LOCK_FILE, "a+") as lf:
+        fcntl.flock(lf, fcntl.LOCK_SH)
+        try:
+            with open(WORK_FILE, "r") as f:
+                data = yaml.safe_load(f) or {}
+        finally:
+            fcntl.flock(lf, fcntl.LOCK_UN)
     # Ensure all top-level keys exist
     for key in ("tasks", "projects", "goals", "threads", "inbox"):
         if key not in data:
@@ -37,10 +48,21 @@ def _load() -> dict:
 
 
 def _save(data: dict) -> None:
-    """Write work data back to work.yaml."""
+    """Write work data atomically: lock, write to temp, rename over original."""
     WORK_DIR.mkdir(parents=True, exist_ok=True)
-    with open(WORK_FILE, "w") as f:
-        yaml.dump(data, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+    with open(LOCK_FILE, "a+") as lf:
+        fcntl.flock(lf, fcntl.LOCK_EX)
+        try:
+            fd, tmp_path = tempfile.mkstemp(dir=str(WORK_DIR), suffix=".yaml.tmp")
+            try:
+                with os.fdopen(fd, "w") as f:
+                    yaml.dump(data, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+                os.replace(tmp_path, str(WORK_FILE))
+            except Exception:
+                os.unlink(tmp_path)
+                raise
+        finally:
+            fcntl.flock(lf, fcntl.LOCK_UN)
 
 
 def _empty_work() -> dict:
@@ -261,10 +283,6 @@ def _log_activity(action: str, task_id: str = None, title: str = None,
     """Append an event to the activity log. Fire-and-forget."""
     try:
         WORK_DIR.mkdir(parents=True, exist_ok=True)
-        events = []
-        if ACTIVITY_FILE.exists():
-            with open(ACTIVITY_FILE, "r") as f:
-                events = yaml.safe_load(f) or []
 
         event = {
             "ts": _now(),
@@ -279,11 +297,26 @@ def _log_activity(action: str, task_id: str = None, title: str = None,
         if detail:
             event["detail"] = detail
 
-        events.insert(0, event)
-        events = events[:MAX_ACTIVITY]
-
-        with open(ACTIVITY_FILE, "w") as f:
-            yaml.dump(events, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+        activity_lock = WORK_DIR / ".activity.lock"
+        with open(activity_lock, "a+") as lf:
+            fcntl.flock(lf, fcntl.LOCK_EX)
+            try:
+                events = []
+                if ACTIVITY_FILE.exists():
+                    with open(ACTIVITY_FILE, "r") as f:
+                        events = yaml.safe_load(f) or []
+                events.insert(0, event)
+                events = events[:MAX_ACTIVITY]
+                fd, tmp = tempfile.mkstemp(dir=str(WORK_DIR), suffix=".activity.tmp")
+                try:
+                    with os.fdopen(fd, "w") as f:
+                        yaml.dump(events, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+                    os.replace(tmp, str(ACTIVITY_FILE))
+                except Exception:
+                    os.unlink(tmp)
+                    raise
+            finally:
+                fcntl.flock(lf, fcntl.LOCK_UN)
 
         # Push to dashboard SSE bus (fire-and-forget)
         _notify_dashboard(event)

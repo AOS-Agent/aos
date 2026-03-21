@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# ─── Setup GitHub Issue Labels for AOS ────────────────────
+# Creates standard labels used by the feedback system.
+# Idempotent — safe to re-run.
+#
+# Usage:
+#   setup-github-labels              # uses origin remote
+#   setup-github-labels owner/repo   # explicit repo
+
+set -euo pipefail
+
+AOS_DIR="$HOME/aos"
+
+if [[ -n "${1:-}" ]]; then
+    REPO="$1"
+else
+    REPO=$(cd "$AOS_DIR" 2>/dev/null && git remote get-url origin 2>/dev/null | sed 's|.*github.com[:/]||;s|\.git$||' || echo "")
+fi
+
+if [[ -z "$REPO" ]]; then
+    echo "No repo found. Pass one: setup-github-labels owner/repo"
+    exit 1
+fi
+
+if ! command -v gh &>/dev/null; then
+    echo "gh CLI not installed"
+    exit 1
+fi
+
+echo "Setting up labels on $REPO..."
+
+# label name : color : description
+labels=(
+    "bug:d73a4a:Something isn't working"
+    "friction:e4e669:Confusing or slow experience"
+    "missing-feature:a2eeef:Expected functionality that doesn't exist"
+    "enhancement:0075ca:Improvement to existing feature"
+    "auto-captured:c5def5:Filed automatically by AOS feedback system"
+    "onboarding:f9d0c4:Related to the onboarding flow"
+    "dashboard:bfdadc:Related to the web dashboard"
+    "bridge:d4c5f9:Related to the bridge service"
+    "work-system:fbca04:Related to work/task management"
+    "integration:0e8a16:Related to an integration (Telegram, email, etc.)"
+    "agent:5319e7:Related to agent behavior"
+    "installer:1d76db:Related to install.sh"
+    "p1-critical:b60205:System broken or data loss"
+    "p2-important:ff9f1c:Significant but workaround exists"
+    "p3-normal:fbca04:Default priority"
+    "good-first-fix:7057ff:Simple fix — good for agent warm-up"
+)
+
+created=0
+skipped=0
+
+for entry in "${labels[@]}"; do
+    IFS=: read -r name color description <<< "$entry"
+
+    if gh label list --repo "$REPO" --json name -q ".[].name" 2>/dev/null | grep -qx "$name"; then
+        echo "  skip  $name"
+        ((skipped++))
+    else
+        if gh label create "$name" --repo "$REPO" --color "$color" --description "$description" 2>/dev/null; then
+            echo "  ok    $name"
+            ((created++))
+        else
+            echo "  fail  $name"
+        fi
+    fi
+done
+
+echo ""
+echo "Done: $created created, $skipped already existed"
