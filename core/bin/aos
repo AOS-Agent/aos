@@ -270,8 +270,7 @@ except py_compile.PyCompileError as e:
         ;;
 
     start)
-        # Open the operator's IDE with Claude Code ready.
-        # On first run (no onboarding.yaml), Chief dispatches Sahib automatically.
+        # Flow: open editor → authorize Claude Code → launch cld → Chief runs onboarding
         EDITOR_FILE="$HOME/.aos/config/editor"
         EDITOR_CMD=""
 
@@ -283,34 +282,35 @@ except py_compile.PyCompileError as e:
             command -v code &>/dev/null && EDITOR_CMD="code"
         fi
 
-        if [[ -z "$EDITOR_CMD" ]]; then
-            echo "No editor configured. Falling back to terminal."
-            echo "Run 'aos start' again after installing an editor,"
-            echo "or set one: echo 'code' > ~/.aos/config/editor"
+        # Step 1: Open editor (non-blocking — it launches in background)
+        if [[ -n "$EDITOR_CMD" ]]; then
             echo ""
-            exec cld "$@"
+            echo "  Opening $EDITOR_CMD..."
+            "$EDITOR_CMD" "$HOME" &>/dev/null &
+            sleep 1
         fi
 
-        # Check Claude Code auth — run 'claude auth' if not yet signed in
+        # Step 2: Authorize Claude Code if not yet signed in
         if command -v claude &>/dev/null; then
             if [[ ! -f "$HOME/.claude/.credentials.json" ]] && [[ ! -f "$HOME/.claude/credentials.json" ]]; then
-                echo "Claude Code needs to be authorized first."
-                echo "A browser window will open for sign-in..."
                 echo ""
-                claude auth login 2>/dev/null || claude --version 2>/dev/null || true
+                echo "  Claude Code needs to be authorized."
+                echo "  A browser window will open for sign-in..."
+                echo ""
+                claude auth login 2>/dev/null || true
                 echo ""
             fi
         fi
 
-        # Open editor to home directory (the AOS workspace root)
-        echo "Opening $EDITOR_CMD..."
-        "$EDITOR_CMD" "$HOME"
-
+        # Step 3: Launch Claude Code in terminal — Chief takes over
         echo ""
-        echo "Your editor is opening. Look for Claude Code in the sidebar."
         if [[ ! -f "$HOME/.aos/config/onboarding.yaml" ]]; then
-            echo "Sahib is waiting to walk you through setup."
+            echo "  Launching Claude Code — Sahib will walk you through setup."
+        else
+            echo "  Launching Claude Code..."
         fi
+        echo ""
+        exec cld
         ;;
 
     deploy)
