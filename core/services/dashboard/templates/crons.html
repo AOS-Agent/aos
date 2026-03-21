@@ -1,235 +1,185 @@
 {% extends "base.html" %}
 
-{% block title %}Crons{% endblock %}
-{% block page_name %}Crons{% endblock %}
+{% block title %}Automations{% endblock %}
+{% block page_title %}Automations{% endblock %}
 
 {% block styles %}
-        .crons-table {
-            width: 100%;
-            border-collapse: collapse;
-            font-family: var(--font-mono);
-            font-size: 12px;
-        }
-
-        .crons-table th {
-            font-size: 10px;
-            color: var(--text-tertiary);
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            font-weight: 600;
-            padding: 0 12px 12px;
-            text-align: left;
-            border-bottom: 1px solid var(--border);
-        }
-
-        .crons-table td {
-            padding: 10px 12px;
-            border-bottom: 1px solid var(--border);
-            vertical-align: middle;
-        }
-
-        .crons-table tr:last-child td { border-bottom: none; }
-        .crons-table tr.cron-disabled td { opacity: 0.4; }
-        .crons-table tr:hover td { background: var(--bg-surface-alt); }
-
-        .cron-name { font-weight: 600; font-size: 13px; }
-        .cron-schedule { font-size: 12px; color: var(--text-secondary); font-family: var(--font-sans); }
-        .cron-age { font-size: 11px; color: var(--text-tertiary); }
-        .cron-dur { font-size: 11px; color: var(--text-tertiary); }
-        .cron-count { font-size: 11px; color: var(--text-tertiary); }
-
-        .cron-status-label {
-            font-size: 10px;
-            font-family: var(--font-mono);
-            padding: 2px 8px;
-            border-radius: 4px;
-            display: inline-block;
-        }
-
-        .cron-status-label.ok { background: rgba(52,211,153,0.12); color: var(--status-online); }
-        .cron-status-label.failed { background: rgba(248,113,113,0.12); color: var(--status-error); }
-        .cron-status-label.stale { background: rgba(251,191,36,0.12); color: var(--status-warning); }
-        .cron-status-label.pending { background: rgba(92,96,112,0.15); color: var(--text-tertiary); }
-        .cron-status-label.disabled { background: var(--bg-surface-alt); color: var(--text-tertiary); }
-
-        .crons-sep td {
-            padding: 8px 12px;
-            font-family: var(--font-mono);
-            font-size: 10px;
-            color: var(--text-tertiary);
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            background: var(--bg-surface-alt);
-            border-bottom: 1px solid var(--border);
-        }
-
-        .summary-bar {
-            display: flex;
-            gap: 20px;
-            flex-wrap: wrap;
-            margin-bottom: 16px;
-        }
-
-        .summary-stat {
-            display: flex;
-            flex-direction: column;
-            gap: 2px;
-        }
-
-        .summary-value {
-            font-family: var(--font-mono);
-            font-size: 24px;
-            font-weight: 700;
-        }
-
-        .summary-label {
-            font-size: 11px;
-            color: var(--text-secondary);
+        .summary-bar { display: flex; gap: 24px; flex-wrap: wrap; }
+        .summary-stat { display: flex; flex-direction: column; gap: 2px; }
+        .summary-value { font-family: var(--font-mono); font-size: 24px; font-weight: 700; }
+        .summary-label { font-size: 12px; color: var(--text-secondary); }
+        .card + .card { margin-top: 16px; }
+        .card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+        .card-header .card-title { margin-bottom: 0; }
+        .updated-text { font-family: var(--font-mono); font-size: 12px; color: var(--text-tertiary); }
+        .table td.name-cell { font-weight: 600; }
+        .table td.mono { font-family: var(--font-mono); font-size: 12px; color: var(--text-tertiary); }
+        .disabled-sep td { font-size: 12px; font-weight: 500; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.5px; background: var(--bg-sidebar); }
+        .row-disabled td { opacity: 0.4; }
+        .btn-sm { height: 24px; font-size: 12px; padding: 2px 8px; }
+        .fail-note { font-size: 12px; color: var(--tag-red); }
+        @media (max-width: 768px) {
+            .summary-bar { gap: 16px; }
+            .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
         }
 {% endblock %}
 
 {% block content %}
-        <!-- SUMMARY -->
-        <div class="card" style="margin-bottom:16px;" id="summary-card">
+        <!-- Summary -->
+        <div class="card" id="summary-card">
             <div class="card-header">
                 <span class="card-title">Summary</span>
-                <span id="last-updated" style="font-family:var(--font-mono);font-size:10px;color:var(--text-tertiary);"></span>
+                <span class="updated-text" id="last-updated"></span>
             </div>
             <div class="summary-bar" id="summary-stats">
                 <div class="summary-stat">
-                    <div class="summary-value" id="stat-total">—</div>
+                    <div class="summary-value" id="stat-total">&mdash;</div>
                     <div class="summary-label">total</div>
                 </div>
                 <div class="summary-stat">
-                    <div class="summary-value" id="stat-enabled">—</div>
+                    <div class="summary-value" id="stat-enabled">&mdash;</div>
                     <div class="summary-label">enabled</div>
                 </div>
                 <div class="summary-stat">
-                    <div class="summary-value" style="color:var(--status-online);" id="stat-ok">—</div>
+                    <div class="summary-value" id="stat-ok" style="color:var(--tag-green)">&mdash;</div>
                     <div class="summary-label">ok</div>
                 </div>
                 <div class="summary-stat">
-                    <div class="summary-value" style="color:var(--status-error);" id="stat-failed">—</div>
+                    <div class="summary-value" id="stat-failed" style="color:var(--tag-red)">&mdash;</div>
                     <div class="summary-label">failed</div>
                 </div>
                 <div class="summary-stat">
-                    <div class="summary-value" style="color:var(--status-warning);" id="stat-stale">—</div>
+                    <div class="summary-value" id="stat-stale" style="color:var(--tag-yellow)">&mdash;</div>
                     <div class="summary-label">stale</div>
                 </div>
                 <div class="summary-stat">
-                    <div class="summary-value" style="color:var(--text-tertiary);" id="stat-disabled">—</div>
+                    <div class="summary-value" id="stat-disabled" style="color:var(--text-tertiary)">&mdash;</div>
                     <div class="summary-label">disabled</div>
                 </div>
             </div>
         </div>
 
-        <!-- JOBS TABLE -->
+        <!-- Scheduled Jobs -->
         <div class="card" id="crons-card">
             <div class="card-header">
                 <span class="card-title">Scheduled Jobs</span>
-                <i data-lucide="timer" class="card-icon" style="width:14px;height:14px;"></i>
             </div>
-            <div id="crons-table-wrap">
-                <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-tertiary);padding:20px;text-align:center;">Loading...</div>
+            <div class="table-scroll" id="crons-table-wrap">
+                <div class="empty-state">Loading...</div>
+            </div>
+        </div>
+
+        <!-- LaunchAgents -->
+        <div class="card" id="agents-card">
+            <div class="card-header">
+                <span class="card-title">LaunchAgents</span>
+            </div>
+            <div class="table-scroll" id="agents-table-wrap">
+                <div class="empty-state">Loading...</div>
             </div>
         </div>
 {% endblock %}
 
 {% block scripts %}
-        function relativeTime(isoStr) {
-            if (!isoStr) return '—';
-            const then = new Date(isoStr);
-            const now = new Date();
-            const s = Math.floor((now - then) / 1000);
+        function relativeTime(iso) {
+            if (!iso) return '\u2014';
+            const s = Math.floor((Date.now() - new Date(iso)) / 1000);
             if (s < 5) return 'just now';
-            if (s < 60) return `${s}s ago`;
-            if (s < 3600) return `${Math.floor(s / 60)}m ago`;
-            if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
-            return `${Math.floor(s / 86400)}d ago`;
+            if (s < 60) return s + 's ago';
+            if (s < 3600) return Math.floor(s / 60) + 'm ago';
+            if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+            return Math.floor(s / 86400) + 'd ago';
         }
 
         function durStr(s) {
-            if (!s && s !== 0) return '—';
+            if (s == null) return '\u2014';
             if (s < 1) return '<1s';
-            if (s < 60) return `${s}s`;
-            return `${Math.floor(s / 60)}m ${s % 60}s`;
+            if (s < 60) return s + 's';
+            return Math.floor(s / 60) + 'm ' + (s % 60) + 's';
         }
 
-        function escapeHtml(text) {
-            const d = document.createElement('div');
-            d.textContent = text;
-            return d.innerHTML;
-        }
+        function esc(t) { const d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
+
+        const statusTag = { ok: 'tag-green', failed: 'tag-red', stale: 'tag-yellow', pending: 'tag-gray', disabled: 'tag-gray' };
 
         function renderCrons(data) {
             const jobs = data.jobs || [];
             const summary = data.summary || {};
-
-            // Summary stats
-            document.getElementById('stat-total').textContent = summary.total ?? '—';
-            document.getElementById('stat-enabled').textContent = summary.enabled ?? '—';
-            document.getElementById('stat-ok').textContent = summary.ok ?? '—';
-            document.getElementById('stat-failed').textContent = summary.failed ?? '—';
-            document.getElementById('stat-stale').textContent = summary.stale ?? '—';
-            document.getElementById('stat-disabled').textContent = summary.disabled ?? '—';
-
+            document.getElementById('stat-total').textContent = summary.total ?? '\u2014';
+            document.getElementById('stat-enabled').textContent = summary.enabled ?? '\u2014';
+            document.getElementById('stat-ok').textContent = summary.ok ?? '\u2014';
+            document.getElementById('stat-failed').textContent = summary.failed ?? '\u2014';
+            document.getElementById('stat-stale').textContent = summary.stale ?? '\u2014';
+            document.getElementById('stat-disabled').textContent = summary.disabled ?? '\u2014';
             const lu = document.getElementById('last-updated');
             if (lu) lu.textContent = 'updated ' + new Date().toLocaleTimeString();
 
-            // Table
             const wrap = document.getElementById('crons-table-wrap');
-            if (!wrap) return;
+            if (!jobs.length) { wrap.innerHTML = '<div class="empty-state">No scheduled jobs found</div>'; return; }
 
-            if (!jobs.length) {
-                wrap.innerHTML = '<div style="font-size:12px;color:var(--text-tertiary);padding:20px;text-align:center;">No cron jobs found</div>';
-                return;
-            }
-
-            let html = `<table class="crons-table">
-                <thead><tr>
-                    <th>Name</th>
-                    <th>Schedule</th>
-                    <th>Last Run</th>
-                    <th>Status</th>
-                    <th>Duration</th>
-                    <th>Runs</th>
-                </tr></thead><tbody>`;
-
-            let shownDisabledSep = false;
-            for (const job of jobs) {
-                if (job.status === 'disabled' && !shownDisabledSep) {
-                    shownDisabledSep = true;
-                    html += `<tr class="crons-sep"><td colspan="6">Disabled</td></tr>`;
+            let h = '<table class="table"><thead><tr><th>Name</th><th>Schedule</th><th>Last Run</th><th>Status</th><th>Duration</th><th>Runs</th><th></th></tr></thead><tbody>';
+            let sepShown = false;
+            for (const j of jobs) {
+                if (j.status === 'disabled' && !sepShown) {
+                    sepShown = true;
+                    h += '<tr class="disabled-sep"><td colspan="7">Disabled</td></tr>';
                 }
-                const rowCls = job.status === 'disabled' ? 'cron-disabled' : '';
-                const lastFailureBadge = job.last_failure
-                    ? `<br><span style="font-size:10px;color:var(--status-error);">last fail: ${relativeTime(job.last_failure)}</span>`
-                    : '';
-                html += `<tr class="${rowCls}">
-                    <td class="cron-name">${escapeHtml(job.name)}</td>
-                    <td class="cron-schedule">${escapeHtml(job.schedule)}</td>
-                    <td class="cron-age">${relativeTime(job.last_run)}${lastFailureBadge}</td>
-                    <td><span class="cron-status-label ${job.status}">${job.status}</span></td>
-                    <td class="cron-dur">${durStr(job.duration_s)}</td>
-                    <td class="cron-count">${job.run_count ?? '—'}</td>
-                </tr>`;
+                const cls = j.status === 'disabled' ? ' class="row-disabled"' : '';
+                const failNote = j.last_failure ? '<br><span class="fail-note">fail ' + relativeTime(j.last_failure) + '</span>' : '';
+                const tagCls = statusTag[j.status] || 'tag-gray';
+                const runBtn = j.status !== 'disabled' ? '<button class="btn btn-sm" onclick="runCron(\'' + esc(j.name) + '\')">Run</button>' : '';
+                h += '<tr' + cls + '><td class="name-cell">' + esc(j.name) + '</td><td>' + esc(j.schedule) + '</td><td class="mono">' + relativeTime(j.last_run) + failNote + '</td><td><span class="tag ' + tagCls + '">' + j.status + '</span></td><td class="mono">' + durStr(j.duration_s) + '</td><td class="mono">' + (j.run_count ?? '\u2014') + '</td><td>' + runBtn + '</td></tr>';
             }
-
-            html += '</tbody></table>';
-            wrap.innerHTML = html;
+            h += '</tbody></table>';
+            wrap.innerHTML = h;
         }
 
-        async function loadCrons() {
+        function renderAgents(agents) {
+            const wrap = document.getElementById('agents-table-wrap');
+            if (!agents || !agents.length) { wrap.innerHTML = '<div class="empty-state">No LaunchAgents found</div>'; return; }
+
+            let h = '<table class="table"><thead><tr><th>Name</th><th>Status</th><th>PID</th><th></th></tr></thead><tbody>';
+            for (const a of agents) {
+                const tagCls = a.status === 'running' ? 'tag-green' : a.status === 'stopped' ? 'tag-red' : 'tag-yellow';
+                h += '<tr><td class="name-cell">' + esc(a.name) + '</td><td><span class="tag ' + tagCls + '">' + a.status + '</span></td><td class="mono">' + (a.pid || '\u2014') + '</td><td><button class="btn btn-sm" onclick="restartAgent(\'' + esc(a.name) + '\')">Restart</button></td></tr>';
+            }
+            h += '</tbody></table>';
+            wrap.innerHTML = h;
+        }
+
+        async function runCron(name) {
             try {
-                const r = await fetch('/api/crons');
-                const data = await r.json();
-                renderCrons(data);
+                const r = await fetch('/api/automations/cron/' + encodeURIComponent(name) + '/run', { method: 'POST' });
+                const d = await r.json();
+                if (d.error) alert('Error: ' + d.error);
+                else loadAll();
+            } catch (e) { alert('Failed: ' + e.message); }
+        }
+
+        async function restartAgent(name) {
+            try {
+                const r = await fetch('/api/automations/launchagent/' + encodeURIComponent(name) + '/restart', { method: 'POST' });
+                const d = await r.json();
+                if (d.error) alert('Error: ' + d.error);
+                else setTimeout(loadAll, 1500);
+            } catch (e) { alert('Failed: ' + e.message); }
+        }
+
+        async function loadAll() {
+            try {
+                const [cronsRes, agentsRes] = await Promise.all([
+                    fetch('/api/crons'),
+                    fetch('/api/automations')
+                ]);
+                const cronsData = await cronsRes.json();
+                const agentsData = await agentsRes.json();
+                renderCrons(cronsData);
+                renderAgents(agentsData.launch_agents || []);
             } catch (e) {
-                const wrap = document.getElementById('crons-table-wrap');
-                if (wrap) wrap.innerHTML = '<div style="font-size:12px;color:var(--status-error);padding:20px;">Failed to load cron data</div>';
+                document.getElementById('crons-table-wrap').innerHTML = '<div class="empty-state" style="color:var(--tag-red)">Failed to load data</div>';
             }
         }
 
-        loadCrons();
-        setInterval(loadCrons, 30000);
+        loadAll();
+        setInterval(loadAll, 30000);
 {% endblock %}

@@ -1,234 +1,110 @@
 {% extends "base.html" %}
 
 {% block title %}Agents{% endblock %}
-{% block page_name %}Agents{% endblock %}
-{% block shell_width %}1400px{% endblock %}
-
-{% block css_vars %}
-            {% for agent in all_agents %}
-            --agent-{{ agent.name | replace('-', '_') }}: {{ agent.color }};
-            {% endfor %}
-{% endblock %}
+{% block page_title %}Agents{% endblock %}
 
 {% block styles %}
-        /* SECTION */
-        .section { margin-bottom: 32px; }
-        .section-header {
-            font-family: var(--font-mono); font-size: 11px; font-weight: 600;
-            color: var(--text-secondary); text-transform: uppercase; letter-spacing: 1.5px;
-            margin-bottom: 16px; display: flex; align-items: center; gap: 8px;
-        }
-        .section-header i { color: var(--text-tertiary); }
+        .agents-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; margin-bottom: 32px; }
+        .agent-card { cursor: pointer; transition: background 0.1s ease; }
+        .agent-card:hover { background: rgba(55, 53, 47, 0.02); }
+        .agent-top { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+        .agent-avatar { width: 36px; height: 36px; border-radius: var(--radius); display: flex; align-items: center; justify-content: center; font-size: 16px; font-weight: 700; color: #FFFFFF; flex-shrink: 0; }
+        .agent-name { font-size: 16px; font-weight: 600; color: var(--text); line-height: 1.3; }
+        .agent-role { font-size: 14px; color: var(--text-secondary); line-height: 1.5; margin-bottom: 12px; }
+        .agent-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+        .agent-stat { font-size: 12px; color: var(--text-tertiary); margin-left: auto; }
 
-        /* AGENT GRID */
-        .agents-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-            gap: 14px;
-        }
+        .section-label { font-size: 12px; font-weight: 500; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px; display: flex; align-items: center; gap: 6px; }
+        .section-label i { width: 14px; height: 14px; color: var(--text-faint); }
 
-        /* AGENT CARD */
-        .agent-card {
-            background: var(--bg-surface);
-            border: 1px solid var(--border);
-            border-radius: 12px;
-            padding: 20px;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-        .agent-card:hover { border-color: var(--border-light); transform: translateY(-2px); }
+        .agent-detail { display: none; margin-bottom: 24px; }
+        .agent-detail.active { display: block; animation: agentFadeIn 0.15s ease; }
+        @keyframes agentFadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
 
-        .agent-top { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
-        .agent-avatar {
-            width: 44px; height: 44px; border-radius: 10px;
-            display: flex; align-items: center; justify-content: center;
-            font-family: var(--font-arabic); font-size: 20px; font-weight: 700;
-            color: var(--bg-primary); flex-shrink: 0;
-        }
-        .agent-identity { flex: 1; min-width: 0; }
-        .agent-name { font-family: var(--font-mono); font-size: 14px; font-weight: 600; }
-        .agent-arabic { font-family: var(--font-arabic); font-size: 13px; color: var(--text-secondary); direction: rtl; }
-
-        .agent-role { font-size: 13px; color: var(--text-secondary); margin-bottom: 12px; }
-
-        .agent-meta { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px; }
-        .trust-badge {
-            font-family: var(--font-mono); font-size: 10px; padding: 3px 10px;
-            border-radius: 10px; background: var(--bg-surface-alt); color: var(--text-secondary);
-            border: 1px solid var(--border);
-        }
-        .scope-badge {
-            font-family: var(--font-mono); font-size: 10px; padding: 3px 10px;
-            border-radius: 10px; border: 1px solid var(--border);
-        }
-        .scope-badge.global { color: var(--status-info); border-color: rgba(96,165,250,0.3); background: rgba(96,165,250,0.1); }
-        .scope-badge.project { color: var(--status-online); border-color: rgba(52,211,153,0.3); background: rgba(52,211,153,0.1); }
-        .agent-stat { font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary); }
-
-        /* AGENT DETAIL PANEL */
-        .agent-detail {
-            background: var(--bg-surface);
-            border: 1px solid var(--border);
-            border-radius: 12px;
-            padding: 24px;
-            margin-bottom: 24px;
-            display: none;
-        }
-        .agent-detail.active { display: block; animation: fadeIn 0.2s ease; }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
-
-        .detail-header { display: flex; align-items: center; gap: 16px; margin-bottom: 20px; }
-        .detail-avatar {
-            width: 56px; height: 56px; border-radius: 12px;
-            display: flex; align-items: center; justify-content: center;
-            font-family: var(--font-arabic); font-size: 26px; font-weight: 700; color: var(--bg-primary);
-        }
-        .detail-name { font-family: var(--font-mono); font-size: 18px; font-weight: 600; }
+        .detail-header { display: flex; align-items: center; gap: 14px; margin-bottom: 16px; }
+        .detail-avatar { width: 44px; height: 44px; border-radius: var(--radius); display: flex; align-items: center; justify-content: center; font-size: 20px; font-weight: 700; color: #FFFFFF; }
+        .detail-name { font-size: 20px; font-weight: 600; color: var(--text); line-height: 1.3; }
         .detail-role { font-size: 14px; color: var(--text-secondary); }
-        .detail-close {
-            margin-left: auto; background: none; border: 1px solid var(--border);
-            border-radius: 6px; padding: 6px 10px; color: var(--text-secondary); cursor: pointer;
-            font-family: var(--font-mono); font-size: 11px;
-        }
-        .detail-close:hover { border-color: var(--border-light); color: var(--text-primary); }
-
-        .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-        .detail-section { background: var(--bg-surface-alt); border-radius: 8px; padding: 14px; }
-        .detail-label {
-            font-family: var(--font-mono); font-size: 10px; font-weight: 600;
-            color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px;
-        }
-        .detail-value { font-size: 13px; }
+        .detail-close { margin-left: auto; }
+        .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 16px; }
+        .detail-section { background: var(--bg-sidebar); border-radius: var(--radius); padding: 12px; }
+        .detail-section-label { font-size: 12px; font-weight: 500; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+        .detail-value { font-size: 14px; color: var(--text); }
         .detail-tools { display: flex; flex-wrap: wrap; gap: 4px; }
-        .tool-tag {
-            font-family: var(--font-mono); font-size: 10px; padding: 2px 8px;
-            background: var(--bg-surface); border-radius: 4px; border: 1px solid var(--border);
-        }
+        .tool-tag { font-family: var(--font-mono); font-size: 12px; padding: 0 6px; height: 20px; display: inline-flex; align-items: center; background: var(--bg-page); border-radius: var(--radius); border: 1px solid var(--border); color: var(--text-secondary); }
+        .activity-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--border-light); font-size: 14px; }
+        .activity-row:last-child { border-bottom: none; }
+        .activity-time { font-family: var(--font-mono); font-size: 12px; color: var(--text-tertiary); }
+        .detail-desc { margin-top: 16px; font-size: 14px; color: var(--text-secondary); line-height: 1.5; white-space: pre-wrap; }
 
-        .detail-body { margin-top: 16px; font-size: 13px; color: var(--text-secondary); line-height: 1.6; white-space: pre-wrap; }
-
-        /* CREATE FORM */
-        .create-btn {
-            display: flex; align-items: center; gap: 8px;
-            background: var(--accent-muted); border: 1px solid rgba(232,114,58,0.3);
-            border-radius: 10px; padding: 12px 20px; color: var(--accent);
-            font-family: var(--font-mono); font-size: 13px; font-weight: 500;
-            cursor: pointer; transition: all 0.15s;
-        }
-        .create-btn:hover { background: rgba(232,114,58,0.25); border-color: var(--accent); }
-
-        .create-form {
-            background: var(--bg-surface); border: 1px solid var(--border);
-            border-radius: 12px; padding: 24px; margin-top: 16px; display: none;
-        }
-        .create-form.active { display: block; animation: fadeIn 0.2s ease; }
+        .create-form { display: none; margin-top: 16px; }
+        .create-form.active { display: block; }
         .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
         .form-group { display: flex; flex-direction: column; gap: 4px; }
         .form-group.full { grid-column: 1 / -1; }
-        .form-label { font-family: var(--font-mono); font-size: 11px; color: var(--text-secondary); }
-        .form-input, .form-select, .form-textarea {
-            background: var(--bg-surface-alt); border: 1px solid var(--border);
-            border-radius: 6px; padding: 8px 12px; color: var(--text-primary);
-            font-family: var(--font-sans); font-size: 13px; outline: none;
-        }
-        .form-input:focus, .form-select:focus, .form-textarea:focus { border-color: var(--accent); }
+        .form-label { font-size: 12px; color: var(--text-tertiary); }
+        .form-input, .form-select, .form-textarea { background: var(--bg-page); border: 1px solid var(--border); border-radius: var(--radius); padding: 6px 10px; font-family: var(--font); font-size: 14px; color: var(--text); outline: none; }
+        .form-input:focus, .form-select:focus, .form-textarea:focus { border-color: var(--orange); }
         .form-textarea { resize: vertical; min-height: 60px; }
         .form-actions { display: flex; gap: 8px; margin-top: 16px; }
-        .btn {
-            font-family: var(--font-mono); font-size: 12px; padding: 8px 20px;
-            border-radius: 6px; border: none; cursor: pointer; transition: all 0.15s;
-        }
-        .btn-primary { background: var(--accent); color: var(--bg-primary); font-weight: 600; }
-        .btn-primary:hover { background: var(--accent-hover); }
-        .btn-cancel { background: var(--bg-surface-alt); color: var(--text-secondary); border: 1px solid var(--border); }
-        .btn-cancel:hover { border-color: var(--border-light); }
+        .form-status { font-size: 14px; margin-top: 8px; }
+        .form-status.success { color: var(--tag-green); }
+        .form-status.error { color: var(--tag-red); }
 
-        .form-status { font-family: var(--font-mono); font-size: 12px; margin-top: 8px; }
-        .form-status.success { color: var(--status-online); }
-        .form-status.error { color: var(--status-error); }
-
-        /* RESPONSIVE */
         @media (max-width: 768px) {
-            .agents-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
-            .agent-card { padding: 14px; }
-            .agent-avatar { width: 36px; height: 36px; font-size: 16px; }
-            .agent-name { font-size: 12px; }
-            .agent-meta { flex-wrap: wrap; gap: 4px; }
+            .agents-grid { grid-template-columns: 1fr; }
             .detail-grid { grid-template-columns: 1fr; }
-            .detail-header { flex-direction: column; align-items: flex-start; gap: 10px; }
+            .detail-header { flex-direction: column; align-items: flex-start; gap: 8px; }
             .detail-close { margin-left: 0; }
             .form-grid { grid-template-columns: 1fr; }
-        }
-        @media (max-width: 400px) {
-            .agents-grid { grid-template-columns: 1fr; }
         }
 {% endblock %}
 
 {% block content %}
-        <!-- AGENT DETAIL (shown when a card is clicked) -->
-        <div class="agent-detail" id="agent-detail"></div>
+        <!-- Detail panel (shown when card is clicked) -->
+        <div class="agent-detail card" id="agent-detail"></div>
 
-        <!-- GLOBAL AGENTS -->
-        <div class="section">
-            <div class="section-header">
-                <i data-lucide="shield" style="width:14px;height:14px;"></i>
-                Global Agents
+        <!-- Global Agents -->
+        <div>
+            <div class="section-label">
+                <i data-lucide="shield"></i> Global Agents
             </div>
             <div class="agents-grid">
                 {% for agent in global_agents %}
-                <div class="agent-card" onclick="showDetail('{{ agent.name }}')">
+                <div class="card agent-card" onclick="showDetail('{{ agent.name }}')">
                     <div class="agent-top">
-                        <div class="agent-avatar" style="background: {{ agent.color }};">
-                            {{ agent.name[0] | upper }}
-                        </div>
-                        <div class="agent-identity">
-                            <div class="agent-name">{{ agent.name }}</div>
-                            <div class="agent-arabic">{{ agent.arabic_name }}</div>
-                        </div>
+                        <div class="agent-avatar" style="background:{{ agent.color }};">{{ agent.name[0] | upper }}</div>
+                        <div class="agent-name">{{ agent.name }}</div>
                     </div>
                     <div class="agent-role">{{ agent.role }}</div>
                     <div class="agent-meta">
-                        <span class="trust-badge">L{{ agent.trust_level }}</span>
-                        <span class="scope-badge global">global</span>
-                        {% if agent.name in agent_stats %}
-                        <span class="agent-stat">{{ agent_stats[agent.name].total }} actions</span>
-                        {% else %}
-                        <span class="agent-stat">no activity</span>
-                        {% endif %}
+                        <span class="tag tag-gray">L{{ agent.trust_level }}</span>
+                        <span class="tag tag-blue">global</span>
+                        <span class="agent-stat">{% if agent.name in agent_stats %}{{ agent_stats[agent.name].total }} actions{% else %}no activity{% endif %}</span>
                     </div>
                 </div>
                 {% endfor %}
             </div>
         </div>
 
-        <!-- PROJECT AGENTS -->
+        <!-- Project Agents -->
         {% for project, agents in project_groups.items() %}
-        <div class="section">
-            <div class="section-header">
-                <i data-lucide="folder" style="width:14px;height:14px;"></i>
-                Project: {{ project }}
+        <div>
+            <div class="section-label">
+                <i data-lucide="folder"></i> Project: {{ project }}
             </div>
             <div class="agents-grid">
                 {% for agent in agents %}
-                <div class="agent-card" onclick="showDetail('{{ agent.name }}')">
+                <div class="card agent-card" onclick="showDetail('{{ agent.name }}')">
                     <div class="agent-top">
-                        <div class="agent-avatar" style="background: {{ agent.color }};">
-                            {{ agent.name[0] | upper }}
-                        </div>
-                        <div class="agent-identity">
-                            <div class="agent-name">{{ agent.name }}</div>
-                            <div class="agent-arabic">{{ agent.arabic_name }}</div>
-                        </div>
+                        <div class="agent-avatar" style="background:{{ agent.color }};">{{ agent.name[0] | upper }}</div>
+                        <div class="agent-name">{{ agent.name }}</div>
                     </div>
                     <div class="agent-role">{{ agent.role }}</div>
                     <div class="agent-meta">
-                        <span class="trust-badge">L{{ agent.trust_level }}</span>
-                        <span class="scope-badge project">{{ project }}</span>
-                        {% if agent.name in agent_stats %}
-                        <span class="agent-stat">{{ agent_stats[agent.name].total }} actions</span>
-                        {% else %}
-                        <span class="agent-stat">no activity</span>
-                        {% endif %}
+                        <span class="tag tag-gray">L{{ agent.trust_level }}</span>
+                        <span class="tag tag-green">{{ project }}</span>
+                        <span class="agent-stat">{% if agent.name in agent_stats %}{{ agent_stats[agent.name].total }} actions{% else %}no activity{% endif %}</span>
                     </div>
                 </div>
                 {% endfor %}
@@ -236,13 +112,12 @@
         </div>
         {% endfor %}
 
-        <!-- CREATE AGENT -->
-        <div style="margin-top: 24px;">
-            <button class="create-btn" onclick="toggleCreate()">
-                <i data-lucide="plus" style="width:16px;height:16px;"></i>
-                Create Agent
+        <!-- Create Agent -->
+        <div style="margin-top: 8px;">
+            <button class="btn" onclick="toggleCreate()">
+                <i data-lucide="plus" style="width:14px;height:14px;"></i> Create Agent
             </button>
-            <div class="create-form" id="create-form">
+            <div class="create-form card" id="create-form">
                 <div class="form-grid">
                     <div class="form-group">
                         <label class="form-label">Name</label>
@@ -282,20 +157,14 @@
                 </div>
                 <div class="form-actions">
                     <button class="btn btn-primary" onclick="createAgent()">Create</button>
-                    <button class="btn btn-cancel" onclick="toggleCreate()">Cancel</button>
+                    <button class="btn" onclick="toggleCreate()">Cancel</button>
                 </div>
                 <div class="form-status" id="form-status"></div>
             </div>
         </div>
-
-        <!-- FOOTER -->
-        <div style="text-align: center; padding: 32px 0 16px; color: var(--text-tertiary); font-family: var(--font-mono); font-size: 11px;">
-            Mac Mini Agent &middot; Agent Management &middot; Port 4096
-        </div>
 {% endblock %}
 
 {% block scripts %}
-        // Scope toggle
         document.getElementById('f-scope').addEventListener('change', function() {
             document.getElementById('f-project').disabled = this.value !== 'project';
         });
@@ -306,8 +175,8 @@
         }
 
         async function createAgent() {
-            const status = document.getElementById('form-status');
-            const body = {
+            var status = document.getElementById('form-status');
+            var body = {
                 name: document.getElementById('f-name').value.trim(),
                 role: document.getElementById('f-role').value.trim(),
                 description: document.getElementById('f-desc').value.trim(),
@@ -316,85 +185,46 @@
                 model: document.getElementById('f-model').value,
                 arabic_name: document.getElementById('f-arabic').value.trim(),
             };
-
             if (!body.name || !body.role) {
                 status.textContent = 'Name and role are required.';
                 status.className = 'form-status error';
                 return;
             }
-
             try {
-                const res = await fetch('/api/agents', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify(body),
-                });
-                const data = await res.json();
-                if (data.error) {
-                    status.textContent = data.error;
-                    status.className = 'form-status error';
-                } else {
-                    status.textContent = `Agent "${data.name}" created.`;
-                    status.className = 'form-status success';
-                    setTimeout(() => location.reload(), 1000);
-                }
-            } catch (e) {
-                status.textContent = 'Network error.';
-                status.className = 'form-status error';
-            }
+                var res = await fetch('/api/agents', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) });
+                var data = await res.json();
+                if (data.error) { status.textContent = data.error; status.className = 'form-status error'; }
+                else { status.textContent = 'Agent "' + data.name + '" created.'; status.className = 'form-status success'; setTimeout(function() { location.reload(); }, 1000); }
+            } catch (e) { status.textContent = 'Network error.'; status.className = 'form-status error'; }
         }
 
         async function showDetail(name) {
-            const panel = document.getElementById('agent-detail');
+            var panel = document.getElementById('agent-detail');
             try {
-                const res = await fetch(`/api/agents/${name}`);
-                const agent = await res.json();
-                if (agent.error) return;
-
-                const tools = (agent.tools || []).map(t => `<span class="tool-tag">${t}</span>`).join('');
-                const activity = (agent.recent_activity || []).slice(0, 5).map(a =>
-                    `<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border);">
-                        <span style="font-size:12px;">${a.action}</span>
-                        <span style="font-family:var(--font-mono);font-size:10px;color:var(--text-tertiary);">${(a.timestamp||'').slice(0,16)}</span>
-                    </div>`
-                ).join('') || '<span style="color:var(--text-tertiary);font-size:12px;">No activity yet</span>';
-
-                panel.innerHTML = `
-                    <div class="detail-header">
-                        <div class="detail-avatar" style="background:${agent.color};">${agent.name[0].toUpperCase()}</div>
-                        <div>
-                            <div class="detail-name">${agent.name} <span style="font-family:var(--font-arabic);font-weight:400;font-size:14px;color:var(--text-secondary);">${agent.arabic_name || ''}</span></div>
-                            <div class="detail-role">${agent.role} &middot; L${agent.trust_level} &middot; ${agent.scope}</div>
-                        </div>
-                        <button class="detail-close" onclick="hideDetail()">Close</button>
-                    </div>
-                    <div class="detail-grid">
-                        <div class="detail-section">
-                            <div class="detail-label">Model</div>
-                            <div class="detail-value" style="font-family:var(--font-mono);">${agent.model || 'sonnet'}</div>
-                        </div>
-                        <div class="detail-section">
-                            <div class="detail-label">Tools</div>
-                            <div class="detail-tools">${tools}</div>
-                        </div>
-                        <div class="detail-section" style="grid-column:1/-1;">
-                            <div class="detail-label">Recent Activity</div>
-                            ${activity}
-                        </div>
-                    </div>
-                    <div class="detail-section" style="margin-top:16px;">
-                        <div class="detail-label">Description</div>
-                        <div class="detail-value" style="font-size:13px;color:var(--text-secondary);line-height:1.6;">${agent.description || ''}</div>
-                    </div>
-                `;
+                var res = await fetch('/api/agents/' + name);
+                var a = await res.json();
+                if (a.error) return;
+                var tools = (a.tools || []).map(function(t) { return '<span class="tool-tag">' + t + '</span>'; }).join('');
+                var levelColors = {0: 'gray', 1: 'yellow', 2: 'blue', 3: 'green'};
+                var capEntries = Object.entries(a.capabilities || {});
+                var capsHtml = '';
+                if (capEntries.length > 0) {
+                    var tags = capEntries.map(function(p) { return '<span class="tag tag-' + (levelColors[p[1]]||'gray') + '">' + p[0] + ' L' + p[1] + '</span>'; }).join(' ');
+                    capsHtml = '<div class="detail-section" style="grid-column:1/-1;"><div class="detail-section-label">Trust Capabilities</div><div style="display:flex;flex-wrap:wrap;gap:6px;">' + tags + '</div>';
+                    if (a.trust_metrics && a.trust_metrics.weighted_score !== undefined)
+                        capsHtml += '<div style="margin-top:8px;font-family:var(--font-mono);font-size:12px;color:var(--text-tertiary);">Score: ' + a.trust_metrics.weighted_score + ' &middot; Actions: ' + a.trust_metrics.total_actions + ' &middot; Reverts: ' + (a.trust_metrics.revert_rate*100).toFixed(0) + '%</div>';
+                    capsHtml += '</div>';
+                }
+                var items = (a.recent_activity || []).slice(0, 5);
+                var actHtml = items.length > 0 ? items.map(function(r) { return '<div class="activity-row"><span>' + r.action + '</span><span class="activity-time">' + (r.timestamp||'').slice(0,16) + '</span></div>'; }).join('') : '<span style="color:var(--text-tertiary);font-size:14px;">No activity yet</span>';
+                panel.innerHTML =
+                    '<div class="detail-header"><div class="detail-avatar" style="background:' + a.color + ';">' + a.name[0].toUpperCase() + '</div><div><div class="detail-name">' + a.name + '</div><div class="detail-role">' + a.role + ' &middot; L' + a.trust_level + ' &middot; ' + a.scope + '</div></div><button class="btn detail-close" onclick="hideDetail()">Close</button></div>' +
+                    '<div class="detail-grid"><div class="detail-section"><div class="detail-section-label">Model</div><div class="detail-value" style="font-family:var(--font-mono);">' + (a.model||'sonnet') + '</div></div><div class="detail-section"><div class="detail-section-label">Tools</div><div class="detail-tools">' + tools + '</div></div>' + capsHtml + '<div class="detail-section" style="grid-column:1/-1;"><div class="detail-section-label">Recent Activity</div>' + actHtml + '</div></div>' +
+                    (a.description ? '<div class="detail-desc">' + a.description + '</div>' : '');
                 panel.classList.add('active');
                 panel.scrollIntoView({behavior: 'smooth', block: 'start'});
-            } catch (e) {
-                console.error('Failed to load agent detail:', e);
-            }
+            } catch (e) { console.error('Failed to load agent detail:', e); }
         }
 
-        function hideDetail() {
-            document.getElementById('agent-detail').classList.remove('active');
-        }
+        function hideDetail() { document.getElementById('agent-detail').classList.remove('active'); }
 {% endblock %}

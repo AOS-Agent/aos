@@ -1,175 +1,121 @@
 {% extends "base.html" %}
 
 {% block title %}Sessions{% endblock %}
-{% block page_name %}Sessions{% endblock %}
+{% block page_title %}Sessions{% endblock %}
 
 {% block styles %}
-        /* Stats bar */
-        .stats-bar { display: flex; gap: 24px; margin-bottom: 20px; align-items: baseline; }
+        /* Stats row */
+        .stats-row { display: flex; gap: 24px; margin-bottom: 24px; }
         .stat-item { display: flex; align-items: baseline; gap: 6px; }
-        .stat-num { font-family: var(--font-mono); font-size: 20px; font-weight: 700; color: var(--accent); }
-        .stat-num.live { color: var(--status-online); }
-        .stat-label { font-size: 12px; color: var(--text-secondary); }
+        .stat-num { font-family: var(--font-mono); font-size: 20px; font-weight: 700; color: var(--orange); }
+        .stat-num.live { color: var(--tag-green); }
+        .stat-num.subtle { font-size: 16px; color: var(--text-secondary); }
+        .stat-label { font-size: 12px; color: var(--text-tertiary); }
 
-        /* Filter bar */
-        .filter-bar { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
-        .filter-btn {
-            font-family: var(--font-mono); font-size: 11px; color: var(--text-secondary);
-            background: var(--bg-surface); border: 1px solid var(--border); border-radius: 16px;
-            padding: 4px 12px; cursor: pointer; transition: all 0.15s;
+        /* Filter tabs */
+        .filter-tabs { display: flex; gap: 4px; margin-bottom: 20px; }
+        .filter-tab {
+            font-family: var(--font); font-size: 14px; font-weight: 500;
+            color: var(--text-tertiary); background: none; border: none;
+            padding: 4px 12px; border-radius: var(--radius); cursor: pointer;
+            transition: all 0.1s;
         }
-        .filter-btn:hover, .filter-btn.active {
-            background: var(--accent-muted); color: var(--accent); border-color: rgba(232,114,58,0.3);
-        }
+        .filter-tab:hover { background: var(--bg-hover); color: var(--text-secondary); }
+        .filter-tab.active { background: var(--bg-active); color: var(--text); }
 
-        /* Session list */
-        .session-list { display: flex; flex-direction: column; gap: 8px; }
-        .session-item {
-            background: var(--bg-surface); border: 1px solid var(--border); border-radius: 10px;
-            padding: 16px; transition: all 0.15s; cursor: pointer;
-        }
-        .session-item:hover { border-color: var(--border-light); }
-        .session-item.expanded { border-color: var(--accent); }
-        .session-item.running { border-left: 3px solid var(--status-online); }
+        /* Session cards */
+        .session-list { display: flex; flex-direction: column; gap: 1px; }
 
-        .session-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
-        .session-id {
-            font-family: var(--font-mono); font-size: 13px; font-weight: 600; color: var(--accent);
+        .session-card {
+            border: 1px solid var(--border); border-radius: var(--radius);
+            padding: 14px 16px; cursor: pointer; transition: background 0.1s;
         }
-        .session-meta { display: flex; align-items: center; gap: 12px; }
-        .session-time { font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary); }
-        .session-status {
-            font-family: var(--font-mono); font-size: 10px; padding: 2px 8px; border-radius: 10px;
-        }
-        .session-status.running {
-            background: rgba(52, 211, 153, 0.15); color: var(--status-online);
-            animation: pulse-status 2s ease-in-out infinite;
-        }
-        .session-status.completed { background: rgba(96, 165, 250, 0.15); color: var(--status-info); }
+        .session-card:hover { background: rgba(55,53,47,0.02); }
+        .session-card.expanded { border-color: var(--orange); }
+        .session-card.running { border-left: 3px solid var(--tag-green); }
 
-        @keyframes pulse-status {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.6; }
-        }
+        .session-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+        .session-left { display: flex; align-items: center; gap: 8px; min-width: 0; }
+        .session-project { font-size: 14px; font-weight: 500; color: var(--text); }
+        .session-duration { font-family: var(--font-mono); font-size: 12px; color: var(--text-tertiary); }
+        .session-time { font-family: var(--font-mono); font-size: 12px; color: var(--text-tertiary); }
 
-        /* Session body */
-        .session-body { display: flex; gap: 16px; flex-wrap: wrap; align-items: center; }
-        .session-dir {
-            font-family: var(--font-mono); font-size: 11px; color: var(--text-secondary);
-            background: var(--bg-surface-alt); padding: 2px 8px; border-radius: 4px;
-        }
-        .session-tools { display: flex; gap: 6px; flex-wrap: wrap; }
-        .tool-badge {
-            font-family: var(--font-mono); font-size: 10px; padding: 2px 6px;
-            border-radius: 4px; background: var(--bg-surface-alt); color: var(--text-secondary);
-            border: 1px solid var(--border);
-        }
-        .tool-badge .count { color: var(--accent); font-weight: 600; margin-left: 2px; }
-        .files-count {
-            font-family: var(--font-mono); font-size: 11px; color: var(--text-secondary);
-            display: flex; align-items: center; gap: 4px;
-        }
+        /* Body row: files + tools */
+        .session-body { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 6px; }
+        .files-count { font-size: 12px; color: var(--text-secondary); display: flex; align-items: center; gap: 4px; }
         .files-count i { width: 12px; height: 12px; }
+        .tool-badges { display: flex; gap: 4px; flex-wrap: wrap; }
+        .tool-badge { font-family: var(--font-mono); font-size: 12px; }
+        .tool-badge .count { font-weight: 600; color: var(--orange); margin-left: 2px; }
+        .ops-count { font-family: var(--font-mono); font-size: 12px; color: var(--text-faint); }
+        .session-hint { font-size: 12px; color: var(--text-faint); margin-top: 4px; }
 
         /* Expanded detail */
         .session-detail { max-height: 0; overflow: hidden; transition: max-height 0.3s ease; }
-        .session-item.expanded .session-detail { max-height: 2000px; }
+        .session-card.expanded .session-detail { max-height: 2000px; }
 
-        .session-files {
-            margin-top: 12px; padding: 12px; background: var(--bg-surface-alt); border-radius: 8px;
-        }
-        .session-files-title {
-            font-family: var(--font-mono); font-size: 10px; color: var(--text-tertiary);
-            text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px;
-        }
-        .file-path {
-            font-family: var(--font-mono); font-size: 11px; color: var(--text-secondary);
-            padding: 2px 0; border-bottom: 1px solid var(--border);
-        }
+        .detail-section { margin-top: 12px; padding: 12px; background: var(--bg-sidebar); border-radius: var(--radius); }
+        .detail-title { font-size: 12px; font-weight: 500; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
+        .file-path { font-family: var(--font-mono); font-size: 12px; color: var(--text-secondary); padding: 3px 0; border-bottom: 1px solid var(--border-light); }
         .file-path:last-child { border-bottom: none; }
 
-        .session-activity {
-            margin-top: 12px; padding: 12px; background: var(--bg-surface-alt); border-radius: 8px;
-        }
-        .session-activity-title {
-            font-family: var(--font-mono); font-size: 10px; color: var(--text-tertiary);
-            text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px;
-        }
-        .activity-row {
-            display: flex; align-items: center; gap: 8px; padding: 4px 0;
-            border-bottom: 1px solid var(--border); font-size: 12px;
-        }
+        .activity-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; border-bottom: 1px solid var(--border-light); font-size: 12px; }
         .activity-row:last-child { border-bottom: none; }
-        .activity-action {
-            font-family: var(--font-mono); font-size: 11px; font-weight: 500; color: var(--accent);
-        }
+        .activity-action { font-family: var(--font-mono); font-size: 12px; font-weight: 500; color: var(--orange); }
         .activity-summary { color: var(--text-secondary); font-size: 12px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .activity-time { font-family: var(--font-mono); font-size: 10px; color: var(--text-tertiary); flex-shrink: 0; }
+        .activity-time { font-family: var(--font-mono); font-size: 12px; color: var(--text-tertiary); flex-shrink: 0; }
 
-        .expand-hint {
-            font-family: var(--font-mono); font-size: 10px; color: var(--text-tertiary);
-            margin-top: 6px;
-        }
+        @keyframes pulse-status { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
+        .tag.running-pulse { animation: pulse-status 2s ease-in-out infinite; }
 
-        .session-duration {
-            font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary);
-        }
-
-        .empty-state { text-align: center; padding: 60px 20px; color: var(--text-tertiary); }
-        .empty-state p { font-size: 13px; margin-top: 12px; }
-
-        @media (max-width: 640px) {
-            .stats-bar { gap: 12px; flex-wrap: wrap; }
-            .stat-num { font-size: 16px; }
-            .session-item { padding: 12px; }
-            .session-header { flex-direction: column; align-items: flex-start; gap: 6px; }
-            .session-meta { flex-wrap: wrap; gap: 6px; }
+        @media (max-width: 768px) {
+            .stats-row { gap: 16px; flex-wrap: wrap; }
+            .session-card { padding: 12px; }
+            .session-top { flex-direction: column; align-items: flex-start; gap: 4px; }
             .session-body { gap: 8px; }
-            .session-dir { font-size: 10px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-            .tool-badge { font-size: 9px; }
-            .file-path { font-size: 10px; word-break: break-all; }
+            .file-path { font-size: 11px; word-break: break-all; }
             .activity-row { flex-wrap: wrap; gap: 4px; }
             .activity-summary { white-space: normal; }
-        }
-
-        @media (max-width: 380px) {
-            .session-id { font-size: 11px; }
         }
 {% endblock %}
 
 {% block content %}
-        <div class="stats-bar">
+        <div class="stats-row">
             <div class="stat-item">
                 <span class="stat-num">{{ stats.total }}</span>
                 <span class="stat-label">total</span>
             </div>
             {% if stats.running > 0 %}
             <div class="stat-item">
-                <span class="stat-num live">{{ stats.running }}</span>
-                <span class="stat-label">running now</span>
+                <span class="stat-num live" id="running-count">{{ stats.running }}</span>
+                <span class="stat-label">running</span>
             </div>
             {% endif %}
             <div class="stat-item">
-                <span class="stat-num" style="font-size:16px;">{{ stats.today }}</span>
+                <span class="stat-num subtle">{{ stats.today }}</span>
                 <span class="stat-label">today</span>
             </div>
         </div>
 
-        <div class="filter-bar">
-            <button class="filter-btn active" onclick="filterSessions('all')">All</button>
-            <button class="filter-btn" onclick="filterSessions('running')">Running</button>
-            <button class="filter-btn" onclick="filterSessions('completed')">Completed</button>
+        <div class="filter-tabs">
+            <button class="filter-tab active" onclick="filterSessions('all')">All</button>
+            <button class="filter-tab" onclick="filterSessions('running')">Running</button>
+            <button class="filter-tab" onclick="filterSessions('completed')">Completed</button>
         </div>
 
         <div class="session-list" id="session-list">
             {% if sessions %}
                 {% for s in sessions %}
-                <div class="session-item {{ s.status }}" data-status="{{ s.status }}" data-sid="{{ s.session_id }}" onclick="toggleSession(this)">
-                    <div class="session-header">
-                        <div style="display:flex;align-items:center;gap:10px;min-width:0;">
+                <div class="session-card {{ s.status }}" data-status="{{ s.status }}" data-sid="{{ s.session_id }}" onclick="toggleSession(this)">
+                    <div class="session-top">
+                        <div class="session-left">
                             {% set project = s.working_dir.split('/')[-1] if s.working_dir else 'unknown' %}
-                            <span class="session-id">{{ project }}</span>
-                            <span class="session-status {{ s.status }}">{% if s.status == 'running' %}active{% else %}done{% endif %}</span>
+                            <span class="session-project">{{ project }}</span>
+                            {% if s.status == 'running' %}
+                            <span class="tag tag-green running-pulse">active</span>
+                            {% else %}
+                            <span class="tag tag-gray">done</span>
+                            {% endif %}
                             {% if s.ended_at and s.started_at %}
                             <span class="session-duration">{{ duration(s.started_at, s.ended_at) }}</span>
                             {% endif %}
@@ -190,31 +136,31 @@
                         {% endif %}
 
                         {% if s.total_tools > 0 %}
-                        <div class="session-tools">
+                        <div class="tool-badges">
                             {% for tool, count in s.tools_used.items() %}
                             {% if tool in ['Write', 'Edit', 'Bash', 'Agent'] %}
-                            <span class="tool-badge">{{ tool }}<span class="count">{{ count }}</span></span>
+                            <span class="tag tag-blue tool-badge">{{ tool }}<span class="count">{{ count }}</span></span>
                             {% endif %}
                             {% endfor %}
-                            <span style="font-family:var(--font-mono);font-size:10px;color:var(--text-tertiary);">{{ s.total_tools }} ops</span>
+                            <span class="ops-count">{{ s.total_tools }} ops</span>
                         </div>
                         {% endif %}
                     </div>
 
-                    <div class="expand-hint">tap for details</div>
+                    <div class="session-hint">tap for details</div>
 
                     <div class="session-detail">
                         {% if s.files_modified %}
-                        <div class="session-files">
-                            <div class="session-files-title">Files Modified</div>
+                        <div class="detail-section">
+                            <div class="detail-title">Files Modified</div>
                             {% for f in s.files_modified %}
                             <div class="file-path">{{ f | replace_home }}</div>
                             {% endfor %}
                         </div>
                         {% endif %}
 
-                        <div class="session-activity" id="activity-{{ s.session_id[:12] }}">
-                            <div class="session-activity-title">Activity Log</div>
+                        <div class="detail-section" id="activity-{{ s.session_id[:12] }}">
+                            <div class="detail-title">Activity Log</div>
                             <div style="font-size:12px;color:var(--text-tertiary);">Loading...</div>
                         </div>
                     </div>
@@ -222,27 +168,19 @@
                 {% endfor %}
             {% else %}
                 <div class="empty-state">
-                    <i data-lucide="terminal" style="width:40px;height:40px;"></i>
-                    <p>No sessions recorded yet.<br>Claude Code sessions will appear here once hooks are active.</p>
+                    <i data-lucide="terminal" style="width:32px;height:32px;"></i>
+                    <p>No sessions recorded yet.<br>Sessions will appear here once hooks are active.</p>
                 </div>
             {% endif %}
-        </div>
-
-        <div style="text-align:center;padding:32px 0 16px;color:var(--text-tertiary);font-family:var(--font-mono);font-size:11px;">
-            AOS Sessions &middot; Port 4096
         </div>
 {% endblock %}
 
 {% block scripts %}
         function filterSessions(filter) {
-            document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.filter-tab').forEach(b => b.classList.remove('active'));
             event.target.classList.add('active');
-            document.querySelectorAll('.session-item').forEach(item => {
-                if (filter === 'all' || item.dataset.status === filter) {
-                    item.style.display = '';
-                } else {
-                    item.style.display = 'none';
-                }
+            document.querySelectorAll('.session-card').forEach(item => {
+                item.style.display = (filter === 'all' || item.dataset.status === filter) ? '' : 'none';
             });
         }
 
@@ -252,16 +190,16 @@
             if (wasExpanded) return;
 
             const sid = el.dataset.sid;
-            const actDiv = el.querySelector('.session-activity');
+            const actDiv = el.querySelector('[id^="activity-"]');
             if (!actDiv || actDiv.dataset.loaded) return;
 
             try {
                 const r = await fetch(`/api/sessions/${encodeURIComponent(sid)}/activity`);
                 const items = await r.json();
                 if (items.length === 0) {
-                    actDiv.innerHTML = '<div class="session-activity-title">Activity Log</div><div style="font-size:12px;color:var(--text-tertiary);">No detailed activity recorded</div>';
+                    actDiv.innerHTML = '<div class="detail-title">Activity Log</div><div style="font-size:12px;color:var(--text-tertiary);">No detailed activity recorded</div>';
                 } else {
-                    let html = '<div class="session-activity-title">Activity Log</div>';
+                    let html = '<div class="detail-title">Activity Log</div>';
                     for (const item of items) {
                         html += `<div class="activity-row">
                             <span class="activity-action">${escapeHtml(item.action)}</span>
@@ -273,7 +211,7 @@
                 }
                 actDiv.dataset.loaded = 'true';
             } catch (e) {
-                actDiv.innerHTML = '<div class="session-activity-title">Activity Log</div><div style="font-size:12px;color:var(--status-error);">Failed to load</div>';
+                actDiv.innerHTML = '<div class="detail-title">Activity Log</div><div style="font-size:12px;color:var(--tag-red);">Failed to load</div>';
             }
         }
 
@@ -287,7 +225,7 @@
             try {
                 const r = await fetch('/api/sessions?status=running');
                 const running = await r.json();
-                const badge = document.querySelector('.stat-num.live');
+                const badge = document.getElementById('running-count');
                 if (badge) badge.textContent = running.length;
             } catch (e) {}
         }, 10000);
