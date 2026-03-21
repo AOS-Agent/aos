@@ -1,629 +1,691 @@
 {% extends "base.html" %}
 
 {% block title %}Logs{% endblock %}
-{% block page_name %}Logs{% endblock %}
-{% block shell_width %}1400px{% endblock %}
-{% block shell_extra %}display: flex; flex-direction: column; height: 100vh;{% endblock %}
+{% block page_title %}Logs{% endblock %}
 
 {% block styles %}
-        /* Toolbar */
-        .toolbar {
-            display: flex; align-items: center; gap: 8px;
-            margin-bottom: 12px; flex-shrink: 0; flex-wrap: wrap;
-        }
+    /* ── Log page layout ────────────────────────────── */
+    .log-toolbar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-bottom: 16px;
+    }
 
-        .source-btn, .toolbar-action {
-            font-family: var(--font-mono); font-size: 12px;
-            padding: 6px 14px; border-radius: 6px;
-            border: 1px solid var(--border); background: var(--bg-surface);
-            color: var(--text-secondary); cursor: pointer; transition: all 0.15s;
-        }
-        .source-btn:hover, .toolbar-action:hover { border-color: var(--border-light); color: var(--text-primary); }
-        .source-btn.active { background: var(--accent-muted); border-color: var(--accent); color: var(--accent); }
-        .source-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+    .log-toolbar select {
+        font-family: var(--font);
+        font-size: 14px;
+        font-weight: 500;
+        padding: 4px 28px 4px 10px;
+        height: 28px;
+        border-radius: var(--radius);
+        border: 1px solid rgba(55, 53, 47, 0.16);
+        background: var(--bg-page);
+        color: var(--text);
+        cursor: pointer;
+        appearance: none;
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='rgba(55,53,47,0.45)' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+        background-repeat: no-repeat;
+        background-position: right 8px center;
+    }
 
-        .toolbar-action {
-            font-size: 11px; padding: 6px 12px;
-            display: flex; align-items: center; gap: 6px;
-        }
-        .toolbar-action.active { background: rgba(52, 211, 153, 0.1); border-color: var(--status-online); color: var(--status-online); }
+    .log-toolbar select:focus {
+        outline: none;
+        border-color: var(--orange);
+    }
 
-        .toolbar-spacer { flex: 1; }
+    .log-search {
+        font-family: var(--font);
+        font-size: 14px;
+        padding: 4px 10px;
+        height: 28px;
+        border-radius: var(--radius);
+        border: 1px solid rgba(55, 53, 47, 0.16);
+        background: var(--bg-page);
+        color: var(--text);
+        width: 200px;
+        outline: none;
+    }
 
-        .toolbar-sep {
-            width: 1px; height: 20px; background: var(--border); margin: 0 4px;
-        }
+    .log-search:focus { border-color: var(--orange); }
+    .log-search::placeholder { color: var(--text-faint); }
 
-        .status-indicator { width: 6px; height: 6px; border-radius: 50%; background: var(--text-tertiary); }
-        .status-indicator.live {
-            background: var(--status-online);
-            box-shadow: 0 0 6px rgba(52, 211, 153, 0.4);
-            animation: pulse 2s ease-in-out infinite;
-        }
+    .toolbar-gap { flex: 1; }
 
-        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+    .log-mode-toggle {
+        display: flex;
+        border: 1px solid rgba(55, 53, 47, 0.16);
+        border-radius: var(--radius);
+        overflow: hidden;
+    }
 
-        /* Search */
-        .search-box {
-            font-family: var(--font-mono); font-size: 12px;
-            padding: 5px 10px; border-radius: 6px;
-            border: 1px solid var(--border); background: var(--bg-surface-alt);
-            color: var(--text-primary); width: 180px; outline: none; transition: border-color 0.15s;
-        }
-        .search-box:focus { border-color: var(--accent); }
-        .search-box::placeholder { color: var(--text-tertiary); }
+    .log-mode-toggle button {
+        font-family: var(--font);
+        font-size: 12px;
+        font-weight: 500;
+        padding: 4px 10px;
+        height: 26px;
+        border: none;
+        background: transparent;
+        color: var(--text-secondary);
+        cursor: pointer;
+    }
 
-        /* Log container */
-        .log-container {
-            flex: 1; background: var(--bg-surface); border: 1px solid var(--border);
-            border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; min-height: 0;
-        }
+    .log-mode-toggle button.active {
+        background: var(--bg-active);
+        color: var(--text);
+    }
 
-        .log-scroll {
-            flex: 1; overflow-y: auto; padding: 12px 16px;
-            font-family: var(--font-mono); font-size: 12.5px; line-height: 1.8;
-            scrollbar-width: thin; scrollbar-color: var(--border) transparent;
-        }
-        .log-scroll::-webkit-scrollbar { width: 6px; }
-        .log-scroll::-webkit-scrollbar-track { background: transparent; }
-        .log-scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    .log-mode-toggle button:not(:last-child) {
+        border-right: 1px solid rgba(55, 53, 47, 0.16);
+    }
 
-        /* Event rows (smart mode) */
-        .log-event {
-            display: flex; align-items: baseline; gap: 10px;
-            padding: 3px 8px; border-radius: 4px; transition: background 0.1s;
-        }
-        .log-event:hover { background: var(--bg-surface-alt); }
-        .log-event.hidden { display: none; }
+    .log-action {
+        font-family: var(--font);
+        font-size: 12px;
+        font-weight: 500;
+        padding: 4px 10px;
+        height: 26px;
+        border-radius: var(--radius);
+        border: 1px solid rgba(55, 53, 47, 0.16);
+        background: transparent;
+        color: var(--text-secondary);
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+    }
 
-        .ev-time { color: var(--text-tertiary); font-size: 11px; flex-shrink: 0; min-width: 58px; }
-        .ev-icon { flex-shrink: 0; width: 18px; text-align: center; font-size: 13px; }
-        .ev-text { flex: 1; min-width: 0; }
-        .ev-text .ev-detail { color: var(--text-secondary); }
-        .ev-text .ev-summary { color: var(--text-tertiary); font-size: 11.5px; margin-left: 6px; }
-        .ev-badge {
-            font-size: 10px; padding: 1px 6px; border-radius: 4px; flex-shrink: 0;
-        }
-        .ev-badge.ok { background: rgba(52, 211, 153, 0.15); color: var(--status-online); }
-        .ev-badge.running { background: rgba(96, 165, 250, 0.15); color: var(--status-info); }
-        .ev-badge.fail { background: rgba(248, 113, 113, 0.15); color: var(--status-error); }
-        .ev-badge.warn { background: rgba(251, 191, 36, 0.15); color: var(--status-warning); }
+    .log-action:hover { background: var(--bg-hover); color: var(--text); }
+    .log-action.active { background: var(--orange-bg); color: var(--orange); border-color: var(--orange); }
 
-        /* Color overrides for event types */
-        .log-event.error .ev-text { color: var(--status-error); }
-        .log-event.warning .ev-text { color: var(--status-warning); }
-        .log-event.system .ev-text { color: var(--text-tertiary); font-size: 11.5px; }
-        .log-event.success .ev-text { color: var(--status-online); }
+    .stream-indicator {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        font-size: 12px;
+        color: var(--text-tertiary);
+    }
 
-        /* Raw mode lines */
-        .log-line {
-            white-space: pre-wrap; word-break: break-all; padding: 1px 8px;
-            border-radius: 2px; transition: background 0.1s;
-        }
-        .log-line:hover { background: var(--bg-surface-alt); }
-        .log-line.error { color: var(--status-error); }
-        .log-line.warning { color: var(--status-warning); }
-        .log-line .ts { color: var(--text-secondary); margin-right: 8px; }
+    .stream-dot {
+        width: 6px; height: 6px;
+        border-radius: 50%;
+        background: var(--text-faint);
+    }
 
-        /* Search highlight */
-        mark { background: rgba(232, 114, 58, 0.3); color: inherit; border-radius: 2px; padding: 0 1px; }
+    .stream-dot.live {
+        background: var(--tag-green);
+        animation: pulse 2s ease-in-out infinite;
+    }
 
-        .status-bar {
-            display: flex; align-items: center; justify-content: space-between;
-            padding: 8px 16px; border-top: 1px solid var(--border);
-            font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary); flex-shrink: 0;
-        }
-        .line-count { color: var(--text-secondary); }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
 
-        .empty-state {
-            display: flex; flex-direction: column; align-items: center; justify-content: center;
-            height: 100%; color: var(--text-tertiary); gap: 12px;
-        }
-        .empty-state p { font-family: var(--font-mono); font-size: 13px; }
+    /* ── Log container ──────────────────────────────── */
+    .log-panel {
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        display: flex;
+        flex-direction: column;
+        height: calc(100vh - 220px);
+        min-height: 300px;
+    }
 
-        @media (max-width: 640px) {
-            .toolbar { gap: 6px; }
-            .source-btn, .toolbar-action { font-size: 10px; padding: 5px 10px; }
-            .toolbar-spacer { display: none; }
-            .search-box { width: 100%; order: 10; font-size: 11px; }
-            .log-scroll { font-size: 11px; padding: 8px; line-height: 1.6; }
-            .ev-time { min-width: 48px; font-size: 10px; }
-            .ev-icon { font-size: 12px; }
-            .log-event { gap: 6px; padding: 3px 4px; }
-            .status-bar { font-size: 10px; padding: 6px 10px; }
-        }
+    .log-scroll {
+        flex: 1;
+        overflow-y: auto;
+        padding: 12px 16px;
+        font-family: var(--font-mono);
+        font-size: 12px;
+        line-height: 1.8;
+        scrollbar-width: thin;
+        scrollbar-color: var(--border) transparent;
+    }
 
-        @media (max-width: 380px) {
-            .source-btn, .toolbar-action { font-size: 9px; padding: 4px 8px; }
-            .toolbar-sep { display: none; }
-        }
+    .log-scroll::-webkit-scrollbar { width: 6px; }
+    .log-scroll::-webkit-scrollbar-track { background: transparent; }
+    .log-scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: var(--radius); }
+
+    /* ── Smart mode event rows ──────────────────────── */
+    .log-event {
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
+        padding: 2px 8px;
+        border-radius: var(--radius);
+    }
+
+    .log-event:hover { background: var(--bg-hover); }
+    .log-event.hidden { display: none; }
+
+    .ev-time {
+        color: var(--text-tertiary);
+        font-size: 11px;
+        flex-shrink: 0;
+        min-width: 56px;
+    }
+
+    .ev-icon { flex-shrink: 0; width: 18px; text-align: center; font-size: 13px; }
+    .ev-text { flex: 1; min-width: 0; color: var(--text); }
+    .ev-text .ev-detail { color: var(--text-secondary); }
+    .ev-text .ev-summary { color: var(--text-tertiary); font-size: 11px; margin-left: 6px; }
+
+    .ev-badge {
+        font-size: 10px;
+        padding: 0 6px;
+        height: 18px;
+        display: inline-flex;
+        align-items: center;
+        border-radius: var(--radius);
+        flex-shrink: 0;
+    }
+
+    .ev-badge.ok { background: var(--tag-green-bg); color: var(--tag-green); }
+    .ev-badge.running { background: var(--tag-blue-bg); color: var(--tag-blue); }
+    .ev-badge.fail { background: var(--tag-red-bg); color: var(--tag-red); }
+    .ev-badge.warn { background: var(--tag-yellow-bg); color: var(--tag-yellow); }
+
+    .log-event.error .ev-text { color: var(--tag-red); }
+    .log-event.warning .ev-text { color: var(--tag-yellow); }
+    .log-event.system .ev-text { color: var(--text-tertiary); font-size: 11px; }
+    .log-event.success .ev-text { color: var(--tag-green); }
+
+    /* ── Raw mode lines ─────────────────────────────── */
+    .log-line {
+        white-space: pre-wrap;
+        word-break: break-all;
+        padding: 1px 8px;
+        border-radius: var(--radius);
+    }
+
+    .log-line:hover { background: var(--bg-hover); }
+    .log-line.error { color: var(--tag-red); }
+    .log-line.warning { color: var(--tag-yellow); }
+    .log-line .ts { color: var(--text-tertiary); margin-right: 8px; }
+
+    /* ── Search highlight ───────────────────────────── */
+    mark {
+        background: var(--orange-bg);
+        color: inherit;
+        border-radius: 2px;
+        padding: 0 1px;
+    }
+
+    /* ── Status bar ─────────────────────────────────── */
+    .log-status-bar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 6px 16px;
+        border-top: 1px solid var(--border);
+        font-size: 12px;
+        color: var(--text-tertiary);
+    }
+
+    .log-status-bar .line-count { color: var(--text-secondary); }
+
+    /* ── Empty state ────────────────────────────────── */
+    .log-empty {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        height: 100%;
+        color: var(--text-tertiary);
+        gap: 8px;
+        font-family: var(--font);
+        font-size: 14px;
+    }
+
+    /* ── Responsive ─────────────────────────────────── */
+    @media (max-width: 768px) {
+        .log-toolbar { gap: 6px; }
+        .log-search { width: 100%; order: 10; }
+        .toolbar-gap { display: none; }
+        .log-scroll { font-size: 11px; padding: 8px; line-height: 1.6; }
+        .ev-time { min-width: 46px; font-size: 10px; }
+        .log-event { gap: 6px; padding: 2px 4px; }
+        .log-status-bar { font-size: 11px; padding: 6px 10px; }
+        .log-panel { height: calc(100vh - 240px); }
+    }
 {% endblock %}
 
 {% block content %}
-        <div class="toolbar">
+    <div class="log-toolbar">
+        <select id="source-select">
             {% for name, exists in log_sources.items() %}
-            <button class="source-btn{% if name == 'bridge' %} active{% endif %}"
-                    data-source="{{ name }}"
-                    {% if not exists %}disabled title="File not found"{% endif %}>
-                {{ name }}
-            </button>
+            <option value="{{ name }}" {% if not exists %}disabled{% endif %}
+                {% if name == 'bridge' %}selected{% endif %}>
+                {{ name }}{% if not exists %} (not found){% endif %}
+            </option>
             {% endfor %}
+        </select>
 
-            <div class="toolbar-sep"></div>
+        <input type="text" class="log-search" id="search-box" placeholder="Search logs...">
 
-            <button class="toolbar-action active" id="btn-smart">Smart</button>
-            <button class="toolbar-action" id="btn-raw">Raw</button>
+        <div class="toolbar-gap"></div>
 
-            <div class="toolbar-spacer"></div>
-
-            <input type="text" class="search-box" id="search-box" placeholder="Search logs...">
-
-            <button class="toolbar-action active" id="btn-autoscroll">
-                <i data-lucide="arrow-down-to-line" style="width:12px;height:12px;"></i>
-                Auto-scroll
-            </button>
-            <button class="toolbar-action" id="btn-clear">
-                <i data-lucide="trash-2" style="width:12px;height:12px;"></i>
-                Clear
-            </button>
-            <div class="toolbar-action" id="stream-status">
-                <span class="status-indicator live" id="stream-dot"></span>
-                <span id="stream-label">Live</span>
-            </div>
+        <div class="log-mode-toggle">
+            <button class="active" id="btn-smart">Smart</button>
+            <button id="btn-raw">Raw</button>
         </div>
 
-        <div class="log-container">
-            <div class="log-scroll" id="log-scroll">
-                <div class="empty-state" id="log-empty">
-                    <i data-lucide="terminal" style="width:32px;height:32px;"></i>
-                    <p>Loading logs...</p>
-                </div>
-            </div>
-            <div class="status-bar">
-                <span id="source-label">bridge</span>
-                <span class="line-count"><span id="line-count">0</span> events</span>
+        <button class="log-action active" id="btn-autoscroll">
+            <i data-lucide="arrow-down-to-line" style="width:12px;height:12px"></i>
+            Auto
+        </button>
+
+        <button class="log-action" id="btn-clear">
+            <i data-lucide="trash-2" style="width:12px;height:12px"></i>
+            Clear
+        </button>
+
+        <span class="stream-indicator">
+            <span class="stream-dot live" id="stream-dot"></span>
+            <span id="stream-label">Live</span>
+        </span>
+    </div>
+
+    <div class="log-panel">
+        <div class="log-scroll" id="log-scroll">
+            <div class="log-empty" id="log-empty">
+                <i data-lucide="terminal" style="width:28px;height:28px"></i>
+                <span>Loading logs...</span>
             </div>
         </div>
+        <div class="log-status-bar">
+            <span id="source-label">bridge</span>
+            <span class="line-count"><span id="line-count">0</span> events</span>
+        </div>
+    </div>
 {% endblock %}
 
 {% block scripts %}
-        const logScroll = document.getElementById('log-scroll');
-        const logEmpty = document.getElementById('log-empty');
-        const lineCountEl = document.getElementById('line-count');
-        const sourceLabelEl = document.getElementById('source-label');
-        const streamDot = document.getElementById('stream-dot');
-        const streamLabel = document.getElementById('stream-label');
-        const btnAutoscroll = document.getElementById('btn-autoscroll');
-        const btnClear = document.getElementById('btn-clear');
-        const btnSmart = document.getElementById('btn-smart');
-        const btnRaw = document.getElementById('btn-raw');
-        const searchBox = document.getElementById('search-box');
+    const logScroll = document.getElementById('log-scroll');
+    const logEmpty = document.getElementById('log-empty');
+    const lineCountEl = document.getElementById('line-count');
+    const sourceLabelEl = document.getElementById('source-label');
+    const streamDot = document.getElementById('stream-dot');
+    const streamLabel = document.getElementById('stream-label');
+    const btnAutoscroll = document.getElementById('btn-autoscroll');
+    const btnClear = document.getElementById('btn-clear');
+    const btnSmart = document.getElementById('btn-smart');
+    const btnRaw = document.getElementById('btn-raw');
+    const searchBox = document.getElementById('search-box');
+    const sourceSelect = document.getElementById('source-select');
 
-        let currentSource = 'bridge';
-        let autoScroll = true;
-        let lineCount = 0;
-        let evtSource = null;
-        let smartMode = true;
-        let searchTerm = '';
+    let currentSource = 'bridge';
+    let autoScroll = true;
+    let lineCount = 0;
+    let evtSource = null;
+    let smartMode = true;
+    let searchTerm = '';
 
-        // ── Token redaction ──────────────────────────────────
-        const TOKEN_RE = /bot\d+:[A-Za-z0-9_-]+/g;
-        function redact(text) {
-            return text.replace(TOKEN_RE, 'bot***');
-        }
+    // ── Token redaction ──────────────────────────────
+    const TOKEN_RE = /bot\d+:[A-Za-z0-9_-]+/g;
+    function redact(text) { return text.replace(TOKEN_RE, 'bot***'); }
 
-        // ── Smart log parser ─────────────────────────────────
-        // Transforms raw log lines into human-readable events
-        function parseLine(raw) {
-            // Extract timestamp — two formats:
-            // Bridge: "2026-03-13 18:30:37,123 [module] ..."
-            // Uvicorn: "INFO:     127.0.0.1:52790 - "GET /logs HTTP/1.1" 200 OK"
-            const tsMatch = raw.match(/^(\d{4}-\d{2}-\d{2}\s+(\d{2}:\d{2}:\d{2}))/);
-            const time = tsMatch ? tsMatch[2] : '';
+    // ── Smart log parser ─────────────────────────────
+    function parseLine(raw) {
+        const tsMatch = raw.match(/^(\d{4}-\d{2}-\d{2}\s+(\d{2}:\d{2}:\d{2}))/);
+        const time = tsMatch ? tsMatch[2] : '';
 
-            // ═══════════════════════════════════════════════════
-            // NOISE — hide completely across all sources
-            // ═══════════════════════════════════════════════════
-            if (raw.includes('/getUpdates')) return null;
-            if (raw.includes('/getMe')) return null;
-            if (raw.includes('/deleteWebhook')) return null;
-            if (raw.includes('resource_tracker:')) return null;
-            if (raw.includes('warnings.warn(')) return null;
-            if (raw.includes('huggingface.co') || raw.includes('HF Hub')) return null;
-            if (raw.includes('new session has been established')) return null;
-            if (raw.includes('Starting to receive messages')) return null;
-            if (raw.includes('/favicon.ico')) return null;
-            if (raw.includes('Waiting for application startup')) return null;
-            if (raw.includes('Application startup complete')) return null;
-            if (raw.includes('Waiting for application shutdown')) return null;
-            if (raw.includes('Application shutdown complete')) return null;
-            if (raw.includes('Started server process')) return null;
-            if (raw.includes('Finished server process')) return null;
-            if (raw.includes('Waiting for connections to close')) return null;
+        // Noise filters
+        if (raw.includes('/getUpdates')) return null;
+        if (raw.includes('/getMe')) return null;
+        if (raw.includes('/deleteWebhook')) return null;
+        if (raw.includes('resource_tracker:')) return null;
+        if (raw.includes('warnings.warn(')) return null;
+        if (raw.includes('huggingface.co') || raw.includes('HF Hub')) return null;
+        if (raw.includes('new session has been established')) return null;
+        if (raw.includes('Starting to receive messages')) return null;
+        if (raw.includes('/favicon.ico')) return null;
+        if (raw.includes('Waiting for application startup')) return null;
+        if (raw.includes('Application startup complete')) return null;
+        if (raw.includes('Waiting for application shutdown')) return null;
+        if (raw.includes('Application shutdown complete')) return null;
+        if (raw.includes('Started server process')) return null;
+        if (raw.includes('Finished server process')) return null;
+        if (raw.includes('Waiting for connections to close')) return null;
 
-            // ═══════════════════════════════════════════════════
-            // UVICORN — HTTP access logs (dashboard-out, listen-out)
-            // Format: INFO: IP:PORT - "METHOD /path HTTP/x" STATUS
-            // ═══════════════════════════════════════════════════
-            const accessMatch = raw.match(/INFO:\s+[\d.:]+\s+-\s+"(\w+)\s+([^\s"]+)\s+HTTP[^"]*"\s+(\d+)/);
-            if (accessMatch) {
-                const [, method, path, status] = accessMatch;
+        // Uvicorn HTTP access logs
+        const accessMatch = raw.match(/INFO:\s+[\d.:]+\s+-\s+"(\w+)\s+([^\s"]+)\s+HTTP[^"]*"\s+(\d+)/);
+        if (accessMatch) {
+            const [, method, path, status] = accessMatch;
+            if (path === '/jobs') return null;
+            if (path.startsWith('/api/stream') || path.startsWith('/api/logs/stream')) return null;
+            if (path.startsWith('/api/logs/history')) return null;
 
-                // Health check polling — pure noise
-                if (path === '/jobs') return null;
-
-                // Dashboard SSE streams — noise
-                if (path.startsWith('/api/stream') || path.startsWith('/api/logs/stream')) return null;
-
-                // Log page loads — noise
-                if (path.startsWith('/api/logs/history')) return null;
-
-                // Activity POST — parse into readable event
-                if (path.startsWith('/api/activity') && method === 'POST') {
-                    const qMatch = path.match(/\?(.+)/);
-                    if (qMatch) {
-                        const params = new URLSearchParams(qMatch[1]);
-                        const agent = params.get('agent') || '?';
-                        const action = params.get('action') || '';
-                        const summary = params.get('summary') || '';
-                        return parseActivity(time, agent, action, summary);
-                    }
+            if (path.startsWith('/api/activity') && method === 'POST') {
+                const qMatch = path.match(/\?(.+)/);
+                if (qMatch) {
+                    const params = new URLSearchParams(qMatch[1]);
+                    return parseActivity(time, params.get('agent') || '?', params.get('action') || '', params.get('summary') || '');
                 }
-
-                // Activity PATCH — completion
-                if (path.startsWith('/api/activity/') && method === 'PATCH') {
-                    const qMatch = path.match(/\?(.+)/);
-                    if (qMatch) return parseActivityPatch(time, qMatch[1]);
-                }
-
-                // Dashboard page views
-                if (path === '/' || path === '/logs')
-                    return { time, icon: '\uD83D\uDCBB', text: `Dashboard viewed`, summary: path, cls: 'system', badge: null };
-
-                // Generic API request — show only errors
-                if (parseInt(status) >= 400)
-                    return { time, icon: '\u274C', text: `${method} ${path}`, summary: `HTTP ${status}`, cls: 'error', badge: 'fail' };
-
-                // Other 200 OK requests — noise
-                return null;
             }
-
-            // ═══════════════════════════════════════════════════
-            // UVICORN lifecycle (no timestamp)
-            // ═══════════════════════════════════════════════════
-            if (raw.includes('Uvicorn running on')) {
-                const portMatch = raw.match(/:(\d+)/);
-                return { time: time || 'now', icon: '\u26A1', text: `Server started on port ${portMatch ? portMatch[1] : '?'}`, summary: '', cls: 'success', badge: 'ok' };
+            if (path.startsWith('/api/activity/') && method === 'PATCH') {
+                const qMatch = path.match(/\?(.+)/);
+                if (qMatch) return parseActivityPatch(time, qMatch[1]);
             }
-            if (raw.match(/Shutting down$/))
-                return { time: time || 'now', icon: '\uD83D\uDED1', text: 'Server shutting down...', summary: '', cls: 'warning', badge: 'warn' };
-            if (raw.includes('address already in use'))
-                return { time: time || 'now', icon: '\u274C', text: 'Port already in use — restart failed', summary: '', cls: 'error', badge: 'fail' };
-
-            // ═══════════════════════════════════════════════════
-            // BRIDGE — activity logging via httpx
-            // ═══════════════════════════════════════════════════
-            const activityMatch = raw.match(/api\/activity\?([^\s"]+)/);
-            if (activityMatch) {
-                const params = new URLSearchParams(activityMatch[1]);
-                return parseActivity(time, params.get('agent') || '?', params.get('action') || '', params.get('summary') || '');
-            }
-
-            const patchMatch = raw.match(/PATCH.*api\/activity\/\d+\?([^\s"]+)/);
-            if (patchMatch) return parseActivityPatch(time, patchMatch[1]);
-
-            // ═══════════════════════════════════════════════════
-            // BRIDGE — Telegram API calls
-            // ═══════════════════════════════════════════════════
-            if (raw.includes('/sendChatAction'))
-                return { time, icon: '\u23F3', text: 'Typing indicator sent', summary: '', cls: 'system', badge: null };
-            if (raw.includes('/sendMessageDraft'))
-                return { time, icon: '\u270D\uFE0F', text: 'Streaming draft update', summary: '', cls: 'system', badge: null };
-            if (raw.includes('/sendMessage') && raw.includes('200 OK'))
-                return { time, icon: '\uD83D\uDCE8', text: 'Telegram message delivered', summary: '', cls: '', badge: 'ok' };
-            if (raw.includes('/getFile'))
-                return { time, icon: '\uD83D\uDCE5', text: 'Downloading voice file', summary: '', cls: 'system', badge: null };
-
-            // ═══════════════════════════════════════════════════
-            // BRIDGE — Voice transcription
-            // ═══════════════════════════════════════════════════
-            const transMatch = raw.match(/\[voice_transcriber\].*Transcription.*?:\s*(.+)/);
-            if (transMatch)
-                return { time, icon: '\uD83C\uDFA4', text: 'Transcription complete', summary: trunc(transMatch[1], 80), cls: 'success', badge: 'ok' };
-            if (raw.includes('[voice_transcriber]') && raw.includes('Downloaded'))
-                return { time, icon: '\uD83D\uDCE5', text: 'Voice file downloaded', summary: '', cls: 'system', badge: null };
-            if (raw.includes('[voice_transcriber]') && raw.includes('Loading faster-whisper'))
-                return { time, icon: '\u2699\uFE0F', text: 'Loading Whisper model...', summary: '', cls: 'system', badge: null };
-            if (raw.includes('[faster_whisper]') && raw.includes('Processing audio'))
-                return { time, icon: '\uD83C\uDFA7', text: 'Processing audio...', summary: '', cls: 'system', badge: null };
-            if (raw.includes('[faster_whisper]') && raw.includes('Detected language')) {
-                const langMatch = raw.match(/language '(\w+)'/);
-                return { time, icon: '\uD83C\uDF10', text: `Language detected: ${langMatch ? langMatch[1] : '?'}`, summary: '', cls: 'system', badge: null };
-            }
-
-            // ═══════════════════════════════════════════════════
-            // SERVICE LIFECYCLE (all sources)
-            // ═══════════════════════════════════════════════════
-            if (raw.includes('Application started'))
-                return { time, icon: '\u26A1', text: 'Telegram bot started', summary: '', cls: 'success', badge: 'ok' };
-            if (raw.includes('Application is stopping'))
-                return { time, icon: '\uD83D\uDED1', text: 'Telegram bot stopping...', summary: '', cls: 'warning', badge: 'warn' };
-            if (raw.includes('Telegram channel started'))
-                return { time, icon: '\u26A1', text: 'Telegram channel ready', summary: '', cls: 'success', badge: null };
-            if (raw.includes('Slack channel started'))
-                return { time, icon: '\u26A1', text: 'Slack channel ready', summary: '', cls: 'success', badge: null };
-            if (raw.includes('Bolt app is running'))
-                return { time, icon: '\u26A1', text: 'Slack connected', summary: '', cls: 'success', badge: 'ok' };
-            if (raw.includes('Heartbeat started'))
-                return { time, icon: '\uD83D\uDC93', text: 'Heartbeat daemon started', summary: '', cls: 'system', badge: null };
-            if (raw.includes('[heartbeat]'))
-                return { time, icon: '\uD83D\uDC93', text: raw.match(/INFO:\s*(.+)/)?.[1] || 'Heartbeat', summary: '', cls: 'system', badge: null };
-
-            // ═══════════════════════════════════════════════════
-            // ERRORS & WARNINGS (all sources)
-            // ═══════════════════════════════════════════════════
-            if (raw.includes('ERROR') || raw.includes('Traceback') || raw.includes('Exception'))
-                return { time: time || 'now', icon: '\u274C', text: redact(raw.replace(/^.*?(ERROR|Traceback|Exception)/, '$1')).slice(0, 120), summary: '', cls: 'error', badge: 'fail' };
-            if (raw.includes('WARNING') || raw.includes('Warning'))
-                return { time: time || 'now', icon: '\u26A0\uFE0F', text: redact(raw.replace(/^.*?(WARNING|Warning):?\s*/, '')).slice(0, 120), summary: '', cls: 'warning', badge: 'warn' };
-
-            // ═══════════════════════════════════════════════════
-            // NOISE — generic httpx / remaining
-            // ═══════════════════════════════════════════════════
-            if (raw.includes('[httpx] INFO: HTTP Request')) return null;
-
-            // Anything else — show as system line
-            const cleanText = raw.replace(/^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[,.\d]*\s*/, '').replace(/^INFO:\s+/, '');
-            if (!cleanText.trim()) return null;
-            return { time: time || '', icon: '\u2022', text: redact(cleanText).slice(0, 120), summary: '', cls: 'system', badge: null };
-        }
-
-        // ── Activity helpers (shared by bridge httpx + dashboard access log) ──
-        function parseActivity(time, agent, action, summary) {
-            if (action === 'message_received')
-                return { time, icon: '\u2709', text: 'Message received', summary: trunc(summary, 80), cls: '', badge: null };
-            if (action === 'voice_received')
-                return { time, icon: '\uD83C\uDFA4', text: 'Voice message received', summary: summary, cls: '', badge: null };
-            if (action === 'invoke')
-                return { time, icon: '\uD83E\uDD16', text: `${agent} thinking...`, summary: trunc(summary, 80), cls: 'running', badge: 'running' };
-            if (action === 'response_sent' || action === 'voice_response_sent')
-                return { time, icon: '\u2705', text: 'Response sent', summary: trunc(summary, 60), cls: 'success', badge: 'ok' };
-            if (action === 'heartbeat')
-                return { time, icon: '\uD83D\uDC93', text: 'Health check', summary: summary, cls: 'system', badge: null };
-            if (action === 'heartbeat_alert')
-                return { time, icon: '\u26A0\uFE0F', text: 'Health alert sent', summary: '', cls: 'warning', badge: 'warn' };
-            return { time, icon: '\u2022', text: `${agent} ${action}`, summary: trunc(summary, 60), cls: 'system', badge: null };
-        }
-
-        function parseActivityPatch(time, qs) {
-            const params = new URLSearchParams(qs);
-            const status = params.get('status') || '';
-            const summary = params.get('summary') || '';
-            const durationMs = params.get('duration_ms');
-            const dur = durationMs ? `${(parseInt(durationMs) / 1000).toFixed(1)}s` : '';
-            if (status === 'completed')
-                return { time, icon: '\u2705', text: `Done${dur ? ' (' + dur + ')' : ''}`, summary: trunc(summary, 80), cls: 'success', badge: 'ok' };
-            if (status === 'failed')
-                return { time, icon: '\u274C', text: `Failed${dur ? ' (' + dur + ')' : ''}`, summary: trunc(summary, 80), cls: 'error', badge: 'fail' };
+            if (path === '/' || path === '/logs')
+                return { time, icon: '\uD83D\uDCBB', text: 'Dashboard viewed', summary: path, cls: 'system', badge: null };
+            if (parseInt(status) >= 400)
+                return { time, icon: '\u274C', text: `${method} ${path}`, summary: `HTTP ${status}`, cls: 'error', badge: 'fail' };
             return null;
         }
 
-        function trunc(s, n) {
-            if (!s) return '';
-            s = decodeURIComponent(s.replace(/\+/g, ' '));
-            return s.length > n ? s.slice(0, n) + '...' : s;
+        // Uvicorn lifecycle
+        if (raw.includes('Uvicorn running on')) {
+            const portMatch = raw.match(/:(\d+)/);
+            return { time: time || 'now', icon: '\u26A1', text: `Server started on port ${portMatch ? portMatch[1] : '?'}`, summary: '', cls: 'success', badge: 'ok' };
+        }
+        if (raw.match(/Shutting down$/))
+            return { time: time || 'now', icon: '\uD83D\uDED1', text: 'Server shutting down...', summary: '', cls: 'warning', badge: 'warn' };
+        if (raw.includes('address already in use'))
+            return { time: time || 'now', icon: '\u274C', text: 'Port already in use', summary: '', cls: 'error', badge: 'fail' };
+
+        // Bridge activity via httpx
+        const activityMatch = raw.match(/api\/activity\?([^\s"]+)/);
+        if (activityMatch) {
+            const params = new URLSearchParams(activityMatch[1]);
+            return parseActivity(time, params.get('agent') || '?', params.get('action') || '', params.get('summary') || '');
+        }
+        const patchMatch = raw.match(/PATCH.*api\/activity\/\d+\?([^\s"]+)/);
+        if (patchMatch) return parseActivityPatch(time, patchMatch[1]);
+
+        // Telegram API
+        if (raw.includes('/sendChatAction'))
+            return { time, icon: '\u23F3', text: 'Typing indicator sent', summary: '', cls: 'system', badge: null };
+        if (raw.includes('/sendMessageDraft'))
+            return { time, icon: '\u270D\uFE0F', text: 'Streaming draft update', summary: '', cls: 'system', badge: null };
+        if (raw.includes('/sendMessage') && raw.includes('200 OK'))
+            return { time, icon: '\uD83D\uDCE8', text: 'Telegram message delivered', summary: '', cls: '', badge: 'ok' };
+        if (raw.includes('/getFile'))
+            return { time, icon: '\uD83D\uDCE5', text: 'Downloading voice file', summary: '', cls: 'system', badge: null };
+
+        // Voice transcription
+        const transMatch = raw.match(/\[voice_transcriber\].*Transcription.*?:\s*(.+)/);
+        if (transMatch)
+            return { time, icon: '\uD83C\uDFA4', text: 'Transcription complete', summary: trunc(transMatch[1], 80), cls: 'success', badge: 'ok' };
+        if (raw.includes('[voice_transcriber]') && raw.includes('Downloaded'))
+            return { time, icon: '\uD83D\uDCE5', text: 'Voice file downloaded', summary: '', cls: 'system', badge: null };
+        if (raw.includes('[voice_transcriber]') && raw.includes('Loading faster-whisper'))
+            return { time, icon: '\u2699\uFE0F', text: 'Loading Whisper model...', summary: '', cls: 'system', badge: null };
+        if (raw.includes('[faster_whisper]') && raw.includes('Processing audio'))
+            return { time, icon: '\uD83C\uDFA7', text: 'Processing audio...', summary: '', cls: 'system', badge: null };
+        if (raw.includes('[faster_whisper]') && raw.includes('Detected language')) {
+            const langMatch = raw.match(/language '(\w+)'/);
+            return { time, icon: '\uD83C\uDF10', text: `Language detected: ${langMatch ? langMatch[1] : '?'}`, summary: '', cls: 'system', badge: null };
         }
 
-        function escapeHtml(text) {
-            const d = document.createElement('div');
-            d.textContent = text;
-            return d.innerHTML;
+        // Service lifecycle
+        if (raw.includes('Application started'))
+            return { time, icon: '\u26A1', text: 'Telegram bot started', summary: '', cls: 'success', badge: 'ok' };
+        if (raw.includes('Application is stopping'))
+            return { time, icon: '\uD83D\uDED1', text: 'Telegram bot stopping...', summary: '', cls: 'warning', badge: 'warn' };
+        if (raw.includes('Telegram channel started'))
+            return { time, icon: '\u26A1', text: 'Telegram channel ready', summary: '', cls: 'success', badge: null };
+        if (raw.includes('Slack channel started'))
+            return { time, icon: '\u26A1', text: 'Slack channel ready', summary: '', cls: 'success', badge: null };
+        if (raw.includes('Bolt app is running'))
+            return { time, icon: '\u26A1', text: 'Slack connected', summary: '', cls: 'success', badge: 'ok' };
+        if (raw.includes('Heartbeat started'))
+            return { time, icon: '\uD83D\uDC93', text: 'Heartbeat daemon started', summary: '', cls: 'system', badge: null };
+        if (raw.includes('[heartbeat]'))
+            return { time, icon: '\uD83D\uDC93', text: raw.match(/INFO:\s*(.+)/)?.[1] || 'Heartbeat', summary: '', cls: 'system', badge: null };
+
+        // Errors & warnings
+        if (raw.includes('ERROR') || raw.includes('Traceback') || raw.includes('Exception'))
+            return { time: time || 'now', icon: '\u274C', text: redact(raw.replace(/^.*?(ERROR|Traceback|Exception)/, '$1')).slice(0, 120), summary: '', cls: 'error', badge: 'fail' };
+        if (raw.includes('WARNING') || raw.includes('Warning'))
+            return { time: time || 'now', icon: '\u26A0\uFE0F', text: redact(raw.replace(/^.*?(WARNING|Warning):?\s*/, '')).slice(0, 120), summary: '', cls: 'warning', badge: 'warn' };
+
+        // Generic httpx noise
+        if (raw.includes('[httpx] INFO: HTTP Request')) return null;
+
+        // Fallback
+        const cleanText = raw.replace(/^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[,.\d]*\s*/, '').replace(/^INFO:\s+/, '');
+        if (!cleanText.trim()) return null;
+        return { time: time || '', icon: '\u2022', text: redact(cleanText).slice(0, 120), summary: '', cls: 'system', badge: null };
+    }
+
+    // ── Activity helpers ─────────────────────────────
+    function parseActivity(time, agent, action, summary) {
+        if (action === 'message_received')
+            return { time, icon: '\u2709', text: 'Message received', summary: trunc(summary, 80), cls: '', badge: null };
+        if (action === 'voice_received')
+            return { time, icon: '\uD83C\uDFA4', text: 'Voice message received', summary: summary, cls: '', badge: null };
+        if (action === 'invoke')
+            return { time, icon: '\uD83E\uDD16', text: `${agent} thinking...`, summary: trunc(summary, 80), cls: 'running', badge: 'running' };
+        if (action === 'response_sent' || action === 'voice_response_sent')
+            return { time, icon: '\u2705', text: 'Response sent', summary: trunc(summary, 60), cls: 'success', badge: 'ok' };
+        if (action === 'heartbeat')
+            return { time, icon: '\uD83D\uDC93', text: 'Health check', summary: summary, cls: 'system', badge: null };
+        if (action === 'heartbeat_alert')
+            return { time, icon: '\u26A0\uFE0F', text: 'Health alert sent', summary: '', cls: 'warning', badge: 'warn' };
+        return { time, icon: '\u2022', text: `${agent} ${action}`, summary: trunc(summary, 60), cls: 'system', badge: null };
+    }
+
+    function parseActivityPatch(time, qs) {
+        const params = new URLSearchParams(qs);
+        const status = params.get('status') || '';
+        const summary = params.get('summary') || '';
+        const durationMs = params.get('duration_ms');
+        const dur = durationMs ? `${(parseInt(durationMs) / 1000).toFixed(1)}s` : '';
+        if (status === 'completed')
+            return { time, icon: '\u2705', text: `Done${dur ? ' (' + dur + ')' : ''}`, summary: trunc(summary, 80), cls: 'success', badge: 'ok' };
+        if (status === 'failed')
+            return { time, icon: '\u274C', text: `Failed${dur ? ' (' + dur + ')' : ''}`, summary: trunc(summary, 80), cls: 'error', badge: 'fail' };
+        return null;
+    }
+
+    function trunc(s, n) {
+        if (!s) return '';
+        s = decodeURIComponent(s.replace(/\+/g, ' '));
+        return s.length > n ? s.slice(0, n) + '...' : s;
+    }
+
+    function escapeHtml(text) {
+        const d = document.createElement('div');
+        d.textContent = text;
+        return d.innerHTML;
+    }
+
+    // ── Render: smart mode ───────────────────────────
+    function renderSmartLine(raw) {
+        const ev = parseLine(raw);
+        if (!ev) return null;
+
+        const div = document.createElement('div');
+        div.className = `log-event ${ev.cls}`;
+        div.dataset.raw = raw;
+
+        const summaryHtml = ev.summary ? `<span class="ev-summary">${escapeHtml(ev.summary)}</span>` : '';
+        const badgeHtml = ev.badge
+            ? `<span class="ev-badge ${ev.badge}">${ev.badge === 'ok' ? 'done' : ev.badge === 'running' ? 'working' : ev.badge === 'fail' ? 'error' : ev.badge}</span>`
+            : '';
+
+        div.innerHTML = `<span class="ev-time">${ev.time}</span><span class="ev-icon">${ev.icon}</span><span class="ev-text">${escapeHtml(ev.text)}${summaryHtml}</span>${badgeHtml}`;
+        return div;
+    }
+
+    // ── Render: raw mode ─────────────────────────────
+    function renderRawLine(raw) {
+        const safe = redact(raw);
+        const div = document.createElement('div');
+        div.dataset.raw = raw;
+
+        const tsMatch = safe.match(/^(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[,.\d]*)/);
+        const lower = safe.toLowerCase();
+        let cls = 'log-line';
+        if (lower.includes('error') || lower.includes('traceback')) cls += ' error';
+        else if (lower.includes('warning')) cls += ' warning';
+        div.className = cls;
+
+        if (tsMatch) {
+            div.innerHTML = `<span class="ts">${escapeHtml(tsMatch[1])}</span>${escapeHtml(safe.slice(tsMatch[1].length))}`;
+        } else {
+            div.textContent = safe;
+        }
+        return div;
+    }
+
+    // ── Core append ──────────────────────────────────
+    function appendLine(raw) {
+        if (logEmpty && logEmpty.parentNode) logEmpty.remove();
+
+        const div = smartMode ? renderSmartLine(raw) : renderRawLine(raw);
+        if (!div) return;
+
+        if (searchTerm && !raw.toLowerCase().includes(searchTerm)) {
+            div.classList.add('hidden');
+        } else if (searchTerm) {
+            highlightSearch(div);
         }
 
-        // ── Render: smart mode ───────────────────────────────
-        function renderSmartLine(raw) {
-            const ev = parseLine(raw);
-            if (!ev) return null; // filtered out
+        logScroll.appendChild(div);
+        lineCount++;
+        lineCountEl.textContent = lineCount;
 
-            const div = document.createElement('div');
-            div.className = `log-event ${ev.cls}`;
-            div.dataset.raw = raw; // keep raw for search
-
-            const summaryHtml = ev.summary
-                ? `<span class="ev-summary">${escapeHtml(ev.summary)}</span>`
-                : '';
-            const badgeHtml = ev.badge
-                ? `<span class="ev-badge ${ev.badge}">${ev.badge === 'ok' ? 'done' : ev.badge === 'running' ? 'working' : ev.badge === 'fail' ? 'error' : ev.badge}</span>`
-                : '';
-
-            div.innerHTML = `<span class="ev-time">${ev.time}</span><span class="ev-icon">${ev.icon}</span><span class="ev-text">${escapeHtml(ev.text)}${summaryHtml}</span>${badgeHtml}`;
-            return div;
+        while (logScroll.children.length > 2000) {
+            logScroll.removeChild(logScroll.firstChild);
+            lineCount--;
         }
 
-        // ── Render: raw mode ─────────────────────────────────
-        function renderRawLine(raw) {
-            const safe = redact(raw);
-            const div = document.createElement('div');
-            div.dataset.raw = raw;
+        if (autoScroll) logScroll.scrollTop = logScroll.scrollHeight;
+    }
 
-            const tsMatch = safe.match(/^(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[,.\d]*)/);
-            const lower = safe.toLowerCase();
-            let cls = 'log-line';
-            if (lower.includes('error') || lower.includes('traceback')) cls += ' error';
-            else if (lower.includes('warning')) cls += ' warning';
-            div.className = cls;
+    function scrollToBottom() {
+        requestAnimationFrame(() => { logScroll.scrollTop = logScroll.scrollHeight; });
+    }
 
-            if (tsMatch) {
-                div.innerHTML = `<span class="ts">${escapeHtml(tsMatch[1])}</span>${escapeHtml(safe.slice(tsMatch[1].length))}`;
-            } else {
-                div.textContent = safe;
+    function clearLog() {
+        logScroll.innerHTML = '';
+        lineCount = 0;
+        lineCountEl.textContent = '0';
+    }
+
+    // ── Search ───────────────────────────────────────
+    function highlightSearch(el) {
+        if (!searchTerm) return;
+        const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+        const nodes = [];
+        while (walker.nextNode()) nodes.push(walker.currentNode);
+        for (const node of nodes) {
+            const idx = node.textContent.toLowerCase().indexOf(searchTerm);
+            if (idx !== -1) {
+                const before = node.textContent.slice(0, idx);
+                const match = node.textContent.slice(idx, idx + searchTerm.length);
+                const after = node.textContent.slice(idx + searchTerm.length);
+                const m = document.createElement('mark');
+                m.textContent = match;
+                const frag = document.createDocumentFragment();
+                if (before) frag.appendChild(document.createTextNode(before));
+                frag.appendChild(m);
+                if (after) frag.appendChild(document.createTextNode(after));
+                node.parentNode.replaceChild(frag, node);
             }
-            return div;
         }
+    }
 
-        // ── Core append ──────────────────────────────────────
-        function appendLine(raw) {
-            if (logEmpty && logEmpty.parentNode) logEmpty.remove();
-
-            const div = smartMode ? renderSmartLine(raw) : renderRawLine(raw);
-            if (!div) return; // filtered
-
-            // Apply search filter
+    function applySearch() {
+        searchTerm = searchBox.value.toLowerCase().trim();
+        document.querySelectorAll('.log-event, .log-line').forEach(el => {
+            const raw = el.dataset.raw || el.textContent;
             if (searchTerm && !raw.toLowerCase().includes(searchTerm)) {
-                div.classList.add('hidden');
-            } else if (searchTerm) {
-                highlightSearch(div);
+                el.classList.add('hidden');
+            } else {
+                el.classList.remove('hidden');
             }
-
-            logScroll.appendChild(div);
-            lineCount++;
-            lineCountEl.textContent = lineCount;
-
-            while (logScroll.children.length > 2000) {
-                logScroll.removeChild(logScroll.firstChild);
-                lineCount--;
-            }
-
-            if (autoScroll) {
-                logScroll.scrollTop = logScroll.scrollHeight;
-            }
-        }
-
-        function scrollToBottom() {
-            requestAnimationFrame(() => { logScroll.scrollTop = logScroll.scrollHeight; });
-        }
-
-        function clearLog() {
-            logScroll.innerHTML = '';
-            lineCount = 0;
-            lineCountEl.textContent = '0';
-        }
-
-        // ── Search ───────────────────────────────────────────
-        function highlightSearch(el) {
-            if (!searchTerm) return;
-            // Only highlight in the visible text, not in HTML tags
-            const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
-            const nodes = [];
-            while (walker.nextNode()) nodes.push(walker.currentNode);
-            for (const node of nodes) {
-                const idx = node.textContent.toLowerCase().indexOf(searchTerm);
-                if (idx !== -1) {
-                    const before = node.textContent.slice(0, idx);
-                    const match = node.textContent.slice(idx, idx + searchTerm.length);
-                    const after = node.textContent.slice(idx + searchTerm.length);
-                    const m = document.createElement('mark');
-                    m.textContent = match;
-                    const frag = document.createDocumentFragment();
-                    if (before) frag.appendChild(document.createTextNode(before));
-                    frag.appendChild(m);
-                    if (after) frag.appendChild(document.createTextNode(after));
-                    node.parentNode.replaceChild(frag, node);
-                }
-            }
-        }
-
-        function applySearch() {
-            searchTerm = searchBox.value.toLowerCase().trim();
-            document.querySelectorAll('.log-event, .log-line').forEach(el => {
-                const raw = el.dataset.raw || el.textContent;
-                if (searchTerm && !raw.toLowerCase().includes(searchTerm)) {
-                    el.classList.add('hidden');
-                } else {
-                    el.classList.remove('hidden');
-                }
-            });
-        }
-
-        let searchTimeout;
-        searchBox.addEventListener('input', () => {
-            clearTimeout(searchTimeout);
-            searchTimeout = setTimeout(applySearch, 200);
         });
+    }
 
-        // ── Data loading ─────────────────────────────────────
-        let rawLines = []; // keep raw lines for mode switching
+    let searchTimeout;
+    searchBox.addEventListener('input', () => {
+        clearTimeout(searchTimeout);
+        searchTimeout = setTimeout(applySearch, 200);
+    });
 
-        async function loadHistory(source) {
-            try {
-                const resp = await fetch(`/api/logs/history?source=${source}&lines=300`);
-                const data = await resp.json();
-                if (data.lines && data.lines.length > 0) {
-                    rawLines = data.lines;
-                    for (const line of data.lines) appendLine(line);
-                    scrollToBottom();
-                } else {
-                    logScroll.innerHTML = `<div class="empty-state"><i data-lucide="file-x" style="width:32px;height:32px;"></i><p>Log file is empty</p></div>`;
-                    lucide.createIcons();
-                }
-            } catch (e) {
-                logScroll.innerHTML = `<div class="empty-state"><i data-lucide="alert-triangle" style="width:32px;height:32px;"></i><p>Failed to load logs</p></div>`;
+    // ── Data loading ─────────────────────────────────
+    let rawLines = [];
+
+    async function loadHistory(source) {
+        try {
+            const resp = await fetch(`/api/logs/history?source=${source}&lines=300`);
+            const data = await resp.json();
+            if (data.lines && data.lines.length > 0) {
+                rawLines = data.lines;
+                for (const line of data.lines) appendLine(line);
+                scrollToBottom();
+            } else {
+                logScroll.innerHTML = '<div class="log-empty"><i data-lucide="file-x" style="width:28px;height:28px"></i><span>Log file is empty</span></div>';
                 lucide.createIcons();
             }
+        } catch (e) {
+            logScroll.innerHTML = '<div class="log-empty"><i data-lucide="alert-triangle" style="width:28px;height:28px"></i><span>Failed to load logs</span></div>';
+            lucide.createIcons();
         }
+    }
 
-        function connectStream(source) {
-            if (evtSource) evtSource.close();
-            evtSource = new EventSource(`/api/logs/stream?source=${source}`);
+    function connectStream(source) {
+        if (evtSource) evtSource.close();
+        evtSource = new EventSource(`/api/logs/stream?source=${source}`);
 
-            evtSource.onmessage = (e) => {
-                try {
-                    const line = JSON.parse(e.data);
-                    rawLines.push(line);
-                    appendLine(line);
-                } catch {
-                    rawLines.push(e.data);
-                    appendLine(e.data);
-                }
-            };
+        evtSource.onmessage = (e) => {
+            try {
+                const line = JSON.parse(e.data);
+                rawLines.push(line);
+                appendLine(line);
+            } catch {
+                rawLines.push(e.data);
+                appendLine(e.data);
+            }
+        };
 
-            evtSource.onopen = () => { streamDot.className = 'status-indicator live'; streamLabel.textContent = 'Live'; };
-            evtSource.onerror = () => { streamDot.className = 'status-indicator'; streamLabel.textContent = 'Reconnecting...'; };
-        }
+        evtSource.onopen = () => { streamDot.className = 'stream-dot live'; streamLabel.textContent = 'Live'; };
+        evtSource.onerror = () => { streamDot.className = 'stream-dot'; streamLabel.textContent = 'Reconnecting...'; };
+    }
 
-        function switchSource(source) {
-            currentSource = source;
-            sourceLabelEl.textContent = source;
-            document.querySelectorAll('.source-btn').forEach(btn => {
-                btn.classList.toggle('active', btn.dataset.source === source);
-            });
-            clearLog();
-            rawLines = [];
-            loadHistory(source).then(() => connectStream(source));
-        }
+    function switchSource(source) {
+        currentSource = source;
+        sourceLabelEl.textContent = source;
+        clearLog();
+        rawLines = [];
+        loadHistory(source).then(() => connectStream(source));
+    }
 
-        // ── Mode switching ───────────────────────────────────
-        function setMode(smart) {
-            smartMode = smart;
-            btnSmart.classList.toggle('active', smart);
-            btnRaw.classList.toggle('active', !smart);
-            // Re-render all lines
-            clearLog();
-            for (const line of rawLines) appendLine(line);
-            scrollToBottom();
-        }
+    // ── Mode switching ───────────────────────────────
+    function setMode(smart) {
+        smartMode = smart;
+        btnSmart.classList.toggle('active', smart);
+        btnRaw.classList.toggle('active', !smart);
+        clearLog();
+        for (const line of rawLines) appendLine(line);
+        scrollToBottom();
+    }
 
-        btnSmart.addEventListener('click', () => setMode(true));
-        btnRaw.addEventListener('click', () => setMode(false));
+    btnSmart.addEventListener('click', () => setMode(true));
+    btnRaw.addEventListener('click', () => setMode(false));
 
-        // ── Controls ─────────────────────────────────────────
-        document.querySelectorAll('.source-btn').forEach(btn => {
-            btn.addEventListener('click', () => { if (!btn.disabled) switchSource(btn.dataset.source); });
-        });
+    // ── Controls ─────────────────────────────────────
+    sourceSelect.addEventListener('change', () => {
+        const val = sourceSelect.value;
+        if (val) switchSource(val);
+    });
 
-        btnAutoscroll.addEventListener('click', () => {
-            autoScroll = !autoScroll;
-            btnAutoscroll.classList.toggle('active', autoScroll);
-            if (autoScroll) logScroll.scrollTop = logScroll.scrollHeight;
-        });
+    btnAutoscroll.addEventListener('click', () => {
+        autoScroll = !autoScroll;
+        btnAutoscroll.classList.toggle('active', autoScroll);
+        if (autoScroll) logScroll.scrollTop = logScroll.scrollHeight;
+    });
 
-        logScroll.addEventListener('scroll', () => {
-            const atBottom = logScroll.scrollHeight - logScroll.scrollTop - logScroll.clientHeight < 50;
-            if (!atBottom && autoScroll) { autoScroll = false; btnAutoscroll.classList.remove('active'); }
-        });
+    logScroll.addEventListener('scroll', () => {
+        const atBottom = logScroll.scrollHeight - logScroll.scrollTop - logScroll.clientHeight < 50;
+        if (!atBottom && autoScroll) { autoScroll = false; btnAutoscroll.classList.remove('active'); }
+    });
 
-        btnClear.addEventListener('click', () => { rawLines = []; clearLog(); });
+    btnClear.addEventListener('click', () => { rawLines = []; clearLog(); });
 
-        // Boot
-        switchSource('bridge');
+    // Boot
+    switchSource('bridge');
 {% endblock %}
