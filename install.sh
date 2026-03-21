@@ -1644,16 +1644,16 @@ if 'hooks' not in s:
 
 hook_defs = {
     'SessionStart': [
-        {'matcher': '', 'hooks': [{'type': 'command', 'command': 'python3 ~/aos/core/work/inject_context.py', 'statusMessage': 'Loading work context...'}]},
+        {'hooks': [{'type': 'command', 'command': 'python3 ~/aos/core/work/inject_context.py', 'statusMessage': 'Loading work context...'}]},
     ],
     'PostCompact': [
-        {'matcher': '', 'hooks': [{'type': 'command', 'command': 'python3 ~/aos/core/work/inject_context.py', 'statusMessage': 'Reloading work context...'}]},
+        {'hooks': [{'type': 'command', 'command': 'python3 ~/aos/core/work/inject_context.py', 'statusMessage': 'Reloading work context...'}]},
     ],
     'Stop': [
-        {'matcher': '', 'hooks': [{'type': 'command', 'command': 'python3 ~/aos/core/work/reconcile.py', 'async': True}]},
+        {'hooks': [{'type': 'command', 'command': 'python3 ~/aos/core/work/reconcile.py', 'async': True}]},
     ],
     'SessionEnd': [
-        {'matcher': '', 'hooks': [
+        {'hooks': [
             {'type': 'command', 'command': 'python3 ~/aos/core/work/session_close.py', 'async': True},
             {'type': 'command', 'command': 'python3 ~/aos/core/bin/reconcile-sessions --hook --quiet', 'async': True},
         ]},
