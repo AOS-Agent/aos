@@ -795,4 +795,14 @@ function showAddProject() {
 
 // Hide done on initial load
 document.querySelectorAll('.hidden-done').forEach(el => { el.style.display = 'none'; });
+
+// SSE — auto-reload on work events (from CLI or other tabs)
+const sse = new EventSource('/api/stream');
+let reloadTimer = null;
+sse.addEventListener('work', () => {
+    // Debounce: wait 500ms after last event before reloading
+    // (batch rapid CLI operations into one reload)
+    clearTimeout(reloadTimer);
+    reloadTimer = setTimeout(() => location.reload(), 500);
+});
 {% endblock %}

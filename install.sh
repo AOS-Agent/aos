@@ -1719,6 +1719,28 @@ assert s.get('hooks', {}).get('$hook_name')
         _check "LaunchAgent $la" "launchctl list 2>/dev/null | grep -q '$la'"
     done
 
+    # ── LaunchAgent path validation ─────────────────────────────
+    # Detect when launchd has cached stale paths that don't match the plist on disk
+    local la_drift=0
+    for la in com.aos.scheduler com.aos.bridge com.aos.dashboard com.aos.listen; do
+        local plist_file="$HOME/Library/LaunchAgents/${la}.plist"
+        if [[ -f "$plist_file" ]]; then
+            # Get the path launchd is actually using
+            local loaded_args
+            loaded_args=$(launchctl print "gui/$(id -u)/$la" 2>/dev/null | grep -A2 "arguments" | tail -1 | xargs 2>/dev/null || true)
+            if [[ -n "$loaded_args" ]] && [[ ! -f "$loaded_args" ]]; then
+                _warn "LaunchAgent $la has stale path: $loaded_args"
+                ((la_drift++))
+                ((warn++))
+                warnings+=("$la has stale cached path — run: launchctl bootout gui/\$(id -u)/$la && launchctl bootstrap gui/\$(id -u) $plist_file")
+            fi
+        fi
+    done
+    if [[ "$la_drift" -eq 0 ]]; then
+        _ok "LaunchAgent paths match plist files"
+        ((pass++))
+    fi
+
     # ── Cron scripts ───────────────────────────────────────────
     _step "Scheduled jobs"
     _check "crons.yaml" "[[ -f '$AOS_DIR/config/crons.yaml' ]]"

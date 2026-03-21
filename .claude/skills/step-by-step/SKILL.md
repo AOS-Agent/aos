@@ -18,6 +18,16 @@ description: >
 
 When a task has multiple parts, don't rush to execute. Decompose, explain, get buy-in, then execute one part at a time with verification. The goal is proper solutions with the operator in control.
 
+## Structured Choices
+
+Claude Code has a native `AskUserQuestion` tool that presents clean, selectable options. **Use it at every decision point** in this skill instead of listing options as text. The operator taps a choice instead of typing.
+
+Rules:
+- Use `question` for the prompt, `options` for the choices
+- Keep option labels short (2-5 words). Put detail in the question, not the options.
+- Always include a freeform fallback — the tool allows typed responses alongside options
+- Don't use AskUserQuestion for simple yes/no — just ask naturally in prose
+
 ## Phase 1: SCOPE
 
 Analyze the request and decompose it into parts.
@@ -47,19 +57,66 @@ Analyze the request and decompose it into parts.
 
 Wait for the operator to approve, adjust, reorder, or split before proceeding.
 
-After scope approval, ask **one** question to set the rhythm:
+After scope approval, use `AskUserQuestion` to set the rhythm:
 
-> **Execute as we go, or plan everything first?**
-> - **As we go** -- I present a part, you approve, I execute, then next part
-> - **Plan first** -- I present all parts one by one for approval, then execute them all
+```
+AskUserQuestion(
+  question: "I'd suggest [as-we-go/plan-first] for this. How do you want to flow?",
+  options: ["As we go", "Plan first"]
+)
+```
 
-Suggest a smart default based on domain:
-- **Infrastructure / system config** -> suggest "as we go" (results from Part 1 often shape Part 2)
-- **Business strategy / planning** -> suggest "plan first" (decisions are interconnected, better to see the full picture)
-- **Code / refactoring** -> suggest "as we go" (each part needs verification before building on it)
-- **Setup / migration** -> suggest "as we go" (sequential dependencies, things break)
+- **As we go** -- present a part, approve, execute, next
+- **Plan first** -- present all parts for approval, then execute
 
-Present the suggestion, not the reasoning: "I'd suggest as-we-go for this -- want that, or plan-first?"
+Smart defaults by domain:
+- **Infrastructure / system config / setup / migration / code** -> suggest "As we go"
+- **Business strategy / planning** -> suggest "Plan first"
+
+## Phase 1.5: 10x RECOMMEND
+
+After scope is approved but before executing anything, pause and think bigger. The operator asked for X — but what's the *best possible* version of X? What would someone who's done this 50 times recommend?
+
+**What to produce:**
+
+A short recommendation block (3-8 lines max) that covers:
+
+1. **The 10x take** — Is there a fundamentally better approach than the obvious one? A different tool, pattern, architecture, or sequence that would make this 10x better?
+2. **What most people get wrong** — The common mistake or shortcut that causes pain later
+3. **The move** — One concrete recommendation that elevates the whole task
+
+**When to include:**
+- Always, unless the task is purely mechanical (e.g., "rename these 5 files")
+- The recommendation should be grounded — not theoretical. Reference real tools, patterns, or approaches you know work.
+
+**Format:**
+
+```
+### 💡 10x Recommendation
+
+Most people [common approach]. The better move is [10x approach] because [why].
+
+Watch out for [common mistake that causes pain later].
+
+**Recommendation**: [One concrete, actionable suggestion].
+```
+
+**Rules:**
+- Be opinionated. The operator wants your best judgment, not a menu of options.
+- If the operator's approach is already the best one, say so: "Your approach is solid — no 10x upgrade needed here."
+- If the 10x move changes the scope, flag it and let the operator decide: "This would add a Part 0 but save you from rebuilding later."
+- Don't pad. If you don't have a genuine 10x insight, skip this phase entirely rather than writing filler.
+
+After presenting, use `AskUserQuestion`:
+
+```
+AskUserQuestion(
+  question: "Want to adopt this into the scope?",
+  options: ["Adopt", "Note it", "Skip"]
+)
+```
+
+Then move to MAP for Part 1.
 
 ## Phase 2: MAP (per part)
 
@@ -102,13 +159,14 @@ Examples of good criteria:
 - `~/.aos/logs/bridge.jsonl` contains entries with `"level"` and `"ts"` fields
 - `launchctl list | grep com.agent.logwatch` shows running
 
-Then ask:
-- ✅ **Go** -- execute this part
-- 🔀 **Reorder** -- do a different part first
-- ✂️ **Split** -- this part is too big, break it down
-- ⏭️ **Skip** -- drop this part
-- 🔗 **Merge** -- combine with another part
-- 💬 **Discuss** -- need to talk through the approach
+Then use `AskUserQuestion`:
+
+```
+AskUserQuestion(
+  question: "Ready for [Part Name]?",
+  options: ["Go", "Reorder", "Split", "Skip", "Merge", "Discuss"]
+)
+```
 
 ## Phase 3: EXECUTE
 
@@ -173,7 +231,7 @@ Skipped parts show as: `⏭️ Part Name`
 
 **Hardening**: Error handling, edge cases, or tests worth adding
 
-**10x Moves**: What would take this from done to exceptional
+**10x Reflection**: Did the 10x recommendation from Phase 1.5 land? If adopted, did it pay off? If skipped, would it have helped? One sentence.
 
 **Dependencies Created**: Anything downstream that needs updating
 

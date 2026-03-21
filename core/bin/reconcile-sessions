@@ -36,7 +36,7 @@ LOCK_FILE = Path.home() / ".aos" / "work" / ".reconcile.lock"
 
 # Project name normalization — maps session project names to task project names
 # Session exports use Claude Code's directory-based naming: -Users-username-dirname
-# Tasks use human-friendly names: aos-v2, nuchay, chief
+# Tasks use human-friendly names: aos, nuchay, chief
 PROJECT_ALIASES = {}
 
 
@@ -48,9 +48,9 @@ def _build_project_aliases():
 
     # Standard mappings
     PROJECT_ALIASES = {
-        f"-Users-{user}-aos": "aos-v2",
-        f"-users-{user}-aos": "aos-v2",
-        "aos": "aos-v2",
+        f"-Users-{user}-aos": "aos",
+        f"-users-{user}-aos": "aos",
+        "aos": "aos",
         f"-Users-{user}-nuchay": "nuchay",
         f"-users-{user}-nuchay": "nuchay",
         "nuchay": "nuchay",

@@ -160,7 +160,12 @@ body.sidebar-collapsed .page-content {
     display: flex;
     align-items: center;
     gap: 8px;
+    border-radius: var(--radius);
+    transition: background 0.1s;
 }
+
+.sidebar-brand:hover { background: var(--bg-hover); }
+.sidebar-brand.active .sidebar-logo { background: var(--text); }
 
 .sidebar-logo {
     width: 22px; height: 22px;

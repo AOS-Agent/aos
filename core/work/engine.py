@@ -10,9 +10,12 @@ v2: Project-scoped IDs, fuzzy resolution, subtasks, handoff context.
 import os
 import re
 import yaml
+import urllib.request
 from datetime import datetime, date
 from pathlib import Path
 from difflib import SequenceMatcher
+
+DASHBOARD_URL = "http://127.0.0.1:4096"
 
 WORK_DIR = Path.home() / ".aos" / "work"
 WORK_FILE = WORK_DIR / "work.yaml"
@@ -56,7 +59,7 @@ def _empty_work() -> dict:
 def _project_prefix(project_id: str | None) -> str:
     """Derive short prefix from project ID.
 
-    aos-v2 -> aos
+    aos -> aos
     nuchay -> nch
     chief  -> chief
     None   -> t  (unaffiliated)
@@ -214,7 +217,7 @@ def resolve_task_in_project(query_str: str, project_id: str = None) -> dict | No
 
 # Directory -> project mapping
 _PROJECT_DIRS = {
-    "aos": "aos-v2",
+    "aos": "aos",
     "nuchay": "nuchay",
     "chief-ios-app": "chief",
 }
@@ -281,8 +284,27 @@ def _log_activity(action: str, task_id: str = None, title: str = None,
 
         with open(ACTIVITY_FILE, "w") as f:
             yaml.dump(events, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+
+        # Push to dashboard SSE bus (fire-and-forget)
+        _notify_dashboard(event)
     except Exception:
         pass  # Activity log is best-effort
+
+
+def _notify_dashboard(event: dict) -> None:
+    """POST work event to dashboard for instant SSE push. Best-effort."""
+    try:
+        import json
+        data = json.dumps(event).encode()
+        req = urllib.request.Request(
+            f"{DASHBOARD_URL}/api/work/notify",
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        urllib.request.urlopen(req, timeout=1)
+    except Exception:
+        pass  # Dashboard may not be running
 
 
 def get_activity(limit: int = 30) -> list:

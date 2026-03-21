@@ -36,17 +36,13 @@ This gives you the operator's name, schedule, communication preferences, and tru
 
 Check if `~/.aos/config/onboarding.yaml` exists.
 
-- **Missing**: This is a fresh install. Dispatch the `onboard` agent immediately before doing anything else. The onboard agent handles conversational setup.
+- **Missing**: This is a fresh install. Load the `onboard` skill and run the onboarding flow directly. Do NOT dispatch a subagent -- onboarding runs in the main session so the operator gets native UI prompts and structured choices.
 - **Present**: Normal session. Read it only if you need to know what integrations were activated.
 
-To dispatch onboarding:
-```
-Agent(
-  description: "Run post-install onboarding",
-  prompt: "This is a fresh AOS install. Walk the operator through onboarding: profile, schedule, integrations, projects, daily loop, and trust preferences. Follow your full protocol.",
-  subagent_type: "onboard"
-)
-```
+To run onboarding:
+1. Read `~/.claude/skills/onboard/SKILL.md`
+2. Follow its protocol exactly -- it handles the full flow
+3. The skill writes `~/.aos/config/onboarding.yaml` on completion
 
 ## System Agents
 

@@ -20,16 +20,13 @@
         <button class="sidebar-collapse-btn" onclick="collapseSidebar()" id="collapse-btn" title="Collapse sidebar">
             <i data-lucide="chevrons-left"></i>
         </button>
-        <div class="sidebar-brand">
+        <a href="/" class="sidebar-brand{% if active_page == 'dashboard' %} active{% endif %}" style="text-decoration:none;color:inherit;">
             <div class="sidebar-logo">A</div>
             <span class="sidebar-title">AOS</span>
-        </div>
+        </a>
 
         <div class="sidebar-section">
             <ul class="sidebar-nav">
-                <li><a href="/" class="sidebar-link{% if active_page == 'dashboard' %} active{% endif %}">
-                    <i data-lucide="layout-dashboard"></i> <span>Dashboard</span>
-                </a></li>
                 <li><a href="/work" class="sidebar-link{% if active_page == 'work' %} active{% endif %}">
                     <i data-lucide="check-square"></i> <span>Work</span>
                     {% if task_count %}<span class="badge">{{ task_count }}</span>{% endif %}

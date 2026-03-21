@@ -80,7 +80,7 @@
                     <div class="agent-meta">
                         <span class="tag tag-gray">L{{ agent.trust_level }}</span>
                         <span class="tag tag-blue">global</span>
-                        <span class="agent-stat">{% if agent.name in agent_stats %}{{ agent_stats[agent.name].total }} actions{% else %}no activity{% endif %}</span>
+                        <span class="agent-stat">{{ agent.model }}</span>
                     </div>
                 </div>
                 {% endfor %}
@@ -104,7 +104,7 @@
                     <div class="agent-meta">
                         <span class="tag tag-gray">L{{ agent.trust_level }}</span>
                         <span class="tag tag-green">{{ project }}</span>
-                        <span class="agent-stat">{% if agent.name in agent_stats %}{{ agent_stats[agent.name].total }} actions{% else %}no activity{% endif %}</span>
+                        <span class="agent-stat">{{ agent.model }}</span>
                     </div>
                 </div>
                 {% endfor %}

@@ -30,6 +30,19 @@ registry = AgentRegistry(WORKSPACE)
 
 app = FastAPI(title="AOS Dashboard")
 
+# ── In-memory SSE event bus ──────────────────────────
+# Each connected SSE client gets a Queue. Work mutations broadcast to all.
+_sse_subscribers: list[asyncio.Queue] = []
+
+
+def _broadcast_work_event(event: dict):
+    """Push a work event to all connected SSE clients."""
+    for q in _sse_subscribers:
+        try:
+            q.put_nowait(event)
+        except asyncio.QueueFull:
+            pass  # Drop if client is too slow
+
 from starlette.staticfiles import StaticFiles
 
 # Serve static CSS/JS
@@ -98,15 +111,23 @@ def _service_status() -> dict:
     # Listen server
     try:
         r = httpx.get("http://localhost:7600/jobs", timeout=3)
-        jobs = r.json()
-        active = sum(1 for j in jobs if j.get("status") == "running")
-        services["listen"] = {"status": "online", "detail": f"{len(jobs)} jobs ({active} active)"}
+        if r.status_code == 200:
+            # Listen may return JSON or YAML — just check it responds
+            try:
+                jobs = r.json()
+                active = sum(1 for j in jobs if j.get("status") == "running")
+                services["listen"] = {"status": "online", "detail": f"{len(jobs)} jobs ({active} active)"}
+            except Exception:
+                # Response is valid but not JSON (e.g. YAML) — still online
+                services["listen"] = {"status": "online", "detail": "Running"}
+        else:
+            services["listen"] = {"status": "offline", "detail": f"HTTP {r.status_code}"}
     except Exception:
         services["listen"] = {"status": "offline", "detail": "Not responding"}
 
     # Bridge
     try:
-        result = subprocess.run(["pgrep", "-f", "apps/bridge/main.py"],
+        result = subprocess.run(["pgrep", "-f", "services/bridge/main.py"],
                                 capture_output=True, text=True, timeout=5)
         if result.returncode == 0:
             services["bridge"] = {"status": "online", "detail": "Telegram + Slack"}
@@ -117,7 +138,7 @@ def _service_status() -> dict:
 
     # Memory MCP
     try:
-        result = subprocess.run(["pgrep", "-f", "apps/memory/main.py"],
+        result = subprocess.run(["pgrep", "-f", "services/memory/main.py"],
                                 capture_output=True, text=True, timeout=5)
         if result.returncode == 0:
             services["memory"] = {"status": "online", "detail": "MCP server"}
@@ -127,6 +148,69 @@ def _service_status() -> dict:
         services["memory"] = {"status": "offline", "detail": "Check failed"}
 
     return services
+
+
+def _get_attention_items(services: dict, cron_data: dict, tasks: list[dict], health: dict) -> list[dict]:
+    """Build attention items — things that need the operator's attention right now."""
+    items = []
+
+    # Services down
+    for name, svc in services.items():
+        if svc["status"] != "online":
+            items.append({"type": "error", "icon": "alert-triangle", "text": f"{name.capitalize()} is offline", "detail": svc.get("detail", ""), "link": "/crons"})
+
+    # Failed crons
+    for job in cron_data.get("jobs", []):
+        if job["status"] == "failed":
+            items.append({"type": "error", "icon": "x-circle", "text": f"Cron failed: {job['name']}", "detail": f"Exit code {job.get('exit_code', '?')}", "link": "/crons"})
+        elif job["status"] == "stale":
+            items.append({"type": "warning", "icon": "clock", "text": f"Cron stale: {job['name']}", "detail": "Hasn't run on schedule", "link": "/crons"})
+
+    # Disk pressure
+    if health.get("disk_pct", 0) > 85:
+        items.append({"type": "warning", "icon": "hard-drive", "text": f"Disk at {health['disk_pct']}%", "detail": f"{health.get('disk_free_gb', '?')}GB free"})
+
+    # Stale tasks (active but no progress for 3+ days)
+    stale_path = Path.home() / ".aos" / "work" / "stale-report.yaml"
+    if stale_path.exists():
+        try:
+            stale = yaml.safe_load(stale_path.read_text()) or {}
+            for t in stale.get("stale_tasks", []):
+                items.append({"type": "warning", "icon": "pause-circle", "text": f"Stale: {t.get('title', t.get('id', '?'))}", "detail": t.get("reason", ""), "link": "/work"})
+            for g in stale.get("orphan_goals", []):
+                items.append({"type": "warning", "icon": "target", "text": f"Orphan goal: {g.get('title', g.get('id', '?'))}", "detail": g.get("reason", ""), "link": "/work"})
+        except Exception:
+            pass
+
+    # Sort: errors first, then warnings
+    items.sort(key=lambda i: 0 if i["type"] == "error" else 1)
+    return items
+
+
+def _load_morning_context() -> dict:
+    """Load morning context (weather, prayer times, focus)."""
+    path = Path.home() / ".aos" / "work" / "morning-context.yaml"
+    if not path.exists():
+        return {}
+    try:
+        return yaml.safe_load(path.read_text()) or {}
+    except Exception:
+        return {}
+
+
+def _load_weekly_metrics() -> dict:
+    """Load current week's metrics for momentum display."""
+    import glob as glob_mod
+    metrics_dir = Path.home() / ".aos" / "work" / "metrics"
+    if not metrics_dir.exists():
+        return {}
+    files = sorted(metrics_dir.glob("*.yaml"), reverse=True)
+    if not files:
+        return {}
+    try:
+        return yaml.safe_load(files[0].read_text()) or {}
+    except Exception:
+        return {}
 
 
 def _load_agents() -> list[dict]:
@@ -225,6 +309,15 @@ async def dashboard(request: Request):
     cron_data = _get_scheduler_crons()
     launch_agents = _get_launch_agents()
 
+    # Attention items
+    attention = _get_attention_items(services, cron_data, tasks, health)
+
+    # Morning context
+    morning = _load_morning_context()
+
+    # Weekly metrics for momentum
+    weekly = _load_weekly_metrics()
+
     # Task count for sidebar badge
     active_task_count = sum(1 for t in tasks if t.get("status") in ("active", "todo"))
 
@@ -252,6 +345,9 @@ async def dashboard(request: Request):
         "now": now.strftime("%Y-%m-%d %H:%M:%S %Z"),
         "cron_data": cron_data,
         "launch_agents": launch_agents,
+        "attention": attention,
+        "morning": morning,
+        "weekly": weekly,
     })
 
 
@@ -293,6 +389,14 @@ async def api_work():
         return {"error": str(e)}
 
 
+@app.post("/api/work/notify")
+async def api_work_notify(request: Request):
+    """Receive work event from CLI engine and broadcast to SSE clients."""
+    event = await request.json()
+    _broadcast_work_event(event)
+    return {"ok": True}
+
+
 @app.post("/api/tasks")
 async def api_create_task(request: Request):
     """Create a new task."""
@@ -308,6 +412,7 @@ async def api_create_task(request: Request):
         status=body.get("status", "todo"),
         parent=body.get("parent"),
     )
+    _broadcast_work_event({"action": "task_created", "task_id": task.get("id"), "title": task.get("title"), "project": task.get("project")})
     return task
 
 @app.patch("/api/tasks/{task_id}")
@@ -335,6 +440,8 @@ async def api_update_task(task_id: str, request: Request):
     else:
         result = mod.get_task(task_id)
 
+    action = f"task_{status}" if status else "task_updated"
+    _broadcast_work_event({"action": action, "task_id": task_id, "title": (result or {}).get("title"), "project": (result or {}).get("project")})
     return result or {"error": "Task not found"}
 
 @app.delete("/api/tasks/{task_id}")
@@ -633,7 +740,7 @@ async def api_log_activity(agent: str, action: str, parent_agent: str = None,
 
 @app.get("/api/stream")
 async def api_stream(request: Request):
-    """SSE endpoint — pushes new activity + health updates to the dashboard."""
+    """SSE endpoint — pushes new activity, health, services, and work events."""
     async def event_generator():
         last_id = 0
         # Get current max ID
@@ -641,29 +748,43 @@ async def api_stream(request: Request):
         if recent:
             last_id = recent[0]["id"]
 
-        tick = 0
-        while True:
-            if await request.is_disconnected():
-                break
+        # Subscribe to work event bus
+        queue: asyncio.Queue = asyncio.Queue(maxsize=100)
+        _sse_subscribers.append(queue)
 
-            # Check for new activity every 2 seconds
-            recent = get_recent(10)
-            new_items = [r for r in recent if r["id"] > last_id]
-            if new_items:
-                last_id = max(r["id"] for r in new_items)
-                # Send newest first → reverse to chronological for client
-                for item in reversed(new_items):
-                    yield f"event: activity\ndata: {json.dumps(item)}\n\n"
+        try:
+            tick = 0
+            while True:
+                if await request.is_disconnected():
+                    break
 
-            # Send health + services every 15 seconds
-            if tick % 15 == 0:
-                health = _system_health()
-                yield f"event: health\ndata: {json.dumps(health)}\n\n"
-                services = _service_status()
-                yield f"event: services\ndata: {json.dumps(services)}\n\n"
+                # Check for new activity every 2 seconds
+                recent = get_recent(10)
+                new_items = [r for r in recent if r["id"] > last_id]
+                if new_items:
+                    last_id = max(r["id"] for r in new_items)
+                    for item in reversed(new_items):
+                        yield f"event: activity\ndata: {json.dumps(item)}\n\n"
 
-            tick += 2
-            await asyncio.sleep(2)
+                # Drain work events from the bus (instant push)
+                while not queue.empty():
+                    try:
+                        event = queue.get_nowait()
+                        yield f"event: work\ndata: {json.dumps(event)}\n\n"
+                    except asyncio.QueueEmpty:
+                        break
+
+                # Send health + services every 15 seconds
+                if tick % 15 == 0:
+                    health = _system_health()
+                    yield f"event: health\ndata: {json.dumps(health)}\n\n"
+                    services = _service_status()
+                    yield f"event: services\ndata: {json.dumps(services)}\n\n"
+
+                tick += 2
+                await asyncio.sleep(2)
+        finally:
+            _sse_subscribers.remove(queue)
 
     return StreamingResponse(
         event_generator(),
@@ -874,12 +995,16 @@ async def api_session_hook(request: Request):
 
 
 def _get_launch_agents() -> list[dict]:
-    """Get status of com.agent.* LaunchAgents."""
+    """Get status of AOS LaunchAgents (com.aos.* and legacy com.agent.*)."""
     agents = []
     la_dir = Path.home() / "Library" / "LaunchAgents"
-    for plist in sorted(la_dir.glob("com.agent.*.plist")):
+    seen = set()
+    for plist in sorted(list(la_dir.glob("com.aos.*.plist")) + list(la_dir.glob("com.agent.*.plist"))):
         label = plist.stem
-        short_name = label.replace("com.agent.", "")
+        short_name = label.replace("com.aos.", "").replace("com.agent.", "")
+        if short_name in seen:
+            continue
+        seen.add(short_name)
         # Check if loaded and get PID
         status = "unknown"
         pid = None
@@ -926,22 +1051,28 @@ def _get_launch_agents() -> list[dict]:
 @app.get("/api/automations")
 async def api_automations():
     return {
-        "crons": _get_cron_jobs(),
         "launch_agents": _get_launch_agents(),
     }
 
 
 @app.post("/api/automations/cron/{name}/run")
 async def api_run_cron(name: str):
-    """Trigger a cron job immediately via the Listen job server."""
-    crons = _get_cron_jobs()
-    job = next((c for c in crons if c["name"] == name), None)
-    if not job:
+    """Trigger a scheduled job immediately via the Listen job server."""
+    config_path = Path.home() / "aos" / "config" / "crons.yaml"
+    command = None
+    try:
+        raw = yaml.safe_load(config_path.read_text()) or {}
+        job_def = raw.get("jobs", {}).get(name)
+        if job_def:
+            command = job_def.get("command")
+    except Exception:
+        pass
+    if not command:
         return {"error": "not found"}
     try:
         r = httpx.post(
             "http://localhost:7600/jobs",
-            json={"command": job["command"], "name": f"manual:{name}"},
+            json={"command": command, "name": f"manual:{name}"},
             timeout=5,
         )
         return {"ok": True, "job": r.json()}
@@ -1096,15 +1227,21 @@ async def crons_page(request: Request):
 @app.post("/api/automations/launchagent/{name}/restart")
 async def api_restart_launchagent(name: str):
     """Restart a LaunchAgent via launchctl kickstart."""
-    label = f"com.agent.{name}"
-    try:
-        result = subprocess.run(
-            ["launchctl", "kickstart", "-k", f"gui/{__import__('os').getuid()}/{label}"],
-            capture_output=True, text=True, timeout=10,
-        )
-        return {"ok": result.returncode == 0, "output": result.stdout + result.stderr}
-    except Exception as e:
-        return {"error": str(e)}
+    import os
+    uid = os.getuid()
+    # Try com.aos first, fall back to com.agent (legacy)
+    for prefix in ("com.aos", "com.agent"):
+        label = f"{prefix}.{name}"
+        try:
+            result = subprocess.run(
+                ["launchctl", "kickstart", "-k", f"gui/{uid}/{label}"],
+                capture_output=True, text=True, timeout=10,
+            )
+            if result.returncode == 0:
+                return {"ok": True, "output": result.stdout + result.stderr}
+        except Exception:
+            continue
+    return {"error": f"Could not restart {name}"}
 
 
 # --- Logs page ---

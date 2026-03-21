@@ -16,10 +16,13 @@ Claude Code hooks protocol:
 import json
 import sys
 import os
+import urllib.request
 from datetime import date
 from pathlib import Path
 
 import yaml
+
+DASHBOARD_URL = "http://127.0.0.1:4096"
 
 # Add work engine to path
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__))))
@@ -144,16 +147,55 @@ def main():
     except Exception:
         pass  # Non-fatal
 
+    # Handoff context — inject for active tasks that have it
+    handoff_tasks = [t for t in (project_active or active) if t.get("handoff")]
+    if handoff_tasks:
+        lines.append("**Tasks with handoff context (pick up where last session left off):**")
+        for t in handoff_tasks[:3]:
+            h = t["handoff"]
+            lines.append(f"- {t['id']}: {t['title']}")
+            if h.get("next_step"):
+                lines.append(f"  Next step: {h['next_step'][:150]}")
+            if h.get("blockers"):
+                lines.append(f"  Blockers: {', '.join(h['blockers'][:3])}")
+
     # Behavioral guidance — this IS the always-on awareness layer
     guidance_lines = []
+    guidance_lines.append("IMPORTANT: If this session involves building, fixing, or setting up anything substantial:")
+    guidance_lines.append("1. At the START: `python3 ~/aos/core/work/cli.py start <task>` or create a new task if none matches")
+    guidance_lines.append("2. During work: create subtasks as you discover them: `python3 ~/aos/core/work/cli.py subtask <parent> \"title\"` (use --done for already-completed parts)")
+    guidance_lines.append("3. At the END: write a handoff: `python3 ~/aos/core/work/cli.py handoff <task> --state '...' --next '...'`")
+    guidance_lines.append("4. Mark tasks done when completed: `python3 ~/aos/core/work/cli.py done <task>`")
+    guidance_lines.append("")
     if project_active:
         task_ids = ", ".join(t["id"] for t in project_active)
-        guidance_lines.append(f"If you complete any active task ({task_ids}), mark it done: `python3 ~/aos/core/work/cli.py done <id>`")
+        guidance_lines.append(f"Active tasks in this project: {task_ids}")
     if due:
         guidance_lines.append("Overdue tasks exist — flag them to the operator if relevant.")
-    guidance_lines.append("If multi-step work emerges that isn't tracked above, suggest tracking it as a task or thread.")
 
     guidance = "\n".join(guidance_lines)
+
+    # Notify dashboard of session start (fire-and-forget)
+    try:
+        project_name = Path(cwd).name if cwd else "unknown"
+        notify_data = json.dumps({
+            "hook_type": "tool",
+            "payload": {
+                "session_id": session_id,
+                "tool_name": "SessionStart",
+                "tool_input": {},
+                "cwd": cwd,
+            }
+        }).encode()
+        req = urllib.request.Request(
+            f"{DASHBOARD_URL}/api/sessions/hook",
+            data=notify_data,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        urllib.request.urlopen(req, timeout=1)
+    except Exception:
+        pass  # Dashboard may not be running
 
     output = {
         "additionalContext": f"[Work System]\n{context}\n---\n{guidance}"

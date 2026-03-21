@@ -9,35 +9,6 @@
 .dash-row-2 { grid-template-columns: 1fr 1fr; }
 .dash-row-3 { grid-template-columns: 1fr 1fr 1fr; }
 
-/* ── Now Banner ──────────────────────────────── */
-.now-banner {
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 16px 20px;
-    margin-bottom: 16px;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-}
-
-.now-dot {
-    width: 8px; height: 8px;
-    border-radius: 50%;
-    flex-shrink: 0;
-}
-
-.now-dot.active {
-    background: var(--tag-green);
-    animation: pulse 2s ease-in-out infinite;
-}
-
-.now-dot.idle { background: var(--text-faint); }
-
-@keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.4; }
-}
-
 /* ── Stat Cards ──────────────────────────────── */
 .stat-card {
     border: 1px solid var(--border);
@@ -163,46 +134,6 @@
     color: var(--tag-gray);
 }
 
-/* ── Automations ─────────────────────────────── */
-.auto-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-.auto-section-label {
-    font-size: 12px;
-    font-weight: 500;
-    color: var(--text-tertiary);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    margin-bottom: 8px;
-}
-
-.auto-item {
-    padding: 10px 12px;
-    border: 1px solid var(--border-light);
-    border-radius: var(--radius);
-    margin-bottom: 6px;
-}
-
-.auto-item-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-}
-
-.auto-name {
-    font-size: 14px;
-    font-weight: 500;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-}
-
-.auto-detail {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-top: 4px;
-    font-size: 12px;
-    color: var(--text-tertiary);
-}
 
 /* ── Activity Feed ───────────────────────────── */
 .feed { max-height: 400px; overflow-y: auto; }
@@ -265,26 +196,6 @@
 .feed-status.running { background: var(--tag-blue-bg); color: var(--tag-blue); }
 .feed-status.failed { background: var(--tag-red-bg); color: var(--tag-red); }
 
-/* ── Crons Table ─────────────────────────────── */
-.crons-table { width: 100%; border-collapse: collapse; }
-.crons-table th {
-    font-size: 12px; font-weight: 500; color: var(--text-tertiary);
-    text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border);
-    text-transform: uppercase; letter-spacing: 0.5px;
-}
-.crons-table td { padding: 6px 10px; font-size: 13px; border-bottom: 1px solid var(--border-light); }
-.cron-name { font-weight: 500; color: var(--text); }
-.cron-schedule { color: var(--text-secondary); }
-.cron-age { font-family: var(--font-mono); font-size: 12px; color: var(--text-tertiary); }
-.cron-dur { font-family: var(--font-mono); font-size: 12px; color: var(--text-tertiary); }
-.cron-disabled td { opacity: 0.4; }
-.crons-sep td { font-size: 11px; color: var(--text-faint); padding: 12px 10px 4px; border: none; text-transform: uppercase; letter-spacing: 0.5px; }
-.cron-status-label { font-size: 11px; padding: 1px 6px; border-radius: var(--radius); }
-.cron-status-label.ok { background: var(--tag-green-bg); color: var(--tag-green); }
-.cron-status-label.failed { background: var(--tag-red-bg); color: var(--tag-red); }
-.cron-status-label.stale { background: var(--tag-yellow-bg); color: var(--tag-yellow); }
-.cron-status-label.pending { background: var(--tag-gray-bg); color: var(--tag-gray); }
-.cron-status-label.disabled { background: var(--tag-gray-bg); color: var(--text-faint); }
 
 /* ── Work Activity Timeline ──────────────────── */
 .work-event {
@@ -311,6 +222,8 @@
 .work-event-icon.subtask { background: var(--tag-purple-bg, rgba(103,36,222,0.1)); color: var(--tag-purple); }
 .work-event-icon.handoff { background: var(--tag-purple-bg, rgba(103,36,222,0.1)); color: var(--tag-purple); }
 .work-event-icon.cancelled { background: var(--tag-red-bg, rgba(235,87,87,0.1)); color: var(--tag-red); }
+.work-event-icon.untracked { background: var(--tag-yellow-bg, rgba(203,145,47,0.1)); color: var(--tag-yellow); }
+.work-event-icon.session { background: var(--tag-gray-bg); color: var(--text-tertiary); }
 
 .work-event-content { flex: 1; min-width: 0; }
 
@@ -370,38 +283,10 @@
 /* ── Responsive ──────────────────────────────── */
 @media (max-width: 768px) {
     .dash-row-2, .dash-row-3 { grid-template-columns: 1fr; }
-    .auto-grid { grid-template-columns: 1fr; }
 }
 {% endblock %}
 
 {% block content %}
-<!-- NOW -->
-<div class="now-banner">
-    {% if active_sessions %}
-    <div class="now-dot active"></div>
-    <div>
-        <div style="font-size:14px;font-weight:600;">
-            Claude is working in <span style="color:var(--orange);">{{ active_sessions[0].project }}</span>
-        </div>
-        {% if active_sessions[0].file_names %}
-        <div style="font-size:13px;color:var(--text-secondary);margin-top:2px;">
-            Editing {{ active_sessions[0].file_names[-1] }}
-            {% if active_sessions[0].file_names|length > 1 %} +{{ active_sessions[0].file_names|length - 1 }} more{% endif %}
-            &middot; {{ active_sessions[0].total_tools }} ops
-        </div>
-        {% endif %}
-    </div>
-    {% else %}
-    <div class="now-dot idle"></div>
-    <div>
-        <div style="font-size:14px;color:var(--text-secondary);">All quiet</div>
-        {% if last_active_ago %}
-        <div style="font-size:13px;color:var(--text-tertiary);">Last active {{ last_active_ago }}</div>
-        {% endif %}
-    </div>
-    {% endif %}
-</div>
-
 <!-- TODAY + HEALTH -->
 <div class="dash-row dash-row-2">
     <div class="stat-card" onclick="window.location='/sessions'">
@@ -458,6 +343,8 @@
                 {%- elif ev.action == 'subtask_added' %} subtask
                 {%- elif ev.action == 'handoff_written' %} handoff
                 {%- elif ev.action == 'task_cancelled' %} cancelled
+                {%- elif ev.action == 'session_untracked' %} untracked
+                {%- elif ev.action == 'session_end' %} session
                 {%- endif %}">
                 {% if ev.action == 'task_completed' %}
                 <i data-lucide="check-circle" style="width:12px;height:12px;"></i>
@@ -471,6 +358,10 @@
                 <i data-lucide="arrow-right-circle" style="width:12px;height:12px;"></i>
                 {% elif ev.action == 'task_cancelled' %}
                 <i data-lucide="x-circle" style="width:12px;height:12px;"></i>
+                {% elif ev.action == 'session_untracked' %}
+                <i data-lucide="alert-triangle" style="width:12px;height:12px;"></i>
+                {% elif ev.action == 'session_end' %}
+                <i data-lucide="log-out" style="width:12px;height:12px;"></i>
                 {% else %}
                 <i data-lucide="circle" style="width:12px;height:12px;"></i>
                 {% endif %}
@@ -499,62 +390,45 @@
     {% endif %}
 </div>
 
-<!-- AUTOMATIONS -->
-<div class="card" style="margin-bottom:16px;">
-    <div class="card-header" style="margin-bottom:12px;">
-        <span class="card-title">Automations</span>
-        <a href="/crons" class="btn" style="font-size:12px;height:24px;padding:0 8px;">Manage</a>
-    </div>
-    <div class="auto-grid">
-        <div>
-            <div class="auto-section-label">Scheduled Jobs</div>
-            {% for job in crons %}
-            <div class="auto-item">
-                <div class="auto-item-header">
-                    <span class="auto-name">
-                        <i data-lucide="clock" style="width:14px;height:14px;color:var(--tag-blue);"></i>
-                        {{ job.name }}
-                    </span>
-                    <button class="btn" onclick="runCron('{{ job.name }}')" id="cron-btn-{{ job.name }}" style="font-size:11px;height:22px;padding:0 8px;">Run</button>
-                </div>
-                <div class="auto-detail">
-                    <span>{{ job.schedule_human }}</span>
-                    {% if job.last_run %}
-                    <span style="font-family:var(--font-mono);">{{ job.last_run[11:16] }}</span>
-                    {% endif %}
-                </div>
+<!-- AUTOMATIONS — unified summary -->
+<div class="dash-row dash-row-2" style="margin-bottom:16px;">
+    <div class="stat-card" onclick="window.location='/crons'">
+        <div class="stat-card-label">Scheduled Jobs</div>
+        <div class="stat-card-values" id="cron-summary-vals">
+            {% set s = cron_data.summary %}
+            <div>
+                <div class="stat-num" style="color:var(--tag-green);">{{ s.ok }}</div>
+                <div class="stat-num-label">ok</div>
             </div>
-            {% endfor %}
-        </div>
-        <div>
-            <div class="auto-section-label">Services</div>
-            {% for la in launch_agents %}
-            <div class="auto-item">
-                <div class="auto-item-header">
-                    <span class="auto-name">
-                        <div style="width:6px;height:6px;border-radius:50%;{% if la.status == 'running' %}background:var(--tag-green);{% else %}background:var(--tag-red);{% endif %}"></div>
-                        {{ la.name }}
-                    </span>
-                    <button class="btn" onclick="restartAgent('{{ la.name }}')" id="la-btn-{{ la.name }}" style="font-size:11px;height:22px;padding:0 8px;">Restart</button>
-                </div>
-                <div class="auto-detail">
-                    <span class="tag tag-{{ 'green' if la.status == 'running' else 'red' }}" style="font-size:11px;">{{ la.status }}</span>
-                    {% if la.pid %}<span style="font-family:var(--font-mono);">PID {{ la.pid }}</span>{% endif %}
-                </div>
+            {% if s.failed %}
+            <div>
+                <div class="stat-num" style="color:var(--tag-red);">{{ s.failed }}</div>
+                <div class="stat-num-label">failed</div>
             </div>
-            {% endfor %}
+            {% endif %}
+            {% if s.stale %}
+            <div>
+                <div class="stat-num" style="color:var(--tag-yellow);">{{ s.stale }}</div>
+                <div class="stat-num-label">stale</div>
+            </div>
+            {% endif %}
         </div>
+        <div class="stat-meta">{{ s.enabled }} of {{ s.total }} enabled</div>
     </div>
-</div>
 
-<!-- CRONS TABLE -->
-<div class="card" style="margin-bottom:16px;" id="crons-card">
-    <div class="card-header" style="margin-bottom:8px;">
-        <span class="card-title">Cron Status</span>
-        <span id="crons-summary" style="font-size:12px;color:var(--text-tertiary);"></span>
-    </div>
-    <div id="crons-table-wrap">
-        <div style="font-size:13px;color:var(--text-tertiary);padding:20px;text-align:center;">Loading...</div>
+    <div class="stat-card">
+        <div class="stat-card-label">Services</div>
+        <div style="display:flex;flex-direction:column;gap:4px;margin-top:4px;">
+            {% for la in launch_agents %}
+            <div style="display:flex;align-items:center;justify-content:space-between;">
+                <span style="display:flex;align-items:center;gap:6px;font-size:13px;">
+                    <span style="width:6px;height:6px;border-radius:50%;{% if la.status == 'running' %}background:var(--tag-green);{% else %}background:var(--tag-red);{% endif %}"></span>
+                    {{ la.name }}
+                </span>
+                <button class="btn" onclick="event.stopPropagation();restartAgent('{{ la.name }}')" id="la-btn-{{ la.name }}" style="font-size:11px;height:20px;padding:0 6px;">Restart</button>
+            </div>
+            {% endfor %}
+        </div>
     </div>
 </div>
 
@@ -598,15 +472,19 @@
 {% if tasks %}
 <div class="card" style="margin-top:16px;">
     <div class="card-header" style="margin-bottom:8px;">
-        <span class="card-title">Active Tasks</span>
+        <span class="card-title">Open Tasks <span style="font-family:var(--font-mono);font-size:12px;color:var(--text-faint);">{{ tasks|length }}</span></span>
         <a href="/work" class="btn" style="font-size:12px;height:24px;padding:0 8px;">View all</a>
     </div>
     {% for task in tasks %}
     <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border-light);">
         <div style="width:3px;height:16px;border-radius:2px;{% if task.priority == 1 %}background:var(--tag-red);{% elif task.priority == 2 %}background:var(--tag-orange);{% else %}background:var(--tag-gray-bg);{% endif %}"></div>
+        <span style="font-family:var(--font-mono);font-size:11px;color:var(--text-faint);width:70px;flex-shrink:0;">{{ task.id }}</span>
         <span style="flex:1;font-size:14px;">{{ task.title }}</span>
-        {% if task.project %}
-        <span class="tag tag-gray">{{ task.project }}</span>
+        {% if task.handoff %}
+        <i data-lucide="arrow-right-circle" style="width:12px;height:12px;color:var(--tag-purple);flex-shrink:0;" title="Has handoff"></i>
+        {% endif %}
+        {% if task.status == 'active' %}
+        <span class="tag tag-blue" style="font-size:10px;">active</span>
         {% endif %}
     </div>
     {% endfor %}
@@ -653,34 +531,6 @@ function updateHealth(health) {
     if (r) { r.textContent = 'RAM ' + health.ram_pct + '%'; }
 }
 
-// Crons
-function relativeTime(s) { if (!s) return '—'; const d = Math.floor((Date.now() - new Date(s)) / 1000); if (d<5) return 'just now'; if (d<60) return d+'s ago'; if (d<3600) return Math.floor(d/60)+'m ago'; if (d<86400) return Math.floor(d/3600)+'h ago'; return Math.floor(d/86400)+'d ago'; }
-function durStr(s) { if (!s && s!==0) return '—'; if (s<1) return '<1s'; if (s<60) return s+'s'; return Math.floor(s/60)+'m '+s%60+'s'; }
-
-function renderCrons(data) {
-    const jobs = data.jobs || [], summary = data.summary || {};
-    const el = document.getElementById('crons-summary');
-    if (el) {
-        const p = [];
-        if (summary.ok) p.push(`<span style="color:var(--tag-green)">${summary.ok} ok</span>`);
-        if (summary.failed) p.push(`<span style="color:var(--tag-red)">${summary.failed} failed</span>`);
-        if (summary.stale) p.push(`<span style="color:var(--tag-yellow)">${summary.stale} stale</span>`);
-        el.innerHTML = p.join(' · ');
-    }
-    const w = document.getElementById('crons-table-wrap');
-    if (!w || !jobs.length) return;
-    let h = `<table class="crons-table"><thead><tr><th>Name</th><th>Schedule</th><th>Last Run</th><th>Status</th><th>Duration</th></tr></thead><tbody>`;
-    let sep = false;
-    for (const j of jobs) {
-        if (j.status==='disabled' && !sep) { sep=true; h+=`<tr class="crons-sep"><td colspan="5">Disabled</td></tr>`; }
-        h += `<tr class="${j.status==='disabled'?'cron-disabled':''}"><td class="cron-name">${escapeHtml(j.name)}</td><td class="cron-schedule">${escapeHtml(j.schedule)}</td><td class="cron-age">${relativeTime(j.last_run)}</td><td><span class="cron-status-label ${j.status}">${j.status}</span></td><td class="cron-dur">${durStr(j.duration_s)}</td></tr>`;
-    }
-    w.innerHTML = h + '</tbody></table>';
-}
-
-async function loadCrons() { try { const r = await fetch('/api/crons'); renderCrons(await r.json()); } catch(e) {} }
-loadCrons();
-setInterval(loadCrons, 30000);
 
 // SSE
 const sse = new EventSource('/api/stream');
@@ -693,6 +543,52 @@ sse.addEventListener('activity', (e) => {
     const el = createFeedItem(item);
     if (el) feed.insertBefore(el, feed.firstChild);
     while (feed.children.length > 50) feed.removeChild(feed.lastChild);
+});
+sse.addEventListener('work', (e) => {
+    const ev = JSON.parse(e.data);
+    const container = document.querySelector('.work-event')?.closest('div[style*="flex-direction"]');
+    if (!container) return;
+
+    const iconMap = {
+        task_completed: {cls: 'completed', icon: 'check-circle'},
+        task_started: {cls: 'started', icon: 'play'},
+        task_created: {cls: 'created', icon: 'plus-circle'},
+        subtask_added: {cls: 'subtask', icon: 'git-branch'},
+        handoff_written: {cls: 'handoff', icon: 'arrow-right-circle'},
+        task_cancelled: {cls: 'cancelled', icon: 'x-circle'},
+    };
+    const info = iconMap[ev.action] || {cls: '', icon: 'circle'};
+    const time = (ev.ts || new Date().toISOString()).slice(11, 16);
+
+    const html = `<div class="work-event" style="animation:fadeIn 0.3s ease;">
+        <div class="work-event-icon ${info.cls}"><i data-lucide="${info.icon}" style="width:12px;height:12px;"></i></div>
+        <div class="work-event-content">
+            <div class="work-event-action">
+                <span class="work-event-verb">${escapeHtml((ev.action||'').replace(/_/g, ' '))}</span>
+                ${ev.task_id ? `<span class="work-event-id">${escapeHtml(ev.task_id)}</span>` : ''}
+            </div>
+            ${ev.title ? `<div class="work-event-title">${escapeHtml(ev.title)}</div>` : ''}
+            ${ev.detail ? `<div class="work-event-detail">${escapeHtml(ev.detail)}</div>` : ''}
+        </div>
+        <div class="work-event-meta">
+            ${ev.project ? `<span class="tag tag-blue" style="font-size:10px;">${escapeHtml(ev.project)}</span>` : ''}
+            <span class="work-event-time">${time}</span>
+        </div>
+    </div>`;
+    const t = document.createElement('template');
+    t.innerHTML = html.trim();
+    container.insertBefore(t.content.firstChild, container.firstChild);
+    while (container.children.length > 12) container.removeChild(container.lastChild);
+    const empty = container.querySelector('.empty-state');
+    if (empty) empty.remove();
+    lucide.createIcons();
+
+    // Also update task count in Open Tasks section
+    const taskCard = document.querySelector('.card-title span[style*="font-mono"]');
+    if (taskCard && (ev.action === 'task_created' || ev.action === 'task_completed')) {
+        const n = parseInt(taskCard.textContent) + (ev.action === 'task_created' ? 1 : -1);
+        taskCard.textContent = Math.max(0, n);
+    }
 });
 sse.addEventListener('health', (e) => updateHealth(JSON.parse(e.data)));
 sse.addEventListener('services', (e) => {
@@ -707,13 +603,6 @@ sse.addEventListener('services', (e) => {
 });
 
 // Controls
-async function runCron(name) {
-    const b = document.getElementById('cron-btn-'+name); b.textContent='...'; b.disabled=true;
-    try { const r = await fetch('/api/automations/cron/'+name+'/run',{method:'POST'}); const d=await r.json(); b.textContent=d.ok?'Done':'Fail'; }
-    catch(e) { b.textContent='Err'; }
-    setTimeout(()=>{b.textContent='Run';b.disabled=false;},2000);
-}
-
 async function restartAgent(name) {
     const b = document.getElementById('la-btn-'+name); b.textContent='...'; b.disabled=true;
     try { const r = await fetch('/api/automations/launchagent/'+name+'/restart',{method:'POST'}); const d=await r.json(); b.textContent=d.ok?'Done':'Fail'; }
