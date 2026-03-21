@@ -33,6 +33,10 @@ templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 
 
 def _load_yaml(path: str) -> dict:
+    """Load YAML config — checks user config (~/.aos/) first, then system (~/aos/)."""
+    user_path = Path.home() / ".aos" / path
+    if user_path.exists():
+        return yaml.safe_load(user_path.read_text()) or {}
     full = WORKSPACE / path
     if full.exists():
         return yaml.safe_load(full.read_text()) or {}
@@ -877,7 +881,7 @@ async def api_restart_launchagent(name: str):
 
 # --- Logs page ---
 
-LOG_DIR = WORKSPACE / "logs"
+LOG_DIR = Path.home() / ".aos" / "logs"
 
 # Each source merges stderr + stdout into one view
 LOG_SOURCES = {

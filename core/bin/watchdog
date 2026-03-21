@@ -1,6 +1,6 @@
 #!/bin/bash
 # watchdog — checks AOS services, network, and disk every 5 minutes
-# Run by the scheduler (crons.yaml) or manually: bash ~/aosv2/core/bin/watchdog
+# Run by the scheduler (crons.yaml) or manually: bash ~/aos/core/bin/watchdog
 #
 # Tier 1: Service down → restart → notify Telegram (best-effort)
 # Tier 2: 3+ restarts in 24 hours (flapping) → escalate to technician via Listen
@@ -9,9 +9,9 @@
 # Never crash on any individual failure
 set +e
 
-AOSV2_DIR="$HOME/aosv2"
+AOS_DIR="$HOME/aos"
 AOS_DIR="$HOME/aos"  # v1 services still live here during migration
-STATE_DIR="$HOME/.aos-v2/logs/.watchdog"
+STATE_DIR="$HOME/.aos/logs/.watchdog"
 LOG_PREFIX="[$(date '+%Y-%m-%d %H:%M:%S')]"
 
 mkdir -p "$STATE_DIR"
@@ -26,12 +26,12 @@ BOT_TOKEN=""
 CHAT_ID=""
 
 # Try v2 secret path first, fall back to v1
-if TOKEN_RAW=$("$AOSV2_DIR/core/bin/agent-secret" get TELEGRAM_BOT_TOKEN 2>/dev/null); then
+if TOKEN_RAW=$("$AOS_DIR/core/bin/agent-secret" get TELEGRAM_BOT_TOKEN 2>/dev/null); then
     BOT_TOKEN="$TOKEN_RAW"
 elif TOKEN_RAW=$("$AOS_DIR/bin/agent-secret" get TELEGRAM_BOT_TOKEN 2>/dev/null); then
     BOT_TOKEN="$TOKEN_RAW"
 fi
-if CHAT_RAW=$("$AOSV2_DIR/core/bin/agent-secret" get TELEGRAM_CHAT_ID 2>/dev/null); then
+if CHAT_RAW=$("$AOS_DIR/core/bin/agent-secret" get TELEGRAM_CHAT_ID 2>/dev/null); then
     CHAT_ID="$CHAT_RAW"
 elif CHAT_RAW=$("$AOS_DIR/bin/agent-secret" get TELEGRAM_CHAT_ID 2>/dev/null); then
     CHAT_ID="$CHAT_RAW"
@@ -161,7 +161,7 @@ check_health() {
 
 # ── Parse services from state.yaml using Python (bash 3.2 safe) ───────────
 
-STATE_YAML="$AOSV2_DIR/config/state.yaml"
+STATE_YAML="$AOS_DIR/config/state.yaml"
 
 # Parse YAML into "name|label|health_url" lines — one per service
 SERVICES_LIST=""
@@ -233,7 +233,7 @@ while IFS='|' read -r name label health_url; do
         restarts_24h=$(count_restarts_24h "$name")
 
         if (( restarts_24h >= FLAP_THRESHOLD )); then
-            log_tail=$(tail -30 "$HOME/.aos-v2/logs/crons/watchdog.log" 2>/dev/null | grep -i "$name" || echo "(no log entries)")
+            log_tail=$(tail -30 "$HOME/.aos/logs/crons/watchdog.log" 2>/dev/null | grep -i "$name" || echo "(no log entries)")
             escalate_to_technician "$name" "Flapping: restarted ${restarts_24h} times in the last 24 hours and still down" "$log_tail"
             continue
         fi
@@ -258,7 +258,7 @@ while IFS='|' read -r name label health_url; do
 
             restarts_24h_after=$(count_restarts_24h "$name")
             if (( restarts_24h_after >= FLAP_THRESHOLD )); then
-                log_tail=$(tail -30 "$HOME/.aos-v2/logs/crons/watchdog.log" 2>/dev/null | grep -i "$name" || echo "(no log entries)")
+                log_tail=$(tail -30 "$HOME/.aos/logs/crons/watchdog.log" 2>/dev/null | grep -i "$name" || echo "(no log entries)")
                 escalate_to_technician "$name" "Flapping detected after restart: ${restarts_24h_after} restarts in 24 hours" "$log_tail"
             fi
         else

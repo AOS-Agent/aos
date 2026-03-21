@@ -41,9 +41,12 @@ def _load_routes() -> tuple[int | None, dict]:
     Returns (forum_group_id, topic_routes) where topic_routes maps
     thread_id -> {"cwd": "/path", "agent": "agent_name"}.
     """
-    config_path = WORKSPACE / "config" / "projects.yaml"
+    # Check user config first, fall back to system config
+    config_path = Path.home() / ".aos" / "config" / "projects.yaml"
     if not config_path.exists():
-        logger.warning("config/projects.yaml not found — no topic routes loaded")
+        config_path = WORKSPACE / "config" / "projects.yaml"
+    if not config_path.exists():
+        logger.warning("projects.yaml not found — no topic routes loaded")
         return None, {}
 
     with open(config_path) as f:

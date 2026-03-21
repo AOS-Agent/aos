@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """stale-detector — finds tasks and goals that have gone stale.
 
-Runs daily at 08:00. Writes a stale report to ~/.aos-v2/work/stale-report.yaml.
+Runs daily at 08:00. Writes a stale report to ~/.aos/work/stale-report.yaml.
 Prints a one-line summary to stdout.
 """
 
@@ -15,8 +15,8 @@ except ImportError:
     print("Error: PyYAML not available. Install with: pip install pyyaml")
     sys.exit(1)
 
-WORK_FILE = Path.home() / ".aos-v2" / "work" / "work.yaml"
-REPORT_FILE = Path.home() / ".aos-v2" / "work" / "stale-report.yaml"
+WORK_FILE = Path.home() / ".aos" / "work" / "work.yaml"
+REPORT_FILE = Path.home() / ".aos" / "work" / "stale-report.yaml"
 
 STALE_ACTIVE_DAYS = 7    # active tasks with no progress after N days
 STALE_TODO_DAYS = 14     # todo tasks not started after N days

@@ -16,7 +16,7 @@ except ImportError:
     sys.exit(1)
 
 VAULT_ROOT = Path.home() / "vault"
-WORK_FILE = Path.home() / ".aos-v2" / "work" / "work.yaml"
+WORK_FILE = Path.home() / ".aos" / "work" / "work.yaml"
 
 
 def _week_bounds() -> tuple[datetime.date, datetime.date]:
@@ -168,7 +168,7 @@ def _format_energy_trend(energy_values: list) -> str:
 def _compute_metrics_and_drift(work: dict, week_start: datetime.date, week_end: datetime.date) -> tuple[dict, dict]:
     """Compute flow metrics and drift using the work metrics library."""
     try:
-        sys.path.insert(0, str(Path.home() / "aosv2" / "core" / "work"))
+        sys.path.insert(0, str(Path.home() / "aos" / "core" / "work"))
         import metrics as work_metrics
         tasks = work.get("tasks", [])
         goals = work.get("goals", [])

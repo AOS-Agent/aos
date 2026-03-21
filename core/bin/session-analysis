@@ -9,8 +9,8 @@ Outputs a friction report to ~/vault/ops/friction/ with categorized
 patterns and a synthesis section identifying actionable improvements.
 
 Run weekly via cron (Sunday 22:00) or manually:
-  python3 ~/aosv2/core/bin/session-analysis
-  python3 ~/aosv2/core/bin/session-analysis --days 3
+  python3 ~/aos/core/bin/session-analysis
+  python3 ~/aos/core/bin/session-analysis --days 3
 """
 
 import json

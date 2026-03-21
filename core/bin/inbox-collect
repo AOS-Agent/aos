@@ -20,7 +20,7 @@ VAULT_ROOT = Path.home() / "vault"
 
 # Try multiple locations for reader modules
 _READER_PATHS = [
-    Path.home() / "aosv2" / "core" / "integrations" / "messages",
+    Path.home() / "aos" / "core" / "integrations" / "messages",
     Path.home() / "aos" / "apps" / "messages",
 ]
 for _p in _READER_PATHS:

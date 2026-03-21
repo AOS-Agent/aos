@@ -1,7 +1,7 @@
 #!/opt/homebrew/bin/python3
 """
-AOS v2 Scheduler — core automation engine
-Reads ~/aosv2/config/crons.yaml, runs due jobs, updates status.json.
+AOS Scheduler — core automation engine
+Reads ~/aos/config/crons.yaml, runs due jobs, updates status.json.
 Designed to be invoked every 5 minutes by com.aos.scheduler LaunchAgent.
 """
 
@@ -24,11 +24,11 @@ except ImportError:
 # ── Paths ─────────────────────────────────────────────────────────────────────
 
 HOME = Path.home()
-CRONS_YAML       = HOME / "aosv2" / "config" / "crons.yaml"
-LOGS_DIR         = HOME / ".aos-v2" / "logs" / "crons"
+CRONS_YAML       = HOME / "aos" / "config" / "crons.yaml"
+LOGS_DIR         = HOME / ".aos" / "logs" / "crons"
 LOCKS_DIR        = LOGS_DIR / "locks"
 STATUS_FILE      = LOGS_DIR / "status.json"
-HEALTHCHECKS_CFG = HOME / ".aos-v2" / "config" / "healthchecks.yaml"
+HEALTHCHECKS_CFG = HOME / ".aos" / "config" / "healthchecks.yaml"
 
 DEFAULT_TIMEOUT = 120  # seconds
 
@@ -336,7 +336,7 @@ def run_job(name: str, job: dict, status: dict):
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def load_healthchecks() -> dict:
-    """Load ~/.aos-v2/config/healthchecks.yaml. Returns {} if missing/empty/invalid."""
+    """Load ~/.aos/config/healthchecks.yaml. Returns {} if missing/empty/invalid."""
     if not HEALTHCHECKS_CFG.exists():
         return {}
     try:
@@ -390,7 +390,7 @@ def main():
     log(f"scheduler done — {ran} job(s) ran")
 
     # Self-ping: prove the scheduler itself is alive on every tick.
-    # Reads checks.scheduler from ~/.aos-v2/config/healthchecks.yaml.
+    # Reads checks.scheduler from ~/.aos/config/healthchecks.yaml.
     # Silently skipped if the file doesn't exist or the URL is empty.
     hc = load_healthchecks()
     scheduler_ping = hc.get("scheduler", "")

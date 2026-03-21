@@ -3,14 +3,14 @@
 Daily Log Compiler — Aggregates data from multiple sources into a single
 daily log file at ~/vault/log/days/YYYY-MM-DD.md
 
-Sources are defined in ~/aosv2/config/vault-sources.yaml.
+Sources are defined in ~/aos/config/vault-sources.yaml.
 The compiler only writes sections for which data exists — no nulls, no empty sections.
 
 If a daily log already exists (e.g., legacy daily note or manually written),
 human-authored content is preserved in a "Reflections" section.
 
 Run via cron at 23:30 daily, or manually:
-  python3 ~/aosv2/core/bin/compile-daily [--date YYYY-MM-DD] [--backfill N]
+  python3 ~/aos/core/bin/compile-daily [--date YYYY-MM-DD] [--backfill N]
 """
 
 import json
@@ -22,10 +22,10 @@ from datetime import datetime, date, timedelta
 from pathlib import Path
 
 VAULT_DAYS = Path.home() / "vault" / "log" / "days"
-WORK_FILE = Path.home() / ".aos-v2" / "work" / "work.yaml"
-SESSIONS_LOG = Path.home() / ".aos-v2" / "logs" / "sessions.jsonl"  # may not exist if session hook isn't installed; load_sessions_for_date() handles this gracefully (returns [])
+WORK_FILE = Path.home() / ".aos" / "work" / "work.yaml"
+SESSIONS_LOG = Path.home() / ".aos" / "logs" / "sessions.jsonl"  # may not exist if session hook isn't installed; load_sessions_for_date() handles this gracefully (returns [])
 SESSION_EXPORTS = Path.home() / "vault" / "ops" / "sessions"
-HEALTH_DIR = Path.home() / ".aos-v2" / "data" / "health"
+HEALTH_DIR = Path.home() / ".aos" / "data" / "health"
 
 DAYS_OF_WEEK = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 

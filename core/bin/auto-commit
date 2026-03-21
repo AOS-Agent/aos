@@ -1,13 +1,13 @@
 #!/bin/bash
 # Auto-commit — saves work to git so nothing is ever lost.
-# Commits ~/aosv2/ (system) and ~/vault/ (knowledge).
+# Commits ~/aos/ (system) and ~/vault/ (knowledge).
 # Never stages sensitive files.
 #
 # Usage: auto-commit [cron|clear|end|bridge]
 
 EVENT="${1:-auto}"
 
-LOG="$HOME/.aos-v2/logs/auto-commit.log"
+LOG="$HOME/.aos/logs/auto-commit.log"
 mkdir -p "$(dirname "$LOG")"
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG"; }
@@ -103,11 +103,11 @@ commit_repo() {
 
 # ── Repos to auto-commit ──────────────────────────────────────────────────
 
-commit_repo "$HOME/aosv2" "aosv2"
+commit_repo "$HOME/aos" "aos"
 commit_repo "$HOME/vault" "vault"
 
 # Also commit any registered project repos (if they exist and have changes)
-if [ -f "$HOME/aosv2/config/state.yaml" ]; then
+if [ -f "$HOME/aos/config/state.yaml" ]; then
     # Quick grep for project paths — no YAML parser needed
     for proj_dir in "$HOME/nuchay" "$HOME/chief-ios-app"; do
         if [ -d "$proj_dir/.git" ]; then

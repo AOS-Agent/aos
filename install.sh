@@ -25,17 +25,84 @@ LOG_DIR="$USER_DIR/logs"
 INSTALL_LOG="$LOG_DIR/install.log"
 MACHINE_ID_FILE="$USER_DIR/.machine-id"
 
-# ── Colors (with fallback) ───────────────────────────
-if [[ -t 1 ]] && command -v tput &>/dev/null && [[ $(tput colors 2>/dev/null || echo 0) -ge 8 ]]; then
+# ── Colors ──────────────────────────────────────────
+if [[ -t 1 ]] && command -v tput &>/dev/null && [[ $(tput colors 2>/dev/null || echo 0) -ge 256 ]]; then
+    # Rich palette for 256+ color terminals
+    BRAND=$'\033[38;2;100;180;255m'    # AOS brand blue
+    GREEN=$'\033[38;2;80;250;123m'     # soft green
+    YELLOW=$'\033[38;2;255;200;50m'    # warm yellow
+    RED=$'\033[38;2;255;85;85m'        # soft red
+    CYAN=$'\033[38;2;100;220;255m'     # bright cyan
+    MUTED=$'\033[38;2;108;112;134m'    # grey
+    ACCENT=$'\033[38;2;180;130;255m'   # purple accent
+    DIM=$(tput dim)
+    BOLD=$(tput bold)
+    RESET=$(tput sgr0)
+elif [[ -t 1 ]] && command -v tput &>/dev/null && [[ $(tput colors 2>/dev/null || echo 0) -ge 8 ]]; then
+    BRAND=$(tput setaf 4)
     GREEN=$(tput setaf 2)
     YELLOW=$(tput setaf 3)
     RED=$(tput setaf 1)
+    CYAN=$(tput setaf 6)
+    MUTED=$(tput setaf 8 2>/dev/null || tput dim)
+    ACCENT=$(tput setaf 5)
     DIM=$(tput dim)
     BOLD=$(tput bold)
     RESET=$(tput sgr0)
 else
-    GREEN="" YELLOW="" RED="" DIM="" BOLD="" RESET=""
+    BRAND="" GREEN="" YELLOW="" RED="" CYAN="" MUTED="" ACCENT="" DIM="" BOLD="" RESET=""
 fi
+
+# ── Timing ──────────────────────────────────────────
+INSTALL_START=$(date +%s)
+STEP_START=$INSTALL_START
+_STEP_NUM=0
+_TOTAL_STEPS=6
+
+_timer_start() { STEP_START=$(date +%s); }
+_timer_elapsed() {
+    local now=$(date +%s)
+    local elapsed=$((now - STEP_START))
+    if [[ $elapsed -ge 60 ]]; then
+        echo "$((elapsed / 60))m $((elapsed % 60))s"
+    else
+        echo "${elapsed}s"
+    fi
+}
+_total_elapsed() {
+    local now=$(date +%s)
+    local elapsed=$((now - INSTALL_START))
+    echo "$((elapsed / 60))m $((elapsed % 60))s"
+}
+
+# ── Spinner (braille dots) ──────────────────────────
+_SPINNER_PID=""
+_spinner_start() {
+    local msg="${1:-Working}"
+    [[ -t 1 ]] || return
+    (
+        local frames=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+        local i=0
+        while true; do
+            printf "\r  ${CYAN}%s${RESET} ${MUTED}%s${RESET}" "${frames[$((i % 10))]}" "$msg"
+            ((i++))
+            sleep 0.08
+        done
+    ) &
+    _SPINNER_PID=$!
+    disown "$_SPINNER_PID" 2>/dev/null
+}
+_spinner_stop() {
+    if [[ -n "${_SPINNER_PID:-}" ]]; then
+        kill "$_SPINNER_PID" 2>/dev/null
+        wait "$_SPINNER_PID" 2>/dev/null || true
+        _SPINNER_PID=""
+        printf "\r\033[K"
+    fi
+}
+
+# Restore cursor on exit
+trap 'tput cnorm 2>/dev/null' EXIT INT TERM
 
 # ── Logging ──────────────────────────────────────────
 _log_init() {
@@ -53,11 +120,50 @@ _log() {
 
 # ── Output helpers ───────────────────────────────────
 _ok()   { echo "  ${GREEN}✓${RESET} $*"; _log "OK: $*"; }
-_skip() { echo "  ${DIM}✓ $* (already installed)${RESET}"; _log "SKIP: $*"; }
+_skip() { echo "  ${MUTED}✓ $*${RESET}"; _log "SKIP: $*"; }
 _warn() { echo "  ${YELLOW}!${RESET} $*"; _log "WARN: $*"; }
 _fail() { echo "  ${RED}✗${RESET} $*"; _log "FAIL: $*"; }
-_step() { echo ""; echo "  ${BOLD}$*${RESET}"; _log "STEP: $*"; }
-_info() { echo "  ${DIM}$*${RESET}"; }
+_phase() {
+    if [[ -n "${_PHASE_ACTIVE:-}" ]]; then
+        echo "  ${MUTED}$(_timer_elapsed)${RESET}"
+    fi
+    _PHASE_ACTIVE=1
+    ((_STEP_NUM++)) || true
+    _timer_start
+    echo ""
+    echo "  ${BRAND}[${_STEP_NUM}/${_TOTAL_STEPS}]${RESET} ${BOLD}$*${RESET}"
+    echo ""
+    _log "PHASE: $*"
+}
+_step() {
+    echo ""
+    echo "  ${BOLD}$*${RESET}"
+    _log "STEP: $*"
+}
+_info() { echo "  ${MUTED}$*${RESET}"; }
+
+# ── Banner ──────────────────────────────────────────
+_banner() {
+    tput civis 2>/dev/null  # hide cursor during install
+
+    echo ""
+    echo "  ${MUTED}bismillah${RESET}"
+    echo ""
+    echo "${BRAND}${BOLD}"
+    cat << 'BANNER'
+       █████╗  ██████╗ ███████╗
+      ██╔══██╗██╔═══██╗██╔════╝
+      ███████║██║   ██║███████╗
+      ██╔══██║██║   ██║╚════██║
+      ██║  ██║╚██████╔╝███████║
+      ╚═╝  ╚═╝ ╚═════╝ ╚══════╝
+BANNER
+    echo "${RESET}"
+    echo "  ${MUTED}Agentic Operating System  v${AOS_VERSION}${RESET}"
+    echo "  ${MUTED}$(uname -m) · macOS $(sw_vers -productVersion 2>/dev/null || echo '?') · $(date +%H:%M)${RESET}"
+    echo ""
+    echo "  ${MUTED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+}
 
 # ── Error handling ───────────────────────────────────
 _die() {
@@ -369,9 +475,6 @@ prereq_claude_remote() {
 }
 
 run_prereqs() {
-    _step "Checking prerequisites..."
-    echo ""
-
     prereq_git
     prereq_homebrew
     prereq_python3
@@ -385,8 +488,7 @@ run_prereqs() {
     prereq_obsidian
     prereq_claude
 
-    _step "Checking remote access..."
-    echo ""
+    _step "Remote access"
 
     prereq_ssh
     prereq_tailscale
@@ -527,8 +629,10 @@ run_bootstrap() {
     _step "Bootstrapping user data..."
     echo ""
 
-    # Ensure minimum structure exists for migration runner
+    # Ensure minimum structure exists for migration runner and services
     mkdir -p "$USER_DIR/logs"
+    mkdir -p "$USER_DIR/logs/crons/locks"
+    mkdir -p "$USER_DIR/config"
 
     # Generate machine ID if not present
     if [[ -f "$MACHINE_ID_FILE" ]]; then
@@ -547,6 +651,61 @@ run_bootstrap() {
     else
         mkdir -p "$project_dir"
         _ok "Created ~/project/"
+    fi
+
+    # Create knowledge vault with standard structure
+    local vault_dir="$HOME/vault"
+    if [[ -d "$vault_dir" ]]; then
+        _skip "Knowledge vault"
+    else
+        mkdir -p "$vault_dir"/{daily,knowledge,log,ops/sessions,reviews,sessions}
+        _ok "Created ~/vault/ with standard structure"
+    fi
+
+    # Scaffold operator profile if not present
+    local operator_yaml="$USER_DIR/config/operator.yaml"
+    if [[ -f "$operator_yaml" ]]; then
+        _skip "Operator profile"
+    else
+        local op_name
+        op_name=$(git config --global user.name 2>/dev/null || echo "")
+        local op_tz
+        op_tz=$(readlink /etc/localtime 2>/dev/null | sed 's|.*/zoneinfo/||' || echo "UTC")
+        cat > "$operator_yaml" << OPERATOR
+# Operator Profile
+# Chief reads this at session start to personalize behavior.
+# This file is user data — never committed to the system repo.
+
+name: ${op_name:-Operator}
+timezone: $op_tz
+
+# Communication preferences
+communication:
+  style: concise           # concise | detailed | conversational
+  questions: one-at-a-time # never batch questions
+  language: en             # primary language
+
+# Schedule blocks (Chief respects these, won't interrupt)
+schedule:
+  blocks: []
+  # Example:
+  #   - name: Focus time
+  #     days: [mon, tue, wed, thu, fri]
+  #     start: "09:00"
+  #     end: "12:00"
+
+# Daily loop timing
+daily_loop:
+  morning_briefing: "07:00"
+  evening_checkin: "21:00"
+
+# Trust preferences
+trust:
+  default_level: 1          # 0=SHADOW, 1=APPROVAL, 2=SEMI-AUTO, 3=FULL-AUTO
+  escalation: always        # always ask before destructive actions
+OPERATOR
+        _ok "Operator profile scaffolded (name: ${op_name:-Operator}, tz: $op_tz)"
+        _info "Edit ~/.aos/config/operator.yaml to customize"
     fi
 
     # Run migrations
@@ -1014,28 +1173,97 @@ with open('$HOME/.claude/settings.json', 'w') as f:
         _skip "Statusline in settings.json"
     fi
 
-    # Set Chief as default agent if not already set
-    local has_agent
-    has_agent=$(python3 -c "
+    # Ensure all required settings.json keys exist (agent, env, hooks)
+    # This is a backstop — migrations handle this too, but install.sh
+    # should guarantee the minimum config for a working system.
+    python3 -c "
 import json
-with open('$HOME/.claude/settings.json') as f:
-    s = json.load(f)
-print('yes' if s.get('agent') else 'no')
-" 2>/dev/null || echo "no")
+from pathlib import Path
 
-    if [[ "$has_agent" == "no" ]]; then
-        python3 -c "
-import json
-with open('$HOME/.claude/settings.json') as f:
-    s = json.load(f)
-s['agent'] = 'chief'
-with open('$HOME/.claude/settings.json', 'w') as f:
-    json.dump(s, f, indent=2)
-    f.write('\n')
+settings_path = Path.home() / '.claude' / 'settings.json'
+settings_path.parent.mkdir(parents=True, exist_ok=True)
+
+if settings_path.exists():
+    with open(settings_path) as f:
+        s = json.load(f)
+else:
+    s = {}
+
+changed = []
+
+# Default agent: Chief
+if not s.get('agent'):
+    s['agent'] = 'chief'
+    changed.append('agent=chief')
+
+# Agent teams env vars
+if 'env' not in s:
+    s['env'] = {}
+if 'CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS' not in s['env']:
+    s['env']['CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS'] = '1'
+    changed.append('agent-teams')
+if 'CLAUDE_CODE_TEAMMATE_MODE' not in s['env']:
+    s['env']['CLAUDE_CODE_TEAMMATE_MODE'] = 'in-process'
+    changed.append('teammate-mode')
+
+# Work system hooks
+if 'hooks' not in s:
+    s['hooks'] = {}
+
+aos_home = Path.home() / 'aos'
+
+hook_defs = {
+    'SessionStart': {
+        'command': f'python3 {aos_home}/core/work/inject_context.py',
+        'statusMessage': 'Loading work context...',
+    },
+    'PostCompact': {
+        'command': f'python3 {aos_home}/core/work/inject_context.py',
+        'statusMessage': 'Reloading work context...',
+    },
+    'Stop': {
+        'command': f'python3 {aos_home}/core/work/reconcile.py',
+        'async': True,
+    },
+    'SessionEnd': {
+        'command': f'python3 {aos_home}/core/work/session_close.py',
+        'async': True,
+    },
+}
+
+for event, hook_props in hook_defs.items():
+    if event not in s['hooks'] or not s['hooks'][event]:
+        hook_entry = {'hooks': [{'type': 'command', **hook_props}]}
+        s['hooks'][event] = [hook_entry]
+        changed.append(f'hook:{event}')
+
+if changed:
+    with open(settings_path, 'w') as f:
+        json.dump(s, f, indent=2)
+        f.write('\n')
+    print('CHANGED:' + ','.join(changed))
+else:
+    print('OK')
 " 2>/dev/null
-        _ok "Default agent set to Chief"
-    else
-        _skip "Default agent already configured"
+    local result=$?
+    if [[ $result -eq 0 ]]; then
+        local output
+        output=$(python3 -c "
+import json
+from pathlib import Path
+settings_path = Path.home() / '.claude' / 'settings.json'
+if settings_path.exists():
+    with open(settings_path) as f:
+        s = json.load(f)
+    checks = []
+    if s.get('agent') == 'chief': checks.append('chief')
+    if 'CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS' in s.get('env', {}): checks.append('teams')
+    hooks = s.get('hooks', {})
+    for h in ['SessionStart', 'PostCompact', 'Stop', 'SessionEnd']:
+        if hooks.get(h): checks.append(h)
+    print(','.join(checks))
+" 2>/dev/null)
+        _ok "Settings verified: $output"
     fi
 }
 
@@ -1086,14 +1314,40 @@ run_health_gate() {
     [[ -n "$git_name" ]]                   && _ok "Git name: $git_name"    || { _warn "Git name not set"; }
     [[ -n "$git_email" ]]                  && _ok "Git email: $git_email"  || { _warn "Git email not set"; }
 
-    # Settings
+    # Settings — agent, env vars, hooks
     if [[ -f "$HOME/.claude/settings.json" ]]; then
-        local agent
-        agent=$(python3 -c "import json; print(json.load(open('$HOME/.claude/settings.json')).get('agent',''))" 2>/dev/null)
-        [[ "$agent" == "chief" ]]          && _ok "Default agent: chief"   || { _warn "Default agent: ${agent:-not set}"; }
+        local settings_check
+        settings_check=$(python3 -c "
+import json
+with open('$HOME/.claude/settings.json') as f:
+    s = json.load(f)
+issues = []
+if s.get('agent') != 'chief': issues.append('agent not chief')
+env = s.get('env', {})
+if 'CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS' not in env: issues.append('no agent-teams env')
+hooks = s.get('hooks', {})
+for h in ['SessionStart', 'PostCompact', 'Stop', 'SessionEnd']:
+    if not hooks.get(h): issues.append(f'no {h} hook')
+print('|'.join(issues) if issues else 'OK')
+" 2>/dev/null || echo "parse error")
+
+        if [[ "$settings_check" == "OK" ]]; then
+            _ok "Settings: agent=chief, teams, hooks (3/3)"
+        else
+            IFS='|' read -ra issues <<< "$settings_check"
+            for issue in "${issues[@]}"; do
+                _warn "Settings: $issue"
+            done
+        fi
     else
         _fail "settings.json missing"; ((errors++))
     fi
+
+    # Operator profile
+    [[ -f "$USER_DIR/config/operator.yaml" ]] && _ok "Operator profile" || { _warn "Operator profile missing"; }
+
+    # Log directories
+    [[ -d "$USER_DIR/logs/crons" ]]           && _ok "Cron log directory" || { _warn "Cron log dir missing"; }
 
     # Agent symlinks
     for agent in chief steward advisor; do
@@ -1144,6 +1398,27 @@ run_health_gate() {
         fi
     done
 
+    # LaunchAgents — verify scheduler and core services are loaded
+    local la_loaded=0
+    for la in com.aos.scheduler com.aos.bridge com.aos.dashboard com.aos.listen; do
+        if launchctl list 2>/dev/null | grep -q "$la"; then
+            ((la_loaded++))
+        else
+            _warn "LaunchAgent $la — not loaded"
+        fi
+    done
+    [[ "$la_loaded" -eq 4 ]] && _ok "All $la_loaded core LaunchAgents loaded"
+
+    # Scheduler — verify crons.yaml exists and scheduler can find it
+    [[ -f "$AOS_DIR/config/crons.yaml" ]]    && _ok "Cron definitions (crons.yaml)" || { _warn "crons.yaml missing"; }
+
+    # QMD — vault search
+    if [[ -f "$HOME/.bun/bin/qmd" ]] || command -v qmd &>/dev/null; then
+        _ok "QMD (vault search)"
+    else
+        _warn "QMD — not installed (vault search unavailable)"
+    fi
+
     # Remote access
     if sudo systemsetup -getremotelogin 2>/dev/null | grep -qi "on"; then
         _ok "SSH (Remote Login)"
@@ -1174,42 +1449,56 @@ run_health_gate() {
 }
 
 print_handoff() {
+    local total=$(_total_elapsed)
+    local hostname=$(scutil --get ComputerName 2>/dev/null || hostname -s)
+    local machine_id=$(cat "$MACHINE_ID_FILE" 2>/dev/null || echo "unknown")
+    local op_name=$(python3 -c "
+import yaml
+try:
+    with open('$USER_DIR/config/operator.yaml') as f:
+        print(yaml.safe_load(f).get('name', 'Operator'))
+except: print('Operator')
+" 2>/dev/null || echo "Operator")
+
+    tput cnorm 2>/dev/null  # restore cursor
+
     echo ""
-    echo "  ${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+    echo "  ${MUTED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
     echo ""
-    echo "  ${GREEN}${BOLD}AOS $AOS_VERSION installed successfully.${RESET}"
+    echo "  ${GREEN}${BOLD}AOS v${AOS_VERSION} installed successfully.${RESET}"
     echo ""
-    echo "  ${BOLD}Next steps:${RESET}"
+    printf "  ${MUTED}%-12s${RESET}%s\n" "Machine" "$hostname"
+    printf "  ${MUTED}%-12s${RESET}%s\n" "ID" "$machine_id"
+    printf "  ${MUTED}%-12s${RESET}%s\n" "Operator" "$op_name"
+    printf "  ${MUTED}%-12s${RESET}%s\n" "Duration" "$total"
+    echo ""
+    echo "  ${MUTED}────────────────────────────────────────────────────${RESET}"
     echo ""
 
     if command -v claude &>/dev/null; then
-        echo "  1. Open a terminal and run:"
-        echo "     ${BOLD}claude${RESET}"
+        echo "  ${BOLD}Get started:${RESET}"
         echo ""
-        echo "  2. Chief will guide you through onboarding:"
-        echo "     setting up Telegram, your vault, integrations,"
-        echo "     and your first goals."
+        echo "    ${BRAND}${BOLD}\$ claude${RESET}"
         echo ""
+        echo "  ${MUTED}Chief is your default agent. Open a terminal,${RESET}"
+        echo "  ${MUTED}type claude, and Chief handles the rest.${RESET}"
     else
-        echo "  1. Install Claude Code:"
-        echo "     ${BOLD}https://docs.anthropic.com/en/docs/claude-code${RESET}"
-        echo ""
-        echo "  2. Then open a terminal and run:"
-        echo "     ${BOLD}claude${RESET}"
-        echo ""
-        echo "  3. Chief will guide you through onboarding."
-        echo ""
+        echo "  ${BOLD}Next:${RESET} Install Claude Code, then run ${BRAND}claude${RESET}"
+        echo "  ${MUTED}https://docs.anthropic.com/en/docs/claude-code${RESET}"
     fi
 
-    echo "  ${DIM}Useful commands:${RESET}"
-    echo "    ${DIM}aos status      — migration status${RESET}"
-    echo "    ${DIM}aos self-test   — verify system health${RESET}"
-    echo "    ${DIM}aos update      — pull latest + migrate${RESET}"
     echo ""
-    echo "  ${DIM}Install log: $INSTALL_LOG${RESET}"
-    echo "  ${DIM}Discovery:   $USER_DIR/logs/discovery-report.yaml${RESET}"
+    echo "  ${MUTED}────────────────────────────────────────────────────${RESET}"
     echo ""
-    echo "  ${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+    echo "  ${MUTED}aos status      check migration status${RESET}"
+    echo "  ${MUTED}aos self-test   verify system health${RESET}"
+    echo "  ${MUTED}aos update      pull latest + migrate${RESET}"
+    echo ""
+    echo "  ${MUTED}Log: $INSTALL_LOG${RESET}"
+    echo ""
+    echo "  ${MUTED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+    echo ""
+    echo "  ${MUTED}alhamdulillah${RESET}"
     echo ""
 }
 
@@ -1218,34 +1507,37 @@ print_handoff() {
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 main() {
-    echo ""
-    echo "  ${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
-    echo "  ${BOLD}  AOS — Agentic Operating System${RESET}"
-    echo "  ${DIM}  v$AOS_VERSION${RESET}"
-    echo "  ${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
-
     # Init logging (needs minimum dir structure)
     mkdir -p "$LOG_DIR"
     _log_init
 
+    # Show banner
+    _banner
+
     # Part 1: Prerequisites
+    _phase "Prerequisites"
     run_prereqs
 
     # Part 2: Repo & PATH
+    _phase "Repository & PATH"
     setup_repo
     setup_path
     setup_git_config
 
     # Part 3: Bootstrap (migrations)
+    _phase "Bootstrap"
     run_bootstrap
 
     # Part 4: Services
+    _phase "Services"
     deploy_services
 
     # Part 5: macOS provisioning
+    _phase "System configuration"
     run_provisioning
 
-    # Part 6: Discovery + Health gate + Handoff
+    # Part 6: Health gate + Handoff
+    _phase "Health check"
     run_discovery
     run_health_gate
     print_handoff

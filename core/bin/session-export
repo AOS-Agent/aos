@@ -8,7 +8,7 @@ The 10x version: uses session structure (timestamps, tools, file paths)
 to generate real summaries, not raw message dumps.
 
 Run via cron every 2h or manually:
-  python3 ~/aosv2/core/bin/session-export [--regenerate]
+  python3 ~/aos/core/bin/session-export [--regenerate]
 """
 
 import json
@@ -22,7 +22,7 @@ from typing import Optional
 
 VAULT_SESSIONS = Path.home() / "vault" / "ops" / "sessions"
 CLAUDE_PROJECTS = Path.home() / ".claude" / "projects"
-EXPORTED_TRACKER = Path.home() / ".aos-v2" / "logs" / "exported-sessions.json"
+EXPORTED_TRACKER = Path.home() / ".aos" / "logs" / "exported-sessions.json"
 
 REGENERATE = "--regenerate" in sys.argv
 
@@ -173,7 +173,7 @@ def parse_session(jsonl_path: Path) -> Optional[dict]:
                                             projects_from_paths.add("nuchay")
                                         elif "/chief-ios-app/" in val:
                                             projects_from_paths.add("chief-app")
-                                        elif "/aos/" in val or "/aosv2/" in val:
+                                        elif "/aos/" in val or "/aos/" in val:
                                             projects_from_paths.add("aos")
 
     if not real_user_messages:

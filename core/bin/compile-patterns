@@ -7,7 +7,7 @@ When a task is done the same way 3+ times successfully, it becomes
 a zero-token script — no AI reasoning needed next time.
 
 Run daily via cron or manually:
-  python3 ~/aosv2/core/bin/compile-patterns [--dry-run] [--threshold 3]
+  python3 ~/aos/core/bin/compile-patterns [--dry-run] [--threshold 3]
 """
 
 import json
@@ -20,10 +20,10 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
 
-AOSV2 = Path(os.path.expanduser("~/aosv2"))
-LOG_DIR = Path.home() / ".aos-v2" / "logs" / "execution"
-PATTERNS_DIR = Path.home() / ".aos-v2" / "patterns"
-PATTERNS_YAML = Path.home() / ".aos-v2" / "config" / "patterns.yaml"
+AOSV2 = Path(os.path.expanduser("~/aos"))
+LOG_DIR = Path.home() / ".aos" / "logs" / "execution"
+PATTERNS_DIR = Path.home() / ".aos" / "patterns"
+PATTERNS_YAML = Path.home() / ".aos" / "config" / "patterns.yaml"
 VAULT_PATTERNS = Path.home() / "vault" / "ops" / "patterns"
 
 DRY_RUN = "--dry-run" in sys.argv
@@ -179,7 +179,7 @@ def update_patterns_yaml(new_patterns):
         data["patterns"].append({
             "name": name,
             "trigger": p["task"],
-            "script": f".aos-v2/patterns/{name}.sh",
+            "script": f".aos/patterns/{name}.sh",
             "compiled_from": p["count"],
             "compiled_date": datetime.now().strftime("%Y-%m-%d"),
             "status": "active",

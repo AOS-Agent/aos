@@ -7,7 +7,7 @@ Usage:
     python3 cli.py add "Fix login" --priority 2 --project website
     python3 cli.py list
     python3 cli.py list --status active
-    python3 cli.py list --project aos-v2
+    python3 cli.py list --project aos
     python3 cli.py done t1
     python3 cli.py start t2
     python3 cli.py cancel t3

@@ -393,13 +393,12 @@ def get_or_create_thread_for_cwd(cwd: str, session_id: str,
 
 def find_tasks_by_project_or_cwd(cwd: str) -> list:
     """Find active tasks that match a working directory.
-    Maps cwd to project name (e.g., ~/nuchay → 'nuchay', ~/aos → 'aos-v2')."""
+    Maps cwd to project name (e.g., ~/nuchay → 'nuchay', ~/aos → 'aos')."""
     data = _load()
     dir_name = Path(cwd).name
     # Map common directory names to project IDs
     project_aliases = {
-        "aos": "aos-v2",
-        "aos": "aos-v2",
+        "aos": "aos",
         "nuchay": "nuchay",
         "chief-ios-app": "chief",
     }

@@ -1,14 +1,14 @@
 #!/bin/bash
-# rotate-logs — rotate .log files in ~/.aos-v2/logs/
+# rotate-logs — rotate .log files in ~/.aos/logs/
 # Keeps 5 rotated copies, rotates at 10MB, compresses with gzip.
-# Also rotates cron job logs in ~/.aos-v2/logs/crons/
+# Also rotates cron job logs in ~/.aos/logs/crons/
 # Usage: rotate-logs [--force]  (--force ignores size threshold)
 
 set -euo pipefail
 
 LOG_DIRS=(
-    "$HOME/.aos-v2/logs"
-    "$HOME/.aos-v2/logs/crons"
+    "$HOME/.aos/logs"
+    "$HOME/.aos/logs/crons"
 )
 
 MAX_SIZE=$((10 * 1024 * 1024))  # 10MB in bytes

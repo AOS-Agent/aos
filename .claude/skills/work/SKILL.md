@@ -31,7 +31,7 @@ python3 ~/aos/core/work/cli.py add "Fix login bug" --priority 2 --project websit
 # List tasks (hides done/cancelled by default)
 python3 ~/aos/core/work/cli.py list
 python3 ~/aos/core/work/cli.py list --status active
-python3 ~/aos/core/work/cli.py list --project aos-v2
+python3 ~/aos/core/work/cli.py list --project aos
 
 # Change status
 python3 ~/aos/core/work/cli.py done t1

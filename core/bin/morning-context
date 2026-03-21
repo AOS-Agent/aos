@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """morning-context — fetches weather and prayer times for the day.
 
-Runs at 06:30 daily. Writes to ~/.aos-v2/work/morning-context.yaml.
+Runs at 06:30 daily. Writes to ~/.aos/work/morning-context.yaml.
 Uses only stdlib — no pip dependencies.
 """
 
@@ -13,7 +13,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-OUTPUT_FILE = Path.home() / ".aos-v2" / "work" / "morning-context.yaml"
+OUTPUT_FILE = Path.home() / ".aos" / "work" / "morning-context.yaml"
 
 # Configurable via environment
 CITY = os.environ.get("AOS_CITY", "Houston")
