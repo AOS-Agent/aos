@@ -1,0 +1,351 @@
+#!/usr/bin/env python3
+"""
+Daily Log Compiler — Aggregates data from multiple sources into a single
+daily log file at ~/vault/log/days/YYYY-MM-DD.md
+
+Sources are defined in ~/aosv2/config/vault-sources.yaml.
+The compiler only writes sections for which data exists — no nulls, no empty sections.
+
+If a daily log already exists (e.g., legacy daily note or manually written),
+human-authored content is preserved in a "Reflections" section.
+
+Run via cron at 23:30 daily, or manually:
+  python3 ~/aosv2/core/bin/compile-daily [--date YYYY-MM-DD] [--backfill N]
+"""
+
+import json
+import os
+import re
+import sys
+import yaml
+from datetime import datetime, date, timedelta
+from pathlib import Path
+
+VAULT_DAYS = Path.home() / "vault" / "log" / "days"
+WORK_FILE = Path.home() / ".aos-v2" / "work" / "work.yaml"
+SESSIONS_LOG = Path.home() / ".aos-v2" / "logs" / "sessions.jsonl"  # may not exist if session hook isn't installed; load_sessions_for_date() handles this gracefully (returns [])
+SESSION_EXPORTS = Path.home() / "vault" / "ops" / "sessions"
+HEALTH_DIR = Path.home() / ".aos-v2" / "data" / "health"
+
+DAYS_OF_WEEK = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+
+
+def parse_args():
+    target_date = date.today()
+    backfill = 0
+    for i, arg in enumerate(sys.argv[1:], 1):
+        if arg == "--date" and i < len(sys.argv) - 1:
+            target_date = date.fromisoformat(sys.argv[i + 1])
+        elif arg == "--backfill" and i < len(sys.argv) - 1:
+            backfill = int(sys.argv[i + 1])
+    return target_date, backfill
+
+
+def load_work_for_date(target: date) -> dict:
+    """Extract work activity for a specific date."""
+    result = {"completed": [], "started": [], "added": [], "active": []}
+    if not WORK_FILE.exists():
+        return result
+
+    try:
+        data = yaml.safe_load(WORK_FILE.read_text()) or {}
+    except Exception:
+        return result
+
+    target_str = target.isoformat()
+    for task in data.get("tasks", []):
+        # Completed today
+        completed = task.get("completed", "")
+        if isinstance(completed, str) and completed.startswith(target_str):
+            result["completed"].append(task)
+        # Started today
+        started = task.get("started", "")
+        if isinstance(started, str) and started.startswith(target_str):
+            result["started"].append(task)
+        # Created today
+        created = task.get("created", "")
+        if created == target_str:
+            result["added"].append(task)
+        # Currently active
+        if task.get("status") == "active":
+            result["active"].append(task)
+
+    return result
+
+
+def load_sessions_for_date(target: date) -> list:
+    """Load session log entries for a specific date."""
+    sessions = []
+    target_str = target.isoformat()
+
+    # From sessions.jsonl
+    if SESSIONS_LOG.exists():
+        try:
+            for line in SESSIONS_LOG.read_text().splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    entry = json.loads(line)
+                    ts = entry.get("ts", "")
+                    if ts.startswith(target_str):
+                        sessions.append(entry)
+                except json.JSONDecodeError:
+                    continue
+        except Exception:
+            pass
+
+    return sessions
+
+
+def load_session_exports_for_date(target: date) -> list:
+    """Load exported session markdown summaries for a specific date."""
+    exports = []
+    target_str = target.isoformat()
+    if not SESSION_EXPORTS.exists():
+        return exports
+
+    for f in SESSION_EXPORTS.glob(f"{target_str}-*.md"):
+        try:
+            content = f.read_text()
+            # Extract frontmatter
+            if content.startswith("---"):
+                end = content.find("---", 3)
+                if end > 0:
+                    fm = yaml.safe_load(content[3:end]) or {}
+                    # Extract summary section
+                    summary_match = re.search(r'## Summary\s*\n(.*?)(?=\n##|\Z)', content, re.DOTALL)
+                    summary = summary_match.group(1).strip()[:150] if summary_match else ""
+                    # Clean up summary — strip XML caveats, newlines, and system noise
+                    summary = re.sub(r'<[^>]+>', '', summary).strip()
+                    summary = summary.replace('\n', ' ').replace('|', '-')
+                    if summary.startswith("Caveat:"):
+                        summary = ""
+
+                    exports.append({
+                        "file": f.name,
+                        "time": fm.get("time", ""),
+                        "project": fm.get("project", "unknown"),
+                        "messages": fm.get("message_count", 0),
+                        "summary": summary,
+                    })
+        except Exception:
+            continue
+
+    return sorted(exports, key=lambda x: x.get("time", ""))
+
+
+def load_health_for_date(target: date) -> dict:
+    """Load health data for a specific date."""
+    health = {}
+    if not HEALTH_DIR.exists():
+        return health
+
+    target_str = target.isoformat()
+    # Check for date-specific health file
+    health_file = HEALTH_DIR / f"{target_str}.json"
+    if health_file.exists():
+        try:
+            data = json.loads(health_file.read_text())
+            if data.get("sleep_hours"):
+                health["sleep"] = f"{data['sleep_hours']:.1f}h"
+            if data.get("steps"):
+                health["steps"] = f"{data['steps']:,}"
+            if data.get("resting_hr"):
+                health["resting_hr"] = f"{data['resting_hr']} bpm"
+            if data.get("energy"):
+                health["energy"] = f"{data['energy']}/10"
+        except Exception:
+            pass
+
+    # Also check the latest health sync
+    latest = HEALTH_DIR / "latest.json"
+    if latest.exists() and not health:
+        try:
+            data = json.loads(latest.read_text())
+            sync_date = data.get("date", "")
+            if sync_date == target_str:
+                if data.get("sleep_hours"):
+                    health["sleep"] = f"{data['sleep_hours']:.1f}h"
+                if data.get("steps"):
+                    health["steps"] = f"{data['steps']:,}"
+        except Exception:
+            pass
+
+    return health
+
+
+def load_existing_reflections(filepath: Path) -> str:
+    """Preserve human-written content from existing daily note."""
+    if not filepath.exists():
+        return ""
+
+    content = filepath.read_text()
+
+    # Strip frontmatter
+    if content.startswith("---"):
+        end = content.find("---", 3)
+        if end > 0:
+            content = content[end + 3:].strip()
+
+    # Remove compiled sections (these will be regenerated)
+    compiled_sections = ['Health', 'Work', 'Sessions', 'Communications', 'Ideas & Captures', 'Reflections']
+    for section in compiled_sections:
+        # Remove section header + all content until next ## or end
+        content = re.sub(
+            rf'(?:^|\n)#\s+[^\n]+\n|##\s+{re.escape(section)}\s*\n.*?(?=\n##|\Z)',
+            '', content, flags=re.DOTALL
+        )
+
+    # Remove empty template headers (legacy daily note format)
+    content = re.sub(r'##\s+(Morning|Tasks|Evening Reflection|Notes|Health Data)\s*\n\s*(?=##|\Z)', '', content)
+
+    # Clean up excess whitespace
+    content = re.sub(r'\n{3,}', '\n\n', content).strip()
+    if not content:
+        return ""
+
+    # Only keep if there's actual human-written content
+    # (not just empty section headers or auto-generated tables)
+    meaningful = re.sub(r'##\s+\w[\w\s]*\n\s*', '', content).strip()
+    meaningful = re.sub(r'\|[^\n]+\|', '', meaningful).strip()
+    meaningful = re.sub(r'[-●✅+]\s+t\d+:.*', '', meaningful).strip()
+    if not meaningful:
+        return ""
+
+    return content
+
+
+def compile_day(target: date) -> str:
+    """Compile all available data for a given date into a daily log."""
+    day_name = DAYS_OF_WEEK[target.weekday()]
+    filepath = VAULT_DAYS / f"{target.isoformat()}.md"
+
+    # Load all available data
+    work = load_work_for_date(target)
+    sessions = load_sessions_for_date(target)
+    session_exports = load_session_exports_for_date(target)
+    health = load_health_for_date(target)
+    existing = load_existing_reflections(filepath)
+
+    # Build frontmatter — only include what we have
+    fm = {
+        "date": target.isoformat(),
+        "day": day_name,
+        "type": "daily-log",
+        "title": f"{day_name}, {target.strftime('%B %d %Y')}",
+    }
+
+    # Add stats to frontmatter only if available
+    if session_exports:
+        fm["sessions"] = len(session_exports)
+    if work["completed"]:
+        fm["tasks_completed"] = len(work["completed"])
+
+    # Build frontmatter string
+    lines = ["---"]
+    for key, val in fm.items():
+        if isinstance(val, str):
+            lines.append(f'{key}: "{val}"')
+        else:
+            lines.append(f"{key}: {val}")
+    lines.append("---")
+    lines.append("")
+
+    # Title
+    lines.append(f"# {day_name}, {target.strftime('%B %d')}")
+    lines.append("")
+
+    # Health section
+    if health:
+        lines.append("## Health")
+        for key, val in health.items():
+            label = key.replace("_", " ").title()
+            lines.append(f"- **{label}**: {val}")
+        lines.append("")
+
+    # Work section
+    has_work = any([work["completed"], work["started"], work["active"], work["added"]])
+    if has_work:
+        lines.append("## Work")
+        for t in work["completed"]:
+            proj = f" [{t.get('project', '')}]" if t.get("project") else ""
+            lines.append(f"- ✅ {t['id']}: {t['title']}{proj}")
+        for t in work["started"]:
+            if t not in work["completed"]:
+                proj = f" [{t.get('project', '')}]" if t.get("project") else ""
+                lines.append(f"- ● {t['id']}: {t['title']}{proj} (started)")
+        for t in work["active"]:
+            if t not in work["started"] and t not in work["completed"]:
+                proj = f" [{t.get('project', '')}]" if t.get("project") else ""
+                lines.append(f"- ● {t['id']}: {t['title']}{proj}")
+        for t in work["added"]:
+            if t not in work["completed"] and t not in work["started"]:
+                lines.append(f"- + {t['id']}: {t['title']} (added)")
+        lines.append("")
+
+    # Sessions section
+    if session_exports:
+        lines.append("## Sessions")
+        lines.append("")
+        lines.append("| Time | Project | Messages | Summary |")
+        lines.append("|------|---------|----------|---------|")
+        for s in session_exports:
+            summary = s["summary"][:60] + "..." if len(s.get("summary", "")) > 60 else s.get("summary", "")
+            # Clean project name — strip path prefixes like -Users-agentalhadi-
+            project = s.get("project", "?")
+            project = re.sub(r'^-Users-\w+-', '', project)
+            lines.append(f"| {s.get('time', '?')} | {project} | {s.get('messages', '?')} | {summary} |")
+        lines.append("")
+
+    # Reflections — preserve human content
+    if existing:
+        # Don't add another Reflections header if existing content already has one
+        if not existing.strip().startswith("## Reflections"):
+            lines.append("## Reflections")
+            lines.append("")
+        lines.append(existing)
+        lines.append("")
+    else:
+        lines.append("## Reflections")
+        lines.append("")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+def main():
+    target_date, backfill = parse_args()
+
+    VAULT_DAYS.mkdir(parents=True, exist_ok=True)
+
+    dates = []
+    if backfill > 0:
+        for i in range(backfill, -1, -1):
+            dates.append(target_date - timedelta(days=i))
+    else:
+        dates.append(target_date)
+
+    compiled = 0
+    for d in dates:
+        content = compile_day(d)
+        filepath = VAULT_DAYS / f"{d.isoformat()}.md"
+
+        # Only write if we have more than just the template
+        section_count = content.count("\n## ")
+        if section_count >= 2:  # At least Reflections + one data section
+            filepath.write_text(content)
+            compiled += 1
+            print(f"  Compiled: {filepath.name} ({section_count - 1} sections)")
+        elif section_count == 1 and not filepath.exists():
+            # Minimal file — just frontmatter + reflections placeholder
+            filepath.write_text(content)
+            compiled += 1
+            print(f"  Created: {filepath.name} (minimal)")
+        else:
+            print(f"  Skipped: {d.isoformat()} (no data)")
+
+    print(f"\nCompiled {compiled} daily log(s) to {VAULT_DAYS}")
+
+
+if __name__ == "__main__":
+    main()

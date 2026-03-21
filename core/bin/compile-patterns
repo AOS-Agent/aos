@@ -1,0 +1,263 @@
+#!/usr/bin/env python3
+"""
+Pattern Compiler — Scans execution logs for repeated successful tasks
+and compiles them into deterministic scripts.
+
+When a task is done the same way 3+ times successfully, it becomes
+a zero-token script — no AI reasoning needed next time.
+
+Run daily via cron or manually:
+  python3 ~/aosv2/core/bin/compile-patterns [--dry-run] [--threshold 3]
+"""
+
+import json
+import os
+import re
+import sys
+import hashlib
+import yaml
+from collections import defaultdict
+from datetime import datetime, timedelta
+from pathlib import Path
+
+AOSV2 = Path(os.path.expanduser("~/aosv2"))
+LOG_DIR = Path.home() / ".aos-v2" / "logs" / "execution"
+PATTERNS_DIR = Path.home() / ".aos-v2" / "patterns"
+PATTERNS_YAML = Path.home() / ".aos-v2" / "config" / "patterns.yaml"
+VAULT_PATTERNS = Path.home() / "vault" / "ops" / "patterns"
+
+DRY_RUN = "--dry-run" in sys.argv
+THRESHOLD = 3
+
+for i, arg in enumerate(sys.argv):
+    if arg == "--threshold" and i + 1 < len(sys.argv):
+        THRESHOLD = int(sys.argv[i + 1])
+
+
+def load_logs(days=14):
+    """Load execution log entries from the last N days."""
+    entries = []
+    if not LOG_DIR.exists():
+        return entries
+
+    cutoff = datetime.now() - timedelta(days=days)
+    for f in sorted(LOG_DIR.glob("*.jsonl")):
+        try:
+            date_str = f.stem
+            file_date = datetime.strptime(date_str, "%Y-%m-%d")
+            if file_date < cutoff:
+                continue
+        except ValueError:
+            continue
+
+        for line in f.read_text().strip().split("\n"):
+            if not line.strip():
+                continue
+            try:
+                entries.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+
+    return entries
+
+
+def normalize_task(task_desc):
+    """Normalize task description for clustering."""
+    t = task_desc.lower().strip()
+    t = re.sub(r'\d{4}-\d{2}-\d{2}', 'DATE', t)
+    t = re.sub(r'\d{1,2}:\d{2}', 'TIME', t)
+    t = re.sub(r'\s+', ' ', t)
+    return t
+
+
+def task_hash(task_desc):
+    """Generate a stable hash for task clustering."""
+    normalized = normalize_task(task_desc)
+    return hashlib.sha256(normalized.encode()).hexdigest()[:12]
+
+
+def find_compilable_patterns(entries):
+    """Find tasks repeated >= threshold with same successful approach."""
+    groups = defaultdict(list)
+    for e in entries:
+        if not e.get("success"):
+            continue
+        key = (normalize_task(e.get("task", "")), e.get("approach", ""))
+        groups[key].append(e)
+
+    compilable = []
+    for (task, approach), runs in groups.items():
+        if len(runs) >= THRESHOLD:
+            latest = max(runs, key=lambda r: r.get("timestamp", ""))
+            compilable.append({
+                "task": task,
+                "approach": approach,
+                "commands": latest.get("commands", []),
+                "count": len(runs),
+                "latest": latest,
+                "hash": task_hash(task),
+            })
+
+    return compilable
+
+
+def generate_script(pattern):
+    """Generate a shell script from a compiled pattern."""
+    name = pattern["hash"]
+    task = pattern["task"]
+    commands = pattern["commands"]
+    count = pattern["count"]
+    approach = pattern["approach"]
+
+    lines = [
+        "#!/bin/bash",
+        f"# Pattern: {name}",
+        f"# Task: {task}",
+        f"# Approach: {approach}",
+        f"# Compiled: {datetime.now().strftime('%Y-%m-%d')} from {count} successful executions",
+        "",
+        "set -e",
+        "",
+    ]
+
+    if commands:
+        for cmd in commands:
+            lines.append(cmd)
+    else:
+        lines.append(f"# No commands captured. Review logs for task: {task}")
+        lines.append("echo 'Pattern has no compiled commands.'")
+        lines.append("exit 1")
+
+    return "\n".join(lines) + "\n"
+
+
+def generate_doc(pattern):
+    """Generate a human-readable doc for the pattern."""
+    today = datetime.now().strftime("%Y-%m-%d")
+    return (
+        f"---\n"
+        f'date: "{today}"\n'
+        f'type: "compiled-pattern"\n'
+        f'title: "Pattern: {pattern["task"][:60]}"\n'
+        f'pattern_id: "{pattern["hash"]}"\n'
+        f"compiled_from: {pattern['count']}\n"
+        f"tags: [ops, pattern, automation]\n"
+        f"---\n\n"
+        f"# Pattern: {pattern['task']}\n\n"
+        f"**Approach**: {pattern['approach']}\n"
+        f"**Compiled from**: {pattern['count']} successful executions\n"
+        f"**Script**: `core/bin/patterns/{pattern['hash']}.sh`\n\n"
+        f"## Commands\n\n"
+        f"```bash\n"
+        + "\n".join(pattern.get("commands", ["# no commands captured"]))
+        + "\n```\n"
+    )
+
+
+def update_patterns_yaml(new_patterns):
+    """Add new patterns to patterns.yaml using proper YAML parsing."""
+    yaml_path = PATTERNS_YAML
+    if yaml_path.exists():
+        try:
+            data = yaml.safe_load(yaml_path.read_text()) or {}
+        except Exception:
+            data = {}
+    else:
+        data = {}
+
+    if not isinstance(data.get("patterns"), list):
+        data["patterns"] = []
+
+    existing_names = {entry.get("name") for entry in data["patterns"]}
+
+    for p in new_patterns:
+        name = p["hash"]
+        if name in existing_names:
+            print(f"  Skip {name} — already in patterns.yaml")
+            continue
+
+        data["patterns"].append({
+            "name": name,
+            "trigger": p["task"],
+            "script": f".aos-v2/patterns/{name}.sh",
+            "compiled_from": p["count"],
+            "compiled_date": datetime.now().strftime("%Y-%m-%d"),
+            "status": "active",
+        })
+        existing_names.add(name)
+
+    if not DRY_RUN:
+        yaml_path.parent.mkdir(parents=True, exist_ok=True)
+        yaml_path.write_text(yaml.dump(data, default_flow_style=False, allow_unicode=True))
+
+
+def main():
+    print(f"Pattern Compiler — scanning logs (threshold: {THRESHOLD})")
+    if DRY_RUN:
+        print("DRY RUN — no files will be written")
+    print()
+
+    entries = load_logs()
+    print(f"Loaded {len(entries)} log entries from last 14 days")
+
+    if not entries:
+        print("No execution log entries found. Nothing to compile.")
+        return
+
+    patterns = find_compilable_patterns(entries)
+    print(f"Found {len(patterns)} compilable patterns (>= {THRESHOLD} occurrences)")
+
+    if not patterns:
+        print("No patterns ready for compilation yet.")
+        groups = defaultdict(int)
+        for e in entries:
+            if e.get("success"):
+                groups[normalize_task(e.get("task", ""))] += 1
+        if groups:
+            print("\nProgress toward compilation:")
+            for task, count in sorted(groups.items(), key=lambda x: -x[1]):
+                bar = "\u2588" * count + "\u2591" * (THRESHOLD - count)
+                print(f"  [{bar}] {count}/{THRESHOLD} — {task[:60]}")
+        return
+
+    PATTERNS_DIR.mkdir(parents=True, exist_ok=True)
+    VAULT_PATTERNS.mkdir(parents=True, exist_ok=True)
+
+    new_patterns = []
+    for p in patterns:
+        name = p["hash"]
+        script_path = PATTERNS_DIR / f"{name}.sh"
+
+        if script_path.exists():
+            print(f"  Skip {name} — script already exists")
+            continue
+
+        print(f"  Compiling: {p['task'][:60]}...")
+
+        script = generate_script(p)
+        doc = generate_doc(p)
+
+        if DRY_RUN:
+            print(f"    Would write: {script_path}")
+        else:
+            script_path.write_text(script)
+            script_path.chmod(0o755)
+            # Write doc to vault
+            doc_path = VAULT_PATTERNS / f"{name}.md"
+            doc_path.write_text(doc)
+            print(f"    Written: {script_path}")
+
+        new_patterns.append(p)
+
+    if new_patterns:
+        update_patterns_yaml(new_patterns)
+        print(f"\nCompiled {len(new_patterns)} new patterns.")
+    else:
+        print("\nNo new patterns to compile.")
+
+    existing = list(PATTERNS_DIR.glob("*.sh")) if PATTERNS_DIR.exists() else []
+    print(f"\nTotal compiled patterns: {len(existing)}")
+
+
+if __name__ == "__main__":
+    main()

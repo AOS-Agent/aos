@@ -1,0 +1,99 @@
+# AOS Integration Registry
+# Each integration has a directory in core/integrations/ with a manifest.yaml
+# Activated during onboarding or later via Advisor recommendation
+
+integrations:
+
+  telegram:
+    name: Telegram
+    category: communication
+    status: available
+    priority: high
+    description: Primary messaging interface. Operator sends commands, agents respond.
+    provides:
+      - messaging (send/receive)
+      - slash commands
+      - heartbeat alerts
+    requires:
+      - bot_token (secret)
+      - chat_id (config)
+
+  whatsapp:
+    name: WhatsApp
+    category: communication
+    status: available
+    priority: medium
+    description: WhatsApp messaging via whatsmeow bridge. Read and send messages.
+    provides:
+      - messaging (send/receive)
+      - contact lookup
+    requires:
+      - whatsmeow service running
+      - QR code pairing (interactive)
+
+  email:
+    name: Email
+    category: communication
+    status: planned
+    priority: medium
+    description: Email reading and sending via IMAP/SMTP or API.
+    provides:
+      - inbox reading
+      - email sending
+      - auto-reply (with trust)
+    requires:
+      - email credentials (secret)
+      - IMAP/SMTP config
+
+  calendar:
+    name: Calendar
+    category: productivity
+    status: planned
+    priority: medium
+    description: Calendar access for scheduling and awareness.
+    provides:
+      - event reading
+      - schedule awareness
+      - conflict detection
+    requires:
+      - calendar API credentials
+
+  obsidian:
+    name: Obsidian Vault
+    category: knowledge
+    status: available
+    priority: high
+    description: Knowledge vault with daily notes, sessions, ideas, materials.
+    provides:
+      - note storage
+      - daily notes
+      - QMD search integration
+    requires:
+      - vault_path (config)
+
+  health:
+    name: HealthKit Sync
+    category: personal
+    status: available
+    priority: low
+    description: Health metrics from iOS via HealthSync app.
+    provides:
+      - sleep data
+      - activity metrics
+      - mood/energy tracking
+    requires:
+      - HealthSync iOS app
+      - sync endpoint
+
+  superwhisper:
+    name: SuperWhisper
+    category: input
+    status: planned
+    priority: low
+    description: Voice-to-text transcription for quick captures.
+    provides:
+      - voice input
+      - transcription
+    requires:
+      - SuperWhisper app installed
+      - hotkey configured

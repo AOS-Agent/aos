@@ -1,0 +1,22 @@
+#!/bin/bash
+# Re-index all QMD collections and embed new content.
+# Runs via cron every 30 minutes.
+#
+# QMD indexes ~/vault/ for hybrid search (BM25 + semantic + reranking).
+# Used by the recall skill and Advisor agent.
+
+set -e
+
+export PATH="/opt/homebrew/bin:/Users/agentalhadi/.bun/bin:$PATH"
+
+command -v qmd >/dev/null 2>&1 || { echo "ERROR: qmd not found in PATH"; exit 1; }
+
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] qmd-reindex starting"
+
+# Re-scan all collections for new/changed/deleted files
+qmd update
+
+# Embed any new chunks that need vectors
+qmd embed
+
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] qmd-reindex complete"

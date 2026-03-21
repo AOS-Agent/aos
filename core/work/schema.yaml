@@ -1,0 +1,104 @@
+# Work System — Data Schema Reference
+# Version: 1.0
+#
+# This defines the canonical format for all work entities.
+# User data lives at ~/.aos-v2/work/ (never in this repo).
+# Progressive: only id, title, status are required. Everything else is optional.
+
+# --- Scale Modes ---
+# Small  (< 50 tasks):  Single work.yaml with everything
+# Medium (50-500 tasks): One file per project + global work.yaml
+# Large  (500+ tasks):   Full directory structure
+#
+# The system auto-detects mode based on what files exist.
+# Upgrade path is additive — never restructure.
+
+# --- Status Model ---
+# inbox → todo → active → done
+#                  ↓
+#               waiting → (back to active when unblocked)
+# Any status → cancelled
+
+# --- Priority Model ---
+# 1 = Urgent    — Drop everything. Consequences if not done today.
+# 2 = High      — This week. Important but not emergency.
+# 3 = Normal    — This cycle/sprint. Standard work.
+# 4 = Low       — When capacity allows. Nice to have.
+# 0 = Unset     — Not yet triaged.
+
+entities:
+
+  task:
+    required:
+      id: string           # Unique ID (t1, t2, ...)
+      title: string         # What needs doing
+      status: enum          # inbox | todo | active | waiting | done | cancelled
+    optional:
+      priority: integer     # 0-4 (see above)
+      project: string       # Project ID or null
+      goal: string          # Goal ID or null
+      assignee: string      # Person name, agent ID, or null
+      assignee_type: enum   # human | agent
+      created: date         # ISO date
+      due: date             # ISO date or null
+      started: datetime     # When moved to active
+      completed: datetime   # When moved to done
+      source: enum          # manual | email | message | calendar | agent | cron | session
+      source_ref: string    # Session ID, email ID, etc.
+      context: string       # GTD context (@computer, @phone, @errands)
+      energy: enum          # high | medium | low
+      estimate: string      # Duration estimate (30m, 2h, 1d)
+      actual: string        # Actual duration
+      blocked_by: list      # Task IDs this is blocked by
+      blocks: list          # Task IDs this blocks
+      tags: list            # Freeform tags
+      notes: string         # Additional context
+
+  project:
+    required:
+      id: string
+      title: string
+      status: enum          # draft | active | paused | completed | cancelled
+    optional:
+      goal: string          # Parent goal ID
+      appetite: string      # Time budget (2w, 1m)
+      done_when: string     # Acceptance criteria
+      started: date
+      due: date
+      owner: string
+      progress: float       # 0.0-1.0, auto-calculated from tasks
+
+  goal:
+    required:
+      id: string
+      title: string
+      status: enum          # active | paused | completed | cancelled
+    optional:
+      area: string          # Parent area ID
+      type: enum            # committed | aspirational
+      timeframe:
+        start: date
+        end: date
+      key_results: list     # {description, target, current, unit}
+      progress: float       # Auto-calculated from key results
+      weight: float         # Relative priority (0.0-1.0)
+
+  thread:
+    required:
+      id: string
+      title: string
+      status: enum          # exploring | active | paused | promoted | abandoned
+    optional:
+      started: date
+      sessions: list        # Session IDs that contributed
+      notes: string
+      promoted_to: string   # Project ID if promoted
+
+  inbox_item:
+    required:
+      id: string
+      text: string          # Raw capture text
+      captured: datetime
+    optional:
+      source: enum          # manual | email | message | voice
+      confidence: float     # 0.0-1.0, how likely this is actionable

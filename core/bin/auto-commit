@@ -1,0 +1,120 @@
+#!/bin/bash
+# Auto-commit — saves work to git so nothing is ever lost.
+# Commits ~/aosv2/ (system) and ~/vault/ (knowledge).
+# Never stages sensitive files.
+#
+# Usage: auto-commit [cron|clear|end|bridge]
+
+EVENT="${1:-auto}"
+
+LOG="$HOME/.aos-v2/logs/auto-commit.log"
+mkdir -p "$(dirname "$LOG")"
+
+log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG"; }
+
+# Concurrency lock
+LOCKFILE="/tmp/aos-auto-commit.lock"
+if [ -f "$LOCKFILE" ]; then
+    LOCK_AGE=$(( $(date +%s) - $(stat -f %m "$LOCKFILE" 2>/dev/null || echo 0) ))
+    if [ "$LOCK_AGE" -lt 30 ]; then
+        log "SKIP: another commit in progress (lock age: ${LOCK_AGE}s)"
+        exit 0
+    fi
+fi
+touch "$LOCKFILE"
+trap 'rm -f "$LOCKFILE"' EXIT
+
+# Sensitive file patterns to never stage
+UNSAFE_PATTERNS=(".env" "secret-key" "*.pem" "*.key" "agent.keychain" "credentials")
+
+commit_repo() {
+    local repo_path="$1"
+    local repo_name="$2"
+
+    cd "$repo_path" 2>/dev/null || return 0
+
+    # Must be a git repo
+    git rev-parse --is-inside-work-tree &>/dev/null || return 0
+
+    # Skip if opted out
+    [ -f "$repo_path/.no-auto-commit" ] && return 0
+
+    # Skip if nothing changed
+    [ -z "$(git status --porcelain 2>/dev/null)" ] && return 0
+
+    # Stage files individually, excluding sensitive patterns
+    local staged=0
+    local skipped=""
+
+    while IFS= read -r line; do
+        status="${line:0:2}"
+        file="${line:3}"
+
+        # Stage deletions directly
+        if [[ "$status" == " D" || "$status" == "D " ]]; then
+            git add "$file" 2>/dev/null
+            staged=$((staged + 1))
+            continue
+        fi
+
+        # Check against unsafe patterns
+        skip=false
+        for pattern in "${UNSAFE_PATTERNS[@]}"; do
+            case "$file" in
+                *$pattern*) skip=true; skipped="$skipped $file"; break ;;
+            esac
+        done
+
+        if [ "$skip" = false ]; then
+            git add "$file" 2>/dev/null
+            staged=$((staged + 1))
+        fi
+    done < <(git status --porcelain 2>/dev/null)
+
+    # Nothing staged after filtering
+    git diff --cached --quiet && return 0
+
+    if [ -n "$skipped" ]; then
+        log "[$repo_name] EXCLUDED:$skipped"
+    fi
+
+    # Build commit message
+    local files
+    files=$(git diff --cached --name-only | head -5 | xargs -I{} basename {} | tr '\n' ',' | sed 's/,$//')
+
+    case "$EVENT" in
+        clear)  prefix="checkpoint" ;;
+        end)    prefix="session end" ;;
+        bridge) prefix="bridge" ;;
+        cron)   prefix="auto" ;;
+        *)      prefix="auto" ;;
+    esac
+
+    local msg="${prefix}: ${files}"
+
+    if git commit -m "$msg" --quiet 2>>"$LOG"; then
+        local hash
+        hash=$(git rev-parse --short HEAD)
+        log "[$repo_name] OK [$hash] ${prefix}: ${staged} file(s) — ${files}"
+    else
+        log "[$repo_name] FAIL: git commit failed"
+    fi
+}
+
+# ── Repos to auto-commit ──────────────────────────────────────────────────
+
+commit_repo "$HOME/aosv2" "aosv2"
+commit_repo "$HOME/vault" "vault"
+
+# Also commit any registered project repos (if they exist and have changes)
+if [ -f "$HOME/aosv2/config/state.yaml" ]; then
+    # Quick grep for project paths — no YAML parser needed
+    for proj_dir in "$HOME/nuchay" "$HOME/chief-ios-app"; do
+        if [ -d "$proj_dir/.git" ]; then
+            proj_name=$(basename "$proj_dir")
+            commit_repo "$proj_dir" "$proj_name"
+        fi
+    done
+fi
+
+log "auto-commit complete (event=$EVENT)"

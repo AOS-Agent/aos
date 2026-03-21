@@ -1,0 +1,124 @@
+# AOS v2 — Scheduled Jobs
+# Read by ~/aosv2/core/bin/scheduler every 5 minutes
+#
+# Schedule types:
+#   every: 5m / 30m / 1h / 2h      — interval-based
+#   at: "HH:MM"                    — daily at this time
+#   weekday: sunday                 — with `at:`, once per week
+#   monthday: 1                    — with `at:`, once per month
+#   active_hours: "08:00-20:00"    — only run during these hours (for `every:`)
+#   enabled: false                 — skip this job entirely
+#
+# All scripts are idempotent — safe to run manually anytime.
+
+jobs:
+  # ── Tier 1: System breaks without these ─────────────────────────────────────
+
+  watchdog:
+    command: bash ~/aosv2/core/bin/watchdog
+    every: 5m
+    timeout: 60
+    # ping: https://hc-ping.com/UUID  # add after Healthchecks.io setup
+
+  auto-commit:
+    command: bash ~/aosv2/core/bin/auto-commit cron
+    every: 30m
+    timeout: 120
+    enabled: false  # enable after Part 6 (port auto-commit)
+    # ping: https://hc-ping.com/UUID
+
+  qmd-reindex:
+    command: bash ~/aosv2/core/bin/qmd-reindex
+    every: 30m
+    timeout: 120
+
+  session-export:
+    command: python3 ~/aosv2/core/bin/session-export
+    every: 2h
+    timeout: 300
+    # ping: https://hc-ping.com/UUID
+
+  rotate-logs:
+    command: bash ~/aosv2/core/bin/rotate-logs
+    at: "03:00"
+    timeout: 60
+    enabled: false  # enable after Part 6 (port rotate-logs)
+
+  compile-daily:
+    command: python3 ~/aosv2/core/bin/compile-daily
+    at: "23:30"
+    timeout: 120
+
+  # ── Tier 2: System is dumber without these ───────────────────────────────────
+
+  inbox-collect:
+    command: python3 ~/aosv2/core/bin/inbox-collect
+    every: 30m
+    timeout: 120
+    enabled: false  # needs porting from v1
+
+  session-analysis:
+    command: python3 ~/aosv2/core/bin/session-analysis
+    at: "22:00"
+    weekday: sunday
+    timeout: 180
+
+  weekly-digest:
+    command: python3 ~/aosv2/core/bin/weekly-digest
+    at: "20:00"
+    weekday: sunday
+    timeout: 300
+    enabled: false  # needs porting from v1
+
+  stale-detector:
+    command: python3 ~/aosv2/core/bin/stale-detector
+    at: "08:00"
+    timeout: 60
+    enabled: false  # needs building (new script)
+
+  # ── Tier 3: System becomes proactive ────────────────────────────────────────
+
+  morning-context:
+    command: python3 ~/aosv2/core/bin/morning-context
+    at: "06:30"
+    timeout: 60
+    enabled: false  # needs building (new script)
+
+  email-digest:
+    command: python3 ~/aosv2/core/bin/email-digest
+    at: "07:30"
+    timeout: 120
+    enabled: false  # needs building + email access configured
+
+  nightly-pipeline:
+    command: python3 ~/aosv2/core/bin/nightly-pipeline
+    at: "23:00"
+    timeout: 600
+    enabled: false  # needs building (new script)
+
+  compile-patterns:
+    command: python3 ~/aosv2/core/bin/compile-patterns
+    at: "04:00"
+    timeout: 120
+    enabled: false  # needs execution logging infrastructure
+
+  meeting-prep:
+    command: python3 ~/aosv2/core/bin/meeting-prep
+    every: 15m
+    active_hours: "08:00-20:00"
+    timeout: 60
+    enabled: false  # needs building + calendar integration
+
+  monthly-review:
+    command: python3 ~/aosv2/core/bin/monthly-review
+    at: "10:00"
+    monthday: 1
+    timeout: 300
+    enabled: false  # needs 4+ weekly digests first
+
+  # ── Test ─────────────────────────────────────────────────────────────────────
+
+  test-echo:
+    command: echo "scheduler is alive"
+    every: 5m
+    timeout: 10

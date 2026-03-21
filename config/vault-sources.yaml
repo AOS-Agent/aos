@@ -1,0 +1,65 @@
+# Vault Daily Log — Collector Registry
+#
+# Each collector pulls data from a source and contributes a section
+# to the daily log at ~/vault/log/days/YYYY-MM-DD.md
+#
+# Collectors are source-agnostic. The compile-daily script iterates
+# over enabled collectors and writes what's available. No rigid schema.
+# If a source has no data for a given day, its section is omitted.
+
+collectors:
+  work:
+    source: ~/.aos-v2/work/work.yaml
+    type: work-engine
+    section: Work
+    enabled: true
+    description: "Tasks started, completed, added today"
+
+  sessions:
+    source: ~/.aos-v2/logs/sessions.jsonl
+    type: jsonl-filter
+    section: Sessions
+    enabled: true
+    description: "Claude Code sessions with duration and project"
+
+  session_exports:
+    source: ~/vault/ops/sessions/
+    type: markdown-dir
+    section: Sessions
+    enabled: true
+    description: "Exported session summaries for the day"
+
+  health:
+    source: ~/aos/data/health/
+    type: health-json
+    section: Health
+    enabled: true
+    description: "Sleep, steps, heart rate from HealthKit sync"
+
+  inbox:
+    source: ~/.aos-v2/work/work.yaml#inbox
+    type: work-engine
+    section: Ideas & Captures
+    enabled: true
+    description: "Ideas captured during the day"
+
+  calendar:
+    source: applescript
+    type: calendar
+    section: Schedule
+    enabled: false
+    description: "Calendar events for the day"
+
+  email:
+    source: applescript
+    type: mail
+    section: Communications
+    enabled: false
+    description: "Email activity summary"
+
+  whatsapp:
+    source: http://127.0.0.1:7601
+    type: whatsapp-api
+    section: Communications
+    enabled: false
+    description: "WhatsApp message counts and contacts"

@@ -1,0 +1,80 @@
+# Telegram Integration Manifest
+# This is the reference pattern for all AOS integrations.
+
+name: Telegram
+version: "1.0"
+category: communication
+
+description: >
+  Primary messaging interface between operator and AOS.
+  Operator sends commands via Telegram, agents respond.
+  Includes heartbeat monitoring and slash command routing.
+
+# What this integration provides to the system
+provides:
+  messaging:
+    type: bidirectional
+    description: Send and receive messages with the operator
+  commands:
+    type: input
+    description: Slash commands routed to skills and agents
+  heartbeat:
+    type: monitoring
+    description: Periodic alive signal with optional status
+
+# What this integration needs to function
+requires:
+  secrets:
+    - key: TELEGRAM_BOT_TOKEN
+      store: keychain
+      description: Bot token from @BotFather
+    - key: TELEGRAM_CHAT_ID
+      store: keychain
+      description: Operator's chat ID for auth
+  services:
+    - name: bridge
+      type: launchagent
+      plist: com.agent.bridge
+  config:
+    - key: telegram.bot_username
+      file: ~/.aos-v2/services/bridge/config.yaml
+
+# How to verify this integration is working
+health:
+  checks:
+    - name: bridge_running
+      command: "launchctl list | grep com.agent.bridge"
+      expect: running
+    - name: bot_reachable
+      command: "curl -s https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getMe"
+      expect: '"ok":true'
+    - name: heartbeat_recent
+      command: "find ~/.aos-v2/services/bridge/ -name 'heartbeat.json' -mmin -5"
+      expect: non-empty
+
+# Layers this integration touches
+layers:
+  - interface    # Telegram is a user interface
+  - services     # Bridge runs as a LaunchAgent
+  - integrations # This manifest
+
+# Setup steps (run by onboarding agent or manually)
+setup:
+  steps:
+    - description: Create Telegram bot via @BotFather
+      type: interactive
+      instruction: "Message @BotFather on Telegram, /newbot, save the token"
+    - description: Store bot token
+      type: command
+      command: "agent-secret set TELEGRAM_BOT_TOKEN <token>"
+    - description: Get chat ID
+      type: interactive
+      instruction: "Send /start to your bot, then check updates API for chat_id"
+    - description: Store chat ID
+      type: command
+      command: "agent-secret set TELEGRAM_CHAT_ID <chat_id>"
+    - description: Install bridge service
+      type: command
+      command: "core/integrations/telegram/install.sh"
+    - description: Verify
+      type: health_check

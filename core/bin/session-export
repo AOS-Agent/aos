@@ -1,0 +1,372 @@
+#!/usr/bin/env python3
+"""Export Claude Code session transcripts to vault as searchable markdown notes.
+
+Reads JSONL session files from ~/.claude/projects/ and writes clean,
+structured summaries to ~/vault/ops/sessions/.
+
+The 10x version: uses session structure (timestamps, tools, file paths)
+to generate real summaries, not raw message dumps.
+
+Run via cron every 2h or manually:
+  python3 ~/aosv2/core/bin/session-export [--regenerate]
+"""
+
+import json
+import os
+import re
+import sys
+import time as _time
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Optional
+
+VAULT_SESSIONS = Path.home() / "vault" / "ops" / "sessions"
+CLAUDE_PROJECTS = Path.home() / ".claude" / "projects"
+EXPORTED_TRACKER = Path.home() / ".aos-v2" / "logs" / "exported-sessions.json"
+
+REGENERATE = "--regenerate" in sys.argv
+
+# Project name overrides for special cases only.
+# Default behavior: strip the '-Users-{username}-' prefix automatically.
+# Add entries here only when the directory name doesn't produce a good result.
+PROJECT_ALIASES = {
+    "-Users-agentalhadi": "home",  # root home dir has no project segment after stripping
+}
+
+# Messages to skip entirely — system noise, not real conversation
+SKIP_PATTERNS = [
+    r'^<local-command-caveat>',
+    r'^<command-name>',
+    r'^<command-message>',
+    r'^<local-command-stdout>',
+    r'^<task-notification>',
+    r'^\s*$',
+    r'^This session is being continued from a previous conversation',
+]
+
+SKIP_RE = re.compile('|'.join(SKIP_PATTERNS), re.MULTILINE)
+
+
+def load_exported() -> set:
+    try:
+        if EXPORTED_TRACKER.exists():
+            return set(json.loads(EXPORTED_TRACKER.read_text()))
+    except Exception:
+        pass
+    return set()
+
+
+def prune_exported(exported: set) -> set:
+    """Remove entries for session files that no longer exist on disk."""
+    return {path for path in exported if Path(path).exists()}
+
+
+def save_exported(exported: set):
+    EXPORTED_TRACKER.parent.mkdir(parents=True, exist_ok=True)
+    data = json.dumps(sorted(exported))
+    # If the tracker has grown beyond 500KB, prune stale entries first
+    if len(data.encode()) > 500 * 1024:
+        exported = prune_exported(exported)
+        data = json.dumps(sorted(exported))
+    EXPORTED_TRACKER.write_text(data)
+
+
+def clean_project_name(raw: str) -> str:
+    """Convert directory path to human-readable project name."""
+    if raw in PROJECT_ALIASES:
+        return PROJECT_ALIASES[raw]
+    # Strip common prefixes
+    cleaned = re.sub(r'^-Users-\w+-', '', raw)
+    return cleaned if cleaned else raw
+
+
+def is_real_message(text: str) -> bool:
+    """Filter out system messages, XML noise, and empty content."""
+    if not text or len(text.strip()) < 3:
+        return False
+    if SKIP_RE.match(text.strip()):
+        return False
+    return True
+
+
+def extract_first_real_line(text: str) -> str:
+    """Get the first meaningful line from a message, stripping noise."""
+    for line in text.split('\n'):
+        line = line.strip()
+        if line and is_real_message(line):
+            # Strip markdown formatting for cleaner display
+            line = re.sub(r'^#+\s*', '', line)
+            line = re.sub(r'\*\*([^*]+)\*\*', r'\1', line)
+            return line[:120]
+    return ""
+
+
+def parse_session(jsonl_path: Path) -> Optional[dict]:
+    """Parse a JSONL session file, extracting structured information."""
+    messages = []
+    try:
+        for line in jsonl_path.read_text().splitlines():
+            if not line.strip():
+                continue
+            try:
+                msg = json.loads(line)
+                messages.append(msg)
+            except json.JSONDecodeError:
+                continue
+    except Exception:
+        return None
+
+    if not messages:
+        return None
+
+    # Extract structured data
+    real_user_messages = []
+    assistant_messages = []
+    files_touched = set()
+    tools_used = set()
+    timestamps = []
+    projects_from_paths = set()
+
+    for msg in messages:
+        msg_type = msg.get("type", "")
+        message = msg.get("message", {})
+        ts = msg.get("timestamp")
+        if ts:
+            timestamps.append(ts)
+
+        if msg_type == "user":
+            content = message.get("content", "")
+            texts = []
+            if isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        texts.append(block.get("text", ""))
+            elif isinstance(content, str):
+                texts.append(content)
+
+            for text in texts:
+                if is_real_message(text):
+                    real_user_messages.append(text)
+
+        elif msg_type == "assistant":
+            content = message.get("content", "")
+            if isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict):
+                        if block.get("type") == "text":
+                            text = block.get("text", "")
+                            if text.strip():
+                                assistant_messages.append(text)
+                        elif block.get("type") == "tool_use":
+                            tool_name = block.get("name", "")
+                            tools_used.add(tool_name)
+                            inp = block.get("input", {})
+                            for key in ("file_path", "path"):
+                                val = inp.get(key, "")
+                                if isinstance(val, str) and val.startswith("/") and "." in val.split("/")[-1]:
+                                    # Only real file paths, not URLs
+                                    if not val.startswith("//") and "/tmp/" not in val:
+                                        files_touched.add(val)
+                                        # Detect project from file path
+                                        if "/nuchay/" in val:
+                                            projects_from_paths.add("nuchay")
+                                        elif "/chief-ios-app/" in val:
+                                            projects_from_paths.add("chief-app")
+                                        elif "/aos/" in val or "/aosv2/" in val:
+                                            projects_from_paths.add("aos")
+
+    if not real_user_messages:
+        return None
+
+    # Calculate timing
+    project_dir = jsonl_path.parent.name
+    project = clean_project_name(project_dir)
+
+    # Override with detected project if we found one in file paths
+    if projects_from_paths:
+        project = sorted(projects_from_paths)[0]
+
+    # Compute start time and duration from timestamps
+    start_time = None
+    end_time = None
+    if timestamps:
+        try:
+            parsed_ts = []
+            for t in timestamps:
+                if isinstance(t, (int, float)):
+                    parsed_ts.append(datetime.fromtimestamp(t / 1000 if t > 1e12 else t))
+                elif isinstance(t, str):
+                    parsed_ts.append(datetime.fromisoformat(t.replace("Z", "+00:00").replace("+00:00", "")))
+            if parsed_ts:
+                start_time = min(parsed_ts)
+                end_time = max(parsed_ts)
+        except Exception:
+            pass
+
+    if not start_time:
+        start_time = datetime.fromtimestamp(jsonl_path.stat().st_mtime)
+
+    duration_min = 0
+    if start_time and end_time:
+        duration_min = max(1, int((end_time - start_time).total_seconds() / 60))
+
+    # Build a real summary from what happened
+    summary_parts = []
+
+    # What the user asked for (first real message, cleaned)
+    first_ask = extract_first_real_line(real_user_messages[0]) if real_user_messages else ""
+    if first_ask:
+        summary_parts.append(f"**Started with**: {first_ask}")
+
+    # What files were worked on (deduplicated by filename)
+    if files_touched:
+        unique_files = set()
+        for f in files_touched:
+            name = f.split("/")[-1]
+            unique_files.add(name)
+        top_files = sorted(unique_files)[:8]
+        summary_parts.append(f"**Files**: {', '.join(f'`{f}`' for f in top_files)}")
+
+    # What tools were used
+    if tools_used:
+        summary_parts.append(f"**Tools**: {', '.join(sorted(tools_used))}")
+
+    # Last assistant message — what was the outcome?
+    if assistant_messages:
+        last = assistant_messages[-1]
+        outcome = extract_first_real_line(last)
+        if outcome and outcome != first_ask:
+            summary_parts.append(f"**Ended with**: {outcome}")
+
+    return {
+        "date": start_time.strftime("%Y-%m-%d"),
+        "time": start_time.strftime("%H:%M"),
+        "project": project,
+        "session_id": jsonl_path.stem,
+        "user_messages": real_user_messages,
+        "summary_parts": summary_parts,
+        "first_ask": first_ask,
+        "files_touched": sorted(files_touched)[:20],
+        "tools_used": sorted(tools_used),
+        "message_count": len(real_user_messages),
+        "duration_min": duration_min,
+    }
+
+
+def generate_title(session: dict) -> str:
+    """Generate a clean, descriptive title for the session."""
+    first = session.get("first_ask", "")
+    if not first:
+        return f"Session — {session['project']}"
+
+    # Clean up for title use
+    title = first[:70]
+    # Remove file paths from title
+    title = re.sub(r'~/\S+', '', title).strip()
+    # Remove quotes
+    title = title.replace('"', '').replace("'", "")
+    # Capitalize first letter
+    if title:
+        title = title[0].upper() + title[1:]
+    # Ellipsis if truncated
+    if len(first) > 70:
+        title += "..."
+
+    return title or f"Session — {session['project']}"
+
+
+def write_session_note(session: dict) -> Path:
+    """Write a clean session summary to vault."""
+    date = session["date"]
+    sid_short = session["session_id"][:8]
+    filename = f"{date}-{sid_short}.md"
+    filepath = VAULT_SESSIONS / filename
+
+    title = generate_title(session)
+    safe_title = title.replace('"', "'")
+
+    # Duration display
+    dur = session["duration_min"]
+    dur_str = f"{dur} min" if dur > 0 else "< 1 min"
+
+    # Build summary
+    summary = "\n".join(session["summary_parts"]) if session["summary_parts"] else "(no summary available)"
+
+    # Files list
+    if session["files_touched"]:
+        files_list = "\n".join(f"- `{f.split('/')[-1]}`" for f in session["files_touched"])
+    else:
+        files_list = "(none tracked)"
+
+    content = (
+        f"---\n"
+        f'date: "{session["date"]}"\n'
+        f'time: "{session["time"]}"\n'
+        f'type: "session-export"\n'
+        f'title: "{safe_title}"\n'
+        f'project: "{session["project"]}"\n'
+        f'session_id: "{session["session_id"]}"\n'
+        f"message_count: {session['message_count']}\n"
+        f"duration_min: {dur}\n"
+        f'tags: [ops, session, {session["project"]}]\n'
+        f"---\n\n"
+        f"# {title}\n\n"
+        f"**Project**: {session['project']} | "
+        f"**Messages**: {session['message_count']} | "
+        f"**Duration**: {dur_str}\n\n"
+        f"## Summary\n\n"
+        f"{summary}\n\n"
+        f"## Files\n\n"
+        f"{files_list}\n"
+    )
+
+    filepath.parent.mkdir(parents=True, exist_ok=True)
+    filepath.write_text(content)
+    return filepath
+
+
+def main():
+    exported = load_exported()
+    new_count = 0
+
+    if REGENERATE:
+        print("Regenerating all session exports...")
+        exported = set()
+
+    if not CLAUDE_PROJECTS.exists():
+        print("No Claude projects directory found.")
+        return
+
+    for jsonl_file in CLAUDE_PROJECTS.rglob("*.jsonl"):
+        file_key = str(jsonl_file)
+        if file_key in exported:
+            continue
+
+        # Skip files modified in the last 5 minutes (still being written to)
+        age_seconds = _time.time() - jsonl_file.stat().st_mtime
+        if age_seconds < 300:
+            continue
+
+        session = parse_session(jsonl_file)
+        if session is None:
+            exported.add(file_key)
+            continue
+
+        if session["message_count"] < 2:
+            exported.add(file_key)
+            continue
+
+        filepath = write_session_note(session)
+        exported.add(file_key)
+        new_count += 1
+        print(f"  Exported: {filepath.name}")
+
+    save_exported(exported)
+    if new_count > 0:
+        print(f"\nExported {new_count} new session(s) to {VAULT_SESSIONS}")
+    else:
+        print("No new sessions to export.")
+
+
+if __name__ == "__main__":
+    main()

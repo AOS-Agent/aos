@@ -1,0 +1,366 @@
+#!/opt/homebrew/bin/python3
+"""
+AOS v2 Scheduler — core automation engine
+Reads ~/aosv2/config/crons.yaml, runs due jobs, updates status.json.
+Designed to be invoked every 5 minutes by com.aos.scheduler LaunchAgent.
+"""
+
+import json
+import os
+import signal
+import subprocess
+import sys
+import time
+import urllib.request
+from datetime import datetime, timedelta
+from pathlib import Path
+
+try:
+    import yaml
+except ImportError:
+    print("[scheduler] ERROR: PyYAML not available", file=sys.stderr)
+    sys.exit(0)
+
+# ── Paths ─────────────────────────────────────────────────────────────────────
+
+HOME = Path.home()
+CRONS_YAML = HOME / "aosv2" / "config" / "crons.yaml"
+LOGS_DIR   = HOME / ".aos-v2" / "logs" / "crons"
+LOCKS_DIR  = LOGS_DIR / "locks"
+STATUS_FILE = LOGS_DIR / "status.json"
+
+DEFAULT_TIMEOUT = 120  # seconds
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def ts() -> str:
+    """ISO-format timestamp without microseconds."""
+    return datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+
+def log(msg: str):
+    print(f"[scheduler {ts()}] {msg}", flush=True)
+
+def parse_interval(value: str) -> int:
+    """Convert '5m', '30m', '2h', '4h' → seconds. Returns 0 on failure."""
+    value = str(value).strip()
+    if value.endswith("m"):
+        return int(value[:-1]) * 60
+    if value.endswith("h"):
+        return int(value[:-1]) * 3600
+    try:
+        return int(value)
+    except ValueError:
+        return 0
+
+def parse_time(value: str):
+    """Parse 'HH:MM' → (hour, minute) tuple. Returns None on failure."""
+    try:
+        h, m = value.strip().split(":")
+        return int(h), int(m)
+    except Exception:
+        return None
+
+def parse_active_hours(value: str):
+    """
+    Parse 'HH:MM-HH:MM' → (start_hour, start_min, end_hour, end_min).
+    Returns None on failure.
+    """
+    try:
+        start_str, end_str = value.strip().split("-")
+        sh, sm = map(int, start_str.split(":"))
+        eh, em = map(int, end_str.split(":"))
+        return sh, sm, eh, em
+    except Exception:
+        return None
+
+def within_active_hours(active_hours_str: str, now: datetime) -> bool:
+    """Return True if now is within the active hours window."""
+    parsed = parse_active_hours(active_hours_str)
+    if parsed is None:
+        return True  # malformed → don't block the job
+    sh, sm, eh, em = parsed
+    start = now.replace(hour=sh, minute=sm, second=0, microsecond=0)
+    end   = now.replace(hour=eh, minute=em, second=0, microsecond=0)
+    if end < start:  # crosses midnight
+        return now >= start or now <= end
+    return start <= now <= end
+
+WEEKDAY_MAP = {
+    "monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3,
+    "friday": 4, "saturday": 5, "sunday": 6,
+}
+
+# ── Config loading ─────────────────────────────────────────────────────────────
+
+def load_crons() -> dict:
+    if not CRONS_YAML.exists():
+        log(f"ERROR: {CRONS_YAML} not found — nothing to run")
+        sys.exit(0)
+    try:
+        with open(CRONS_YAML) as f:
+            data = yaml.safe_load(f)
+        jobs = data.get("jobs", {})
+        if not isinstance(jobs, dict):
+            log("ERROR: 'jobs' key missing or not a dict in crons.yaml")
+            sys.exit(0)
+        return jobs
+    except yaml.YAMLError as exc:
+        log(f"ERROR: Could not parse crons.yaml — {exc}")
+        sys.exit(0)
+
+# ── Status file ────────────────────────────────────────────────────────────────
+
+def load_status() -> dict:
+    if not STATUS_FILE.exists():
+        return {}
+    try:
+        with open(STATUS_FILE) as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            raise ValueError("root is not a dict")
+        return data
+    except Exception as exc:
+        log(f"WARNING: status.json corrupted ({exc}) — starting fresh")
+        return {}
+
+def save_status(status: dict):
+    STATUS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = STATUS_FILE.with_suffix(".tmp")
+    with open(tmp, "w") as f:
+        json.dump(status, f, indent=2)
+    tmp.replace(STATUS_FILE)
+
+# ── Schedule evaluation ────────────────────────────────────────────────────────
+
+def is_due(name: str, job: dict, status: dict, now: datetime) -> bool:
+    """Return True if this job should run right now."""
+    last_run_str = status.get(name, {}).get("last_run")
+    last_run = None
+    if last_run_str:
+        try:
+            last_run = datetime.fromisoformat(last_run_str)
+        except ValueError:
+            last_run = None
+
+    # `every:` — interval-based
+    if "every" in job:
+        interval = parse_interval(str(job["every"]))
+        if interval <= 0:
+            log(f"WARNING: {name}: could not parse every='{job['every']}'")
+            return False
+
+        # active_hours check
+        if "active_hours" in job:
+            if not within_active_hours(str(job["active_hours"]), now):
+                return False
+
+        if last_run is None:
+            return True  # never ran → run now
+        elapsed = (now - last_run).total_seconds()
+        return elapsed >= interval
+
+    # `at:` — time-of-day based
+    if "at" in job:
+        parsed = parse_time(str(job["at"]))
+        if parsed is None:
+            log(f"WARNING: {name}: could not parse at='{job['at']}'")
+            return False
+        at_h, at_m = parsed
+        now_minutes = now.hour * 60 + now.minute
+        target_minutes = at_h * 60 + at_m
+        # 5-minute window: target in [now-4, now]
+        if not (target_minutes <= now_minutes <= target_minutes + 4):
+            return False
+
+        # weekday check
+        if "weekday" in job:
+            wd = str(job["weekday"]).lower()
+            required_wd = WEEKDAY_MAP.get(wd)
+            if required_wd is None:
+                log(f"WARNING: {name}: unknown weekday='{wd}'")
+                return False
+            if now.weekday() != required_wd:
+                return False
+            # only once per week: check last_run is not this week
+            if last_run is not None:
+                days_since = (now.date() - last_run.date()).days
+                if days_since < 7:
+                    return False
+            return True
+
+        # monthday check
+        if "monthday" in job:
+            try:
+                required_day = int(job["monthday"])
+            except (TypeError, ValueError):
+                log(f"WARNING: {name}: invalid monthday='{job['monthday']}'")
+                return False
+            if now.day != required_day:
+                return False
+            # only once per month
+            if last_run is not None:
+                if last_run.year == now.year and last_run.month == now.month:
+                    return False
+            return True
+
+        # daily `at:` — only once per day
+        if last_run is not None:
+            if last_run.date() == now.date():
+                return False
+        return True
+
+    log(f"WARNING: {name}: no 'every' or 'at' defined — skipping")
+    return False
+
+# ── Lock file ─────────────────────────────────────────────────────────────────
+
+def lock_path(name: str) -> Path:
+    return LOCKS_DIR / f"{name}.lock"
+
+def acquire_lock(name: str) -> bool:
+    """
+    Returns True if the lock was acquired (safe to proceed).
+    Returns False if another process is still running (skip).
+    """
+    LOCKS_DIR.mkdir(parents=True, exist_ok=True)
+    lpath = lock_path(name)
+
+    if lpath.exists():
+        try:
+            pid = int(lpath.read_text().strip())
+            os.kill(pid, 0)  # raises OSError if dead
+            log(f"{name}: lock held by pid {pid} — skipping")
+            return False
+        except (OSError, ValueError):
+            log(f"{name}: removing stale lock")
+            lpath.unlink(missing_ok=True)
+
+    lpath.write_text(str(os.getpid()))
+    return True
+
+def release_lock(name: str):
+    lock_path(name).unlink(missing_ok=True)
+
+# ── Job execution ─────────────────────────────────────────────────────────────
+
+def run_job(name: str, job: dict, status: dict):
+    command = job.get("command", "").strip()
+    if not command:
+        log(f"{name}: ERROR — no 'command' defined")
+        return
+
+    timeout = int(job.get("timeout", DEFAULT_TIMEOUT))
+    log_file = LOGS_DIR / f"{name}.log"
+
+    if not acquire_lock(name):
+        return
+
+    start_dt = datetime.now()
+    start_str = start_dt.strftime("%Y-%m-%d %H:%M:%S")
+
+    log(f"{name}: starting (timeout: {timeout}s)")
+
+    exit_code = 0
+    duration  = 0
+
+    try:
+        with open(log_file, "a") as lf:
+            lf.write(f"\n--- [{start_str}] START {name} (timeout: {timeout}s) ---\n")
+            lf.flush()
+
+            proc = subprocess.Popen(
+                command,
+                shell=True,
+                stdout=lf,
+                stderr=lf,
+                preexec_fn=os.setsid,  # process group for clean kill
+            )
+
+            try:
+                proc.wait(timeout=timeout)
+                exit_code = proc.returncode
+            except subprocess.TimeoutExpired:
+                log(f"{name}: TIMEOUT after {timeout}s — killing")
+                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+                time.sleep(2)
+                try:
+                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                proc.wait()
+                exit_code = -1
+
+            end_dt = datetime.now()
+            duration = int((end_dt - start_dt).total_seconds())
+            end_str = end_dt.strftime("%Y-%m-%d %H:%M:%S")
+
+            if exit_code == -1:
+                lf.write(f"--- [{end_str}] TIMEOUT {name} (exit: -1, duration: {duration}s) ---\n")
+            else:
+                lf.write(f"--- [{end_str}] END {name} (exit: {exit_code}, duration: {duration}s) ---\n")
+            lf.flush()
+
+    except Exception as exc:
+        log(f"{name}: ERROR running job — {exc}")
+        exit_code = -2
+        duration = int((datetime.now() - start_dt).total_seconds())
+    finally:
+        release_lock(name)
+
+    # Update status
+    entry = status.setdefault(name, {})
+    run_ts = start_dt.strftime("%Y-%m-%dT%H:%M:%S")
+    entry["last_run"]    = run_ts
+    entry["exit_code"]   = exit_code
+    entry["duration_s"]  = duration
+    entry["run_count"]   = entry.get("run_count", 0) + 1
+
+    if exit_code != 0:
+        entry["last_failure"] = run_ts
+    else:
+        if "last_failure" not in entry:
+            entry["last_failure"] = None
+
+    log(f"{name}: done (exit: {exit_code}, duration: {duration}s)")
+
+    # Ping healthchecks.io on success
+    if exit_code == 0 and "ping" in job:
+        ping_url = str(job["ping"]).strip()
+        try:
+            urllib.request.urlopen(ping_url, timeout=10)
+            log(f"{name}: pinged {ping_url}")
+        except Exception as exc:
+            log(f"{name}: WARNING — ping failed ({exc})")
+
+# ── Main ──────────────────────────────────────────────────────────────────────
+
+def main():
+    # Ensure directories exist
+    LOGS_DIR.mkdir(parents=True, exist_ok=True)
+    LOCKS_DIR.mkdir(parents=True, exist_ok=True)
+
+    jobs   = load_crons()
+    status = load_status()
+    now    = datetime.now()
+
+    log(f"scheduler tick — {len(jobs)} jobs defined")
+
+    ran = 0
+    for name, job in jobs.items():
+        if not isinstance(job, dict):
+            log(f"WARNING: job '{name}' is not a dict — skipping")
+            continue
+
+        # enabled: false → skip
+        if not job.get("enabled", True):
+            continue
+
+        if is_due(name, job, status, now):
+            run_job(name, job, status)
+            save_status(status)
+            ran += 1
+
+    log(f"scheduler done — {ran} job(s) ran")
+
+if __name__ == "__main__":
+    main()

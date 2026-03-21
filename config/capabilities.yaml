@@ -1,0 +1,264 @@
+# Capability Map — Tool Selection for Autonomous Execution
+#
+# For each target (app, interaction type), lists approaches in priority order.
+# The agent tries the first approach; if it fails, moves to the next.
+#
+# cost tiers:
+#   zero    — deterministic script/API, no LLM tokens
+#   low     — simple command generation, ~100 tokens
+#   medium  — accessibility tree + reasoning, ~500-1k tokens
+#   high    — OCR/screenshots + vision, ~1-2k tokens per action
+#   very-high — full vision loop (computer use), ~10-30k tokens
+
+apps:
+  Obsidian:
+    type: electron
+    approaches:
+      - method: cli
+        command: 'obsidian <command>'
+        examples: ["read note", "daily:read", "search", "tasks todo", "append"]
+        cost: zero
+        notes: "Full vault ops: read, write, search, tasks, tags, backlinks, properties, bases. Use 'silent' flag to avoid opening files. Run 'obsidian help' for all commands."
+      - method: uri
+        command: 'open "obsidian://daily"'
+        examples: ["open daily note in GUI"]
+        cost: zero
+        notes: "Only for opening files in the UI. Use CLI for read/write ops."
+      - method: rest-api
+        endpoint: "https://127.0.0.1:27124"
+        api_key: "bin/agent-secret get OBSIDIAN_REST_API_KEY"
+        cost: zero
+        notes: "JSON responses, good for scripts/crons. Use -sk with curl (self-signed cert). Auth: Bearer token."
+      - method: steer-ocr
+        command: 'steer see --app Obsidian --ocr --json'
+        cost: high
+        notes: "Last resort — Electron app, must use OCR"
+
+  Calendar:
+    type: native
+    approaches:
+      - method: applescript
+        cost: low
+        notes: "Full calendar CRUD via AppleScript"
+      - method: steer
+        command: 'steer see --app Calendar --json'
+        cost: medium
+        notes: "Native app — good accessibility tree"
+      - method: chrome
+        target: "calendar.google.com"
+        cost: high
+
+  Mail:
+    type: native
+    approaches:
+      - method: applescript
+        cost: low
+        notes: "Read, compose, search via AppleScript"
+      - method: steer
+        cost: medium
+        notes: "Native app — good accessibility tree"
+
+  Notes:
+    type: native
+    approaches:
+      - method: applescript
+        cost: low
+      - method: steer
+        cost: medium
+
+  Reminders:
+    type: native
+    approaches:
+      - method: applescript
+        cost: low
+      - method: steer
+        cost: medium
+
+  Safari:
+    type: native
+    approaches:
+      - method: applescript
+        cost: low
+        notes: "Can execute JS in tabs, read URLs, manage tabs"
+      - method: steer
+        cost: medium
+
+  Finder:
+    type: native
+    approaches:
+      - method: bash
+        cost: zero
+        notes: "ls, cp, mv, open — prefer CLI over GUI"
+      - method: applescript
+        cost: low
+      - method: steer
+        cost: medium
+
+  Terminal:
+    type: native
+    approaches:
+      - method: bash
+        cost: zero
+        notes: "Already in a terminal — just run commands"
+      - method: applescript
+        cost: low
+        notes: "Open new windows, run commands in tabs"
+
+  "System Settings":
+    type: native
+    approaches:
+      - method: applescript
+        cost: low
+        notes: "Can open specific panes via 'reveal anchor'"
+      - method: steer
+        cost: medium
+        notes: "103 elements typically — good accessibility"
+      - method: bash
+        cost: zero
+        notes: "Some settings via 'defaults write' commands"
+
+  "Google Chrome":
+    type: electron
+    approaches:
+      - method: chrome-mcp
+        cost: medium
+        notes: "Claude-in-Chrome MCP — DOM-level control"
+      - method: applescript
+        cost: low
+        notes: "Tab management, URL navigation, JS execution"
+      - method: steer-ocr
+        cost: high
+
+  "Visual Studio Code":
+    type: electron
+    approaches:
+      - method: cli
+        command: "code --goto {file}:{line}"
+        cost: zero
+        notes: "CLI for file ops, extensions, diff"
+      - method: steer-ocr
+        cost: high
+        notes: "Electron — empty accessibility tree"
+
+  Slack:
+    type: electron
+    approaches:
+      - method: api
+        cost: zero
+        notes: "Slack Web API — messages, channels, files"
+      - method: chrome
+        target: "app.slack.com"
+        cost: medium
+        notes: "Full web version — use Chrome MCP"
+      - method: steer-ocr
+        cost: high
+
+  Notion:
+    type: electron
+    approaches:
+      - method: api
+        cost: zero
+        notes: "Notion API — pages, databases, blocks"
+      - method: chrome
+        target: "notion.so"
+        cost: medium
+      - method: steer-ocr
+        cost: high
+
+  Telegram:
+    type: native
+    approaches:
+      - method: api
+        cost: zero
+        notes: "Telegram Bot API via bridge"
+      - method: steer
+        cost: medium
+        notes: "Native macOS app — decent accessibility"
+      - method: steer-ocr
+        cost: high
+
+  Discord:
+    type: electron
+    approaches:
+      - method: api
+        cost: zero
+        notes: "Discord Bot API"
+      - method: chrome
+        target: "discord.com"
+        cost: medium
+      - method: steer-ocr
+        cost: high
+
+  WhatsApp:
+    type: electron
+    approaches:
+      - method: chrome
+        target: "web.whatsapp.com"
+        cost: medium
+      - method: steer-ocr
+        cost: high
+
+# Interaction types (not app-specific)
+interactions:
+  web_page:
+    approaches:
+      - method: chrome-mcp
+        cost: medium
+        notes: "Claude-in-Chrome for any web page"
+      - method: steer-ocr
+        cost: high
+        notes: "Fallback if Chrome MCP can't reach the page"
+
+  file_operation:
+    approaches:
+      - method: bash
+        cost: zero
+      - method: applescript
+        cost: low
+
+  system_command:
+    approaches:
+      - method: bash
+        cost: zero
+      - method: applescript
+        cost: low
+
+  notification_read:
+    approaches:
+      - method: applescript
+        cost: low
+        notes: "Read Notification Center via System Events"
+      - method: steer
+        cost: medium
+        notes: "Click notification elements"
+
+  clipboard:
+    approaches:
+      - method: bash
+        command: "pbcopy / pbpaste"
+        cost: zero
+      - method: steer
+        command: "steer clipboard read/write"
+        cost: zero
+
+# Generic fallback chain for unknown apps
+_default:
+  approaches:
+    - method: bash
+      cost: zero
+      notes: "Is there a CLI for this?"
+    - method: applescript
+      cost: low
+      notes: "Is it a native macOS app?"
+    - method: steer
+      cost: medium
+      notes: "Can we read the accessibility tree?"
+    - method: steer-ocr
+      cost: high
+      notes: "Can we see and click via OCR?"
+    - method: chrome
+      cost: medium
+      notes: "Does a web version exist?"
+    - method: screenshot-and-reason
+      cost: very-high
+      notes: "Last resort — screenshot + Claude vision"

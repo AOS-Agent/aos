@@ -1,0 +1,333 @@
+#!/bin/bash
+# watchdog — checks AOS services, network, and disk every 5 minutes
+# Run by the scheduler (crons.yaml) or manually: bash ~/aosv2/core/bin/watchdog
+#
+# Tier 1: Service down → restart → notify Telegram (best-effort)
+# Tier 2: 3+ restarts in 24 hours (flapping) → escalate to technician via Listen
+# Also checks: Tailscale, internet, disk space
+
+# Never crash on any individual failure
+set +e
+
+AOSV2_DIR="$HOME/aosv2"
+AOS_DIR="$HOME/aos"  # v1 services still live here during migration
+STATE_DIR="$HOME/.aos-v2/logs/.watchdog"
+LOG_PREFIX="[$(date '+%Y-%m-%d %H:%M:%S')]"
+
+mkdir -p "$STATE_DIR"
+
+log() {
+    echo "$LOG_PREFIX $*"
+}
+
+# ── Telegram: best-effort, never crash if credentials missing ──────────────
+
+BOT_TOKEN=""
+CHAT_ID=""
+
+# Try v2 secret path first, fall back to v1
+if TOKEN_RAW=$("$AOSV2_DIR/core/bin/agent-secret" get TELEGRAM_BOT_TOKEN 2>/dev/null); then
+    BOT_TOKEN="$TOKEN_RAW"
+elif TOKEN_RAW=$("$AOS_DIR/bin/agent-secret" get TELEGRAM_BOT_TOKEN 2>/dev/null); then
+    BOT_TOKEN="$TOKEN_RAW"
+fi
+if CHAT_RAW=$("$AOSV2_DIR/core/bin/agent-secret" get TELEGRAM_CHAT_ID 2>/dev/null); then
+    CHAT_ID="$CHAT_RAW"
+elif CHAT_RAW=$("$AOS_DIR/bin/agent-secret" get TELEGRAM_CHAT_ID 2>/dev/null); then
+    CHAT_ID="$CHAT_RAW"
+fi
+
+notify() {
+    local msg="$1"
+    if [[ -z "$BOT_TOKEN" || -z "$CHAT_ID" ]]; then
+        log "NOTIFY (no token): $msg"
+        return 0
+    fi
+    curl -s --max-time 10 -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+        -H "Content-Type: application/json" \
+        -d "{\"chat_id\": ${CHAT_ID}, \"text\": \"${msg}\", \"parse_mode\": \"HTML\"}" \
+        > /dev/null 2>&1 || true
+}
+
+# ── State helpers ──────────────────────────────────────────────────────────
+
+check_state_change() {
+    local key="$1"
+    local new_val="$2"
+    local state_file="$STATE_DIR/${key}.state"
+    local prev="unknown"
+    if [[ -f "$state_file" ]]; then
+        prev=$(cat "$state_file" 2>/dev/null || echo "unknown")
+    fi
+    echo "$new_val" > "$state_file"
+    [[ "$prev" != "$new_val" ]]
+}
+
+record_restart() {
+    local name="$1"
+    local ts_file="$STATE_DIR/${name}.timestamps"
+    date '+%s' >> "$ts_file" 2>/dev/null || true
+}
+
+count_restarts_24h() {
+    local name="$1"
+    local ts_file="$STATE_DIR/${name}.timestamps"
+    local cutoff
+    cutoff=$(( $(date '+%s') - 86400 ))
+    local count=0
+    if [[ -f "$ts_file" ]]; then
+        while IFS= read -r ts; do
+            [[ -z "$ts" ]] && continue
+            if (( ts >= cutoff )); then
+                count=$(( count + 1 ))
+            fi
+        done < "$ts_file"
+        # Compact: drop old entries
+        awk -v cutoff="$cutoff" '$1 >= cutoff' "$ts_file" > "${ts_file}.tmp" 2>/dev/null \
+            && mv "${ts_file}.tmp" "$ts_file" 2>/dev/null || true
+    fi
+    echo "$count"
+}
+
+# ── Escalation via Listen ──────────────────────────────────────────────────
+
+escalate_to_technician() {
+    local name="$1"
+    local reason="$2"
+    local log_tail="$3"
+    local escalation_file="$STATE_DIR/${name}.escalated"
+
+    # Only escalate once until service recovers
+    if [[ -f "$escalation_file" ]]; then
+        log "$name already escalated — skipping duplicate"
+        return 0
+    fi
+
+    log "$name ESCALATING to technician via Listen: $reason"
+    date '+%Y-%m-%d %H:%M:%S' > "$escalation_file" 2>/dev/null || true
+    notify "WATCHDOG: <b>${name}</b> is being escalated to the technician. Reason: ${reason}"
+
+    local prompt
+    prompt="[WATCHDOG ESCALATION] Service: ${name}
+
+Reason: ${reason}
+
+Recent log tail:
+${log_tail}
+
+You are the system technician. Service '${name}' has been flagged by the watchdog as critically unhealthy. Please:
+1. Read the relevant logs
+2. Diagnose the root cause
+3. Attempt a fix
+4. Write a brief vault note at ~/vault/ops/watchdog-escalation-$(date '+%Y-%m-%d')-${name}.md
+5. Send a Telegram message reporting what you found and what you did"
+
+    local escaped_prompt
+    escaped_prompt=$(printf '%s' "$prompt" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))' 2>/dev/null || echo '"'"$prompt"'"')
+
+    curl -s --max-time 10 -X POST "http://127.0.0.1:7600/job" \
+        -H "Content-Type: application/json" \
+        -d "{\"prompt\": ${escaped_prompt}}" \
+        > /dev/null 2>&1 && log "$name escalation job posted to Listen" \
+        || log "$name WARN: could not reach Listen to post escalation job"
+}
+
+clear_escalation() {
+    local name="$1"
+    rm -f "$STATE_DIR/${name}.escalated" 2>/dev/null || true
+}
+
+# ── LaunchAgent helpers ────────────────────────────────────────────────────
+
+check_launchagent() {
+    local label="$1"
+    launchctl list "$label" > /dev/null 2>&1
+}
+
+restart_service() {
+    local label="$1"
+    log "Restarting $label..."
+    launchctl kickstart -k "gui/$(id -u)/$label" 2>/dev/null || {
+        launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
+        sleep 2
+        launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/${label}.plist" 2>/dev/null || true
+    }
+}
+
+check_health() {
+    local url="$1"
+    curl -sf --max-time 5 "$url" > /dev/null 2>&1
+}
+
+# ── Parse services from state.yaml using Python (bash 3.2 safe) ───────────
+
+STATE_YAML="$AOSV2_DIR/config/state.yaml"
+
+# Parse YAML into "name|label|health_url" lines — one per service
+SERVICES_LIST=""
+if [[ -f "$STATE_YAML" ]]; then
+    SERVICES_LIST=$(python3 -c "
+import yaml, sys
+with open('$STATE_YAML') as f:
+    data = yaml.safe_load(f)
+for name, cfg in (data.get('services') or {}).items():
+    if not isinstance(cfg, dict): continue
+    label = cfg.get('launchagent', '')
+    health = cfg.get('health', '')
+    if label:
+        print(f'{name}|{label}|{health}')
+" 2>/dev/null)
+fi
+
+if [[ -z "$SERVICES_LIST" ]]; then
+    log "WARNING: Could not parse $STATE_YAML — using hardcoded fallback"
+    SERVICES_LIST="bridge|com.agent.bridge|
+dashboard|com.agent.dashboard|http://127.0.0.1:4096/api/health
+listen|com.agent.listen|http://127.0.0.1:7600/health
+phoenix|com.agent.phoenix|http://127.0.0.1:6006
+whatsapp|com.agent.whatsmeow|http://127.0.0.1:7601/health"
+fi
+
+# ── Flapping threshold ─────────────────────────────────────────────────────
+
+FLAP_THRESHOLD=3
+
+# ── Check services ─────────────────────────────────────────────────────────
+
+issues=0
+restarts=0
+service_count=0
+
+# Write to temp file to avoid subshell variable scoping (bash 3.2)
+SERVICES_TMP=$(mktemp)
+echo "$SERVICES_LIST" > "$SERVICES_TMP"
+
+while IFS='|' read -r name label health_url; do
+    [[ -z "$name" || -z "$label" ]] && continue
+    service_count=$(( service_count + 1 ))
+
+    alive=true
+
+    # Check 1: Is the LaunchAgent loaded?
+    if ! check_launchagent "$label"; then
+        alive=false
+    fi
+
+    # Check 2: Does the health endpoint respond? (if configured)
+    if $alive && [[ -n "$health_url" ]]; then
+        if ! check_health "$health_url"; then
+            alive=false
+        fi
+    fi
+
+    if $alive; then
+        if check_state_change "${name}" "up"; then
+            notify "[AOS] <b>${name}</b> is back up."
+            log "$name recovered"
+        fi
+        clear_escalation "$name"
+    else
+        issues=$(( issues + 1 ))
+        log "$name is DOWN"
+
+        restarts_24h=$(count_restarts_24h "$name")
+
+        if (( restarts_24h >= FLAP_THRESHOLD )); then
+            log_tail=$(tail -30 "$HOME/.aos-v2/logs/crons/watchdog.log" 2>/dev/null | grep -i "$name" || echo "(no log entries)")
+            escalate_to_technician "$name" "Flapping: restarted ${restarts_24h} times in the last 24 hours and still down" "$log_tail"
+            continue
+        fi
+
+        # Tier 1: attempt restart
+        restart_service "$label"
+        sleep 5
+
+        restarted=false
+        if check_launchagent "$label"; then
+            if [[ -z "$health_url" ]] || check_health "$health_url"; then
+                restarted=true
+            fi
+        fi
+
+        if $restarted; then
+            restarts=$(( restarts + 1 ))
+            record_restart "$name"
+            check_state_change "${name}" "restarted" > /dev/null || true
+            notify "[AOS] <b>${name}</b> was down — restarted successfully."
+            log "$name restarted OK"
+
+            restarts_24h_after=$(count_restarts_24h "$name")
+            if (( restarts_24h_after >= FLAP_THRESHOLD )); then
+                log_tail=$(tail -30 "$HOME/.aos-v2/logs/crons/watchdog.log" 2>/dev/null | grep -i "$name" || echo "(no log entries)")
+                escalate_to_technician "$name" "Flapping detected after restart: ${restarts_24h_after} restarts in 24 hours" "$log_tail"
+            fi
+        else
+            record_restart "$name"
+            if check_state_change "${name}" "down"; then
+                restarts_24h_new=$(count_restarts_24h "$name")
+                notify "[AOS] <b>${name}</b> is down — restart failed (${restarts_24h_new} failures in 24h)."
+            fi
+            log "$name restart failed"
+        fi
+    fi
+done < "$SERVICES_TMP"
+rm -f "$SERVICES_TMP"
+
+# ── Network checks ─────────────────────────────────────────────────────────
+
+# Internet connectivity
+if ping -c1 -W3 1.1.1.1 > /dev/null 2>&1; then
+    if check_state_change "internet" "up"; then
+        notify "[AOS] Internet connectivity restored."
+        log "Internet recovered"
+    fi
+else
+    if check_state_change "internet" "down"; then
+        notify "[AOS] <b>Internet connectivity lost.</b>"
+    fi
+    log "Internet is DOWN"
+    issues=$(( issues + 1 ))
+fi
+
+# Tailscale
+if command -v tailscale > /dev/null 2>&1; then
+    ts_status=$(tailscale status --self 2>/dev/null | head -1)
+    if [[ -n "$ts_status" && ! "$ts_status" =~ "stopped" ]]; then
+        if check_state_change "tailscale" "up"; then
+            notify "[AOS] Tailscale is back up."
+            log "Tailscale recovered"
+        fi
+    else
+        if check_state_change "tailscale" "down"; then
+            notify "[AOS] <b>Tailscale is down.</b> Remote access lost."
+        fi
+        log "Tailscale is DOWN"
+        issues=$(( issues + 1 ))
+    fi
+fi
+
+# ── Disk space check ──────────────────────────────────────────────────────
+
+disk_pct=$(df -h / | tail -1 | awk '{print $5}' | tr -d '%')
+if (( disk_pct >= 90 )); then
+    if check_state_change "disk" "critical"; then
+        notify "[AOS] <b>Disk usage critical: ${disk_pct}%</b>"
+    fi
+    log "Disk usage critical: ${disk_pct}%"
+    issues=$(( issues + 1 ))
+elif (( disk_pct >= 80 )); then
+    if check_state_change "disk" "warning"; then
+        notify "[AOS] Disk usage warning: ${disk_pct}%"
+    fi
+    log "Disk usage warning: ${disk_pct}%"
+else
+    check_state_change "disk" "ok" > /dev/null || true
+fi
+
+# ── Summary ────────────────────────────────────────────────────────────────
+
+if [[ $issues -eq 0 ]]; then
+    log "All healthy (${service_count} services, internet, tailscale, disk ${disk_pct}%)"
+else
+    log "Issues: $issues | Restarts: $restarts"
+fi

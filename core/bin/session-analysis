@@ -1,0 +1,295 @@
+#!/usr/bin/env python3
+"""Analyze Claude Code sessions for friction patterns.
+
+Scans JSONL session files for REAL user corrections, frustration, and
+repeated mistakes. Filters out system noise (XML caveats, task notifications,
+session continuations) before pattern matching.
+
+Outputs a friction report to ~/vault/ops/friction/ with categorized
+patterns and a synthesis section identifying actionable improvements.
+
+Run weekly via cron (Sunday 22:00) or manually:
+  python3 ~/aosv2/core/bin/session-analysis
+  python3 ~/aosv2/core/bin/session-analysis --days 3
+"""
+
+import json
+import re
+import sys
+from collections import defaultdict
+from datetime import datetime, timedelta
+from pathlib import Path
+
+CLAUDE_PROJECTS = Path.home() / ".claude" / "projects"
+VAULT_FRICTION = Path.home() / "vault" / "ops" / "friction"
+
+# Messages to skip entirely — system noise
+SKIP_PATTERNS = re.compile(
+    r'^<(local-command|command-name|command-message|command-args|task-notification|local-command-stdout)'
+    r'|^This session is being continued'
+    r'|^\[Request interrupted'
+    r'|^\s*$'
+    r'|^<command-name>'
+    r'|^\[Image:',
+    re.MULTILINE
+)
+
+# Friction indicators — tighter patterns to reduce false positives
+# Each pattern requires enough context to be a real signal
+FRICTION_PATTERNS = {
+    "correction": [
+        r"(?:^|\.\s+)no[,.]?\s+(?:that|I|we|it|the|you)",  # "No, I meant..." not "no matches found"
+        r"\bnot that\b",
+        r"\bI meant\b",
+        r"\bI said\b",
+        r"\bactually\b.{0,20}\bshould\b",  # "actually it should be..."
+        r"\bthat'?s wrong\b",
+        r"\bthat'?s incorrect\b",
+        r"\byou (?:got|did|made) (?:it |that |this )?wrong\b",
+    ],
+    "retry": [
+        r"\btry (?:it )?again\b",
+        r"\b(?:let'?s |can you )redo\b",
+        r"\bstart over\b",
+        r"\brevert (?:it|that|this|the)\b",
+    ],
+    "frustration": [
+        r"(?:^|\.\s+)stop(?:\.|!|\s+doing|\s+that|\s+it)",  # "stop doing that" not "don't stop"
+        r"\bwhy did you\b",
+        r"\bwhy are you\b",
+        r"\bthat'?s not what\b",
+        r"\bI (?:already|just) (?:said|told|asked)\b",
+        r"(?:WHY|WHAT|HOW)\s+(?:IS|ARE|DID|DO)",  # ALL CAPS = frustrated
+        r"!{2,}",  # multiple exclamation marks
+    ],
+    "clarification": [
+        r"\bwhat I (?:actually )?want\b",
+        r"\blet me (?:re)?clarify\b",
+        r"\bto be (?:more )?clear\b",
+        r"\bwhat I (?:actually )?mean\b",
+    ],
+    "overreach": [
+        r"\bdidn'?t ask (?:you |for )\b",
+        r"\bI only (?:asked|wanted|need)\b",
+        r"\bkeep it simple\b",
+        r"\btoo (?:much|many|complex|complicated)\b",
+        r"\bover.?engineer\b",
+        r"\bjust do (?:what|it)\b",
+    ],
+}
+
+
+def is_real_user_message(text: str) -> bool:
+    """Check if a message is real user input, not system noise."""
+    if not text or len(text.strip()) < 5:
+        return False
+    if SKIP_PATTERNS.match(text.strip()):
+        return False
+    # Skip messages that are mostly XML
+    if text.count('<') > 3 and text.count('<') > len(text) / 20:
+        return False
+    return True
+
+
+def scan_session(jsonl_path: Path, since: datetime = None) -> list[dict]:
+    """Scan a session file for friction patterns."""
+    frictions = []
+
+    try:
+        mtime = datetime.fromtimestamp(jsonl_path.stat().st_mtime)
+        if since and mtime < since:
+            return []
+        lines = jsonl_path.read_text().splitlines()
+    except Exception:
+        return []
+
+    prev_assistant = ""
+
+    for line in lines:
+        try:
+            msg = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+
+        msg_type = msg.get("type", "")
+        message = msg.get("message", {})
+
+        if msg_type == "assistant":
+            content = message.get("content", "")
+            if isinstance(content, list):
+                texts = [b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text"]
+                prev_assistant = " ".join(texts)[:300]
+            elif isinstance(content, str):
+                prev_assistant = content[:300]
+
+        elif msg_type == "user":
+            content = message.get("content", "")
+            if isinstance(content, list):
+                texts = [b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text"]
+                user_text = " ".join(texts)
+            elif isinstance(content, str):
+                user_text = content
+            else:
+                continue
+
+            # Filter out system noise BEFORE pattern matching
+            if not is_real_user_message(user_text):
+                continue
+
+            for category, patterns in FRICTION_PATTERNS.items():
+                for pattern in patterns:
+                    if re.search(pattern, user_text, re.IGNORECASE):
+                        frictions.append({
+                            "category": category,
+                            "pattern": pattern,
+                            "user_message": user_text[:200],
+                            "preceding_assistant": prev_assistant[:200],
+                            "session_id": jsonl_path.stem[:8],
+                        })
+                        break
+                else:
+                    continue
+                break
+
+    return frictions
+
+
+def synthesize_patterns(by_category: dict) -> list[str]:
+    """Generate actionable insights from friction data."""
+    insights = []
+
+    # Look for repeated correction themes
+    corrections = by_category.get("correction", [])
+    if corrections:
+        # Group by session to find sessions with multiple corrections
+        by_session = defaultdict(list)
+        for f in corrections:
+            by_session[f["session_id"]].append(f)
+        worst_sessions = sorted(by_session.items(), key=lambda x: -len(x[1]))
+        if worst_sessions and len(worst_sessions[0][1]) >= 3:
+            s_id, items = worst_sessions[0]
+            insights.append(
+                f"Session `{s_id}` had {len(items)} corrections — "
+                f"review this session for systemic issues"
+            )
+
+    # Overreach signals a pattern
+    overreach = by_category.get("overreach", [])
+    if len(overreach) >= 2:
+        insights.append(
+            "Multiple overreach signals — agents may be doing more than asked. "
+            "Consider adding 'do only what is asked' to agent rules."
+        )
+
+    # Frustration is always worth calling out
+    frustration = by_category.get("frustration", [])
+    if frustration:
+        for f in frustration[:3]:
+            insights.append(f"Frustration: \"{f['user_message'][:80]}...\"")
+
+    if not insights:
+        insights.append("No strong patterns detected. Friction is distributed across sessions.")
+
+    return insights
+
+
+def generate_report(all_frictions: list[dict], days: int) -> str:
+    """Generate a markdown friction report with synthesis."""
+    today = datetime.now().strftime("%Y-%m-%d")
+
+    by_category = defaultdict(list)
+    for f in all_frictions:
+        by_category[f["category"]].append(f)
+
+    lines = [
+        "---",
+        f'date: "{today}"',
+        f'type: "friction-report"',
+        f'title: "Friction Analysis — {today}"',
+        f"period_days: {days}",
+        f"total_frictions: {len(all_frictions)}",
+        "tags: [ops, friction, self-improvement]",
+        "---",
+        "",
+        f"# Friction Analysis — {today}",
+        "",
+        f"Analyzed sessions from the last {days} days.",
+        f"Found **{len(all_frictions)} friction instances** across {len(by_category)} categories.",
+        "",
+    ]
+
+    if not all_frictions:
+        lines.append("No friction patterns detected. Clean week.")
+        return "\n".join(lines)
+
+    # Summary table
+    lines.append("## Summary")
+    lines.append("")
+    lines.append("| Category | Count |")
+    lines.append("|----------|-------|")
+    for cat in sorted(by_category.keys(), key=lambda c: -len(by_category[c])):
+        lines.append(f"| {cat} | {len(by_category[cat])} |")
+    lines.append("")
+
+    # Synthesis — the actual value
+    lines.append("## Insights")
+    lines.append("")
+    insights = synthesize_patterns(by_category)
+    for insight in insights:
+        lines.append(f"- {insight}")
+    lines.append("")
+
+    # Top examples per category (max 5 each, not 10)
+    for cat in sorted(by_category.keys(), key=lambda c: -len(by_category[c])):
+        items = by_category[cat]
+        lines.append(f"## {cat.title()} ({len(items)})")
+        lines.append("")
+        for i, f in enumerate(items[:5], 1):
+            user_msg = f["user_message"].replace("\n", " ")[:120]
+            lines.append(f"{i}. `{f['session_id']}` — {user_msg}")
+        if len(items) > 5:
+            lines.append(f"\n*+ {len(items) - 5} more*")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+def main():
+    days = 7
+    if "--days" in sys.argv:
+        idx = sys.argv.index("--days")
+        if idx + 1 < len(sys.argv):
+            days = int(sys.argv[idx + 1])
+
+    since = datetime.now() - timedelta(days=days)
+    all_frictions = []
+
+    if not CLAUDE_PROJECTS.exists():
+        print("No Claude projects directory found.")
+        return
+
+    session_files = [f for f in CLAUDE_PROJECTS.rglob("*.jsonl") if "subagent" not in str(f)]
+    print(f"Scanning {len(session_files)} session files (last {days} days)...")
+
+    for f in session_files:
+        frictions = scan_session(f, since=since)
+        all_frictions.extend(frictions)
+
+    print(f"Found {len(all_frictions)} friction instances.")
+
+    report = generate_report(all_frictions, days)
+    today = datetime.now().strftime("%Y-%m-%d")
+    if days == 1:
+        period_suffix = "daily"
+    elif days == 7:
+        period_suffix = "weekly"
+    else:
+        period_suffix = f"{days}d"
+    report_path = VAULT_FRICTION / f"session-friction-{today}-{period_suffix}.md"
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(report)
+    print(f"Report saved to {report_path}")
+
+
+if __name__ == "__main__":
+    main()
