@@ -15,7 +15,7 @@ set -euo pipefail
 
 # ── Version ──────────────────────────────────────────
 AOS_VERSION="0.1.0"
-AOS_REPO="https://github.com/agentalhadi/aos.git"
+AOS_REPO="https://github.com/hishamalhadi/aos.git"
 AOS_BRANCH="main"
 
 # ── Paths ────────────────────────────────────────────

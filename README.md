@@ -17,7 +17,7 @@
 ## Quick Start
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/agentalhadi/aos/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/hishamalhadi/aos/main/install.sh | bash
 ```
 
 Idempotent. Safe to re-run. Takes ~5 minutes. When it finishes, type `claude` and Chief will guide you through onboarding.
@@ -198,13 +198,13 @@ Four boundaries. Never crossed.
 ### One-liner
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/agentalhadi/aos/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/hishamalhadi/aos/main/install.sh | bash
 ```
 
 ### Manual
 
 ```bash
-git clone https://github.com/agentalhadi/aos.git ~/aos
+git clone https://github.com/hishamalhadi/aos.git ~/aos
 cd ~/aos && bash install.sh
 ```
 

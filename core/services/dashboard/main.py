@@ -262,8 +262,11 @@ def _load_work_activity(limit: int = 20) -> list[dict]:
 
 @app.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request):
-    health = _system_health()
-    services = _service_status()
+    loop = asyncio.get_event_loop()
+    health, services = await asyncio.gather(
+        loop.run_in_executor(None, _system_health),
+        loop.run_in_executor(None, _service_status),
+    )
     tasks = _load_tasks()
     work_activity = _load_work_activity(20)
     activity = get_recent(30)
@@ -329,12 +332,12 @@ async def dashboard(request: Request):
 
 @app.get("/api/health")
 async def api_health():
-    return _system_health()
+    return await asyncio.get_event_loop().run_in_executor(None, _system_health)
 
 
 @app.get("/api/services")
 async def api_services():
-    return _service_status()
+    return await asyncio.get_event_loop().run_in_executor(None, _service_status)
 
 
 @app.get("/api/activity")
