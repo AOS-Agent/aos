@@ -1,0 +1,418 @@
+{% extends "base.html" %}
+
+{% block title %}Work{% endblock %}
+{% block page_title %}Work{% endblock %}
+{% block page_subtitle %}<div class="page-subtitle">Tasks, projects, and goals</div>{% endblock %}
+
+{% block page_actions %}
+<div style="display:flex;gap:8px;">
+    <button class="btn" onclick="toggleDone()" id="btn-toggle-done">
+        <i data-lucide="eye-off" style="width:12px;height:12px;"></i> Show done
+    </button>
+</div>
+{% endblock %}
+
+{% block styles %}
+/* ── Work Layout ─────────────────────────────────── */
+.work-grid {
+    display: grid;
+    grid-template-columns: 1fr 320px;
+    gap: 24px;
+    align-items: start;
+}
+
+/* ── Goals Strip ─────────────────────────────────── */
+.goals-strip {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 24px;
+    overflow-x: auto;
+    padding-bottom: 4px;
+}
+
+.goal-card {
+    flex: 0 0 auto;
+    min-width: 220px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 16px 18px;
+    transition: border-color 0.12s;
+}
+
+.goal-card:hover { border-color: var(--border-light); }
+
+.goal-title {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-primary);
+    margin-bottom: 8px;
+}
+
+.goal-meta {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-tertiary);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.goal-progress {
+    width: 100%;
+    height: 3px;
+    background: var(--bg-surface-alt);
+    border-radius: 2px;
+    margin-top: 10px;
+    overflow: hidden;
+}
+
+.goal-progress-fill {
+    height: 100%;
+    border-radius: 2px;
+    background: var(--accent);
+    transition: width 0.3s ease;
+}
+
+/* ── Project Sections ────────────────────────────── */
+.project-section {
+    margin-bottom: 28px;
+}
+
+.project-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border-subtle);
+}
+
+.project-icon {
+    width: 20px; height: 20px;
+    border-radius: 4px;
+    background: var(--accent-muted);
+    display: flex; align-items: center; justify-content: center;
+}
+
+.project-icon i { width: 12px; height: 12px; color: var(--accent); }
+
+.project-name {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
+.project-count {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-tertiary);
+    margin-left: auto;
+}
+
+/* ── Task List ───────────────────────────────────── */
+.task-list { list-style: none; }
+
+.task-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    margin: 2px 0;
+    border-radius: var(--radius);
+    transition: background 0.1s;
+    cursor: default;
+}
+
+.task-item:hover { background: var(--bg-surface-hover); }
+
+.task-check {
+    width: 16px; height: 16px;
+    border-radius: 4px;
+    border: 1.5px solid var(--border-light);
+    flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer;
+    transition: all 0.12s;
+}
+
+.task-check:hover { border-color: var(--accent); }
+.task-check.active { border-color: var(--accent); background: var(--accent-muted); }
+.task-check.active::after { content: ''; width: 6px; height: 6px; border-radius: 2px; background: var(--accent); }
+.task-check.done { border-color: var(--status-online); background: var(--status-online-muted); opacity: 0.5; }
+.task-check.done::after { content: '✓'; color: var(--status-online); font-size: 10px; }
+
+.task-title {
+    flex: 1;
+    font-size: 13px;
+    color: var(--text-primary);
+}
+
+.task-item.done .task-title {
+    color: var(--text-tertiary);
+    text-decoration: line-through;
+    text-decoration-color: var(--text-muted);
+}
+
+.task-id {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-muted);
+    flex-shrink: 0;
+}
+
+.task-priority {
+    width: 4px;
+    height: 16px;
+    border-radius: 2px;
+    flex-shrink: 0;
+}
+
+.task-priority.p1 { background: var(--status-error); }
+.task-priority.p2 { background: var(--accent); }
+.task-priority.p3 { background: var(--text-tertiary); }
+.task-priority.p4 { background: var(--text-muted); }
+
+.task-sessions {
+    display: flex;
+    gap: 2px;
+    flex-shrink: 0;
+}
+
+.task-session-dot {
+    width: 4px; height: 4px;
+    border-radius: 50%;
+    background: var(--status-info);
+    opacity: 0.6;
+}
+
+/* ── Right Panel ─────────────────────────────────── */
+.panel-card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 18px;
+    margin-bottom: 16px;
+}
+
+.panel-title {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-tertiary);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 14px;
+}
+
+.stat-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 6px 0;
+}
+
+.stat-label {
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+.stat-value {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
+/* ── Threads ─────────────────────────────────────── */
+.thread-item {
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border-subtle);
+}
+
+.thread-item:last-child { border-bottom: none; }
+
+.thread-title {
+    font-size: 12px;
+    color: var(--text-primary);
+    margin-bottom: 4px;
+}
+
+.thread-meta {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-tertiary);
+    display: flex;
+    gap: 8px;
+}
+
+/* ── Inbox ───────────────────────────────────────── */
+.inbox-item {
+    padding: 8px 0;
+    font-size: 12px;
+    color: var(--text-secondary);
+    border-bottom: 1px solid var(--border-subtle);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.inbox-item:last-child { border-bottom: none; }
+
+.inbox-dot {
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: var(--accent);
+    flex-shrink: 0;
+}
+
+/* ── Responsive ──────────────────────────────────── */
+@media (max-width: 900px) {
+    .work-grid { grid-template-columns: 1fr; }
+}
+{% endblock %}
+
+{% block content %}
+<!-- Goals Strip -->
+{% if goals %}
+<div class="goals-strip">
+    {% for goal in goals %}
+    <div class="goal-card">
+        <div class="goal-title">{{ goal.title }}</div>
+        <div class="goal-meta">
+            <span class="tag tag-{{ 'green' if goal.status == 'active' else 'default' }}">{{ goal.status }}</span>
+            {% if goal.weight %}<span>{{ (goal.weight * 100)|int }}% weight</span>{% endif %}
+        </div>
+        <div class="goal-progress">
+            <div class="goal-progress-fill" style="width: {{ (goal.progress or 0) * 100 }}%"></div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+<div class="work-grid">
+    <!-- Left: Task Lists by Project -->
+    <div>
+        {% for project in projects %}
+        <div class="project-section" data-project="{{ project.id }}">
+            <div class="project-header">
+                <div class="project-icon"><i data-lucide="folder"></i></div>
+                <span class="project-name">{{ project.title }}</span>
+                <span class="project-count">{{ project.task_count }} tasks</span>
+            </div>
+            <ul class="task-list">
+                {% for task in project.tasks %}
+                <li class="task-item{% if task.status == 'done' %} done{% endif %}{% if task.status == 'done' %} hidden-done{% endif %}" data-status="{{ task.status }}">
+                    <div class="task-priority p{{ task.priority or 3 }}"></div>
+                    <div class="task-check {{ task.status }}" title="{{ task.status }}"></div>
+                    <span class="task-title">{{ task.title }}</span>
+                    {% if task.sessions %}
+                    <div class="task-sessions" title="{{ task.sessions|length }} session(s)">
+                        {% for s in task.sessions[:5] %}
+                        <div class="task-session-dot"></div>
+                        {% endfor %}
+                    </div>
+                    {% endif %}
+                    <span class="task-id">{{ task.id }}</span>
+                </li>
+                {% endfor %}
+            </ul>
+        </div>
+        {% endfor %}
+
+        <!-- Unassigned tasks -->
+        {% if unassigned_tasks %}
+        <div class="project-section">
+            <div class="project-header">
+                <div class="project-icon" style="background:var(--bg-surface-alt)"><i data-lucide="inbox" style="color:var(--text-tertiary)"></i></div>
+                <span class="project-name" style="color:var(--text-secondary)">Unassigned</span>
+                <span class="project-count">{{ unassigned_tasks|length }} tasks</span>
+            </div>
+            <ul class="task-list">
+                {% for task in unassigned_tasks %}
+                <li class="task-item{% if task.status == 'done' %} done{% endif %}{% if task.status == 'done' %} hidden-done{% endif %}" data-status="{{ task.status }}">
+                    <div class="task-priority p{{ task.priority or 3 }}"></div>
+                    <div class="task-check {{ task.status }}"></div>
+                    <span class="task-title">{{ task.title }}</span>
+                    <span class="task-id">{{ task.id }}</span>
+                </li>
+                {% endfor %}
+            </ul>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Right: Summary Panel -->
+    <div>
+        <!-- Summary -->
+        <div class="panel-card">
+            <div class="panel-title">Summary</div>
+            <div class="stat-row">
+                <span class="stat-label">Active</span>
+                <span class="stat-value">{{ summary.active or 0 }}</span>
+            </div>
+            <div class="stat-row">
+                <span class="stat-label">Todo</span>
+                <span class="stat-value">{{ summary.todo or 0 }}</span>
+            </div>
+            <div class="stat-row">
+                <span class="stat-label">Done</span>
+                <span class="stat-value" style="color:var(--status-online)">{{ summary.done or 0 }}</span>
+            </div>
+            <div class="stat-row" style="border-top:1px solid var(--border-subtle);padding-top:10px;margin-top:6px;">
+                <span class="stat-label">Total</span>
+                <span class="stat-value">{{ summary.total or 0 }}</span>
+            </div>
+        </div>
+
+        <!-- Threads -->
+        {% if threads %}
+        <div class="panel-card">
+            <div class="panel-title">Threads</div>
+            {% for thread in threads %}
+            <div class="thread-item">
+                <div class="thread-title">{{ thread.title }}</div>
+                <div class="thread-meta">
+                    <span class="tag tag-{{ 'blue' if thread.status == 'exploring' else 'green' if thread.status == 'active' else 'purple' }}">{{ thread.status }}</span>
+                    {% if thread.sessions %}<span>{{ thread.sessions|length }} sessions</span>{% endif %}
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        <!-- Inbox -->
+        {% if inbox %}
+        <div class="panel-card">
+            <div class="panel-title">Inbox <span class="tag tag-accent" style="margin-left:6px;">{{ inbox|length }}</span></div>
+            {% for item in inbox %}
+            <div class="inbox-item">
+                <div class="inbox-dot"></div>
+                <span>{{ item.text }}</span>
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+let showDone = false;
+
+function toggleDone() {
+    showDone = !showDone;
+    const btn = document.getElementById('btn-toggle-done');
+    document.querySelectorAll('.hidden-done').forEach(el => {
+        el.style.display = showDone ? 'flex' : 'none';
+    });
+    btn.innerHTML = showDone
+        ? '<i data-lucide="eye" style="width:12px;height:12px;"></i> Hide done'
+        : '<i data-lucide="eye-off" style="width:12px;height:12px;"></i> Show done';
+    lucide.createIcons();
+}
+
+// Hide done tasks initially
+document.querySelectorAll('.hidden-done').forEach(el => { el.style.display = 'none'; });
+{% endblock %}

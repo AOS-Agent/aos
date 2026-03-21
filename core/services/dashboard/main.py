@@ -204,9 +204,13 @@ async def dashboard(request: Request):
     crons = _get_cron_jobs()
     launch_agents = _get_launch_agents()
 
+    # Task count for sidebar badge
+    active_task_count = sum(1 for t in tasks if t.get("status") in ("active", "todo"))
+
     return templates.TemplateResponse("dashboard.html", {
         "request": request,
         "active_page": "dashboard",
+        "task_count": active_task_count if active_task_count else None,
         "state": state,
         "health": health,
         "services": services,
@@ -259,6 +263,69 @@ async def api_work():
         return {"tasks": data["tasks"], "projects": data["projects"], "goals": data["goals"], "threads": data["threads"], "inbox": data["inbox"], "summary": summary}
     except Exception as e:
         return {"error": str(e)}
+
+
+@app.get("/work", response_class=HTMLResponse)
+async def work_page(request: Request):
+    """Work page — tasks, projects, goals, threads."""
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("engine", str(Path.home() / "aos" / "core" / "work" / "engine.py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        data = mod.load_all()
+        summary_data = mod.summary()
+    except Exception:
+        data = {"tasks": [], "projects": [], "goals": [], "threads": [], "inbox": []}
+        summary_data = {}
+
+    tasks = data.get("tasks", [])
+    projects_raw = data.get("projects", [])
+    goals = data.get("goals", [])
+    threads = data.get("threads", [])
+    inbox = data.get("inbox", [])
+
+    # Group tasks by project
+    project_map = {p["id"]: {**p, "tasks": [], "task_count": 0} for p in projects_raw}
+    unassigned = []
+
+    for task in tasks:
+        proj_id = task.get("project")
+        if proj_id and proj_id in project_map:
+            project_map[proj_id]["tasks"].append(task)
+            project_map[proj_id]["task_count"] += 1
+        elif proj_id is None:
+            unassigned.append(task)
+
+    # Sort tasks within projects: active first, then todo, then done
+    status_order = {"active": 0, "todo": 1, "done": 2, "cancelled": 3}
+    for p in project_map.values():
+        p["tasks"].sort(key=lambda t: (status_order.get(t.get("status", "todo"), 1), t.get("priority", 3)))
+
+    unassigned.sort(key=lambda t: (status_order.get(t.get("status", "todo"), 1), t.get("priority", 3)))
+
+    # Summary counts
+    summary = {
+        "active": sum(1 for t in tasks if t.get("status") == "active"),
+        "todo": sum(1 for t in tasks if t.get("status") == "todo"),
+        "done": sum(1 for t in tasks if t.get("status") == "done"),
+        "total": len(tasks),
+    }
+
+    # Count active tasks for sidebar badge
+    active_count = summary["active"] + summary["todo"]
+
+    return templates.TemplateResponse("work.html", {
+        "request": request,
+        "active_page": "work",
+        "task_count": active_count if active_count else None,
+        "projects": list(project_map.values()),
+        "unassigned_tasks": unassigned,
+        "goals": goals,
+        "threads": threads,
+        "inbox": inbox,
+        "summary": summary,
+    })
 
 
 @app.get("/agents", response_class=HTMLResponse)
