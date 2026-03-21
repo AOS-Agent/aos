@@ -132,8 +132,19 @@ def main():
     except Exception:
         pass  # Non-fatal
 
+    # Behavioral guidance — this IS the always-on awareness layer
+    guidance_lines = []
+    if project_active:
+        task_ids = ", ".join(t["id"] for t in project_active)
+        guidance_lines.append(f"If you complete any active task ({task_ids}), mark it done: `python3 ~/aosv2/core/work/cli.py done <id>`")
+    if due:
+        guidance_lines.append("Overdue tasks exist — flag them to the operator if relevant.")
+    guidance_lines.append("If multi-step work emerges that isn't tracked above, suggest tracking it as a task or thread.")
+
+    guidance = "\n".join(guidance_lines)
+
     output = {
-        "additionalContext": f"[Work System]\n{context}\nManage with /work skill. Link sessions with: work link <task_id>"
+        "additionalContext": f"[Work System]\n{context}\n---\n{guidance}"
     }
 
     print(json.dumps(output))

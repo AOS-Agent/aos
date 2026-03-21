@@ -3,7 +3,10 @@ name: work
 description: >
   Manage tasks, projects, goals, and threads. Trigger on "/work", "add task",
   "show my tasks", "what's on my plate", "mark X done", "what should I work on",
-  "create project", "add goal", or any request to manage tracked work items.
+  "create project", "add goal", "track this", "create a thread", "promote thread",
+  or any request to manage tracked work items. Also self-activate when you detect
+  multi-step work emerging that should be tracked, or when a session completes
+  work matching an active task.
 allowed-tools: Bash, Read, Write, Edit, Glob
 ---
 
@@ -29,7 +32,6 @@ python3 ~/aosv2/core/work/cli.py add "Fix login bug" --priority 2 --project webs
 python3 ~/aosv2/core/work/cli.py list
 python3 ~/aosv2/core/work/cli.py list --status active
 python3 ~/aosv2/core/work/cli.py list --project aos-v2
-python3 ~/aosv2/core/work/cli.py list --status todo,active
 
 # Change status
 python3 ~/aosv2/core/work/cli.py done t1
@@ -41,6 +43,25 @@ python3 ~/aosv2/core/work/cli.py show t1
 
 # Search
 python3 ~/aosv2/core/work/cli.py search "groceries"
+```
+
+### Session & Thread Commands
+
+```bash
+# Link current session to a task (for multi-session work)
+python3 ~/aosv2/core/work/cli.py link t5 --session <id> --outcome "what was done"
+
+# Create a thread (for explorations spanning sessions)
+python3 ~/aosv2/core/work/cli.py thread "Researching WebSocket approach"
+
+# List active threads
+python3 ~/aosv2/core/work/cli.py thread
+
+# List all threads (including promoted/abandoned)
+python3 ~/aosv2/core/work/cli.py threads
+
+# Promote a thread to a project
+python3 ~/aosv2/core/work/cli.py promote th1 --title "WebSocket Integration" --goal launch-mvp
 ```
 
 ### Other Commands
@@ -74,19 +95,28 @@ python3 ~/aosv2/core/work/cli.py json
 ## How to Respond
 
 **"Add a task" / "I need to..."**
-→ Run `cli.py add` with the title. Infer priority from urgency words. Ask for project only if ambiguous.
+> Run `cli.py add` with the title. Infer priority from urgency words. Ask for project only if ambiguous.
 
 **"What's on my plate?" / "Show tasks"**
-→ Run `cli.py list`. Present as a clean list. Highlight anything overdue or urgent.
+> Run `cli.py list`. Present as a clean list. Highlight anything overdue or urgent.
 
 **"Done with X" / "Finished X"**
-→ Find the task by searching if they give a title instead of an ID. Run `cli.py done`.
+> Find the task by searching if they give a title instead of an ID. Run `cli.py done`.
 
 **"What should I work on?"**
-→ Run `cli.py list --status todo,active`. Consider priority, energy level (if known from daily note), and due dates. Suggest the top 1-3.
+> Run `cli.py list --status todo,active`. Consider priority, energy level (if known from daily note), and due dates. Suggest the top 1-3.
 
 **Quick capture / "Remind me to..."**
-→ Use `cli.py inbox` for things that need triage later.
+> Use `cli.py inbox` for things that need triage later.
+
+**"Track this" / Multi-step work detected**
+> If work is clearly a task (defined outcome), use `cli.py add`.
+> If exploratory or evolving, use `cli.py thread`.
+> If vague or needs thinking, use `cli.py inbox`.
+
+**Session completed a task**
+> If you just finished work that matches an active task in your context, run `cli.py done <id>`.
+> Confirm with the operator: "Marked t5 as done — Build session linking."
 
 ## Data Location
 
@@ -98,3 +128,5 @@ Schema: `~/aosv2/core/work/schema.yaml`
 - Don't edit work.yaml directly -- always use the CLI (preserves format, handles IDs)
 - After any mutation, confirm what was done: "Created t5: Buy groceries [todo]"
 - If the operator mentions work during a non-work conversation, note it but don't trigger the full skill -- suggest "Want me to track that as a task?"
+- Session linking happens automatically via hooks -- you don't need to manually link unless explicitly asked
+- Threads auto-accumulate sessions via the SessionEnd hook -- don't manually manage thread sessions

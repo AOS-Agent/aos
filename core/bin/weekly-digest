@@ -165,6 +165,21 @@ def _format_energy_trend(energy_values: list) -> str:
         return ", ".join(energy_values)
 
 
+def _compute_metrics_and_drift(work: dict, week_start: datetime.date, week_end: datetime.date) -> tuple[dict, dict]:
+    """Compute flow metrics and drift using the work metrics library."""
+    try:
+        sys.path.insert(0, str(Path.home() / "aosv2" / "core" / "work"))
+        import metrics as work_metrics
+        tasks = work.get("tasks", [])
+        goals = work.get("goals", [])
+        flow = work_metrics.compute_period_metrics(tasks, week_start, week_end)
+        drift = work_metrics.compute_drift(goals, tasks)
+        return flow, drift
+    except Exception as e:
+        print(f"Warning: Could not compute metrics: {e}")
+        return {}, {}
+
+
 def main():
     print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] weekly-digest starting")
 
@@ -175,6 +190,7 @@ def main():
     sessions = _scan_sessions(week_start, week_end)
     daily = _scan_daily_notes(week_start, week_end)
     patterns = _detect_patterns(sessions)
+    flow_metrics, drift = _compute_metrics_and_drift(work, week_start, week_end)
 
     # Format dates
     month_abbr = week_start.strftime("%b")
@@ -202,6 +218,31 @@ def main():
 
     energy_trend = _format_energy_trend(daily["energy_values"])
 
+    # Flow metrics section
+    metrics_lines = ""
+    if flow_metrics:
+        cycle = flow_metrics.get("cycle_time_avg_days")
+        cycle_str = f"{cycle}d" if cycle is not None else "n/a"
+        lead = flow_metrics.get("lead_time_avg_days")
+        lead_str = f"{lead}d" if lead is not None else "n/a"
+        metrics_lines = f"""
+## Flow Metrics
+- Throughput: {flow_metrics.get('throughput', 0)} tasks completed
+- Cycle time (active→done): {cycle_str}
+- Lead time (created→done): {lead_str}
+- WIP: {flow_metrics.get('wip_current', 0)} active now
+"""
+
+    # Drift section
+    drift_lines = ""
+    if drift and drift.get("has_drift_data"):
+        status = "Aligned" if drift.get("aligned") else "Drifting"
+        drift_lines = f"\n## Drift Analysis\n- Status: **{status}** (max drift: {drift.get('max_drift', '?')})\n"
+        for g in drift.get("goals", []):
+            drift_lines += f"- {g['goal_title']}: intended {int(g['intended_weight'] * 100)}%, actual {int(g['actual_share'] * 100)}% ({g['direction']})\n"
+        if drift.get("unlinked_tasks", 0) > 0:
+            drift_lines += f"- {drift['unlinked_tasks']} tasks not linked to any goal\n"
+
     content = f"""---
 type: weekly-review
 week_start: "{week_start.isoformat()}"
@@ -215,7 +256,7 @@ generated: "{datetime.datetime.now().isoformat(timespec='seconds')}"
 - Tasks completed: {len(task_data['completed'])}
 - Tasks added: {len(task_data['added'])}
 - Active tasks: {task_data['active_count']}{completed_lines}
-
+{metrics_lines}
 ## Sessions
 - Total sessions: {sessions['count']}
 - Topics: {topics_str}
@@ -223,7 +264,7 @@ generated: "{datetime.datetime.now().isoformat(timespec='seconds')}"
 ## Daily Notes
 - Days with notes: {daily['days_with_notes']}/7
 - Energy trend: {energy_trend}
-
+{drift_lines}
 ## Patterns
 {patterns_str}
 """

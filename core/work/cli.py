@@ -353,6 +353,162 @@ def cmd_threads(args):
         print(f"  {t['id']:6s}  {t['status']:10s}  {t['title']}  ({sessions} sessions){promoted}")
 
 
+def cmd_metrics(args):
+    """Show flow metrics for current week."""
+    import metrics as work_metrics
+
+    data = engine.load_all()
+    tasks = data["tasks"]
+    goals = data["goals"]
+
+    week = work_metrics.compute_current_week(tasks)
+    goal_health = work_metrics.compute_goal_health(goals, tasks)
+
+    # Save snapshot
+    save = "--no-save" not in args
+    if save:
+        path = work_metrics.save_weekly_snapshot(week)
+
+    print(work_metrics.format_metrics_display(week, goal_health))
+
+    if save:
+        print(f"\n  Snapshot saved: {path}")
+
+
+def cmd_today(args):
+    """Show today's work plan — due today, active, high priority."""
+    from datetime import date as _date
+    today = _date.today().isoformat()
+    tasks = engine.get_all_tasks()
+
+    due = query.due_today(tasks, today)
+    active = query.active_tasks(tasks)
+    high_todo = query.filter_tasks(
+        query.filter_tasks(tasks, status="todo"), priority=1
+    ) + query.filter_tasks(
+        query.filter_tasks(tasks, status="todo"), priority=2
+    )
+
+    # Dedup (a task could be both active and due)
+    seen = set()
+    sections = []
+
+    if due:
+        section_tasks = []
+        for t in due:
+            if t["id"] not in seen:
+                seen.add(t["id"])
+                section_tasks.append(t)
+        if section_tasks:
+            sections.append(("Due today / overdue", section_tasks))
+
+    if active:
+        section_tasks = []
+        for t in active:
+            if t["id"] not in seen:
+                seen.add(t["id"])
+                section_tasks.append(t)
+        if section_tasks:
+            sections.append(("In progress", section_tasks))
+
+    if high_todo:
+        section_tasks = []
+        for t in high_todo:
+            if t["id"] not in seen:
+                seen.add(t["id"])
+                section_tasks.append(t)
+        if section_tasks:
+            sections.append(("High priority (ready)", section_tasks))
+
+    if not sections:
+        print("Nothing pressing today. Check `work list` for all tasks.")
+        return
+
+    print(f"Today — {today}")
+    print("=" * 40)
+    for label, items in sections:
+        print(f"\n  {label}:")
+        for t in items:
+            p = t.get("priority", 0)
+            marker = {1: "!!", 2: "!", 3: " ", 4: "~", 0: "?"}.get(p, " ")
+            proj = f" [{t['project']}]" if t.get("project") else ""
+            due_str = f" (due {t['due']})" if t.get("due") else ""
+            sessions = len(t.get("sessions", []))
+            sess_str = f" [{sessions}s]" if sessions > 0 else ""
+            print(f"    {marker} {t['id']:4s}  {t['title']}{proj}{due_str}{sess_str}")
+
+
+def cmd_next(args):
+    """Suggest what to work on next based on priority, energy, and context."""
+    tasks = engine.get_all_tasks()
+
+    # Get todo and active tasks
+    candidates = [t for t in tasks if t.get("status") in ("todo", "active")]
+    if not candidates:
+        print("No tasks to suggest. Inbox empty too." if not engine.get_inbox() else
+              f"No tasks, but {len(engine.get_inbox())} inbox items to triage.")
+        return
+
+    # Score each task
+    def score(t):
+        s = 0
+        # Priority (higher priority = higher score)
+        p = t.get("priority", 3)
+        s += (5 - p) * 10  # P1=40, P2=30, P3=20, P4=10
+
+        # Active tasks get a boost (momentum)
+        if t.get("status") == "active":
+            s += 15
+
+        # Overdue tasks get a big boost
+        from datetime import date as _date
+        today = _date.today().isoformat()
+        if t.get("due") and t["due"] <= today:
+            s += 25
+
+        # Tasks with sessions get a small boost (continuity)
+        sessions = len(t.get("sessions", []))
+        if sessions > 0:
+            s += min(sessions * 3, 12)
+
+        return s
+
+    ranked = sorted(candidates, key=score, reverse=True)
+    top = ranked[:3]
+
+    print("Suggested next:")
+    print("=" * 40)
+    for i, t in enumerate(top, 1):
+        p = t.get("priority", 0)
+        marker = {1: "!!", 2: "!", 3: " ", 4: "~", 0: "?"}.get(p, " ")
+        proj = f" [{t['project']}]" if t.get("project") else ""
+        status = t.get("status", "?")
+        sessions = len(t.get("sessions", []))
+        sess_str = f" ({sessions} sessions)" if sessions > 0 else ""
+        reasons = []
+        if status == "active":
+            reasons.append("in progress")
+        if t.get("due"):
+            from datetime import date as _date
+            if t["due"] <= _date.today().isoformat():
+                reasons.append("overdue")
+            else:
+                reasons.append(f"due {t['due']}")
+        if sessions > 0:
+            reasons.append("has momentum")
+        reason_str = f"  — {', '.join(reasons)}" if reasons else ""
+        print(f"  {i}. {marker} {t['id']:4s}  {t['title']}{proj}{sess_str}{reason_str}")
+
+
+def cmd_drift(args):
+    """Show drift analysis — goal weights vs actual work distribution."""
+    import metrics as work_metrics
+
+    data = engine.load_all()
+    drift = work_metrics.compute_drift(data["goals"], data["tasks"])
+    print(work_metrics.format_drift_display(drift))
+
+
 def cmd_json(args):
     """Output full work data as JSON (for programmatic use)."""
     data = engine.load_all()
@@ -371,6 +527,10 @@ COMMANDS = {
     "inbox": cmd_inbox,
     "projects": cmd_projects,
     "goals": cmd_goals,
+    "today": cmd_today,
+    "next": cmd_next,
+    "metrics": cmd_metrics,
+    "drift": cmd_drift,
     "link": cmd_link,
     "thread": cmd_thread,
     "threads": cmd_threads,
