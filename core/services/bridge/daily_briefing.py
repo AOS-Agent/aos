@@ -321,6 +321,156 @@ def _build_briefing() -> str:
     return "\n".join(lines)
 
 
+def _build_morning_prompt() -> str:
+    """Build a personalized morning prompt that invites a voice note.
+
+    Selects the right template based on: day of week, recent activity,
+    time since last ramble, and active task count.
+    """
+    tz_name, _, _ = _get_config()
+    tz = ZoneInfo(tz_name)
+    now = datetime.now(tz)
+
+    # Load operator name
+    op_name = "there"
+    op_file = Path.home() / ".aos" / "config" / "operator.yaml"
+    if op_file.exists():
+        op = yaml.safe_load(op_file.read_text()) or {}
+        op_name = op.get("name", "there")
+
+    # Count active tasks and recent completions
+    active_count = 0
+    done_yesterday = 0
+    top_task = ""
+    top_project = ""
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "engine", str(Path.home() / "aos" / "core" / "work" / "engine.py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        tasks = mod.get_all_tasks()
+        active = [t for t in tasks if t.get("status") in ("active", "todo") and not t.get("parent")]
+        active_count = len(active)
+        if active:
+            top_task = active[0].get("title", "")
+            top_project = active[0].get("project", "")
+        yesterday = (now - timedelta(days=1)).strftime("%Y-%m-%d")
+        done_yesterday = sum(1 for t in tasks
+                             if t.get("status") == "done"
+                             and t.get("completed", "").startswith(yesterday))
+    except Exception:
+        pass
+
+    # Check last ramble date
+    vault = Path.home() / "vault"
+    gap_days = 0
+    for d in range(1, 8):
+        day_str = (now - timedelta(days=d)).strftime("%Y-%m-%d")
+        note = vault / "daily" / f"{day_str}.md"
+        if note.exists() and "ramble" in note.read_text().lower():
+            gap_days = d
+            break
+    if gap_days == 0:
+        gap_days = 7  # No recent ramble found
+
+    day_of_week = now.strftime("%A")
+    is_monday = day_of_week == "Monday"
+    is_friday = day_of_week == "Friday"
+
+    # Select prompt based on context
+    if is_friday:
+        # Gratitude / reflection
+        prompts = [
+            f"Asalamualaikum {op_name}. Jumuah mubarak.\n\n"
+            f"Before the day — what are you grateful for this week? And what's one thing "
+            f"you want to carry into next week?\n\n"
+            f"Send a voice note. I'll capture it.",
+
+            f"{op_name}, it's Friday. The week is almost wrapped.\n\n"
+            f"What worked this week? What didn't? What would you do differently?\n\n"
+            f"Just talk — I'll sort it out.",
+        ]
+    elif is_monday or gap_days > 3:
+        # Fresh start
+        prompts = [
+            f"Asalamualaikum {op_name}. New week.\n\n"
+            f"What are the 2-3 things that matter most this week? "
+            f"Don't overthink it — just talk for a minute.\n\n"
+            f"Send me a voice note.",
+
+            f"Asalamualaikum {op_name}. It's been {gap_days} days since we last talked.\n\n"
+            f"What happened? What changed? What needs your attention today?\n\n"
+            f"Voice note — just ramble. I'll organize it.",
+        ]
+    elif done_yesterday >= 2:
+        # Momentum
+        prompts = [
+            f"Asalamualaikum {op_name}. You finished {done_yesterday} tasks yesterday. "
+            f"That's momentum.\n\n"
+            f"What do you want to keep moving today? What's the one thing that would "
+            f"make today count?\n\n"
+            f"Send a voice note.",
+
+            f"{op_name} — productive day yesterday. {done_yesterday} things done.\n\n"
+            f"What's the priority today? Talk to me — I'll turn it into tasks.",
+        ]
+    elif active_count > 3:
+        # Lots going on — help prioritize
+        prompts = [
+            f"Asalamualaikum {op_name}. You've got {active_count} things in motion"
+            + (f" — '{top_task}' is the most recent" if top_task else "") + ".\n\n"
+            f"What's actually important today? Not everything — just the real priorities.\n\n"
+            f"Voice note. 60 seconds. Go.",
+
+            f"{op_name}, there's a lot on your plate — {active_count} active items.\n\n"
+            f"What would make today feel like progress? What can wait?\n\n"
+            f"Send a voice note and I'll help you sort it.",
+        ]
+    elif active_count == 0:
+        # Nothing active — open space
+        prompts = [
+            f"Asalamualaikum {op_name}. Your plate is clear right now.\n\n"
+            f"What do you want this machine working on? What's been in the back "
+            f"of your mind that you haven't started yet?\n\n"
+            f"Send a voice note — even 30 seconds is enough.",
+
+            f"{op_name}, nothing active right now. That's either peaceful or "
+            f"something is being avoided.\n\n"
+            f"What should we be working on? Talk to me.",
+        ]
+    else:
+        # Normal day
+        prompts = [
+            f"Asalamualaikum {op_name}. What's on your mind this morning?\n\n"
+            + (f"'{top_task}' is still active" + (f" in {top_project}" if top_project else "") + ". " if top_task else "")
+            + f"Where do you want to push today?\n\n"
+            f"Send a voice note — I'll turn it into tasks and notes.",
+
+            f"Morning {op_name}. Before the day takes over — "
+            f"what matters most right now?\n\n"
+            f"Not the urgent stuff. The important stuff.\n\n"
+            f"Voice note. I'm listening.",
+        ]
+
+    import random
+    return random.choice(prompts)
+
+
+def _send_morning_prompt(bot_token: str, chat_id: int):
+    """Send the personalized morning prompt inviting a voice note."""
+    try:
+        text = _build_morning_prompt()
+        httpx.post(
+            f"https://api.telegram.org/bot{bot_token}/sendMessage",
+            json={"chat_id": chat_id, "text": text},
+            timeout=10,
+        )
+        logger.info("Morning prompt sent")
+    except Exception as e:
+        logger.error(f"Morning prompt failed: {e}")
+
+
 def _send_briefing(bot_token: str, chat_id: int):
     """Build and send the daily briefing via Telegram."""
     try:
@@ -367,9 +517,22 @@ def start_daily_briefing(bot_token: str, chat_id: int, hour: int = 8, minute: in
                 tz = ZoneInfo(tz_name)
                 now = datetime.now(tz)
 
-                # Send if it's past the briefing time and we haven't sent today
-                if (now.hour >= hour and
-                    (now.hour == hour and now.minute >= minute or now.hour > hour) and
+                # Morning prompt: send at the configured hour
+                # Briefing: send 15 minutes later (gives them time to send a voice note)
+                prompt_sent = state_file.with_suffix(".prompt").exists() and \
+                    state_file.with_suffix(".prompt").read_text().strip() == str(now.date())
+
+                if (now.hour == hour and now.minute >= minute and
+                        last_sent_date != now.date() and not prompt_sent):
+                    _send_morning_prompt(bot_token, chat_id)
+                    state_file.with_suffix(".prompt").write_text(str(now.date()))
+
+                # Send briefing 15 min after prompt (or at hour+1 if prompt was missed)
+                briefing_minute = minute + 15
+                briefing_hour = hour + (1 if briefing_minute >= 60 else 0)
+                briefing_minute = briefing_minute % 60
+                if (now.hour >= briefing_hour and
+                    (now.hour == briefing_hour and now.minute >= briefing_minute or now.hour > briefing_hour) and
                         last_sent_date != now.date()):
                     _send_briefing(bot_token, chat_id)
                     last_sent_date = now.date()

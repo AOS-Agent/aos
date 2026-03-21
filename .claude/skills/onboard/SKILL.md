@@ -311,6 +311,44 @@ Advisor handles that.
 You can also activate specialist agents from the catalog — Engineer for infrastructure,
 Developer for coding, Marketing for content. But start with these three. They're enough."
 
+### The Machine That Runs While You Sleep
+
+"Behind the scenes, there are 12+ automated jobs running on a schedule — every 5 minutes,
+every 30 minutes, daily, weekly. You don't need to think about them, but you should know
+they exist:
+
+- **Watchdog** (every 5 min) — makes sure all services are running
+- **Session sync** (every 30 min) — captures your Claude Code sessions
+- **Vault indexing** (every 30 min) — keeps your knowledge searchable
+- **Morning context** (6:30 AM) — fetches weather and prayer times
+- **Session analysis** (weekly) — finds friction patterns in your work
+- **Auto-update** (4 AM) — pulls the latest AOS improvements
+
+You can see all of these on your dashboard under 'Automations'. If one fails,
+Steward catches it. If the machine reboots, the scheduler detects it and restarts
+everything automatically."
+
+### The Morning Practice
+
+"Every morning, your Telegram will send you a prompt — personalized to what you're
+working on, what happened yesterday, what day of the week it is. It's not a notification.
+It's an invitation.
+
+Send a voice note back. Just talk — 60 seconds about what's on your mind, what you
+want to do today, what's bugging you. The system transcribes it, extracts tasks and ideas,
+and sends them back for your approval. One tap — tasks created, ideas saved to your vault.
+
+That's the daily practice. The more you do it, the more context the system has,
+the smarter it gets. Sessions compound. Patterns emerge. Repeated work gets automated.
+
+It starts tomorrow morning."
+
+AskUserQuestion:
+- question: "What time should your morning prompt arrive?"
+- options: ["7:00 AM", "7:30 AM", "8:00 AM", "8:30 AM", "9:00 AM"]
+
+Write the selected time to `operator.yaml` → `daily_loop.morning_briefing`.
+
 ### Trust
 
 "Now — how much rope do you want to give them?
