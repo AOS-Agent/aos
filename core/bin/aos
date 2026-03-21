@@ -270,7 +270,7 @@ except py_compile.PyCompileError as e:
         ;;
 
     start)
-        # Flow: open editor → authorize Claude Code → launch cld → Chief runs onboarding
+        # Flow: authorize Claude Code → open editor with cld in terminal
         EDITOR_FILE="$HOME/.aos/config/editor"
         EDITOR_CMD=""
 
@@ -282,15 +282,7 @@ except py_compile.PyCompileError as e:
             command -v code &>/dev/null && EDITOR_CMD="code"
         fi
 
-        # Step 1: Open editor (non-blocking — it launches in background)
-        if [[ -n "$EDITOR_CMD" ]]; then
-            echo ""
-            echo "  Opening $EDITOR_CMD..."
-            "$EDITOR_CMD" "$HOME" &>/dev/null &
-            sleep 1
-        fi
-
-        # Step 2: Authorize Claude Code if not yet signed in
+        # Step 1: Authorize Claude Code if not yet signed in
         if command -v claude &>/dev/null; then
             if [[ ! -f "$HOME/.claude/.credentials.json" ]] && [[ ! -f "$HOME/.claude/credentials.json" ]]; then
                 echo ""
@@ -302,15 +294,46 @@ except py_compile.PyCompileError as e:
             fi
         fi
 
-        # Step 3: Launch Claude Code in terminal — Chief takes over
-        echo ""
-        if [[ ! -f "$HOME/.aos/config/onboarding.yaml" ]]; then
-            echo "  Launching Claude Code — Sahib will walk you through setup."
+        # Step 2: Open editor and launch cld inside its terminal
+        if [[ -n "$EDITOR_CMD" ]]; then
+            echo ""
+            echo "  Opening $EDITOR_CMD with Claude Code..."
+            # Open editor to home directory
+            "$EDITOR_CMD" "$HOME" &>/dev/null &
+            sleep 2
+
+            # Send cld command to the editor's integrated terminal
+            if [[ "$EDITOR_CMD" == "code" ]] || [[ "$EDITOR_CMD" == "cursor" ]]; then
+                # Use VS Code / Cursor CLI to run cld in the integrated terminal
+                "$EDITOR_CMD" --command "workbench.action.terminal.new" 2>/dev/null || true
+                sleep 1
+                # osascript to type cld into the active terminal
+                osascript -e '
+                    tell application "System Events"
+                        delay 0.5
+                        keystroke "cld"
+                        keystroke return
+                    end tell
+                ' 2>/dev/null &
+            fi
+
+            echo ""
+            if [[ ! -f "$HOME/.aos/config/onboarding.yaml" ]]; then
+                echo "  Sahib is waiting in your editor to walk you through setup."
+            else
+                echo "  Claude Code is running in your editor."
+            fi
         else
-            echo "  Launching Claude Code..."
+            # No editor — run cld directly in this terminal
+            echo ""
+            if [[ ! -f "$HOME/.aos/config/onboarding.yaml" ]]; then
+                echo "  Launching Claude Code — Sahib will walk you through setup."
+            else
+                echo "  Launching Claude Code..."
+            fi
+            echo ""
+            exec cld
         fi
-        echo ""
-        exec cld
         ;;
 
     deploy)

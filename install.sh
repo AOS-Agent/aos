@@ -1026,15 +1026,44 @@ OPERATOR
         _info "Creating Claude Code settings..."
         cat > "$settings_file" << 'SETTINGS'
 {
+  "agent": "chief",
   "permissions": {
     "allow": ["Bash(*)", "Read(*)", "Write(*)", "Edit(*)", "Glob(*)", "Grep(*)"],
     "deny": []
   },
-  "env": {},
+  "env": {
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
+    "CLAUDE_CODE_TEAMMATE_MODE": "in-process"
+  },
   "hooks": {}
 }
 SETTINGS
         _ok "settings.json created"
+    else
+        # Patch existing settings.json — ensure agent=chief and teams env vars
+        python3 -c "
+import json
+from pathlib import Path
+p = Path.home() / '.claude' / 'settings.json'
+s = json.loads(p.read_text())
+changed = False
+if not s.get('agent'):
+    s['agent'] = 'chief'
+    changed = True
+if 'env' not in s:
+    s['env'] = {}
+if 'CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS' not in s.get('env', {}):
+    s['env']['CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS'] = '1'
+    changed = True
+if 'CLAUDE_CODE_TEAMMATE_MODE' not in s.get('env', {}):
+    s['env']['CLAUDE_CODE_TEAMMATE_MODE'] = 'in-process'
+    changed = True
+if changed:
+    p.write_text(json.dumps(s, indent=2) + '\n')
+    print('patched')
+else:
+    print('ok')
+" 2>/dev/null
     fi
 
     # Wire hooks if missing — run migration 005 directly
