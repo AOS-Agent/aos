@@ -270,7 +270,8 @@ except py_compile.PyCompileError as e:
         ;;
 
     start)
-        # Flow: authorize Claude Code → open editor with cld in terminal
+        # Flow: open editor → launch cld in its terminal
+        # Claude Code handles its own auth on first run — no need to pre-auth.
         EDITOR_FILE="$HOME/.aos/config/editor"
         EDITOR_CMD=""
 
@@ -282,19 +283,7 @@ except py_compile.PyCompileError as e:
             command -v code &>/dev/null && EDITOR_CMD="code"
         fi
 
-        # Step 1: Authorize Claude Code if not yet signed in
-        if command -v claude &>/dev/null; then
-            if [[ ! -f "$HOME/.claude/.credentials.json" ]] && [[ ! -f "$HOME/.claude/credentials.json" ]]; then
-                echo ""
-                echo "  Claude Code needs to be authorized."
-                echo "  A browser window will open for sign-in..."
-                echo ""
-                claude auth login 2>/dev/null || true
-                echo ""
-            fi
-        fi
-
-        # Step 2: Open editor and launch cld inside its terminal
+        # Open editor and launch cld inside its terminal
         if [[ -n "$EDITOR_CMD" ]]; then
             echo ""
             echo "  Opening $EDITOR_CMD with Claude Code..."

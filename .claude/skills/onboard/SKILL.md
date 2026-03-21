@@ -83,15 +83,18 @@ is the telemetry opt-in question in Phase 6 (Trust).
 
 ## Choice Format
 
-Claude Code has a native `AskUserQuestion` tool that presents clean, selectable options.
-**Use it at every decision point** -- the operator taps a choice instead of typing.
+**ALWAYS use the `AskUserQuestion` tool for EVERY question.** This is mandatory.
+The operator selects from clean, tappable options instead of typing free text.
 
 Rules:
-- Use `question` for the prompt, `options` for the choices
+- Use `question` for the prompt text
+- Use `options` array for all possible answers — the operator picks one
 - Keep option labels short (2-5 words). Put detail in the question, not the options.
 - Always include a "Skip" option where skipping makes sense
-- For open-ended input (name, custom values), just ask naturally in prose -- no AskUserQuestion needed
-- Don't use AskUserQuestion for simple confirmations -- just ask "That right?" in text
+- For open-ended input (name, custom values): use AskUserQuestion with a text field
+  by setting `options` to an empty array and asking them to type their answer
+- For confirmations: use AskUserQuestion with options like ["Yes", "Change it", "Skip"]
+- NEVER present numbered lists in prose text — always use AskUserQuestion
 
 ---
 
@@ -113,19 +116,12 @@ For each failure, try to fix it during the relevant phase (e.g., Python issue du
 profile setup, SSH during integrations). If you fix it, note it. If you can't fix it
 in-session, file it with `~/aos/core/bin/feedback --auto` and move on.
 
-Then greet:
+Then greet with a warm message explaining what AOS is — keep it to 3-4 sentences.
+Use the operator's name from operator.yaml.
 
-```
-Asalamualaikum {name}! I'm Sahib -- I'll walk you through setting up your system.
-
-AOS is your personal operating system. It has agents that help manage work,
-knowledge, and communication -- but first, let's make it yours.
-
-This takes about 5 minutes. You can skip anything, and everything
-can be changed later.
-
-Ready? (yes / skip entire setup)
-```
+Then use AskUserQuestion:
+- question: "This takes about 5 minutes. You can skip anything. Ready?"
+- options: ["Let's go", "Skip setup"]
 
 If they skip, write a minimal `onboarding.yaml` with all phases marked "skipped" and exit.
 
@@ -133,44 +129,36 @@ If they skip, write a minimal `onboarding.yaml` with all phases marked "skipped"
 
 ### Phase 1: Profile
 
-Refine `~/.aos/config/operator.yaml`. Ask one at a time:
+Refine `~/.aos/config/operator.yaml`. Ask one at a time using AskUserQuestion.
 
 **1a. Name**
 
-```
-Your name is showing as "{name}" (from git config).
+AskUserQuestion:
+- question: "Your name is showing as '{name}'. Is that right?"
+- options: ["Yes, that's me", "Change it"]
 
-That right, or should I change it?
-```
+If "Change it": ask "What should I call you?" (open-ended AskUserQuestion, no options).
 
 **1b. Timezone**
 
-```
-Timezone detected: {timezone}
-
-  1. Keep it
-  2. Change it
-
-Default: 1
-```
+AskUserQuestion:
+- question: "Timezone detected: {timezone}. Correct?"
+- options: ["Keep it", "Change it"]
 
 **1c. Communication style**
 
-```
-How do you prefer responses?
-
-  1. Concise -- short and direct
-  2. Detailed -- thorough explanations
-  3. Conversational -- natural back-and-forth
-
-Default: 1
-```
+AskUserQuestion:
+- question: "How do you prefer responses?"
+- options: ["Concise", "Detailed", "Conversational"]
 
 **1d. Language**
 
-```
-What language should AOS communicate in? (currently: en)
-```
+Default to English. Only ask if the operator's system locale suggests otherwise.
+If their macOS language is non-English, use AskUserQuestion:
+- question: "Should AOS communicate in {detected_language} or English?"
+- options: ["{detected_language}", "English"]
+
+Otherwise skip — English is the default, no need to ask.
 
 Write each update to `operator.yaml` immediately after the answer.
 
@@ -178,23 +166,16 @@ Write each update to `operator.yaml` immediately after the answer.
 
 ### Phase 2: Schedule
 
-```
-Do you have regular blocks of time where you shouldn't be interrupted?
-For example: teaching hours, meetings, prayer times, focus blocks.
+AskUserQuestion:
+- question: "Do you have regular blocks where you shouldn't be interrupted? (teaching, meetings, prayer, focus time)"
+- options: ["Yes, add some", "Skip for now"]
 
-  1. Yes, let me add some
-  2. Skip for now (add later)
+If yes, ask for each block using AskUserQuestion for each field:
+- Name: open-ended
+- Days: AskUserQuestion with options ["Weekdays", "Every day", "Custom"]
+- Start/end time: open-ended
 
-Default: 2
-```
-
-If yes, ask for one block at a time:
-- Name (e.g., "Teaching")
-- Days (e.g., "mon tue wed thu")
-- Start time (e.g., "08:30")
-- End time (e.g., "09:45")
-
-After each: "Add another block? (yes / done)"
+After each block, AskUserQuestion: "Add another?" with options ["Add another", "Done"]
 
 Write to `operator.yaml` schedule.blocks.
 
@@ -219,53 +200,34 @@ I checked -- {N} are accessible. macOS will prompt for the rest when agents firs
 
 #### 3b. Telegram (recommended -- Chrome MCP automation)
 
-```
-Telegram is how you'll talk to AOS from your phone -- commands, updates, everything.
+Explain briefly: "Telegram lets you talk to your agents from your phone."
 
-  1. Set it up now (I'll automate it in Chrome -- takes 2 minutes)
-  2. Skip for now
-
-Default: 1
-```
+AskUserQuestion:
+- question: "Set up Telegram now? (I'll automate it in Chrome — takes 2 minutes)"
+- options: ["Set it up", "Skip"]
 
 If yes, follow the **Telegram Chrome MCP Protocol** below.
 
 #### 3c. Other Built-in Integrations
 
-Present each one individually:
+Present each one individually using AskUserQuestion:
 
 **Email:**
-```
-Do you use email accounts you'd like AOS to read?
-
-  1. Yes -- set up email
-  2. Skip
-
-Default: 2
-```
+AskUserQuestion:
+- question: "Do you use email accounts you'd like AOS to read?"
+- options: ["Set up email", "Skip"]
 If yes: `bash ~/aos/core/integrations/email/setup.sh`
 
 **WhatsApp:**
-```
-Want AOS to read and send WhatsApp messages?
-(Requires scanning a QR code with your phone)
-
-  1. Yes -- set up WhatsApp
-  2. Skip
-
-Default: 2
-```
+AskUserQuestion:
+- question: "Want AOS to read and send WhatsApp messages? (requires QR code scan)"
+- options: ["Set up WhatsApp", "Skip"]
 If yes: `bash ~/aos/core/integrations/whatsapp/setup.sh`
 
 **GitHub:**
-```
-Do you use GitHub for code?
-
-  1. Yes -- connect GitHub
-  2. Skip
-
-Default: 2
-```
+AskUserQuestion:
+- question: "Do you use GitHub for code?"
+- options: ["Connect GitHub", "Skip"]
 If yes: `bash ~/aos/core/integrations/github/setup.sh`
 
 **Obsidian:** Already set up by install.sh. Just confirm:
@@ -275,21 +237,11 @@ bash ~/aos/core/integrations/obsidian/setup.sh --check
 
 #### 3d. Catalog (what else do you use?)
 
-```
-Do you use any of these for work or projects?
+AskUserQuestion:
+- question: "Do you use any of these for work or projects?"
+- options: ["Notion", "Linear", "Slack", "Discord", "Google Workspace", "Todoist", "Plane", "Other", "None — I'm good"]
 
-  1. Notion
-  2. Linear
-  3. Slack
-  4. Discord
-  5. Google Workspace
-  6. Todoist
-  7. Plane
-  8. Other (tell me what)
-  9. None -- I'm good
-
-Pick any that apply (e.g., "1, 3, 7") or 9 to skip.
-```
+If they pick multiple, ask one at a time. If "Other", ask what it is (open-ended).
 
 For each selected:
 - Read its `setup_hint` from `registry.yaml`
@@ -437,44 +389,29 @@ If Chrome MCP tools aren't available:
 
 ### Phase 4: Projects
 
-Check for existing project directories:
+Scan for existing project directories:
 ```bash
-ls -d ~/project/*/ ~/nuchay/ ~/chief-ios-app/ 2>/dev/null
+# Look for directories with CLAUDE.md, .git, or package.json — signs of a project
+find ~ -maxdepth 2 -name "CLAUDE.md" -o -name ".git" -o -name "package.json" 2>/dev/null | \
+    sed 's|/[^/]*$||' | sort -u | grep -v -E '(\.aos|\.claude|aos/|Library|\.cache)'
 ```
 
 Also check `~/aos/config/projects.yaml`.
 
-```
-I found these directories: {list}
+Mention what you found, then AskUserQuestion:
+- question: "Want me to register these so AOS tracks work per-project?"
+- options: ["Register all", "Let me pick", "Skip"]
 
-Want me to register them so AOS tracks work per-project?
-
-  1. Yes -- register all
-  2. Let me pick which ones
-  3. Skip
-
-Default: 1
-```
-
-For each registered project:
-- Ask for display name (default: directory name)
-- Add to `~/aos/config/projects.yaml`
+For each registered project: ask display name via AskUserQuestion (open-ended, default: directory name).
+Add to `~/aos/config/projects.yaml`.
 
 ---
 
 ### Phase 5: Daily Loop
 
-```
-AOS can send you a morning briefing and evening check-in.
-Currently set to {morning_time} and {evening_time}.
-
-  1. Keep these times
-  2. Change morning time
-  3. Change evening time
-  4. Change both
-  5. Disable daily loop
-
-Default: 1
+Explain briefly what the daily loop does, then AskUserQuestion:
+- question: "Morning briefing at {morning_time}, evening check-in at {evening_time}. Good?"
+- options: ["Keep these times", "Change times", "Disable daily loop"]
 ```
 
 Write changes to `operator.yaml` daily_loop section.
@@ -483,39 +420,18 @@ Write changes to `operator.yaml` daily_loop section.
 
 ### Phase 6: Trust
 
-```
-Last thing -- how much autonomy should AOS have?
+Explain briefly what trust levels mean, then AskUserQuestion:
+- question: "How much autonomy should AOS have? You can change this anytime."
+- options: ["Training wheels — approve everything", "Copilot — routine is automatic", "Autopilot — handle everything"]
 
-  1. Training wheels -- I propose everything, you approve (recommended)
-  2. Copilot -- routine stuff is automatic, important decisions need approval
-  3. Autopilot -- handle everything, only escalate exceptions
-
-You can change this anytime. Most people start with 1.
-
-Default: 1
-```
-
-Map:
-- 1 = level 1 (APPROVAL)
-- 2 = level 2 (SEMI-AUTO)
-- 3 = level 3 (FULL-AUTO)
-
+Map: Training wheels = level 1, Copilot = level 2, Autopilot = level 3.
 Write to `operator.yaml` trust section and `~/.aos/config/trust.yaml`.
 
 #### Telemetry opt-in
 
-After trust, ask about telemetry:
-
-```
-One more thing — AOS can send anonymous usage stats to help improve the system.
-No personal data, ever — just things like "onboarding took 4 minutes" and
-"telegram setup was skipped by 60% of users."
-
-  1. Opt in -- help improve AOS
-  2. No thanks
-
-Default: 1
-```
+Explain briefly (no personal data, just phase timings and skip rates), then AskUserQuestion:
+- question: "Help improve AOS with anonymous usage stats?"
+- options: ["Opt in", "No thanks"]
 
 If yes: `~/aos/core/bin/telemetry opt-in`
 If no: that's it — telemetry stays off, no data collected.

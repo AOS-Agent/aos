@@ -672,41 +672,9 @@ prereq_claude() {
 }
 
 prereq_claude_auth() {
-    # Claude Code needs authentication before first use.
-    # Check if already authenticated (settings or credentials exist).
-    if ! command -v claude &>/dev/null; then
-        _info "Claude Code not installed — skipping auth"
-        return 0
-    fi
-
-    # Check if already authenticated by looking for credential markers
-    if [[ -f "$HOME/.claude/.credentials.json" ]] || [[ -f "$HOME/.claude/credentials.json" ]]; then
-        _skip "Claude Code auth"
-        return 0
-    fi
-
-    echo ""
-    echo "  ${BOLD}Claude Code needs to be authorized.${RESET}"
-    echo "  This opens a browser window for you to sign in."
-    echo ""
-    printf "  Authorize now? [Y/n]: "
-    read -r auth_choice
-
-    case "${auth_choice:-y}" in
-        [Yy]|"")
-            _info "Starting Claude Code auth — a browser window will open..."
-            # Run claude with a simple command to trigger auth flow
-            # The auth flow is interactive — claude handles it
-            claude --version &>/dev/null
-            # Just opening claude briefly triggers auth if needed
-            echo ""
-            _info "If a browser window opened, complete sign-in there."
-            _info "If auth didn't trigger, you'll be prompted when you first run ${BRAND}aos start${RESET}"
-            ;;
-        *)
-            _info "Skipping auth — you'll be prompted when you first run aos start"
-            ;;
-    esac
+    # Claude Code handles its own auth on first launch — nothing to do here.
+    # When cld runs at the end of install, Claude will prompt for sign-in if needed.
+    return 0
 }
 
 prereq_ssh() {
@@ -968,8 +936,20 @@ run_bootstrap() {
     if [[ -f "$operator_yaml" ]]; then
         _skip "Operator profile"
     else
-        local op_name
-        op_name=$(git config --global user.name 2>/dev/null || echo "")
+        # Get the operator's real name — try multiple sources
+        local op_name=""
+        # 1. macOS contact card (most reliable for real name)
+        op_name=$(id -F 2>/dev/null || echo "")
+        # 2. Fall back to git config
+        if [[ -z "$op_name" ]] || [[ "$op_name" == "$(whoami)" ]]; then
+            op_name=$(git config --global user.name 2>/dev/null || echo "")
+        fi
+        # 3. Ask if we still don't have it
+        if [[ -z "$op_name" ]]; then
+            echo ""
+            printf "  ${BOLD}What's your name?${RESET} "
+            read -r op_name
+        fi
         local op_tz
         op_tz=$(readlink /etc/localtime 2>/dev/null | sed 's|.*/zoneinfo/||' || echo "UTC")
         cat > "$operator_yaml" << OPERATOR
