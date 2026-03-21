@@ -394,6 +394,25 @@
             {% endfor %}
         </div>
         {% endif %}
+
+        <!-- Detected (untracked) projects -->
+        {% if detected_projects %}
+        <div class="panel-card">
+            <div class="panel-title">Detected <span class="tag tag-yellow" style="margin-left:6px;">{{ detected_projects|length }}</span></div>
+            <div style="font-size:11px;color:var(--text-tertiary);margin-bottom:12px;">Untracked work detected from sessions</div>
+            {% for dp in detected_projects %}
+            <div class="thread-item">
+                <div class="thread-title">{{ dp.name }}</div>
+                <div class="thread-meta">
+                    {% if dp.session_count %}<span>{{ dp.session_count }} sessions</span>{% endif %}
+                    {% if dp.has_claude_md %}<span class="tag tag-blue" style="font-size:9px;">CLAUDE.md</span>{% endif %}
+                    {% if dp.has_git %}<span class="tag tag-default" style="font-size:9px;">git</span>{% endif %}
+                    <span class="tag tag-{{ 'green' if dp.confidence == 'high' else 'yellow' }}">{{ dp.confidence }}</span>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
     </div>
 </div>
 {% endblock %}

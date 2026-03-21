@@ -265,6 +265,20 @@ async def api_work():
         return {"error": str(e)}
 
 
+@app.get("/api/detected-projects")
+async def api_detected_projects():
+    """Auto-detect projects from session patterns and directories."""
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "detect", str(Path.home() / "aos" / "core" / "work" / "detect_projects.py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod.detect()
+    except Exception as e:
+        return {"error": str(e)}
+
+
 @app.get("/work", response_class=HTMLResponse)
 async def work_page(request: Request):
     """Work page — tasks, projects, goals, threads."""
@@ -315,6 +329,18 @@ async def work_page(request: Request):
     # Count active tasks for sidebar badge
     active_count = summary["active"] + summary["todo"]
 
+    # Auto-detect untracked projects
+    detected_projects = []
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "detect", str(Path.home() / "aos" / "core" / "work" / "detect_projects.py"))
+        det_mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(det_mod)
+        detected_projects = det_mod.detect()
+    except Exception:
+        pass
+
     return templates.TemplateResponse("work.html", {
         "request": request,
         "active_page": "work",
@@ -325,6 +351,7 @@ async def work_page(request: Request):
         "threads": threads,
         "inbox": inbox,
         "summary": summary,
+        "detected_projects": detected_projects,
     })
 
 
