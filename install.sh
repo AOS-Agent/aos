@@ -1063,31 +1063,36 @@ deploy_services() {
         else
             _info "Deploying $name..."
             mkdir -p "$dst"
-            uv venv "$dst/.venv" --quiet 2>/dev/null
-            uv pip install --quiet -p "$dst/.venv/bin/python" -r <(
-                python3 -c "
+
+            # Each service deploy is best-effort — don't kill the install
+            if uv venv "$dst/.venv" --quiet 2>/dev/null && \
+               uv pip install --quiet -p "$dst/.venv/bin/python" \
+                 -r <(python3 -c "
+import re, sys
+toml_path = '$src_dir/pyproject.toml'
 try:
-    import tomllib
-except ImportError:
-    import tomli as tomllib
-with open('$src_dir/pyproject.toml', 'rb') as f:
-    deps = tomllib.load(f).get('project', {}).get('dependencies', [])
-print('\n'.join(deps))
-" 2>/dev/null || python3 -c "
-# Fallback: parse deps without toml library
-import re
-deps = []
-in_deps = False
-for line in open('$src_dir/pyproject.toml'):
-    if line.strip() == 'dependencies = [': in_deps = True; continue
-    if in_deps and line.strip() == ']': break
-    if in_deps:
-        m = re.search(r'\"(.+?)\"', line)
-        if m: deps.append(m.group(1))
+    try:
+        import tomllib
+    except ImportError:
+        import tomli as tomllib
+    with open(toml_path, 'rb') as f:
+        deps = tomllib.load(f).get('project', {}).get('dependencies', [])
+except Exception:
+    deps, in_deps = [], False
+    for line in open(toml_path):
+        s = line.strip()
+        if s == 'dependencies = [': in_deps = True; continue
+        if in_deps and s == ']': break
+        if in_deps:
+            m = re.search(r'\"(.+?)\"', line)
+            if m: deps.append(m.group(1))
 print('\n'.join(deps))
 "
-            ) 2>&1 | tail -3 >> "$INSTALL_LOG"
-            _ok "Service $name"
+               ) 2>&1 | tail -3 >> "$INSTALL_LOG"; then
+                _ok "Service $name"
+            else
+                _warn "Service $name — deploy failed (run 'aos deploy $name' later)"
+            fi
         fi
     done
 
