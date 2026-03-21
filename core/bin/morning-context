@@ -1,0 +1,153 @@
+#!/usr/bin/env python3
+"""morning-context — fetches weather and prayer times for the day.
+
+Runs at 06:30 daily. Writes to ~/.aos-v2/work/morning-context.yaml.
+Uses only stdlib — no pip dependencies.
+"""
+
+import datetime
+import json
+import os
+import sys
+import urllib.parse
+import urllib.request
+from pathlib import Path
+
+OUTPUT_FILE = Path.home() / ".aos-v2" / "work" / "morning-context.yaml"
+
+# Configurable via environment
+CITY = os.environ.get("AOS_CITY", "Houston")
+COUNTRY = os.environ.get("AOS_COUNTRY", "US")
+PRAYER_METHOD = os.environ.get("AOS_PRAYER_METHOD", "2")
+
+REQUEST_TIMEOUT = 10
+
+
+def _fetch_url(url: str) -> dict | None:
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "aos-morning-context/1.0"})
+        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as resp:
+            return json.loads(resp.read().decode())
+    except Exception as e:
+        print(f"Warning: Failed to fetch {url}: {e}")
+        return None
+
+
+def _get_weather() -> dict:
+    data = _fetch_url("https://wttr.in/?format=j1")
+    if not data:
+        return {"condition": "unavailable", "summary": "Weather fetch failed"}
+
+    try:
+        current = data["current_condition"][0]
+        today = data["weather"][0]
+
+        condition = current.get("weatherDesc", [{}])[0].get("value", "Unknown")
+        temp_high_c = today.get("maxtempC", "?")
+        temp_low_c = today.get("mintempC", "?")
+        humidity = current.get("humidity", "?")
+
+        # Convert C to F
+        def c_to_f(c):
+            try:
+                return f"{round(int(c) * 9/5 + 32)}°F"
+            except (ValueError, TypeError):
+                return f"{c}°C"
+
+        temp_high = c_to_f(temp_high_c)
+        temp_low = c_to_f(temp_low_c)
+
+        return {
+            "condition": condition,
+            "temp_high": temp_high,
+            "temp_low": temp_low,
+            "humidity": f"{humidity}%",
+            "summary": f"{condition}, high {temp_high}",
+        }
+    except (KeyError, IndexError, TypeError) as e:
+        print(f"Warning: Weather parse failed: {e}")
+        return {"condition": "parse error", "summary": "Weather parse failed"}
+
+
+def _get_prayer_times() -> dict:
+    date_str = datetime.date.today().strftime("%d-%m-%Y")
+    url = (
+        f"https://api.aladhan.com/v1/timingsByCity/{date_str}"
+        f"?city={urllib.parse.quote(CITY)}&country={urllib.parse.quote(COUNTRY)}"
+        f"&method={PRAYER_METHOD}"
+    )
+
+    data = _fetch_url(url)
+    if not data:
+        return {}
+
+    try:
+        timings = data["data"]["timings"]
+        return {
+            "fajr": timings.get("Fajr", "?"),
+            "sunrise": timings.get("Sunrise", "?"),
+            "dhuhr": timings.get("Dhuhr", "?"),
+            "asr": timings.get("Asr", "?"),
+            "maghrib": timings.get("Maghrib", "?"),
+            "isha": timings.get("Isha", "?"),
+        }
+    except (KeyError, TypeError) as e:
+        print(f"Warning: Prayer times parse failed: {e}")
+        return {}
+
+
+def _write_yaml(data: dict, path: Path):
+    """Write dict as YAML using stdlib (no pyyaml required)."""
+    lines = []
+
+    def _val(v):
+        if isinstance(v, str):
+            if any(c in v for c in ('"', "'", ":", "#", "{", "}", "[", "]", ",")):
+                return f'"{v}"'
+            return v
+        return str(v)
+
+    for key, value in data.items():
+        if isinstance(value, dict):
+            lines.append(f"{key}:")
+            for k2, v2 in value.items():
+                lines.append(f"  {k2}: {_val(str(v2))}")
+        else:
+            lines.append(f"{key}: {_val(str(value))}")
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines) + "\n")
+
+
+def main():
+    print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] morning-context starting")
+
+    today = datetime.date.today().isoformat()
+    now = datetime.datetime.now().isoformat(timespec="seconds")
+
+    print(f"Fetching weather ({CITY}, {COUNTRY})...")
+    weather = _get_weather()
+
+    print(f"Fetching prayer times ({CITY}, {COUNTRY}, method {PRAYER_METHOD})...")
+    prayer_times = _get_prayer_times()
+
+    context = {
+        "date": today,
+        "generated": now,
+        "weather": weather,
+        "prayer_times": prayer_times,
+    }
+
+    _write_yaml(context, OUTPUT_FILE)
+    print(f"Morning context written: {OUTPUT_FILE}")
+
+    if weather.get("summary"):
+        print(f"  Weather: {weather['summary']}")
+    if prayer_times.get("fajr"):
+        print(f"  Fajr: {prayer_times['fajr']}, Maghrib: {prayer_times.get('maghrib', '?')}")
+
+    print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] morning-context done")
+
+
+if __name__ == "__main__":
+    main()

@@ -53,7 +53,6 @@ jobs:
     command: python3 ~/aosv2/core/bin/inbox-collect
     every: 30m
     timeout: 120
-    enabled: false  # needs porting from v1
 
   session-analysis:
     command: python3 ~/aosv2/core/bin/session-analysis
@@ -72,7 +71,6 @@ jobs:
     command: python3 ~/aosv2/core/bin/stale-detector
     at: "08:00"
     timeout: 60
-    enabled: false  # needs building (new script)
 
   # ── Tier 3: System becomes proactive ────────────────────────────────────────
 
@@ -80,7 +78,6 @@ jobs:
     command: python3 ~/aosv2/core/bin/morning-context
     at: "06:30"
     timeout: 60
-    enabled: false  # needs building (new script)
 
   email-digest:
     command: python3 ~/aosv2/core/bin/email-digest
@@ -89,10 +86,9 @@ jobs:
     enabled: false  # needs building + email access configured
 
   nightly-pipeline:
-    command: python3 ~/aosv2/core/bin/nightly-pipeline
+    command: bash ~/aosv2/core/bin/nightly-pipeline
     at: "23:00"
     timeout: 600
-    enabled: false  # needs building (new script)
 
   compile-patterns:
     command: python3 ~/aosv2/core/bin/compile-patterns
@@ -113,4 +109,25 @@ jobs:
     monthday: 1
     timeout: 300
     enabled: false  # needs 4+ weekly digests first
+
+  # ── Ported from v1 crontab (not yet rewritten for v2) ─────────────────────
+
+  channel-update:
+    command: /opt/homebrew/bin/python3 ~/aos/bin/channel-update
+    every: 1h
+    timeout: 60
+    enabled: false  # v1 script, needs v2 rewrite
+
+  phoenix-weekly:
+    command: ~/aos/apps/phoenix/.venv/bin/python ~/aos/apps/phoenix/weekly_report.py
+    at: "21:00"
+    weekday: sunday
+    timeout: 300
+    enabled: false  # v1 script, needs v2 rewrite
+
+  friction-rules:
+    command: /opt/homebrew/bin/python3 ~/aos/bin/friction-rules propose
+    at: "23:05"
+    timeout: 120
+    enabled: false  # needs bridge approval workflow
 

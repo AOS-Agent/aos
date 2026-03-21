@@ -219,8 +219,57 @@ def add_thread(title: str, session_id: str = None) -> dict:
     return thread
 
 
+def get_thread(thread_id: str) -> dict | None:
+    """Get a single thread by ID."""
+    data = _load()
+    for thread in data["threads"]:
+        if thread["id"] == thread_id:
+            return thread
+    return None
+
+
+def update_thread(thread_id: str, **fields) -> dict | None:
+    """Update arbitrary fields on a thread."""
+    data = _load()
+    for thread in data["threads"]:
+        if thread["id"] == thread_id:
+            for key, val in fields.items():
+                if val is None and key in thread:
+                    del thread[key]
+                elif val is not None:
+                    thread[key] = val
+            _save(data)
+            return thread
+    return None
+
+
+def promote_thread(thread_id: str, project_title: str = None,
+                   goal: str = None) -> dict | None:
+    """Promote a thread to a project. Returns the created project."""
+    data = _load()
+    for thread in data["threads"]:
+        if thread["id"] == thread_id:
+            title = project_title or thread["title"]
+            thread["status"] = "promoted"
+            _save(data)
+            project = add_project(title, goal=goal)
+            # Link the thread to the project
+            update_thread(thread_id, promoted_to=project["id"])
+            return project
+    return None
+
+
 def get_all_threads() -> list:
     return _load()["threads"]
+
+
+def find_thread_by_cwd(cwd: str) -> dict | None:
+    """Find an active thread associated with a working directory."""
+    data = _load()
+    for thread in data["threads"]:
+        if thread.get("status") in ("exploring", "active") and thread.get("cwd") == cwd:
+            return thread
+    return None
 
 
 # --- Inbox ---
@@ -254,6 +303,111 @@ def promote_inbox(inbox_id: str, as_title: str = None) -> dict | None:
             _save(data)
             return add_task(title, source="inbox")
     return None
+
+
+# --- Session Linking ---
+
+def link_session_to_task(task_id: str, session_id: str, outcome: str = None,
+                         date_str: str = None) -> dict | None:
+    """Link a session to a task. Multiple sessions can link to the same task
+    (multi-session work). Same session won't be linked twice."""
+    data = _load()
+    for task in data["tasks"]:
+        if task["id"] == task_id:
+            if "sessions" not in task:
+                task["sessions"] = []
+            # Dedup — don't link same session twice
+            existing_ids = {s["id"] for s in task["sessions"]}
+            if session_id in existing_ids:
+                # Update outcome if provided
+                if outcome:
+                    for s in task["sessions"]:
+                        if s["id"] == session_id:
+                            s["outcome"] = outcome
+                _save(data)
+                return task
+            entry = {
+                "id": session_id,
+                "date": date_str or _today(),
+            }
+            if outcome:
+                entry["outcome"] = outcome
+            task["sessions"].append(entry)
+            _save(data)
+            return task
+    return None
+
+
+def link_session_to_thread(thread_id: str, session_id: str,
+                           notes: str = None) -> dict | None:
+    """Link a session to a thread. Threads accumulate sessions across
+    multiple sittings — this is the continuity layer."""
+    data = _load()
+    for thread in data["threads"]:
+        if thread["id"] == thread_id:
+            if "sessions" not in thread:
+                thread["sessions"] = []
+            # Dedup
+            if session_id not in thread["sessions"]:
+                thread["sessions"].append(session_id)
+            if notes:
+                existing_notes = thread.get("notes", "")
+                if existing_notes:
+                    thread["notes"] = existing_notes + f"\n\n[{_today()}] {notes}"
+                else:
+                    thread["notes"] = f"[{_today()}] {notes}"
+            thread["last_session"] = _now()
+            _save(data)
+            return thread
+    return None
+
+
+def get_or_create_thread_for_cwd(cwd: str, session_id: str,
+                                  title: str = None) -> dict:
+    """Find an active thread for this working directory, or create one.
+    This is the auto-continuity mechanism — work in the same directory
+    across sessions automatically accumulates under one thread."""
+    thread = find_thread_by_cwd(cwd)
+    if thread:
+        link_session_to_thread(thread["id"], session_id)
+        return thread
+    # Create new thread
+    data = _load()
+    # Derive title from cwd if not provided
+    if not title:
+        dir_name = Path(cwd).name
+        title = f"Work in {dir_name}"
+    thread = {
+        "id": _next_id(data["threads"], "th"),
+        "title": title,
+        "status": "exploring",
+        "started": _today(),
+        "cwd": cwd,
+        "sessions": [session_id],
+        "last_session": _now(),
+    }
+    data["threads"].append(thread)
+    _save(data)
+    return thread
+
+
+def find_tasks_by_project_or_cwd(cwd: str) -> list:
+    """Find active tasks that match a working directory.
+    Maps cwd to project name (e.g., ~/nuchay → 'nuchay', ~/aosv2 → 'aos-v2')."""
+    data = _load()
+    dir_name = Path(cwd).name
+    # Map common directory names to project IDs
+    project_aliases = {
+        "aosv2": "aos-v2",
+        "aos": "aos-v2",
+        "nuchay": "nuchay",
+        "chief-ios-app": "chief",
+    }
+    project_id = project_aliases.get(dir_name, dir_name)
+    active_tasks = [t for t in data["tasks"]
+                    if t.get("project") == project_id
+                    and t.get("status") in ("active", "todo")]
+    return active_tasks
 
 
 # --- Bulk accessors ---

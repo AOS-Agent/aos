@@ -24,10 +24,11 @@ except ImportError:
 # ── Paths ─────────────────────────────────────────────────────────────────────
 
 HOME = Path.home()
-CRONS_YAML = HOME / "aosv2" / "config" / "crons.yaml"
-LOGS_DIR   = HOME / ".aos-v2" / "logs" / "crons"
-LOCKS_DIR  = LOGS_DIR / "locks"
-STATUS_FILE = LOGS_DIR / "status.json"
+CRONS_YAML       = HOME / "aosv2" / "config" / "crons.yaml"
+LOGS_DIR         = HOME / ".aos-v2" / "logs" / "crons"
+LOCKS_DIR        = LOGS_DIR / "locks"
+STATUS_FILE      = LOGS_DIR / "status.json"
+HEALTHCHECKS_CFG = HOME / ".aos-v2" / "config" / "healthchecks.yaml"
 
 DEFAULT_TIMEOUT = 120  # seconds
 
@@ -325,14 +326,40 @@ def run_job(name: str, job: dict, status: dict):
 
     # Ping healthchecks.io on success
     if exit_code == 0 and "ping" in job:
-        ping_url = str(job["ping"]).strip()
+        _ping_url = str(job["ping"]).strip()
         try:
-            urllib.request.urlopen(ping_url, timeout=10)
-            log(f"{name}: pinged {ping_url}")
+            urllib.request.urlopen(_ping_url, timeout=10)
+            log(f"{name}: pinged {_ping_url}")
         except Exception as exc:
             log(f"{name}: WARNING — ping failed ({exc})")
 
 # ── Main ──────────────────────────────────────────────────────────────────────
+
+def load_healthchecks() -> dict:
+    """Load ~/.aos-v2/config/healthchecks.yaml. Returns {} if missing/empty/invalid."""
+    if not HEALTHCHECKS_CFG.exists():
+        return {}
+    try:
+        with open(HEALTHCHECKS_CFG) as f:
+            data = yaml.safe_load(f)
+        if not isinstance(data, dict):
+            return {}
+        checks = data.get("checks", {})
+        return checks if isinstance(checks, dict) else {}
+    except Exception:
+        return {}
+
+
+def ping_url(url: str, label: str):
+    """Fire-and-forget GET to a healthchecks ping URL. Logs but never raises."""
+    if not url or not url.startswith("http"):
+        return
+    try:
+        urllib.request.urlopen(url, timeout=10)
+        log(f"{label}: pinged healthchecks ({url})")
+    except Exception as exc:
+        log(f"{label}: WARNING — healthchecks ping failed ({exc})")
+
 
 def main():
     # Ensure directories exist
@@ -361,6 +388,13 @@ def main():
             ran += 1
 
     log(f"scheduler done — {ran} job(s) ran")
+
+    # Self-ping: prove the scheduler itself is alive on every tick.
+    # Reads checks.scheduler from ~/.aos-v2/config/healthchecks.yaml.
+    # Silently skipped if the file doesn't exist or the URL is empty.
+    hc = load_healthchecks()
+    scheduler_ping = hc.get("scheduler", "")
+    ping_url(scheduler_ping, "scheduler[self]")
 
 if __name__ == "__main__":
     main()

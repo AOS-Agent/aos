@@ -1,0 +1,204 @@
+#!/usr/bin/env python3
+"""
+setup-healthchecks — provision Healthchecks.io checks for AOS v2 critical jobs.
+
+Usage:
+  setup-healthchecks [--dry-run]
+
+Prerequisites:
+  1. Sign up at https://healthchecks.io (free tier — 20 checks)
+  2. Copy your API key from Account Settings → API Access
+  3. Store it:  ~/aos/bin/agent-secret set HEALTHCHECKS_API_KEY <key>
+  4. Run this script
+
+What it does:
+  - Creates or updates checks for each critical job via the HC API
+  - Saves ping URLs to ~/.aos-v2/config/healthchecks.yaml
+  - Prints the lines to manually paste into ~/aosv2/config/crons.yaml
+
+Healthchecks.io API docs: https://healthchecks.io/docs/api/
+"""
+
+import json
+import sys
+import urllib.request
+import urllib.error
+import subprocess
+from pathlib import Path
+
+# ── Configuration ──────────────────────────────────────────────────────────────
+
+AGENT_SECRET = Path.home() / "aos" / "bin" / "agent-secret"
+HC_API_BASE  = "https://healthchecks.io/api/v3"
+HC_CONFIG    = Path.home() / ".aos-v2" / "config" / "healthchecks.yaml"
+CRONS_YAML   = Path.home() / "aosv2" / "config" / "crons.yaml"
+
+# Checks to create.  Keys map to job names in crons.yaml.
+# period / grace are in seconds.
+CHECKS = {
+    "watchdog": {
+        "name": "AOS watchdog",
+        "desc": "Core service health monitor — runs every 5m",
+        "period": 5 * 60,        # 5 minutes
+        "grace":  10 * 60,       # 10 minutes
+        "tags":   "aos tier1",
+    },
+    "auto-commit": {
+        "name": "AOS auto-commit",
+        "desc": "Git auto-commit of vault + state — runs every 30m",
+        "period": 30 * 60,
+        "grace":  60 * 60,       # 1 hour
+        "tags":   "aos tier1",
+    },
+    "session-export": {
+        "name": "AOS session-export",
+        "desc": "Claude session → vault export — runs every 2h",
+        "period": 2 * 3600,
+        "grace":  4 * 3600,      # 4 hours
+        "tags":   "aos tier1",
+    },
+    "scheduler": {
+        "name": "AOS scheduler",
+        "desc": "Scheduler self-heartbeat — proves cron engine is alive",
+        "period": 5 * 60,
+        "grace":  15 * 60,       # 15 minutes
+        "tags":   "aos system",
+    },
+}
+
+# ── Helpers ────────────────────────────────────────────────────────────────────
+
+def get_api_key() -> str:
+    if not AGENT_SECRET.exists():
+        die(f"agent-secret not found at {AGENT_SECRET}")
+    result = subprocess.run(
+        [str(AGENT_SECRET), "get", "HEALTHCHECKS_API_KEY"],
+        capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        die(
+            "HEALTHCHECKS_API_KEY not found in Keychain.\n"
+            "Run:  ~/aos/bin/agent-secret set HEALTHCHECKS_API_KEY <your-key>"
+        )
+    return result.stdout.strip()
+
+
+def api_request(method: str, path: str, api_key: str, body: dict = None) -> dict:
+    url = f"{HC_API_BASE}{path}"
+    data = json.dumps(body).encode() if body else None
+    req = urllib.request.Request(
+        url,
+        data=data,
+        method=method,
+        headers={
+            "X-Api-Key": api_key,
+            "Content-Type": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return json.loads(resp.read())
+    except urllib.error.HTTPError as exc:
+        body_text = exc.read().decode(errors="replace")
+        die(f"HC API {method} {path} → HTTP {exc.code}: {body_text}")
+
+
+def die(msg: str):
+    print(f"ERROR: {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
+def find_existing(checks: list, name: str):
+    for c in checks:
+        if c.get("name") == name:
+            return c
+    return None
+
+# ── Main ───────────────────────────────────────────────────────────────────────
+
+def main():
+    dry_run = "--dry-run" in sys.argv
+
+    print("setup-healthchecks — AOS v2")
+    print(f"  Config target : {HC_CONFIG}")
+    print(f"  Dry run       : {dry_run}")
+    print()
+
+    if dry_run:
+        print("DRY RUN — no API calls will be made.\n")
+        print("Checks that would be created:")
+        for job, cfg in CHECKS.items():
+            print(f"  [{job}]  {cfg['name']}  period={cfg['period']//60}m  grace={cfg['grace']//60}m")
+        print()
+        print("Run without --dry-run after storing your API key.")
+        return
+
+    api_key = get_api_key()
+    print(f"API key loaded from Keychain ({api_key[:6]}...)")
+
+    # Fetch existing checks to avoid duplicates
+    existing_data = api_request("GET", "/checks/", api_key)
+    existing = existing_data.get("checks", [])
+    print(f"Found {len(existing)} existing check(s) on account\n")
+
+    results = {}  # job_name → ping_url
+
+    for job, cfg in CHECKS.items():
+        existing_check = find_existing(existing, cfg["name"])
+
+        if existing_check:
+            ping_url = existing_check.get("ping_url", "")
+            print(f"  [skip]   {cfg['name']} — already exists")
+        else:
+            payload = {
+                "name":    cfg["name"],
+                "desc":    cfg["desc"],
+                "tags":    cfg["tags"],
+                "timeout": cfg["period"],
+                "grace":   cfg["grace"],
+                "channels": "*",  # notify all configured channels
+            }
+            resp = api_request("POST", "/checks/", api_key, payload)
+            ping_url = resp.get("ping_url", "")
+            print(f"  [created] {cfg['name']} → {ping_url}")
+
+        results[job] = ping_url
+
+    print()
+
+    # Write healthchecks.yaml
+    HC_CONFIG.parent.mkdir(parents=True, exist_ok=True)
+    lines = ["# Healthchecks.io ping URLs — auto-generated by setup-healthchecks\n"]
+    lines.append("# Do not edit manually — re-run setup-healthchecks to regenerate\n")
+    lines.append("#\n")
+    lines.append("# Usage: ping URLs are read by ~/aosv2/core/bin/scheduler\n")
+    lines.append("# Add `ping: <url>` to the job entry in crons.yaml\n")
+    lines.append("\n")
+    lines.append("checks:\n")
+    for job, url in results.items():
+        lines.append(f"  {job}: {url}\n")
+
+    with open(HC_CONFIG, "w") as f:
+        f.writelines(lines)
+
+    print(f"Saved ping URLs to {HC_CONFIG}")
+    print()
+
+    # Print crons.yaml patch instructions
+    print("=" * 60)
+    print("Paste these `ping:` lines into ~/aosv2/config/crons.yaml")
+    print("under the matching job entries:\n")
+    for job, url in results.items():
+        if job == "scheduler":
+            print(f"  # (scheduler self-ping — read from healthchecks.yaml)")
+        else:
+            print(f"  {job}:")
+            print(f"    ping: {url}")
+    print()
+    print("The scheduler self-ping (scheduler check) is automatic —")
+    print("no crons.yaml edit needed for that one.")
+    print("=" * 60)
+
+
+if __name__ == "__main__":
+    main()

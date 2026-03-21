@@ -1,0 +1,243 @@
+#!/usr/bin/env python3
+"""weekly-digest — generates a weekly summary note in the vault.
+
+Runs every Sunday at 20:00. Aggregates work data, session summaries,
+and daily notes into a review note at ~/vault/reviews/weekly-{date}.md
+"""
+
+import datetime
+import sys
+from pathlib import Path
+
+try:
+    import yaml
+except ImportError:
+    print("Error: PyYAML not available. Install with: pip install pyyaml")
+    sys.exit(1)
+
+VAULT_ROOT = Path.home() / "vault"
+WORK_FILE = Path.home() / ".aos-v2" / "work" / "work.yaml"
+
+
+def _week_bounds() -> tuple[datetime.date, datetime.date]:
+    """Return Monday and Sunday of the current week."""
+    today = datetime.date.today()
+    monday = today - datetime.timedelta(days=today.weekday())
+    sunday = monday + datetime.timedelta(days=6)
+    return monday, sunday
+
+
+def _load_work() -> dict:
+    if not WORK_FILE.exists():
+        return {}
+    try:
+        with open(WORK_FILE) as f:
+            return yaml.safe_load(f) or {}
+    except Exception as e:
+        print(f"Warning: Could not load work.yaml: {e}")
+        return {}
+
+
+def _analyze_tasks(work: dict, week_start: datetime.date, week_end: datetime.date) -> dict:
+    tasks = work.get("tasks", [])
+    completed_this_week = []
+    added_this_week = []
+    active_tasks = []
+
+    for t in tasks:
+        status = t.get("status", "")
+        created_str = str(t.get("created", ""))
+        completed_str = str(t.get("completed", ""))
+
+        # Parse created date
+        try:
+            created = datetime.date.fromisoformat(created_str[:10])
+        except (ValueError, TypeError):
+            created = None
+
+        # Parse completed date
+        try:
+            completed = datetime.date.fromisoformat(completed_str[:10])
+        except (ValueError, TypeError):
+            completed = None
+
+        if status == "done" and completed and week_start <= completed <= week_end:
+            completed_this_week.append(t.get("title", t.get("id", "?")))
+
+        if created and week_start <= created <= week_end:
+            added_this_week.append(t.get("title", t.get("id", "?")))
+
+        if status in ("active", "todo"):
+            active_tasks.append(t)
+
+    return {
+        "completed": completed_this_week,
+        "added": added_this_week,
+        "active_count": len(active_tasks),
+    }
+
+
+def _scan_sessions(week_start: datetime.date, week_end: datetime.date) -> dict:
+    sessions_dir = VAULT_ROOT / "sessions"
+    if not sessions_dir.exists():
+        return {"count": 0, "topics": []}
+
+    count = 0
+    topics = set()
+    current = week_start
+    while current <= week_end:
+        date_str = current.isoformat()
+        for f in sessions_dir.glob(f"{date_str}-*.md"):
+            count += 1
+            # Extract topic from filename: YYYY-MM-DD-topic-words.md
+            stem = f.stem[len(date_str) + 1:]  # strip date prefix
+            topic = stem.replace("-", " ").strip()
+            if topic:
+                topics.add(topic)
+        current += datetime.timedelta(days=1)
+
+    return {"count": count, "topics": sorted(topics)}
+
+
+def _scan_daily_notes(week_start: datetime.date, week_end: datetime.date) -> dict:
+    daily_dir = VAULT_ROOT / "daily"
+    if not daily_dir.exists():
+        return {"days_with_notes": 0, "energy_values": []}
+
+    days_with_notes = 0
+    energy_values = []
+
+    current = week_start
+    while current <= week_end:
+        note_path = daily_dir / f"{current.isoformat()}.md"
+        if note_path.exists():
+            days_with_notes += 1
+            # Try to read energy from frontmatter
+            try:
+                content = note_path.read_text()
+                if content.startswith("---"):
+                    end = content.find("---", 3)
+                    if end > 0:
+                        fm_text = content[3:end]
+                        for line in fm_text.splitlines():
+                            if line.startswith("energy:"):
+                                val = line.split(":", 1)[1].strip()
+                                if val and val not in ("", "null", "~"):
+                                    energy_values.append(val)
+            except Exception:
+                pass
+        current += datetime.timedelta(days=1)
+
+    return {"days_with_notes": days_with_notes, "energy_values": energy_values}
+
+
+def _detect_patterns(sessions: dict) -> list[str]:
+    """Find repeated themes from session topics."""
+    from collections import Counter
+    topics = sessions.get("topics", [])
+    if not topics:
+        return []
+
+    # Count word frequency across all topics
+    word_counts: Counter = Counter()
+    for topic in topics:
+        for word in topic.split():
+            if len(word) > 4:  # skip short words
+                word_counts[word.lower()] += 1
+
+    patterns = []
+    for word, count in word_counts.most_common(5):
+        if count > 1:
+            patterns.append(f'"{word}" appeared in {count} sessions')
+
+    return patterns
+
+
+def _format_energy_trend(energy_values: list) -> str:
+    if not energy_values:
+        return "no data"
+    try:
+        nums = [float(v) for v in energy_values]
+        avg = sum(nums) / len(nums)
+        return f"avg {avg:.1f}/10 over {len(nums)} days"
+    except (ValueError, TypeError):
+        # Non-numeric (e.g. "high", "low")
+        return ", ".join(energy_values)
+
+
+def main():
+    print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] weekly-digest starting")
+
+    week_start, week_end = _week_bounds()
+
+    work = _load_work()
+    task_data = _analyze_tasks(work, week_start, week_end)
+    sessions = _scan_sessions(week_start, week_end)
+    daily = _scan_daily_notes(week_start, week_end)
+    patterns = _detect_patterns(sessions)
+
+    # Format dates
+    month_abbr = week_start.strftime("%b")
+    end_month_abbr = week_end.strftime("%b")
+    if month_abbr == end_month_abbr:
+        date_range = f"{month_abbr} {week_start.day}–{week_end.day}, {week_end.year}"
+    else:
+        date_range = f"{month_abbr} {week_start.day} – {end_month_abbr} {week_end.day}, {week_end.year}"
+
+    # Build completed list
+    completed_lines = ""
+    if task_data["completed"]:
+        completed_lines = "\n- Completed: " + ", ".join(task_data["completed"])
+    else:
+        completed_lines = "\n- Completed: none"
+
+    # Build topics list
+    topics_str = ", ".join(sessions["topics"]) if sessions["topics"] else "none"
+
+    # Build patterns section
+    if patterns:
+        patterns_str = "\n".join(f"- {p}" for p in patterns)
+    else:
+        patterns_str = "- No repeated patterns detected"
+
+    energy_trend = _format_energy_trend(daily["energy_values"])
+
+    content = f"""---
+type: weekly-review
+week_start: "{week_start.isoformat()}"
+week_end: "{week_end.isoformat()}"
+generated: "{datetime.datetime.now().isoformat(timespec='seconds')}"
+---
+
+# Weekly Review — {date_range}
+
+## Work
+- Tasks completed: {len(task_data['completed'])}
+- Tasks added: {len(task_data['added'])}
+- Active tasks: {task_data['active_count']}{completed_lines}
+
+## Sessions
+- Total sessions: {sessions['count']}
+- Topics: {topics_str}
+
+## Daily Notes
+- Days with notes: {daily['days_with_notes']}/7
+- Energy trend: {energy_trend}
+
+## Patterns
+{patterns_str}
+"""
+
+    output_dir = VAULT_ROOT / "reviews"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / f"weekly-{week_end.isoformat()}.md"
+    output_path.write_text(content)
+
+    print(f"Weekly digest written: {output_path}")
+    print(f"  Tasks: {len(task_data['completed'])} completed, {len(task_data['added'])} added, {task_data['active_count']} active")
+    print(f"  Sessions: {sessions['count']}, Daily notes: {daily['days_with_notes']}/7")
+    print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] weekly-digest done")
+
+
+if __name__ == "__main__":
+    main()

@@ -238,6 +238,121 @@ def cmd_goals(args):
         print(f"  {g['id']:20s}  {g['status']:10s}  {g['title']}{weight}")
 
 
+def cmd_link(args):
+    """Link a session to a task or thread."""
+    if len(args) < 1:
+        print("Usage: link <task_id|thread_id> [--session ID] [--outcome TEXT]")
+        sys.exit(1)
+
+    target_id = args[0]
+    session_id = None
+    outcome = None
+
+    i = 1
+    while i < len(args):
+        if args[i] == "--session" and i + 1 < len(args):
+            session_id = args[i + 1]
+            i += 2
+        elif args[i] == "--outcome" and i + 1 < len(args):
+            outcome = args[i + 1]
+            i += 2
+        else:
+            i += 1
+
+    if not session_id:
+        # Try to read current session from context file
+        context_file = os.path.join(os.path.expanduser("~"), ".aos-v2", "work", ".session-context.json")
+        if os.path.exists(context_file):
+            try:
+                ctx = json.load(open(context_file))
+                session_id = ctx.get("session_id")
+            except Exception:
+                pass
+        if not session_id:
+            print("Error: --session ID required (no active session detected)")
+            sys.exit(1)
+
+    if target_id.startswith("th"):
+        result = engine.link_session_to_thread(target_id, session_id, notes=outcome)
+        if result:
+            count = len(result.get("sessions", []))
+            print(f"Linked session to thread {target_id}: {result['title']} ({count} sessions total)")
+        else:
+            print(f"Thread {target_id} not found")
+            sys.exit(1)
+    else:
+        result = engine.link_session_to_task(target_id, session_id, outcome=outcome)
+        if result:
+            count = len(result.get("sessions", []))
+            print(f"Linked session to task {target_id}: {result['title']} ({count} sessions)")
+        else:
+            print(f"Task {target_id} not found")
+            sys.exit(1)
+
+
+def cmd_thread(args):
+    """Create or manage threads."""
+    if not args:
+        # List active threads
+        threads = engine.get_all_threads()
+        active = [t for t in threads if t.get("status") in ("exploring", "active")]
+        if not active:
+            print("No active threads.")
+            return
+        for t in active:
+            sessions = len(t.get("sessions", []))
+            last = t.get("last_session", t.get("started", ""))[:10]
+            cwd_short = os.path.basename(t["cwd"]) if t.get("cwd") else ""
+            print(f"  {t['id']:6s}  {t['status']:10s}  {t['title']}  ({sessions} sessions, last: {last}) {cwd_short}")
+        return
+
+    # Create new thread
+    title = " ".join(args)
+    thread = engine.add_thread(title)
+    print(f"Created {thread['id']}: {thread['title']} [{thread['status']}]")
+
+
+def cmd_promote(args):
+    """Promote a thread to a project."""
+    if not args:
+        print("Usage: promote <thread_id> [--title PROJECT_TITLE] [--goal GOAL_ID]")
+        sys.exit(1)
+
+    thread_id = args[0]
+    title = None
+    goal = None
+
+    i = 1
+    while i < len(args):
+        if args[i] == "--title" and i + 1 < len(args):
+            title = args[i + 1]
+            i += 2
+        elif args[i] == "--goal" and i + 1 < len(args):
+            goal = args[i + 1]
+            i += 2
+        else:
+            i += 1
+
+    project = engine.promote_thread(thread_id, project_title=title, goal=goal)
+    if project:
+        print(f"Promoted thread {thread_id} → project {project['id']}: {project['title']}")
+    else:
+        print(f"Thread {thread_id} not found")
+        sys.exit(1)
+
+
+def cmd_threads(args):
+    """List all threads (including inactive)."""
+    threads = engine.get_all_threads()
+    if not threads:
+        print("No threads.")
+        return
+    for t in threads:
+        sessions = len(t.get("sessions", []))
+        promoted = f" → {t['promoted_to']}" if t.get("promoted_to") else ""
+        print(f"  {t['id']:6s}  {t['status']:10s}  {t['title']}  ({sessions} sessions){promoted}")
+
+
 def cmd_json(args):
     """Output full work data as JSON (for programmatic use)."""
     data = engine.load_all()
@@ -256,6 +371,10 @@ COMMANDS = {
     "inbox": cmd_inbox,
     "projects": cmd_projects,
     "goals": cmd_goals,
+    "link": cmd_link,
+    "thread": cmd_thread,
+    "threads": cmd_threads,
+    "promote": cmd_promote,
     "json": cmd_json,
 }
 

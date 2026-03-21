@@ -1,0 +1,227 @@
+#!/usr/bin/env python3
+"""inbox-collect — passive data collector for the daily intelligence loop.
+
+Runs every 30 minutes via cron. Stages data into the vault without Claude.
+Feeds into /gm (morning briefing) and /inbox (on-demand triage).
+
+What it does:
+  1. Calendar: writes today's schedule into the daily note
+  2. Voice Memos: detects new recordings, transcribes them
+  3. Notes: logs recently modified Apple Notes titles
+
+No Claude involved — just data staging.
+"""
+
+import datetime
+import sys
+from pathlib import Path
+
+VAULT_ROOT = Path.home() / "vault"
+
+# Try multiple locations for reader modules
+_READER_PATHS = [
+    Path.home() / "aosv2" / "core" / "integrations" / "messages",
+    Path.home() / "aos" / "apps" / "messages",
+]
+for _p in _READER_PATHS:
+    if _p.exists():
+        sys.path.insert(0, str(_p))
+        break
+
+
+def _today_str() -> str:
+    return datetime.date.today().isoformat()
+
+
+def _ensure_daily_note() -> Path:
+    """Ensure today's daily note exists."""
+    daily_path = VAULT_ROOT / "daily" / f"{_today_str()}.md"
+    if daily_path.exists():
+        return daily_path
+
+    # Check for template
+    template_path = VAULT_ROOT / "templates" / "daily.md"
+    if template_path.exists():
+        content = template_path.read_text()
+        today = datetime.date.today()
+        content = content.replace("{{date}}", today.isoformat())
+        content = content.replace("{{day}}", today.strftime("%A"))
+    else:
+        today = datetime.date.today()
+        content = (
+            f"---\n"
+            f"date: \"{today.isoformat()}\"\n"
+            f"day: \"{today.strftime('%A')}\"\n"
+            f"type: daily\n"
+            f"energy:\n"
+            f"sleep:\n"
+            f"mood:\n"
+            f"focus: \"\"\n"
+            f"tags: [daily]\n"
+            f"---\n\n"
+            f"## Schedule\n\n"
+            f"## Notes\n\n"
+            f"## Evening Reflection\n\n"
+        )
+
+    daily_path.parent.mkdir(parents=True, exist_ok=True)
+    daily_path.write_text(content)
+    print(f"Created daily note: {daily_path}")
+    return daily_path
+
+
+def _collect_calendar(daily_path: Path):
+    """Pull today's calendar events and write schedule section to daily note."""
+    try:
+        from calendar_reader import get_events
+    except ImportError:
+        print("Warning: calendar_reader not available (missing EventKit?)")
+        return
+
+    try:
+        events = get_events(days=1)
+    except SystemExit:
+        print("Warning: Calendar access not granted, skipping")
+        return
+    except Exception as e:
+        print(f"Warning: Calendar read failed: {e}")
+        return
+
+    if not events:
+        return
+
+    # Build schedule block
+    schedule_lines = []
+    for ev in events:
+        if ev.get("all_day"):
+            schedule_lines.append(f"- All day: {ev['title']}")
+        else:
+            time_str = f"{ev.get('start_time', '?')}–{ev.get('end_time', '?')}"
+            line = f"- {time_str}: {ev['title']}"
+            if ev.get("location"):
+                line += f" @ {ev['location']}"
+            schedule_lines.append(line)
+
+    schedule_block = "\n".join(schedule_lines)
+
+    # Update daily note
+    content = daily_path.read_text()
+    if "## Schedule" in content:
+        sched_idx = content.index("## Schedule")
+        next_section = content.find("\n## ", sched_idx + 1)
+        existing = content[sched_idx:next_section].strip() if next_section > 0 else content[sched_idx:].strip()
+
+        if existing == "## Schedule":
+            content = content.replace(
+                "## Schedule",
+                f"## Schedule\n\n{schedule_block}",
+                1,
+            )
+            daily_path.write_text(content)
+            print(f"Updated schedule: {len(events)} events")
+        else:
+            if next_section > 0:
+                content = (
+                    content[:sched_idx]
+                    + f"## Schedule\n\n{schedule_block}\n\n"
+                    + content[next_section:]
+                )
+            else:
+                content = content[:sched_idx] + f"## Schedule\n\n{schedule_block}\n"
+            daily_path.write_text(content)
+            print(f"Refreshed schedule: {len(events)} events")
+    else:
+        content += f"\n## Schedule\n\n{schedule_block}\n"
+        daily_path.write_text(content)
+        print(f"Added schedule section: {len(events)} events")
+
+
+def _collect_voice_memos():
+    """Check for new voice memos and transcribe them."""
+    try:
+        from voicememo_reader import get_recordings, transcribe_recording
+    except ImportError:
+        print("Warning: voicememo_reader not available")
+        return
+
+    try:
+        recordings = get_recordings(days=1)
+    except Exception as e:
+        print(f"Warning: Voice memo read failed: {e}")
+        return
+
+    new_count = 0
+    for rec in recordings:
+        if not rec.get("has_transcript"):
+            path = Path(rec["path"])
+            if path.exists():
+                print(f"Transcribing: {rec['name']}...")
+                try:
+                    transcript = transcribe_recording(path, save=True)
+                    if transcript:
+                        new_count += 1
+                except Exception as e:
+                    print(f"Warning: Transcription failed for {rec['name']}: {e}")
+
+    if new_count:
+        print(f"Transcribed {new_count} new voice memo(s)")
+    elif recordings:
+        print(f"Voice memos: {len(recordings)} found, all transcribed")
+
+
+def _collect_notes(daily_path: Path):
+    """Check for recently modified Apple Notes."""
+    try:
+        from notes_reader import get_notes
+    except ImportError:
+        print("Warning: notes_reader not available")
+        return
+
+    try:
+        notes = get_notes(days=1)
+    except SystemExit:
+        print("Warning: Notes access not granted, skipping")
+        return
+    except Exception as e:
+        print(f"Warning: Notes read failed: {e}")
+        return
+
+    if not notes:
+        return
+
+    content = daily_path.read_text()
+    notes_block = "\n".join(f"- [[{n['title']}]] (Notes.app)" for n in notes)
+
+    if "## Notes" in content:
+        notes_idx = content.index("## Notes")
+        next_section = content.find("\n## ", notes_idx + 1)
+        existing = content[notes_idx:next_section].strip() if next_section > 0 else content[notes_idx:].strip()
+
+        if existing == "## Notes":
+            content = content.replace(
+                "## Notes",
+                f"## Notes\n\n{notes_block}",
+                1,
+            )
+            daily_path.write_text(content)
+    else:
+        content += f"\n## Notes\n\n{notes_block}\n"
+        daily_path.write_text(content)
+
+    print(f"Notes: {len(notes)} recently modified")
+
+
+def main():
+    print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] inbox-collect starting")
+
+    daily_path = _ensure_daily_note()
+
+    _collect_calendar(daily_path)
+    _collect_voice_memos()
+    _collect_notes(daily_path)
+
+    print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] inbox-collect done")
+
+
+if __name__ == "__main__":
+    main()

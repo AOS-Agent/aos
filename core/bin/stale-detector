@@ -1,0 +1,165 @@
+#!/usr/bin/env python3
+"""stale-detector — finds tasks and goals that have gone stale.
+
+Runs daily at 08:00. Writes a stale report to ~/.aos-v2/work/stale-report.yaml.
+Prints a one-line summary to stdout.
+"""
+
+import datetime
+import sys
+from pathlib import Path
+
+try:
+    import yaml
+except ImportError:
+    print("Error: PyYAML not available. Install with: pip install pyyaml")
+    sys.exit(1)
+
+WORK_FILE = Path.home() / ".aos-v2" / "work" / "work.yaml"
+REPORT_FILE = Path.home() / ".aos-v2" / "work" / "stale-report.yaml"
+
+STALE_ACTIVE_DAYS = 7    # active tasks with no progress after N days
+STALE_TODO_DAYS = 14     # todo tasks not started after N days
+
+
+def _load_work() -> dict:
+    if not WORK_FILE.exists():
+        print(f"Warning: work file not found at {WORK_FILE}")
+        return {}
+    try:
+        with open(WORK_FILE) as f:
+            return yaml.safe_load(f) or {}
+    except Exception as e:
+        print(f"Error loading work.yaml: {e}")
+        sys.exit(1)
+
+
+def _parse_date(value) -> datetime.date | None:
+    if not value:
+        return None
+    try:
+        s = str(value)[:10]
+        return datetime.date.fromisoformat(s)
+    except (ValueError, TypeError):
+        return None
+
+
+def _days_since(d: datetime.date) -> int:
+    return (datetime.date.today() - d).days
+
+
+def _find_stale_tasks(tasks: list) -> tuple[list, list]:
+    stale = []
+    overdue = []
+
+    for t in tasks:
+        status = t.get("status", "")
+        if status in ("done", "cancelled"):
+            continue
+
+        task_id = t.get("id", "?")
+        title = t.get("title", task_id)
+        created = _parse_date(t.get("created"))
+        due = _parse_date(t.get("due"))
+
+        # Overdue check
+        if due and due < datetime.date.today():
+            overdue.append({
+                "id": task_id,
+                "title": title,
+                "due": due.isoformat(),
+                "days_overdue": _days_since(due),
+            })
+
+        # Stale check
+        if created:
+            if status == "active" and _days_since(created) > STALE_ACTIVE_DAYS:
+                stale.append({
+                    "id": task_id,
+                    "title": title,
+                    "status": status,
+                    "days_stale": _days_since(created),
+                    "reason": f"active > {STALE_ACTIVE_DAYS} days",
+                })
+            elif status == "todo" and _days_since(created) > STALE_TODO_DAYS:
+                stale.append({
+                    "id": task_id,
+                    "title": title,
+                    "status": status,
+                    "days_stale": _days_since(created),
+                    "reason": f"todo > {STALE_TODO_DAYS} days",
+                })
+
+    return stale, overdue
+
+
+def _find_orphan_goals(goals: list, tasks: list) -> list:
+    orphans = []
+
+    # Build set of goal IDs that have at least one active/todo task linked
+    goals_with_active_tasks = set()
+    for t in tasks:
+        if t.get("status") in ("active", "todo"):
+            goal_id = t.get("goal") or t.get("goal_id")
+            if goal_id:
+                goals_with_active_tasks.add(goal_id)
+
+            # Also check if project links to a goal
+            proj_id = t.get("project")
+            if proj_id:
+                goals_with_active_tasks.add(f"project:{proj_id}")
+
+    # Also index projects -> goals
+    projects = []  # will be loaded separately if needed
+
+    for g in goals:
+        if g.get("status") in ("done", "cancelled", "archived"):
+            continue
+        goal_id = g.get("id", "?")
+        if goal_id not in goals_with_active_tasks:
+            orphans.append({
+                "id": goal_id,
+                "title": g.get("title", goal_id),
+                "reason": "no active tasks linked",
+            })
+
+    return orphans
+
+
+def main():
+    print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] stale-detector starting")
+
+    work = _load_work()
+    tasks = work.get("tasks", [])
+    goals = work.get("goals", [])
+
+    stale_tasks, overdue_tasks = _find_stale_tasks(tasks)
+    orphan_goals = _find_orphan_goals(goals, tasks)
+
+    report = {
+        "generated": datetime.datetime.now().isoformat(timespec="seconds"),
+        "stale_tasks": stale_tasks,
+        "overdue_tasks": overdue_tasks,
+        "orphan_goals": orphan_goals,
+        "summary": {
+            "stale": len(stale_tasks),
+            "overdue": len(overdue_tasks),
+            "orphan_goals": len(orphan_goals),
+        },
+    }
+
+    REPORT_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with open(REPORT_FILE, "w") as f:
+        yaml.dump(report, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+
+    summary = (
+        f"Stale: {len(stale_tasks)} tasks, "
+        f"{len(overdue_tasks)} overdue, "
+        f"{len(orphan_goals)} orphan goal{'s' if len(orphan_goals) != 1 else ''}"
+    )
+    print(summary)
+    print(f"Report written: {REPORT_FILE}")
+
+
+if __name__ == "__main__":
+    main()
