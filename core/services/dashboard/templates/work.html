@@ -4,10 +4,10 @@
 {% block page_title %}Work{% endblock %}
 {% block page_subtitle %}<div class="page-subtitle">Tasks, projects, and goals</div>{% endblock %}
 
-{% block page_actions %}
-<div style="display:flex;gap:8px;">
+{% block page_actions_block %}
+<div class="page-actions">
     <button class="btn" onclick="toggleDone()" id="btn-toggle-done">
-        <i data-lucide="eye-off" style="width:12px;height:12px;"></i> Show done
+        <i data-lucide="eye-off" style="width:14px;height:14px;"></i> Show completed
     </button>
 </div>
 {% endblock %}
@@ -16,8 +16,8 @@
 /* ── Work Layout ─────────────────────────────────── */
 .work-grid {
     display: grid;
-    grid-template-columns: 1fr 320px;
-    gap: 24px;
+    grid-template-columns: 1fr 280px;
+    gap: 32px;
     align-items: start;
 }
 
@@ -25,33 +25,29 @@
 .goals-strip {
     display: flex;
     gap: 12px;
-    margin-bottom: 24px;
+    margin-bottom: 28px;
     overflow-x: auto;
     padding-bottom: 4px;
 }
 
 .goal-card {
     flex: 0 0 auto;
-    min-width: 220px;
+    min-width: 240px;
     background: var(--bg-surface);
     border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
-    padding: 16px 18px;
-    transition: border-color 0.12s;
+    border-radius: var(--radius);
+    padding: 14px 16px;
 }
 
-.goal-card:hover { border-color: var(--border-light); }
-
 .goal-title {
-    font-size: 13px;
-    font-weight: 500;
-    color: var(--text-primary);
-    margin-bottom: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 6px;
 }
 
 .goal-meta {
-    font-family: var(--font-mono);
-    font-size: 10px;
+    font-size: 12px;
     color: var(--text-tertiary);
     display: flex;
     align-items: center;
@@ -60,8 +56,8 @@
 
 .goal-progress {
     width: 100%;
-    height: 3px;
-    background: var(--bg-surface-alt);
+    height: 4px;
+    background: var(--tag-gray-bg);
     border-radius: 2px;
     margin-top: 10px;
     overflow: hidden;
@@ -75,37 +71,31 @@
 }
 
 /* ── Project Sections ────────────────────────────── */
-.project-section {
-    margin-bottom: 28px;
-}
+.project-section { margin-bottom: 32px; }
 
 .project-header {
     display: flex;
     align-items: center;
-    gap: 10px;
-    margin-bottom: 12px;
-    padding-bottom: 8px;
-    border-bottom: 1px solid var(--border-subtle);
+    gap: 8px;
+    margin-bottom: 4px;
+    padding: 6px 0;
 }
 
 .project-icon {
     width: 20px; height: 20px;
-    border-radius: 4px;
-    background: var(--accent-muted);
     display: flex; align-items: center; justify-content: center;
 }
 
-.project-icon i { width: 12px; height: 12px; color: var(--accent); }
+.project-icon i { width: 18px; height: 18px; color: var(--text-tertiary); }
 
 .project-name {
-    font-size: 14px;
-    font-weight: 500;
-    color: var(--text-primary);
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text);
 }
 
 .project-count {
-    font-family: var(--font-mono);
-    font-size: 10px;
+    font-size: 12px;
     color: var(--text-tertiary);
     margin-left: auto;
 }
@@ -116,62 +106,79 @@
 .task-item {
     display: flex;
     align-items: center;
-    gap: 10px;
-    padding: 8px 12px;
-    margin: 2px 0;
+    gap: 8px;
+    padding: 6px 8px;
+    margin: 0;
     border-radius: var(--radius);
-    transition: background 0.1s;
+    transition: background 0.08s;
     cursor: default;
+    min-height: 34px;
 }
 
-.task-item:hover { background: var(--bg-surface-hover); }
+.task-item:hover { background: rgba(55, 53, 47, 0.03); }
 
 .task-check {
     width: 16px; height: 16px;
-    border-radius: 4px;
-    border: 1.5px solid var(--border-light);
+    border-radius: 2px;
+    border: 2px solid rgba(55, 53, 47, 0.16);
     flex-shrink: 0;
     display: flex; align-items: center; justify-content: center;
-    cursor: pointer;
-    transition: all 0.12s;
+    transition: all 0.1s;
 }
 
-.task-check:hover { border-color: var(--accent); }
-.task-check.active { border-color: var(--accent); background: var(--accent-muted); }
-.task-check.active::after { content: ''; width: 6px; height: 6px; border-radius: 2px; background: var(--accent); }
-.task-check.done { border-color: var(--status-online); background: var(--status-online-muted); opacity: 0.5; }
-.task-check.done::after { content: '✓'; color: var(--status-online); font-size: 10px; }
+.task-check.active {
+    border-color: var(--accent);
+    background: var(--accent-bg);
+}
+
+.task-check.active::after {
+    content: '';
+    width: 6px; height: 6px;
+    border-radius: 1px;
+    background: var(--accent);
+}
+
+.task-check.done {
+    border-color: var(--tag-green);
+    background: var(--tag-green);
+}
+
+.task-check.done::after {
+    content: '✓';
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+}
 
 .task-title {
     flex: 1;
-    font-size: 13px;
-    color: var(--text-primary);
+    font-size: 14px;
+    color: var(--text);
 }
 
 .task-item.done .task-title {
     color: var(--text-tertiary);
     text-decoration: line-through;
-    text-decoration-color: var(--text-muted);
 }
 
 .task-id {
     font-family: var(--font-mono);
-    font-size: 10px;
-    color: var(--text-muted);
+    font-size: 11px;
+    color: var(--text-faint);
     flex-shrink: 0;
 }
 
 .task-priority {
-    width: 4px;
+    width: 3px;
     height: 16px;
     border-radius: 2px;
     flex-shrink: 0;
 }
 
-.task-priority.p1 { background: var(--status-error); }
-.task-priority.p2 { background: var(--accent); }
-.task-priority.p3 { background: var(--text-tertiary); }
-.task-priority.p4 { background: var(--text-muted); }
+.task-priority.p1 { background: var(--tag-red); }
+.task-priority.p2 { background: var(--tag-orange); }
+.task-priority.p3 { background: var(--tag-gray-bg); }
+.task-priority.p4 { background: transparent; }
 
 .task-sessions {
     display: flex;
@@ -182,76 +189,73 @@
 .task-session-dot {
     width: 4px; height: 4px;
     border-radius: 50%;
-    background: var(--status-info);
-    opacity: 0.6;
+    background: var(--tag-blue);
 }
 
 /* ── Right Panel ─────────────────────────────────── */
 .panel-card {
-    background: var(--bg-surface);
     border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
-    padding: 18px;
-    margin-bottom: 16px;
+    border-radius: var(--radius);
+    padding: 14px 16px;
+    margin-bottom: 12px;
 }
 
 .panel-title {
-    font-family: var(--font-mono);
-    font-size: 10px;
-    font-weight: 600;
+    font-size: 12px;
+    font-weight: 500;
     color: var(--text-tertiary);
     text-transform: uppercase;
-    letter-spacing: 1px;
-    margin-bottom: 14px;
+    letter-spacing: 0.5px;
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
 }
 
 .stat-row {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 6px 0;
+    padding: 4px 0;
 }
 
-.stat-label {
-    font-size: 12px;
-    color: var(--text-secondary);
-}
+.stat-label { font-size: 14px; color: var(--text-secondary); }
 
 .stat-value {
     font-family: var(--font-mono);
-    font-size: 13px;
+    font-size: 14px;
     font-weight: 500;
-    color: var(--text-primary);
+    color: var(--text);
 }
 
 /* ── Threads ─────────────────────────────────────── */
 .thread-item {
-    padding: 10px 0;
-    border-bottom: 1px solid var(--border-subtle);
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border-light);
 }
 
 .thread-item:last-child { border-bottom: none; }
 
 .thread-title {
-    font-size: 12px;
-    color: var(--text-primary);
+    font-size: 14px;
+    color: var(--text);
     margin-bottom: 4px;
 }
 
 .thread-meta {
-    font-family: var(--font-mono);
-    font-size: 10px;
+    font-size: 12px;
     color: var(--text-tertiary);
     display: flex;
-    gap: 8px;
+    align-items: center;
+    gap: 6px;
 }
 
 /* ── Inbox ───────────────────────────────────────── */
 .inbox-item {
-    padding: 8px 0;
-    font-size: 12px;
+    padding: 6px 0;
+    font-size: 14px;
     color: var(--text-secondary);
-    border-bottom: 1px solid var(--border-subtle);
+    border-bottom: 1px solid var(--border-light);
     display: flex;
     align-items: center;
     gap: 8px;
@@ -262,8 +266,15 @@
 .inbox-dot {
     width: 5px; height: 5px;
     border-radius: 50%;
-    background: var(--accent);
+    background: var(--tag-orange);
     flex-shrink: 0;
+}
+
+/* ── Detected Projects ───────────────────────────── */
+.detected-hint {
+    font-size: 12px;
+    color: var(--text-tertiary);
+    margin-bottom: 10px;
 }
 
 /* ── Responsive ──────────────────────────────────── */
@@ -280,7 +291,7 @@
     <div class="goal-card">
         <div class="goal-title">{{ goal.title }}</div>
         <div class="goal-meta">
-            <span class="tag tag-{{ 'green' if goal.status == 'active' else 'default' }}">{{ goal.status }}</span>
+            <span class="tag tag-{{ 'green' if goal.status == 'active' else 'gray' }}">{{ goal.status }}</span>
             {% if goal.weight %}<span>{{ (goal.weight * 100)|int }}% weight</span>{% endif %}
         </div>
         <div class="goal-progress">
@@ -299,13 +310,13 @@
             <div class="project-header">
                 <div class="project-icon"><i data-lucide="folder"></i></div>
                 <span class="project-name">{{ project.title }}</span>
-                <span class="project-count">{{ project.task_count }} tasks</span>
+                <span class="project-count">{{ project.task_count }}</span>
             </div>
             <ul class="task-list">
                 {% for task in project.tasks %}
                 <li class="task-item{% if task.status == 'done' %} done{% endif %}{% if task.status == 'done' %} hidden-done{% endif %}" data-status="{{ task.status }}">
                     <div class="task-priority p{{ task.priority or 3 }}"></div>
-                    <div class="task-check {{ task.status }}" title="{{ task.status }}"></div>
+                    <div class="task-check {{ task.status }}"></div>
                     <span class="task-title">{{ task.title }}</span>
                     {% if task.sessions %}
                     <div class="task-sessions" title="{{ task.sessions|length }} session(s)">
@@ -325,9 +336,9 @@
         {% if unassigned_tasks %}
         <div class="project-section">
             <div class="project-header">
-                <div class="project-icon" style="background:var(--bg-surface-alt)"><i data-lucide="inbox" style="color:var(--text-tertiary)"></i></div>
+                <div class="project-icon"><i data-lucide="inbox"></i></div>
                 <span class="project-name" style="color:var(--text-secondary)">Unassigned</span>
-                <span class="project-count">{{ unassigned_tasks|length }} tasks</span>
+                <span class="project-count">{{ unassigned_tasks|length }}</span>
             </div>
             <ul class="task-list">
                 {% for task in unassigned_tasks %}
@@ -345,7 +356,6 @@
 
     <!-- Right: Summary Panel -->
     <div>
-        <!-- Summary -->
         <div class="panel-card">
             <div class="panel-title">Summary</div>
             <div class="stat-row">
@@ -358,15 +368,14 @@
             </div>
             <div class="stat-row">
                 <span class="stat-label">Done</span>
-                <span class="stat-value" style="color:var(--status-online)">{{ summary.done or 0 }}</span>
+                <span class="stat-value" style="color:var(--tag-green)">{{ summary.done or 0 }}</span>
             </div>
-            <div class="stat-row" style="border-top:1px solid var(--border-subtle);padding-top:10px;margin-top:6px;">
+            <div class="stat-row" style="border-top:1px solid var(--border-light);padding-top:8px;margin-top:4px;">
                 <span class="stat-label">Total</span>
                 <span class="stat-value">{{ summary.total or 0 }}</span>
             </div>
         </div>
 
-        <!-- Threads -->
         {% if threads %}
         <div class="panel-card">
             <div class="panel-title">Threads</div>
@@ -382,10 +391,9 @@
         </div>
         {% endif %}
 
-        <!-- Inbox -->
         {% if inbox %}
         <div class="panel-card">
-            <div class="panel-title">Inbox <span class="tag tag-accent" style="margin-left:6px;">{{ inbox|length }}</span></div>
+            <div class="panel-title">Inbox <span class="tag tag-orange">{{ inbox|length }}</span></div>
             {% for item in inbox %}
             <div class="inbox-item">
                 <div class="inbox-dot"></div>
@@ -395,18 +403,17 @@
         </div>
         {% endif %}
 
-        <!-- Detected (untracked) projects -->
         {% if detected_projects %}
         <div class="panel-card">
-            <div class="panel-title">Detected <span class="tag tag-yellow" style="margin-left:6px;">{{ detected_projects|length }}</span></div>
-            <div style="font-size:11px;color:var(--text-tertiary);margin-bottom:12px;">Untracked work detected from sessions</div>
+            <div class="panel-title">Detected <span class="tag tag-yellow">{{ detected_projects|length }}</span></div>
+            <div class="detected-hint">Untracked work from sessions</div>
             {% for dp in detected_projects %}
             <div class="thread-item">
                 <div class="thread-title">{{ dp.name }}</div>
                 <div class="thread-meta">
                     {% if dp.session_count %}<span>{{ dp.session_count }} sessions</span>{% endif %}
-                    {% if dp.has_claude_md %}<span class="tag tag-blue" style="font-size:9px;">CLAUDE.md</span>{% endif %}
-                    {% if dp.has_git %}<span class="tag tag-default" style="font-size:9px;">git</span>{% endif %}
+                    {% if dp.has_claude_md %}<span class="tag tag-blue">CLAUDE.md</span>{% endif %}
+                    {% if dp.has_git %}<span class="tag tag-gray">git</span>{% endif %}
                     <span class="tag tag-{{ 'green' if dp.confidence == 'high' else 'yellow' }}">{{ dp.confidence }}</span>
                 </div>
             </div>
@@ -427,11 +434,10 @@ function toggleDone() {
         el.style.display = showDone ? 'flex' : 'none';
     });
     btn.innerHTML = showDone
-        ? '<i data-lucide="eye" style="width:12px;height:12px;"></i> Hide done'
-        : '<i data-lucide="eye-off" style="width:12px;height:12px;"></i> Show done';
+        ? '<i data-lucide="eye" style="width:14px;height:14px;"></i> Hide completed'
+        : '<i data-lucide="eye-off" style="width:14px;height:14px;"></i> Show completed';
     lucide.createIcons();
 }
 
-// Hide done tasks initially
 document.querySelectorAll('.hidden-done').forEach(el => { el.style.display = 'none'; });
 {% endblock %}
