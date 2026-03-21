@@ -303,8 +303,6 @@ prereq_bun() {
 
     _step "Installing bun..."
     brew install oven-sh/bun/bun 2>&1 | tail -1
-    # Ensure bun globals path is available immediately
-    export PATH="$HOME/.bun/bin:$PATH"
     command -v bun &>/dev/null || _die "bun install failed"
     _ok "bun"
 }
@@ -316,8 +314,11 @@ prereq_qmd() {
     fi
 
     _step "Installing qmd..."
-    "$HOME/.bun/bin/bun" install -g qmd 2>&1 | tail -1
-    [[ -f "$HOME/.bun/bin/qmd" ]] || _die "qmd install failed"
+    # bun install -g puts binaries in ~/.bun/bin/ — use bun from brew PATH
+    bun install -g qmd 2>&1 | tail -1
+    # Add globals to PATH for the rest of the install
+    export PATH="$HOME/.bun/bin:$PATH"
+    command -v qmd &>/dev/null || [[ -f "$HOME/.bun/bin/qmd" ]] || _die "qmd install failed"
     _ok "qmd"
 }
 
