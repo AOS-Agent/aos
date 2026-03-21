@@ -445,6 +445,7 @@ prereq_chrome() {
 
     # Ensure Chrome starts at login — MCP needs Chrome running
     local chrome_plist="$HOME/Library/LaunchAgents/com.agent.chrome.plist"
+    mkdir -p "$HOME/Library/LaunchAgents"
     if [[ -f "$chrome_plist" ]]; then
         _skip "Chrome LaunchAgent"
     else
