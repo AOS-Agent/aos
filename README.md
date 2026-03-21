@@ -17,7 +17,7 @@
 ## Quick Start
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/hishamalhadi/aos/main/install.sh | bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/hishamalhadi/aos/main/bootstrap.sh)"
 ```
 
 Idempotent. Safe to re-run. Takes ~5 minutes. When it finishes, type `claude` and Chief will guide you through onboarding.
@@ -198,7 +198,7 @@ Four boundaries. Never crossed.
 ### One-liner
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/hishamalhadi/aos/main/install.sh | bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/hishamalhadi/aos/main/bootstrap.sh)"
 ```
 
 ### Manual

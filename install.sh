@@ -15,24 +15,6 @@
 
 set -euo pipefail
 
-# ── Bootstrap mode ─────────────────────────────────────
-# When piped via curl, stdin is the script — we can't prompt for passwords.
-# So: clone the repo, then exec the local copy with a real terminal.
-if [[ ! -t 0 ]]; then
-    echo ""
-    echo "  Bootstrapping AOS..."
-    echo ""
-    if [[ ! -d "$HOME/aos/.git" ]]; then
-        git clone https://github.com/hishamalhadi/aos.git "$HOME/aos" 2>&1
-    else
-        echo "  Updating to latest..."
-        git -C "$HOME/aos" fetch origin main 2>&1
-        git -C "$HOME/aos" reset --hard origin/main 2>&1
-    fi
-    # Re-exec with a real terminal attached
-    exec bash "$HOME/aos/install.sh" "$@" </dev/tty
-fi
-
 # Don't run as root — Homebrew refuses it and files get wrong ownership
 if [[ $EUID -eq 0 ]]; then
     echo "Don't run with sudo. Just:"
