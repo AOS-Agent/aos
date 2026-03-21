@@ -112,7 +112,53 @@ Report what's accessible: "Your Mac already has Calendar, Notes, Reminders, Mess
 
 Don't make the operator do anything here. Just inform.
 
-#### Step 3b: Telegram (recommended, automate via Chrome MCP)
+#### Step 3b: Chrome Extension (required for browser automation)
+
+Before any Chrome MCP automation, ensure the Claude-in-Chrome extension is installed and authorized.
+
+```
+Chrome is installed -- now it needs the Claude extension so I can
+automate things in the browser for you (like setting up Telegram).
+```
+
+Steps:
+1. Open the Chrome Web Store page:
+```bash
+open "https://chromewebstore.google.com/detail/claude-in-chrome/fcoeoabgfenejglbffodgkkbkcdhcgfn"
+```
+
+2. Tell the operator:
+```
+I opened the Chrome extension page. Two things to do:
+  1. Click "Add to Chrome" to install it
+  2. After it installs, click the extension icon in Chrome's toolbar
+     and authorize it (it needs permission to interact with pages)
+
+Let me know when that's done.
+```
+
+3. Verify it works by trying a simple Chrome MCP call:
+```
+mcp__claude-in-chrome__tabs_context_mcp
+```
+
+If it works, continue. If not:
+```
+Hmm, the extension isn't responding. Make sure you:
+  - Clicked the puzzle piece icon in Chrome's toolbar
+  - Clicked on "Claude in Chrome"
+  - Authorized/enabled it
+
+Try again?
+```
+
+Once confirmed working:
+```
+Browser automation is connected. This is what lets me do things
+in Chrome for you -- like setting up Telegram next.
+```
+
+#### Step 3c: Telegram (recommended, automate via Chrome MCP)
 
 Present this as the key integration:
 
@@ -124,7 +170,7 @@ work in Chrome, you just watch.
 
 If yes, follow the **Telegram Chrome MCP Protocol** below.
 
-#### Step 3c: Other Built-in Integrations
+#### Step 3d: Other Built-in Integrations
 
 After Telegram, offer the rest one at a time:
 
@@ -136,7 +182,7 @@ After Telegram, offer the rest one at a time:
   - If yes, run: `bash ~/aos/core/integrations/github/setup.sh`
 - **Obsidian**: Already set up by install.sh. Just confirm vault path exists.
 
-#### Step 3d: Catalog (what else do you use?)
+#### Step 3e: Catalog (what else do you use?)
 
 ```
 Do you use any of these for work or personal projects?
@@ -152,7 +198,7 @@ For each one they mention:
 - For MCP-based tools (Notion): enable the Claude Code plugin
 - For unknown tools: ask how they access it (web? app? API?) and note it in `~/.aos/config/custom_integrations.yaml`
 
-#### Step 3e: Save Integration State
+#### Step 3f: Save Integration State
 
 After all integrations, write the state:
 ```bash
