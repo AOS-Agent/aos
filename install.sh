@@ -624,17 +624,30 @@ prereq_ffmpeg() {
 
 prereq_mlx_whisper() {
     # mlx-whisper — Apple Silicon optimized local transcription
-    if python3 -c "import mlx_whisper" 2>/dev/null; then
+    # Only relevant on Apple Silicon. Installed into its own venv to avoid polluting system python.
+    if [[ "$(uname -m)" != "arm64" ]]; then
+        _skip "mlx-whisper (Intel — not applicable)"
+        return 0
+    fi
+
+    local mlx_venv="$HOME/.aos/services/mlx-whisper/.venv"
+    if [[ -f "$mlx_venv/bin/python" ]] && "$mlx_venv/bin/python" -c "import mlx_whisper" 2>/dev/null; then
         _skip "mlx-whisper"
         return 0
     fi
 
     _step "Installing mlx-whisper (Apple Silicon transcription)..."
-    pip3 install --quiet mlx-whisper 2>&1 | tail -3
-    if python3 -c "import mlx_whisper" 2>/dev/null; then
-        _ok "mlx-whisper"
+    mkdir -p "$(dirname "$mlx_venv")"
+    python3 -m venv "$mlx_venv" 2>/dev/null || uv venv "$mlx_venv" 2>/dev/null
+    if [[ -f "$mlx_venv/bin/pip" ]]; then
+        "$mlx_venv/bin/pip" install --quiet mlx-whisper 2>&1 | tail -3
+        if "$mlx_venv/bin/python" -c "import mlx_whisper" 2>/dev/null; then
+            _ok "mlx-whisper"
+        else
+            _warn "mlx-whisper — install failed (non-critical, voice transcription unavailable)"
+        fi
     else
-        _warn "mlx-whisper — install failed (non-critical, faster-whisper used as fallback)"
+        _warn "mlx-whisper — could not create venv (non-critical)"
     fi
 }
 
@@ -1237,17 +1250,7 @@ print('\n'.join(deps))
         fi
     done
 
-    # Post-deploy: download NLTK tokenizer data for memory service
-    local memory_venv="$services_dst/memory/.venv/bin/python"
-    if [[ -f "$memory_venv" ]] && "$memory_venv" -c "import nltk" 2>/dev/null; then
-        if "$memory_venv" -c "import nltk; nltk.data.find('tokenizers/punkt')" 2>/dev/null; then
-            _skip "NLTK data (punkt)"
-        elif "$memory_venv" -c "import nltk; nltk.download('punkt', quiet=True); nltk.download('punkt_tab', quiet=True)" 2>/dev/null; then
-            _ok "NLTK data (punkt)"
-        else
-            _warn "NLTK data — download failed (run 'aos deploy memory' later)"
-        fi
-    fi
+    # NLTK removed — memory service doesn't use it
 
     # Install LaunchAgents from templates
     install_launchagents
@@ -1868,8 +1871,7 @@ assert s.get('hooks', {}).get('$hook_name')
         _check "Service $svc venv" "[[ -f '$USER_DIR/services/$svc/.venv/bin/python' ]]" critical
     done
 
-    # NLTK data (memory service dependency)
-    _check "NLTK tokenizer data" "'$USER_DIR/services/memory/.venv/bin/python' -c 'import nltk; nltk.data.find(\"tokenizers/punkt\")'"
+    # NLTK removed — memory service doesn't use it
 
     # ── LaunchAgents ───────────────────────────────────────────
     _step "LaunchAgents"
@@ -1956,7 +1958,9 @@ for name, job in (data.get('jobs') or {}).items():
     _check "gh"             "command -v gh"
     _check "QMD"            "[[ -f '$HOME/.bun/bin/qmd' ]] || command -v qmd"
     _check "Claude Code"    "command -v claude"         critical
-    _check "mlx-whisper"    "python3 -c 'import mlx_whisper'"
+    if [[ "$(uname -m)" == "arm64" ]]; then
+        _check "mlx-whisper"    "[[ -f '$USER_DIR/services/mlx-whisper/.venv/bin/python' ]] && '$USER_DIR/services/mlx-whisper/.venv/bin/python' -c 'import mlx_whisper'"
+    fi
 
     # ── Apps ───────────────────────────────────────────────────
     _step "Applications"

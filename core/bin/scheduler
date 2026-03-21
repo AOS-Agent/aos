@@ -1,4 +1,4 @@
-#!/opt/homebrew/bin/python3
+#!/usr/bin/env python3
 """
 AOS Scheduler — core automation engine
 Reads ~/aos/config/crons.yaml, runs due jobs, updates status.json.

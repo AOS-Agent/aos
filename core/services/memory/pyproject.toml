@@ -8,7 +8,6 @@ dependencies = [
     "mcp>=1.0.0",
     "watchfiles>=1.0.0",
     "pyyaml>=6.0",
-    "nltk>=3.9",
 ]
 
 [build-system]
