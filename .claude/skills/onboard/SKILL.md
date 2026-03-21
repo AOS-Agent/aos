@@ -101,6 +101,18 @@ Rules:
 
 Read `~/.aos/config/operator.yaml` to get the operator's name and current settings.
 
+**Check install health:** Read `~/.aos/config/install-report.yaml` if it exists.
+If there are failures or warnings, acknowledge them up front:
+
+```
+I see the installer flagged {N} issue(s): {list failures and warnings}.
+I'll help you resolve these as we go through setup.
+```
+
+For each failure, try to fix it during the relevant phase (e.g., Python issue during
+profile setup, SSH during integrations). If you fix it, note it. If you can't fix it
+in-session, file it with `~/aos/core/bin/feedback --auto` and move on.
+
 Then greet:
 
 ```

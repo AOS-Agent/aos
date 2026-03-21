@@ -1950,6 +1950,30 @@ for name, job in (data.get('jobs') or {}).items():
     # Save scorecard to install log
     _log "SCORECARD: pass=$pass warn=$warn fail=$fail"
 
+    # Write structured report for Chief to read during onboarding
+    local report_file="$HOME/.aos/config/install-report.yaml"
+    {
+        echo "install_date: '$(date -u +%Y-%m-%dT%H:%M:%SZ)'"
+        echo "aos_version: '$AOS_VERSION'"
+        echo "macos: '$(sw_vers -productVersion 2>/dev/null || echo unknown)'"
+        echo "arch: '$(uname -m)'"
+        echo "pass: $pass"
+        echo "warn: $warn"
+        echo "fail: $fail"
+        if [[ ${#warnings[@]} -gt 0 ]]; then
+            echo "warnings:"
+            for w in "${warnings[@]}"; do
+                echo "  - \"$w\""
+            done
+        fi
+        if [[ ${#failures[@]} -gt 0 ]]; then
+            echo "failures:"
+            for f in "${failures[@]}"; do
+                echo "  - \"$f\""
+            done
+        fi
+    } > "$report_file"
+
     if [[ "$fail" -gt 0 ]]; then
         _fail "$fail critical failure(s) — fix with: bash ~/aos/install.sh"
         echo ""
