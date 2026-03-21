@@ -1,0 +1,245 @@
+#!/usr/bin/env bash
+# AOS CLI — entry point for system management
+#
+# Usage:
+#   aos migrate         Run pending migrations
+#   aos status          Show migration version + pending
+#   aos discover        Scan machine for existing setup
+#   aos update          Pull latest + run migrations
+#   aos version         Show current version
+#   aos self-test       Validate system health
+#   aos deploy [svc]    Deploy service venv (all or specific)
+
+set -euo pipefail
+
+AOS_DIR="$HOME/aos"
+RUNNER="$AOS_DIR/core/migrations/runner.py"
+
+case "${1:-help}" in
+    migrate)
+        python3 "$RUNNER" migrate
+        ;;
+
+    status)
+        python3 "$RUNNER" status
+        ;;
+
+    discover)
+        python3 "$RUNNER" discover
+        ;;
+
+    update)
+        echo "=== AOS Update ==="
+        echo ""
+        echo "  Pulling latest..."
+        cd "$AOS_DIR"
+        git pull --ff-only 2>&1 | sed 's/^/  /'
+        echo ""
+        echo "  Running migrations..."
+        python3 "$RUNNER" migrate
+        echo ""
+        echo "  ✓ Update complete"
+        ;;
+
+    version)
+        if [ -f "$HOME/.aos/.version" ]; then
+            echo "AOS version: $(cat "$HOME/.aos/.version")"
+        else
+            echo "AOS version: 0 (not yet migrated)"
+        fi
+        ;;
+
+    self-test)
+        echo "=== AOS Self-Test ==="
+        echo ""
+        errors=0
+
+        # Check Python
+        if command -v python3 &>/dev/null; then
+            echo "  ✓ Python3 available"
+        else
+            echo "  ✗ Python3 not found"
+            ((errors++))
+        fi
+
+        # Check PyYAML
+        if python3 -c "import yaml" 2>/dev/null; then
+            echo "  ✓ PyYAML installed"
+        else
+            echo "  ✗ PyYAML not installed (pip3 install pyyaml)"
+            ((errors++))
+        fi
+
+        # Check user data dir
+        if [ -d "$HOME/.aos" ]; then
+            echo "  ✓ User data dir exists"
+        else
+            echo "  ✗ User data dir missing (run: aos migrate)"
+            ((errors++))
+        fi
+
+        # Check config files
+        if [ -f "$AOS_DIR/config/crons.yaml" ]; then
+            echo "  ✓ Config files exist"
+        else
+            echo "  ✗ Config files missing"
+            ((errors++))
+        fi
+
+        # Check agent symlinks
+        for agent in chief steward advisor; do
+            link="$HOME/.claude/agents/${agent}.md"
+            if [ -L "$link" ]; then
+                echo "  ✓ Agent $agent symlinked"
+            elif [ -f "$link" ]; then
+                echo "  ~ Agent $agent exists but not symlinked"
+            else
+                echo "  ✗ Agent $agent not installed"
+                ((errors++))
+            fi
+        done
+
+        # Check skills
+        for skill in recall work review step-by-step; do
+            link="$HOME/.claude/skills/$skill"
+            if [ -L "$link" ]; then
+                echo "  ✓ Skill $skill symlinked"
+            elif [ -d "$link" ]; then
+                echo "  ~ Skill $skill exists but not symlinked"
+            else
+                echo "  ✗ Skill $skill not installed"
+                ((errors++))
+            fi
+        done
+
+        # Check work engine
+        if python3 -c "
+import sys; sys.path.insert(0, '$AOS_DIR/core/work')
+from engine import _load
+_load()
+" 2>/dev/null; then
+            echo "  ✓ Work engine loads"
+        else
+            echo "  ✗ Work engine failed to load"
+            ((errors++))
+        fi
+
+        # Check scripts parse
+        script_errors=0
+        for script in "$AOS_DIR"/core/bin/*; do
+            [ -f "$script" ] || continue
+            basename=$(basename "$script")
+            [ "$basename" = "__pycache__" ] && continue
+            [ "$basename" = "aos" ] && continue
+
+            # Check if Python script
+            if head -1 "$script" | grep -q python; then
+                if python3 -c "
+import py_compile, sys
+try:
+    py_compile.compile('$script', doraise=True)
+except py_compile.PyCompileError as e:
+    print(f'  ✗ Script $basename: {e}')
+    sys.exit(1)
+" 2>/dev/null; then
+                    : # ok
+                else
+                    ((script_errors++))
+                fi
+            fi
+        done
+        if [ "$script_errors" -eq 0 ]; then
+            echo "  ✓ All Python scripts parse"
+        else
+            echo "  ✗ $script_errors scripts failed to parse"
+            ((errors++))
+        fi
+
+        # Check events.jsonl
+        if [ -f "$HOME/.aos/events.jsonl" ]; then
+            echo "  ✓ Event bus exists"
+        else
+            echo "  ✗ Event bus missing (run: aos migrate)"
+            ((errors++))
+        fi
+
+        echo ""
+        if [ "$errors" -eq 0 ]; then
+            echo "  ✓ All checks passed"
+        else
+            echo "  ✗ $errors check(s) failed"
+        fi
+        ;;
+
+    deploy)
+        SERVICES_SRC="$AOS_DIR/core/services"
+        SERVICES_DST="$HOME/.aos/services"
+        svc="${2:-}"
+
+        deploy_one() {
+            local name="$1"
+            local src="$SERVICES_SRC/$name"
+            local dst="$SERVICES_DST/$name"
+
+            if [ ! -f "$src/pyproject.toml" ]; then
+                echo "  ✗ $name: no pyproject.toml"
+                return 1
+            fi
+
+            echo "  Deploying $name..."
+            mkdir -p "$dst"
+
+            # Create or rebuild venv
+            if [ ! -d "$dst/.venv" ]; then
+                uv venv "$dst/.venv" --quiet
+                echo "    Created venv"
+            fi
+
+            # Install deps from framework source
+            uv pip install --quiet -p "$dst/.venv/bin/python" -r <(
+                python3 -c "
+import tomllib, sys
+with open('$src/pyproject.toml', 'rb') as f:
+    deps = tomllib.load(f).get('project', {}).get('dependencies', [])
+print('\n'.join(deps))
+"
+            )
+            echo "    ✓ $name deployed"
+        }
+
+        echo "=== AOS Deploy ==="
+        echo ""
+        if [ -n "$svc" ]; then
+            deploy_one "$svc"
+        else
+            for src_dir in "$SERVICES_SRC"/*/; do
+                name=$(basename "$src_dir")
+                [ -f "$src_dir/pyproject.toml" ] && deploy_one "$name"
+            done
+        fi
+        echo ""
+        echo "  ✓ Deploy complete"
+        ;;
+
+    help|--help|-h)
+        echo "AOS — Agentic Operating System"
+        echo ""
+        echo "Usage: aos <command>"
+        echo ""
+        echo "Commands:"
+        echo "  migrate     Run pending migrations"
+        echo "  status      Show migration version + pending"
+        echo "  discover    Scan machine for existing setup"
+        echo "  update      Pull latest code + run migrations"
+        echo "  version     Show current version"
+        echo "  self-test   Validate system health"
+        echo "  deploy      Deploy service venvs (all or: aos deploy bridge)"
+        echo ""
+        ;;
+
+    *)
+        echo "Unknown command: $1"
+        echo "Run 'aos help' for usage"
+        exit 1
+        ;;
+esac

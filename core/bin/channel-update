@@ -1,0 +1,548 @@
+#!/usr/bin/env python3
+"""channel-update — Automated system status updates to Telegram.
+
+Posts a comprehensive, formatted status update covering:
+- System health (disk, RAM)
+- Service status (bridge, dashboard, listen, whatsmeow)
+- Recent agent activity (from dashboard SQLite)
+- Cron job health (last run times, freshness)
+- Goal progress summary
+- Active Claude Code sessions
+
+Designed to run via cron every hour. Posts to a forum topic if configured,
+otherwise falls back to direct chat.
+
+All runs are logged to logs/channel-update.log for performance review.
+"""
+
+import json
+import logging
+import os
+import shutil
+import sqlite3
+import subprocess
+import sys
+import time
+from datetime import datetime, timedelta
+from pathlib import Path
+from zoneinfo import ZoneInfo
+
+import httpx
+
+# --- Config ---
+
+WORKSPACE = Path(__file__).resolve().parent.parent
+LOG_PATH = WORKSPACE / "logs" / "channel-update.log"
+CONFIG_PATH = WORKSPACE / "config" / "channel-update.yaml"
+ACTIVITY_DB = WORKSPACE / "data" / "dashboard" / "activity.db"
+GOALS_PATH = WORKSPACE / "config" / "goals.yaml"
+STATE_PATH = WORKSPACE / "config" / "state.yaml"
+
+FORUM_GROUP_ID = -1003874890243  # الملأ group
+
+# Setup logging — log everything for performance review
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[
+        logging.FileHandler(LOG_PATH, encoding="utf-8"),
+        logging.StreamHandler(sys.stdout),
+    ],
+)
+log = logging.getLogger("channel-update")
+
+# Suppress httpx request logging (leaks bot tokens)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+
+
+def get_secret(name: str) -> str | None:
+    """Get a secret from the agent keychain."""
+    try:
+        result = subprocess.run(
+            [str(WORKSPACE / "bin" / "agent-secret"), "get", name],
+            capture_output=True, text=True, timeout=5,
+        )
+        val = result.stdout.strip()
+        return val if val and result.returncode == 0 else None
+    except Exception as e:
+        log.error(f"Failed to get secret {name}: {e}")
+        return None
+
+
+def load_yaml(path: Path) -> dict:
+    """Load a YAML file safely."""
+    import yaml
+    if path.exists():
+        return yaml.safe_load(path.read_text()) or {}
+    return {}
+
+
+def get_channel_config() -> dict:
+    """Load channel update config (topic ID, preferences)."""
+    if CONFIG_PATH.exists():
+        return load_yaml(CONFIG_PATH)
+    return {}
+
+
+# --- Data collectors ---
+
+def collect_health() -> dict:
+    """System health: disk and RAM."""
+    log.info("Collecting system health...")
+
+    # Disk
+    usage = shutil.disk_usage("/")
+    disk_pct = round(usage.used / usage.total * 100, 1)
+    disk_free_gb = round(usage.free / (1024**3), 1)
+
+    # RAM (macOS vm_stat)
+    ram_pct = 0
+    ram_used_gb = 0
+    try:
+        result = subprocess.run(["vm_stat"], capture_output=True, text=True, timeout=5)
+        pages = {}
+        for line in result.stdout.strip().split("\n")[1:]:
+            parts = line.split(":")
+            if len(parts) == 2:
+                try:
+                    pages[parts[0].strip()] = int(parts[1].strip().rstrip("."))
+                except ValueError:
+                    pass
+        page_size = 16384  # Apple Silicon
+        free = pages.get("Pages free", 0) * page_size
+        active = pages.get("Pages active", 0) * page_size
+        inactive = pages.get("Pages inactive", 0) * page_size
+        wired = pages.get("Pages wired down", 0) * page_size
+        total = free + active + inactive + wired
+        used = active + wired
+        ram_pct = round(used / total * 100, 1) if total else 0
+        ram_used_gb = round(used / (1024**3), 1)
+    except Exception:
+        ram_pct = -1
+
+    # Uptime
+    uptime_str = ""
+    try:
+        result = subprocess.run(["uptime"], capture_output=True, text=True, timeout=5)
+        # Parse "up X days, HH:MM" from uptime output
+        out = result.stdout.strip()
+        if "up" in out:
+            up_part = out.split("up")[1].split(",")[0].strip()
+            uptime_str = up_part
+    except Exception:
+        pass
+
+    return {
+        "disk_pct": disk_pct,
+        "disk_free_gb": disk_free_gb,
+        "ram_pct": ram_pct,
+        "ram_used_gb": ram_used_gb,
+        "uptime": uptime_str,
+    }
+
+
+def collect_services() -> dict:
+    """Check all services."""
+    log.info("Collecting service status...")
+    services = {}
+
+    # Listen
+    try:
+        r = httpx.get("http://localhost:7600/jobs", timeout=3)
+        if r.status_code == 200:
+            jobs = r.json()
+            active = sum(1 for j in jobs if j.get("status") == "running")
+            services["Listen"] = {"ok": True, "detail": f"{active} active jobs"}
+        else:
+            services["Listen"] = {"ok": False, "detail": f"HTTP {r.status_code}"}
+    except Exception:
+        services["Listen"] = {"ok": False, "detail": "DOWN"}
+
+    # Dashboard
+    try:
+        r = httpx.get("http://localhost:4096/api/health", timeout=3)
+        services["Dashboard"] = {"ok": r.status_code == 200, "detail": "OK" if r.status_code == 200 else f"HTTP {r.status_code}"}
+    except Exception:
+        services["Dashboard"] = {"ok": False, "detail": "DOWN"}
+
+    # Bridge (check via pgrep)
+    try:
+        result = subprocess.run(["pgrep", "-f", "apps/bridge/main.py"],
+                                capture_output=True, text=True, timeout=5)
+        services["Bridge"] = {"ok": result.returncode == 0, "detail": "Running" if result.returncode == 0 else "DOWN"}
+    except Exception:
+        services["Bridge"] = {"ok": False, "detail": "Check failed"}
+
+    # WhatsApp (whatsmeow)
+    try:
+        result = subprocess.run(["pgrep", "-f", "whatsmeow"],
+                                capture_output=True, text=True, timeout=5)
+        services["WhatsApp"] = {"ok": result.returncode == 0, "detail": "Running" if result.returncode == 0 else "Stopped"}
+    except Exception:
+        services["WhatsApp"] = {"ok": False, "detail": "Check failed"}
+
+    # Plane (Docker)
+    try:
+        r = httpx.get("http://localhost:8880/", timeout=3)
+        services["Plane"] = {"ok": r.status_code in (200, 301, 302), "detail": "OK"}
+    except Exception:
+        services["Plane"] = {"ok": False, "detail": "DOWN"}
+
+    return services
+
+
+def collect_activity(hours: int = 1) -> list[dict]:
+    """Get recent activity from dashboard SQLite."""
+    log.info(f"Collecting activity (last {hours}h)...")
+    if not ACTIVITY_DB.exists():
+        return []
+    try:
+        conn = sqlite3.connect(str(ACTIVITY_DB))
+        conn.row_factory = sqlite3.Row
+        cutoff = (datetime.now() - timedelta(hours=hours)).isoformat()
+        rows = conn.execute(
+            "SELECT agent, action, status, summary, timestamp FROM activity "
+            "WHERE timestamp > ? ORDER BY timestamp DESC LIMIT 15",
+            (cutoff,),
+        ).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+    except Exception as e:
+        log.error(f"Activity DB error: {e}")
+        return []
+
+
+def collect_sessions() -> list[dict]:
+    """Get active Claude Code sessions."""
+    log.info("Collecting active sessions...")
+    if not ACTIVITY_DB.exists():
+        return []
+    try:
+        conn = sqlite3.connect(str(ACTIVITY_DB))
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT session_id, working_dir, status, started_at, total_tools "
+            "FROM sessions WHERE status = 'running' ORDER BY started_at DESC LIMIT 5"
+        ).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+    except Exception as e:
+        log.error(f"Sessions DB error: {e}")
+        return []
+
+
+def collect_cron_health() -> list[dict]:
+    """Check cron job freshness by log file mtimes."""
+    log.info("Collecting cron health...")
+    crons = []
+    log_dir = WORKSPACE / "logs"
+
+    checks = [
+        ("qmd-reindex", log_dir / "qmd-reindex.log", 35),      # expect every 30 min
+        ("session-export", log_dir / "session-export.log", 130), # expect every 2 hours
+    ]
+
+    for name, log_path, max_age_min in checks:
+        if log_path.exists():
+            mtime = datetime.fromtimestamp(log_path.stat().st_mtime)
+            age_min = (datetime.now() - mtime).total_seconds() / 60
+            stale = age_min > max_age_min
+
+            # Get last line of output
+            try:
+                lines = log_path.read_text().strip().split("\n")
+                last_line = lines[-1][:80] if lines else ""
+            except Exception:
+                last_line = ""
+
+            crons.append({
+                "name": name,
+                "last_run": mtime.strftime("%H:%M"),
+                "age_min": round(age_min),
+                "stale": stale,
+                "last_output": last_line,
+            })
+        else:
+            crons.append({"name": name, "last_run": "never", "age_min": -1, "stale": True, "last_output": ""})
+
+    return crons
+
+
+def collect_goals() -> list[dict]:
+    """Goal progress from goals.yaml."""
+    log.info("Collecting goal progress...")
+    data = load_yaml(GOALS_PATH)
+    goals = []
+    for obj in data.get("quarterly_objectives", []):
+        krs = obj.get("key_results", [])
+        if krs:
+            avg = round(sum(kr.get("progress", 0) for kr in krs) / len(krs))
+        else:
+            avg = 0
+        goals.append({"name": obj["name"], "progress": avg, "weight": obj.get("weight", 0)})
+    return goals
+
+
+def collect_log_errors(hours: int = 1) -> list[str]:
+    """Scan recent bridge/dashboard logs for errors."""
+    log.info("Scanning logs for errors...")
+    errors = []
+    log_dir = WORKSPACE / "logs"
+    cutoff = datetime.now() - timedelta(hours=hours)
+
+    for logfile in ["bridge.err.log", "dashboard.err.log", "listen.err.log"]:
+        path = log_dir / logfile
+        if not path.exists():
+            continue
+        try:
+            # Read last 50 lines
+            lines = path.read_text().strip().split("\n")[-50:]
+            for line in lines:
+                lower = line.lower()
+                if any(kw in lower for kw in ["error", "traceback", "exception", "critical"]):
+                    # Skip common noise
+                    if "heartbeat" in lower or "connection reset" in lower:
+                        continue
+                    errors.append(f"{logfile.split('.')[0]}: {line[:100]}")
+        except Exception:
+            pass
+
+    return errors[-5:]  # Max 5 errors
+
+
+# --- Formatter ---
+
+def format_update(health, services, activity, sessions, crons, goals, errors, tz_name) -> str:
+    """Format all collected data into a Telegram HTML message."""
+    now = datetime.now(ZoneInfo(tz_name))
+    lines = []
+
+    # Header
+    lines.append(f"<b>AOS Status Update</b>")
+    lines.append(f"<i>{now.strftime('%Y-%m-%d %H:%M %Z')}</i>")
+    lines.append("")
+
+    # Health bar
+    disk_icon = "🔴" if health["disk_pct"] > 85 else "🟡" if health["disk_pct"] > 70 else "🟢"
+    ram_icon = "🔴" if health["ram_pct"] > 85 else "🟡" if health["ram_pct"] > 70 else "🟢"
+    lines.append(f"<b>System</b>")
+    lines.append(f"  {disk_icon} Disk: {health['disk_pct']}% ({health['disk_free_gb']}GB free)")
+    lines.append(f"  {ram_icon} RAM: {health['ram_pct']}% ({health['ram_used_gb']}GB used)")
+    if health["uptime"]:
+        lines.append(f"  ⏱ Up: {health['uptime']}")
+    lines.append("")
+
+    # Services
+    all_ok = all(s["ok"] for s in services.values())
+    svc_header = "✅ <b>Services</b> — all operational" if all_ok else "⚠️ <b>Services</b>"
+    lines.append(svc_header)
+    if not all_ok:
+        for name, s in services.items():
+            icon = "✅" if s["ok"] else "❌"
+            lines.append(f"  {icon} {name}: {s['detail']}")
+    lines.append("")
+
+    # Cron health
+    stale_crons = [c for c in crons if c["stale"]]
+    if stale_crons:
+        lines.append("⚠️ <b>Stale Crons</b>")
+        for c in stale_crons:
+            lines.append(f"  ⏰ {c['name']} — last ran {c['age_min']}m ago")
+    else:
+        cron_summary = ", ".join(f"{c['name']}@{c['last_run']}" for c in crons)
+        lines.append(f"✅ <b>Crons</b> — {cron_summary}")
+    lines.append("")
+
+    # Active sessions
+    if sessions:
+        lines.append(f"🔧 <b>Active Sessions</b> ({len(sessions)})")
+        for s in sessions:
+            wd = s.get("working_dir", "").replace("/Users/agentalhadi/", "~/")
+            tools = s.get("total_tools", 0)
+            lines.append(f"  • {wd} ({tools} ops)")
+        lines.append("")
+
+    # Recent activity (compact)
+    if activity:
+        # Deduplicate and summarize
+        seen = set()
+        unique = []
+        for a in activity:
+            key = f"{a['agent']}:{a['action']}"
+            if key not in seen:
+                seen.add(key)
+                unique.append(a)
+            if len(unique) >= 5:
+                break
+
+        lines.append(f"📋 <b>Recent Activity</b> ({len(activity)} events)")
+        for a in unique:
+            agent = a.get("agent", "?")
+            action = a.get("action", "?")
+            summary = a.get("summary", "")
+            if summary:
+                lines.append(f"  • <b>{agent}</b>: {action} — {summary[:60]}")
+            else:
+                lines.append(f"  • <b>{agent}</b>: {action}")
+        lines.append("")
+
+    # Goals (compact progress bars)
+    if goals:
+        lines.append("<b>Goals</b>")
+        for g in sorted(goals, key=lambda x: -x["weight"]):
+            bar_filled = g["progress"] // 10
+            bar_empty = 10 - bar_filled
+            bar = "█" * bar_filled + "░" * bar_empty
+            lines.append(f"  {bar} {g['progress']}% {g['name']}")
+        lines.append("")
+
+    # Errors
+    if errors:
+        lines.append(f"🚨 <b>Errors</b> ({len(errors)})")
+        for e in errors[:3]:
+            lines.append(f"  <code>{e[:80]}</code>")
+        lines.append("")
+
+    # Footer
+    if not activity and not sessions and all_ok and not stale_crons and not errors:
+        lines.append("<i>All quiet. Systems nominal.</i>")
+
+    return "\n".join(lines)
+
+
+# --- Sender ---
+
+def send_update(bot_token: str, chat_id: int, text: str, thread_id: int | None = None) -> bool:
+    """Post the update to Telegram."""
+    payload = {
+        "chat_id": chat_id,
+        "text": text,
+        "parse_mode": "HTML",
+    }
+    if thread_id:
+        payload["message_thread_id"] = thread_id
+
+    try:
+        r = httpx.post(
+            f"https://api.telegram.org/bot{bot_token}/sendMessage",
+            json=payload,
+            timeout=15,
+        )
+        if r.status_code == 200 and r.json().get("ok"):
+            log.info(f"Update sent successfully (thread_id={thread_id})")
+            return True
+        else:
+            log.error(f"Telegram API error: {r.status_code} — {r.text[:200]}")
+            return False
+    except Exception as e:
+        log.error(f"Failed to send update: {e}")
+        return False
+
+
+def try_create_topic(bot_token: str) -> int | None:
+    """Try to create the Updates forum topic. Returns thread_id or None."""
+    try:
+        r = httpx.post(
+            f"https://api.telegram.org/bot{bot_token}/createForumTopic",
+            data={
+                "chat_id": FORUM_GROUP_ID,
+                "name": "📡 Updates",
+                "icon_color": 7322096,
+            },
+            timeout=10,
+        )
+        if r.status_code == 200 and r.json().get("ok"):
+            thread_id = r.json()["result"]["message_thread_id"]
+            log.info(f"Created Updates topic: thread_id={thread_id}")
+            return thread_id
+        else:
+            log.debug(f"Cannot create topic (expected if no permission): {r.text[:100]}")
+            return None
+    except Exception:
+        return None
+
+
+def save_topic_id(thread_id: int):
+    """Save the topic ID to config for future runs."""
+    import yaml
+    config = get_channel_config()
+    config["forum_topic_id"] = thread_id
+    config["created_at"] = datetime.now().isoformat()
+    CONFIG_PATH.write_text(yaml.dump(config, default_flow_style=False))
+    log.info(f"Saved topic ID {thread_id} to {CONFIG_PATH}")
+
+
+# --- Main ---
+
+def main():
+    start = time.time()
+    log.info("=" * 60)
+    log.info("Channel update starting")
+
+    # Load secrets
+    bot_token = get_secret("TELEGRAM_BOT_TOKEN")
+    chat_id_str = get_secret("TELEGRAM_CHAT_ID")
+    if not bot_token or not chat_id_str:
+        log.error("Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID")
+        sys.exit(1)
+    chat_id = int(chat_id_str)
+
+    # Check timezone
+    goals_data = load_yaml(GOALS_PATH)
+    tz_name = goals_data.get("work_hours", {}).get("timezone", "America/Toronto")
+
+    # Check work hours — skip during quiet hours unless --force
+    if "--force" not in sys.argv:
+        tz = ZoneInfo(tz_name)
+        now = datetime.now(tz)
+        active_range = goals_data.get("work_hours", {}).get("active", "07:00-23:00")
+        start_h, start_m = map(int, active_range.split("-")[0].split(":"))
+        end_h, end_m = map(int, active_range.split("-")[1].split(":"))
+        current_min = now.hour * 60 + now.minute
+        if not (start_h * 60 + start_m <= current_min < end_h * 60 + end_m):
+            log.info("Quiet hours — skipping update")
+            return
+
+    # Determine where to post (forum topic or direct chat)
+    config = get_channel_config()
+    thread_id = config.get("forum_topic_id")
+
+    # If no topic configured, try to create one
+    if not thread_id:
+        thread_id = try_create_topic(bot_token)
+        if thread_id:
+            save_topic_id(thread_id)
+
+    # If posting to forum topic, use group chat ID; otherwise direct chat
+    target_chat_id = FORUM_GROUP_ID if thread_id else chat_id
+
+    # Collect all data
+    health = collect_health()
+    services = collect_services()
+    activity = collect_activity(hours=1)
+    sessions = collect_sessions()
+    crons = collect_cron_health()
+    goals = collect_goals()
+    errors = collect_log_errors(hours=1)
+
+    # Format
+    message = format_update(health, services, activity, sessions, crons, goals, errors, tz_name)
+
+    # Log the message for review
+    log.info(f"Message length: {len(message)} chars")
+    log.info(f"Target: chat_id={target_chat_id}, thread_id={thread_id}")
+
+    # Send
+    success = send_update(bot_token, target_chat_id, message, thread_id)
+
+    elapsed = round(time.time() - start, 2)
+    log.info(f"Completed in {elapsed}s — {'sent' if success else 'FAILED'}")
+    log.info(f"Metrics: disk={health['disk_pct']}% ram={health['ram_pct']}% "
+             f"services={sum(1 for s in services.values() if s['ok'])}/{len(services)} "
+             f"activity={len(activity)} sessions={len(sessions)} errors={len(errors)}")
+    log.info("=" * 60)
+
+
+if __name__ == "__main__":
+    main()

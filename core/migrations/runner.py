@@ -184,7 +184,7 @@ def cmd_discover():
          "Obsidian knowledge vault"),
         ("homebrew", Path("/opt/homebrew"),
          "Homebrew package manager"),
-        ("tailscale", Path("/usr/local/bin/tailscale"),
+        ("tailscale", Path("/opt/homebrew/bin/tailscale"),
          "Tailscale VPN"),
         ("qmd", Path.home() / ".bun" / "bin" / "qmd",
          "QMD semantic search"),

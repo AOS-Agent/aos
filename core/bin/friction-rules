@@ -1,0 +1,404 @@
+#!/usr/bin/env python3
+"""friction-rules — reads friction reports, clusters repeated patterns, proposes rules.
+
+Usage:
+    friction-rules propose          # Analyze latest friction report → send proposals to Telegram
+    friction-rules apply <nums>     # Apply approved proposals (e.g., "apply 1 3" or "apply all")
+
+Runs after session-analysis in the nightly cron.
+"""
+
+import json
+import os
+import re
+import sys
+import subprocess
+from collections import Counter, defaultdict
+from datetime import datetime
+from pathlib import Path
+
+AOS_DIR = Path.home() / "aos"
+VAULT_REVIEWS = Path.home() / "vault" / "reviews"
+MEMORY_DIR = Path.home() / ".claude" / "projects" / "-Users-agentalhadi-aos" / "memory"
+MEMORY_INDEX = MEMORY_DIR / "MEMORY.md"
+PENDING_FILE = AOS_DIR / "apps" / "bridge" / "data" / "bridge" / "pending_rules.json"
+STATE_FILE = AOS_DIR / "apps" / "bridge" / "data" / "bridge" / "friction_rules_state.json"
+
+
+def get_secret(name: str) -> str:
+    return subprocess.check_output(
+        [str(AOS_DIR / "bin" / "agent-secret"), "get", name],
+        text=True,
+    ).strip()
+
+
+def send_telegram(text: str):
+    """Send a message via Telegram."""
+    import urllib.request
+
+    bot_token = get_secret("TELEGRAM_BOT_TOKEN")
+    chat_id = get_secret("TELEGRAM_CHAT_ID")
+    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+    data = json.dumps({
+        "chat_id": int(chat_id),
+        "text": text,
+        "parse_mode": "HTML",
+    }).encode()
+    req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+    try:
+        urllib.request.urlopen(req, timeout=10)
+    except Exception as e:
+        print(f"Failed to send Telegram message: {e}", file=sys.stderr)
+
+
+def find_latest_friction_report() -> Path | None:
+    """Find the most recent friction report in the vault."""
+    reports = sorted(VAULT_REVIEWS.glob("session-friction-*.md"), reverse=True)
+    return reports[0] if reports else None
+
+
+def parse_friction_report(path: Path) -> list[dict]:
+    """Parse a friction report into structured instances."""
+    text = path.read_text()
+    instances = []
+
+    # Extract each instance block
+    pattern = re.compile(
+        r"### \d+\. Session `([^`]+)`\s*\n\n"
+        r"(?:\*\*User said:\*\* (.*?)\n\n)?"
+        r"(?:\*\*Agent had said:\*\* (.*?)(?=\n\n###|\n\n##|\n\n\*\.\.\.|\Z))?",
+        re.DOTALL,
+    )
+
+    # Track which category we're in
+    current_category = None
+    for line in text.split("\n"):
+        cat_match = re.match(r"^## (\w+) \(\d+ instances?\)", line)
+        if cat_match:
+            current_category = cat_match.group(1).lower()
+
+    # Simpler approach: split by category headers, then parse instances within
+    sections = re.split(r"^## (\w+) \(\d+ instances?\)", text, flags=re.MULTILINE)
+    # sections = [preamble, cat1_name, cat1_body, cat2_name, cat2_body, ...]
+    for i in range(1, len(sections) - 1, 2):
+        category = sections[i].lower()
+        body = sections[i + 1]
+
+        for match in re.finditer(
+            r"### \d+\. Session `([^`]+)`\s*\n\n"
+            r"\*\*User said:\*\* (.*?)(?=\n\n\*\*Agent had said:\*\*|\n\n###|\n\n##|\n\n\*\.\.\.|\Z)"
+            r"(?:\n\n\*\*Agent had said:\*\* (.*?)(?=\n\n###|\n\n##|\n\n\*\.\.\.|\Z))?",
+            body,
+            re.DOTALL,
+        ):
+            instances.append({
+                "category": category,
+                "session": match.group(1),
+                "user_said": match.group(2).strip()[:300] if match.group(2) else "",
+                "agent_said": match.group(3).strip()[:300] if match.group(3) else "",
+            })
+
+    return instances
+
+
+def cluster_patterns(instances: list[dict]) -> list[dict]:
+    """Find repeated patterns across friction instances.
+
+    Groups by: same session with multiple issues, or similar user corrections.
+    Returns clusters with 2+ instances.
+    """
+    # Strategy 1: Group by session — sessions with many frictions indicate systemic issues
+    session_counts = Counter(i["session"] for i in instances)
+    problematic_sessions = {s for s, c in session_counts.items() if c >= 3}
+
+    # Strategy 2: Look for keyword patterns in user corrections
+    keyword_patterns = defaultdict(list)
+    correction_keywords = [
+        ("autonomous", "Agent asked user to do things manually instead of acting autonomously"),
+        ("don't", "Agent did something the user explicitly didn't want"),
+        ("not that", "Agent misunderstood what was requested"),
+        ("wrong", "Agent produced incorrect output"),
+        ("simple", "Agent over-complicated the solution"),
+        ("just", "Agent over-engineered when a simpler approach was needed"),
+        ("stop", "Agent continued doing something after being told to stop"),
+        ("already", "Agent repeated work that was already done"),
+        ("manual", "Agent asked user to do things manually"),
+    ]
+
+    for inst in instances:
+        user_text = inst["user_said"].lower()
+        for keyword, description in correction_keywords:
+            if keyword in user_text:
+                keyword_patterns[description].append(inst)
+
+    # Build clusters
+    clusters = []
+
+    # From keyword patterns (2+ occurrences)
+    for description, insts in keyword_patterns.items():
+        if len(insts) >= 2:
+            clusters.append({
+                "pattern": description,
+                "count": len(insts),
+                "examples": insts[:3],
+                "category": insts[0]["category"],
+            })
+
+    # From high-friction sessions
+    for session_id in problematic_sessions:
+        session_insts = [i for i in instances if i["session"] == session_id]
+        # Check if already covered by keyword patterns
+        covered = any(
+            any(i["session"] == session_id for i in c["examples"])
+            for c in clusters
+        )
+        if not covered:
+            clusters.append({
+                "pattern": f"Session {session_id[:8]} had {len(session_insts)} friction points — likely a systemic issue",
+                "count": len(session_insts),
+                "examples": session_insts[:3],
+                "category": "correction",
+            })
+
+    # Sort by count descending
+    clusters.sort(key=lambda c: c["count"], reverse=True)
+    return clusters
+
+
+def draft_rules(clusters: list[dict]) -> list[dict]:
+    """Draft concrete rules from friction clusters."""
+    rules = []
+    for i, cluster in enumerate(clusters[:5]):  # Max 5 proposals per batch
+        # Build a rule from the pattern
+        examples_text = ""
+        for ex in cluster["examples"][:2]:
+            user_snippet = ex["user_said"][:100]
+            examples_text += f"\n  - \"{user_snippet}...\""
+
+        rule = {
+            "id": i + 1,
+            "pattern": cluster["pattern"],
+            "count": cluster["count"],
+            "category": cluster["category"],
+            "examples": examples_text,
+            "proposed_rule": _generate_rule_text(cluster),
+            "memory_type": "feedback",
+        }
+        rules.append(rule)
+
+    return rules
+
+
+def _generate_rule_text(cluster: dict) -> str:
+    """Generate a concrete rule from a cluster."""
+    pattern = cluster["pattern"].lower()
+
+    if "autonomous" in pattern or "manual" in pattern:
+        return "Exhaust all available tools before asking the user to do something manually. Check the capability map and fallback chains first."
+    elif "over-complicated" in pattern or "over-engineer" in pattern or "simple" in pattern:
+        return "Start with the simplest approach. Don't add abstractions, error handling, or features beyond what was asked."
+    elif "misunderstood" in pattern or "not that" in pattern:
+        return "When the request is ambiguous, clarify before acting. Don't assume intent on multi-step tasks."
+    elif "incorrect" in pattern or "wrong" in pattern:
+        return "Verify output before presenting it. Run tests, check formatting, validate against the original request."
+    elif "stop" in pattern or "continued" in pattern:
+        return "When told to stop or change direction, fully stop the current approach before starting the new one."
+    elif "repeated" in pattern or "already" in pattern:
+        return "Check what's already been done before starting work. Read existing files and recent git history."
+    else:
+        return f"Avoid: {cluster['pattern']}. This caused friction {cluster['count']} times."
+
+
+def format_proposals(rules: list[dict]) -> str:
+    """Format rule proposals for Telegram."""
+    if not rules:
+        return ""
+
+    msg = "<b>Friction Rules — Proposals</b>\n\n"
+    msg += "Based on recent session analysis, I noticed these repeated patterns:\n\n"
+
+    for rule in rules:
+        msg += f"<b>{rule['id']}.</b> {rule['pattern']} ({rule['count']}x)\n"
+        msg += f"   <i>Proposed rule:</i> {rule['proposed_rule']}\n\n"
+
+    msg += "Reply: <code>/approve-rules 1 3</code> (specific) or <code>/approve-rules all</code>"
+    return msg
+
+
+def save_pending(rules: list[dict]):
+    """Save pending proposals to JSON."""
+    PENDING_FILE.parent.mkdir(parents=True, exist_ok=True)
+    data = {
+        "timestamp": datetime.now().isoformat(),
+        "rules": rules,
+        "status": "pending",
+    }
+    PENDING_FILE.write_text(json.dumps(data, indent=2))
+    print(f"Saved {len(rules)} pending rules to {PENDING_FILE}")
+
+
+def load_pending() -> dict | None:
+    """Load pending proposals."""
+    if not PENDING_FILE.exists():
+        return None
+    return json.loads(PENDING_FILE.read_text())
+
+
+def apply_rules(nums: list[int]):
+    """Apply selected rules as memory files."""
+    pending = load_pending()
+    if not pending or pending["status"] != "pending":
+        print("No pending rules to apply.")
+        send_telegram("No pending rule proposals to apply.")
+        return
+
+    rules = pending["rules"]
+    if not nums:
+        print("No rule numbers specified.")
+        return
+
+    applied = []
+    for rule in rules:
+        if rule["id"] in nums:
+            _write_memory(rule)
+            applied.append(rule["id"])
+
+    # Update pending status
+    pending["status"] = "applied"
+    pending["applied"] = applied
+    pending["applied_at"] = datetime.now().isoformat()
+    PENDING_FILE.write_text(json.dumps(pending, indent=2))
+
+    msg = f"Applied {len(applied)} rule(s) as feedback memories: {', '.join(f'#{n}' for n in applied)}"
+    print(msg)
+    send_telegram(f"✅ {msg}")
+
+
+def _write_memory(rule: dict):
+    """Write a rule as a feedback memory file."""
+    # Generate filename
+    slug = re.sub(r"[^a-z0-9]+", "_", rule["pattern"].lower())[:40].strip("_")
+    filename = f"feedback_auto_{slug}.md"
+    filepath = MEMORY_DIR / filename
+
+    content = f"""---
+name: {rule['pattern'][:60]}
+description: Auto-detected friction pattern ({rule['count']}x) — {rule['proposed_rule'][:80]}
+type: feedback
+---
+
+{rule['proposed_rule']}
+
+**Why:** Detected {rule['count']} times in session friction analysis. Category: {rule['category']}.
+
+**How to apply:** {rule['proposed_rule']}
+"""
+    filepath.write_text(content)
+    print(f"  Wrote memory: {filepath}")
+
+    # Update MEMORY.md index
+    _update_memory_index(filename, rule["pattern"][:60])
+
+
+def _update_memory_index(filename: str, description: str):
+    """Add a pointer to the new memory file in MEMORY.md."""
+    index_text = MEMORY_INDEX.read_text()
+
+    # Add under Feedback section if it exists, otherwise append
+    entry = f"- [{filename}]({filename}) — Auto-rule: {description}\n"
+
+    if "## Feedback" in index_text:
+        index_text = index_text.replace(
+            "## Feedback\n",
+            f"## Feedback\n{entry}",
+        )
+    else:
+        # Add a Feedback section before the last section
+        index_text = index_text.rstrip() + f"\n\n## Auto-Rules\n{entry}"
+
+    MEMORY_INDEX.write_text(index_text)
+
+
+def save_state(action: str, details: str = ""):
+    """Save state for bridge intercept."""
+    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    state = {
+        "last_action": action,
+        "timestamp": datetime.now().isoformat(),
+        "details": details,
+    }
+    STATE_FILE.write_text(json.dumps(state, indent=2))
+
+
+# ── CLI ──────────────────────────────────────────────
+
+def cmd_propose():
+    """Analyze friction and propose rules."""
+    report = find_latest_friction_report()
+    if not report:
+        print("No friction reports found.")
+        return
+
+    print(f"Reading friction report: {report}")
+    instances = parse_friction_report(report)
+    print(f"Parsed {len(instances)} friction instances")
+
+    if not instances:
+        print("No parseable instances found.")
+        return
+
+    clusters = cluster_patterns(instances)
+    print(f"Found {len(clusters)} repeated patterns")
+
+    if not clusters:
+        print("No repeated patterns (2+ occurrences). Nothing to propose.")
+        return
+
+    rules = draft_rules(clusters)
+    if not rules:
+        print("No rules to propose.")
+        return
+
+    save_pending(rules)
+    msg = format_proposals(rules)
+    send_telegram(msg)
+    save_state("proposed", f"{len(rules)} rules proposed")
+    print(f"Sent {len(rules)} proposals to Telegram")
+
+
+def cmd_apply(args: list[str]):
+    """Apply specific rules."""
+    if not args:
+        print("Usage: friction-rules apply <1 3> or <all>")
+        return
+
+    if args[0] == "all":
+        pending = load_pending()
+        if pending:
+            nums = [r["id"] for r in pending["rules"]]
+        else:
+            print("No pending rules.")
+            return
+    else:
+        nums = [int(x) for x in args if x.isdigit()]
+
+    apply_rules(nums)
+
+
+def main():
+    if len(sys.argv) < 2:
+        print(__doc__)
+        return
+
+    cmd = sys.argv[1]
+    if cmd == "propose":
+        cmd_propose()
+    elif cmd == "apply":
+        cmd_apply(sys.argv[2:])
+    else:
+        print(f"Unknown command: {cmd}")
+        print(__doc__)
+
+
+if __name__ == "__main__":
+    main()

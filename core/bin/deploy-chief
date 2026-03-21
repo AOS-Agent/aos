@@ -1,0 +1,159 @@
+#!/usr/bin/env zsh
+# deploy-chief — Build and upload Chief iOS app to TestFlight
+# Usage: deploy-chief [lane]   (default lane: beta)
+# Lanes: beta | archive_only
+#
+# All secrets pulled from macOS Keychain at runtime — nothing stored in files.
+
+set -euo pipefail
+
+LANE="${1:-beta}"
+PROJECT_DIR="/Users/agentalhadi/chief-ios-app"
+LOG_DIR="/Users/agentalhadi/aos/logs"
+TIMESTAMP=$(date +%Y-%m-%dT%H:%M:%S)
+LOG_FILE="$LOG_DIR/deploy-chief.log"
+METRICS_FILE="$LOG_DIR/deploy-chief-metrics.log"
+AGENT_SECRET="/Users/agentalhadi/aos/bin/agent-secret"
+
+log() { echo "[$TIMESTAMP] $*" | tee -a "$LOG_FILE"; }
+
+# ---- Deploy attempt counter ----
+if [[ -f "$METRICS_FILE" ]]; then
+  ATTEMPT=$(( $(wc -l < "$METRICS_FILE") + 1 ))
+else
+  ATTEMPT=1
+fi
+
+log_metric() {
+  local result="$1"
+  echo "$TIMESTAMP attempt=$ATTEMPT lane=$LANE result=$result" >> "$METRICS_FILE"
+}
+
+log "Starting deploy-chief (lane=$LANE, attempt=$ATTEMPT)"
+
+# ---- App Store preflight validation ----
+PREFLIGHT_PASS=true
+ICON_DIR="$PROJECT_DIR/Chief/Assets.xcassets/AppIcon.appiconset"
+INFO_PLIST="$PROJECT_DIR/Chief/Info.plist"
+PBXPROJ="$PROJECT_DIR/Chief.xcodeproj/project.pbxproj"
+
+preflight_fail() {
+  log "PREFLIGHT FAIL: $1"
+  PREFLIGHT_PASS=false
+}
+
+log "Running App Store preflight checks..."
+
+# 1. App icons — required sizes
+REQUIRED_ICONS=(icon_120.png icon_180.png icon_76.png icon_152.png icon_167.png icon_1024.png)
+if [[ ! -d "$ICON_DIR" ]]; then
+  preflight_fail "AppIcon.appiconset directory not found at $ICON_DIR"
+else
+  for icon in "${REQUIRED_ICONS[@]}"; do
+    if [[ ! -f "$ICON_DIR/$icon" ]]; then
+      preflight_fail "Missing app icon: $icon in $ICON_DIR"
+    fi
+  done
+fi
+
+# 2. iPad orientations in Info.plist
+if [[ ! -f "$INFO_PLIST" ]]; then
+  preflight_fail "Info.plist not found at $INFO_PLIST"
+else
+  IPAD_ORIENTATIONS=(UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight)
+
+  # Check UISupportedInterfaceOrientations
+  if ! /usr/libexec/PlistBuddy -c "Print :UISupportedInterfaceOrientations" "$INFO_PLIST" &>/dev/null; then
+    preflight_fail "UISupportedInterfaceOrientations missing from Info.plist"
+  else
+    for orient in "${IPAD_ORIENTATIONS[@]}"; do
+      if ! /usr/libexec/PlistBuddy -c "Print :UISupportedInterfaceOrientations" "$INFO_PLIST" 2>/dev/null | grep -q "$orient"; then
+        preflight_fail "UISupportedInterfaceOrientations missing: $orient"
+      fi
+    done
+  fi
+
+  # Check UISupportedInterfaceOrientations~ipad
+  if ! /usr/libexec/PlistBuddy -c "Print :UISupportedInterfaceOrientations~ipad" "$INFO_PLIST" &>/dev/null; then
+    preflight_fail "UISupportedInterfaceOrientations~ipad missing from Info.plist"
+  else
+    for orient in "${IPAD_ORIENTATIONS[@]}"; do
+      if ! /usr/libexec/PlistBuddy -c "Print :UISupportedInterfaceOrientations~ipad" "$INFO_PLIST" 2>/dev/null | grep -q "$orient"; then
+        preflight_fail "UISupportedInterfaceOrientations~ipad missing: $orient"
+      fi
+    done
+  fi
+
+  # 3. Required usage description keys
+  for key in NSHealthShareUsageDescription NSHealthUpdateUsageDescription; do
+    if ! /usr/libexec/PlistBuddy -c "Print :$key" "$INFO_PLIST" &>/dev/null; then
+      preflight_fail "Missing required plist key: $key"
+    fi
+  done
+
+  # 4. ITSAppUsesNonExemptEncryption must be false
+  ENC_VAL=$(/usr/libexec/PlistBuddy -c "Print :ITSAppUsesNonExemptEncryption" "$INFO_PLIST" 2>/dev/null || echo "MISSING")
+  if [[ "$ENC_VAL" == "MISSING" ]]; then
+    preflight_fail "ITSAppUsesNonExemptEncryption not set in Info.plist (must be false)"
+  elif [[ "$ENC_VAL" != "false" && "$ENC_VAL" != "NO" && "$ENC_VAL" != "0" ]]; then
+    preflight_fail "ITSAppUsesNonExemptEncryption is '$ENC_VAL' — must be false/NO"
+  fi
+
+  # 6. Version and build number
+  for key in CFBundleShortVersionString CFBundleVersion; do
+    VAL=$(/usr/libexec/PlistBuddy -c "Print :$key" "$INFO_PLIST" 2>/dev/null || echo "")
+    if [[ -z "$VAL" ]]; then
+      preflight_fail "$key not set in Info.plist"
+    fi
+  done
+fi
+
+# 5. Bundle ID exists (check pbxproj or Info.plist)
+BUNDLE_ID=""
+if [[ -f "$PBXPROJ" ]]; then
+  BUNDLE_ID=$(grep -m1 'PRODUCT_BUNDLE_IDENTIFIER' "$PBXPROJ" 2>/dev/null | head -1 | sed 's/.*= *"\{0,1\}\([^";]*\)"\{0,1\}.*/\1/' || true)
+fi
+if [[ -z "$BUNDLE_ID" && -f "$INFO_PLIST" ]]; then
+  BUNDLE_ID=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$INFO_PLIST" 2>/dev/null || echo "")
+fi
+if [[ -z "$BUNDLE_ID" ]]; then
+  preflight_fail "PRODUCT_BUNDLE_IDENTIFIER not found in project.pbxproj or Info.plist"
+fi
+
+# ---- Preflight verdict ----
+if [[ "$PREFLIGHT_PASS" != "true" ]]; then
+  log "Preflight FAILED — aborting before build/upload. Fix issues above."
+  log_metric "preflight_fail"
+  exit 1
+fi
+
+log "Preflight passed — all App Store checks OK"
+
+# ---- Pull secrets from Keychain ----
+export ASC_KEY_ID="$($AGENT_SECRET get ASC_KEY_ID)"
+export ASC_ISSUER_ID="$($AGENT_SECRET get ASC_ISSUER_ID)"
+export ASC_KEY_PATH="/Users/agentalhadi/aos/config/keys/AuthKey_${ASC_KEY_ID}.p8"
+
+if [[ ! -f "$ASC_KEY_PATH" ]]; then
+  log "ERROR: API key file not found at $ASC_KEY_PATH"
+  log_metric "fail"
+  exit 1
+fi
+
+log "API key: $ASC_KEY_ID  Issuer: $ASC_ISSUER_ID  Key: $ASC_KEY_PATH"
+
+# ---- Run fastlane ----
+cd "$PROJECT_DIR"
+
+log "Running: fastlane $LANE"
+fastlane "$LANE" 2>&1 | tee -a "$LOG_FILE"
+STATUS=${PIPESTATUS[0]}
+
+if [[ $STATUS -eq 0 ]]; then
+  log "deploy-chief SUCCESS (lane=$LANE)"
+  log_metric "pass"
+else
+  log "deploy-chief FAILED (lane=$LANE, exit=$STATUS)"
+  log_metric "fail"
+  exit $STATUS
+fi

@@ -12,19 +12,17 @@
 # All scripts are idempotent — safe to run manually anytime.
 
 jobs:
-  # ── Tier 1: System breaks without these ─────────────────────────────────────
+  # ── Tier 1: System health ───────────────────────────────────────────────────
 
   watchdog:
     command: bash ~/aos/core/bin/watchdog
     every: 5m
     timeout: 60
-    # ping: https://hc-ping.com/UUID  # add after Healthchecks.io setup
 
   auto-commit:
     command: bash ~/aos/core/bin/auto-commit cron
     every: 30m
     timeout: 120
-    # ping: https://hc-ping.com/UUID
 
   qmd-reindex:
     command: bash ~/aos/core/bin/qmd-reindex
@@ -35,19 +33,18 @@ jobs:
     command: python3 ~/aos/core/bin/session-export
     every: 2h
     timeout: 300
-    # ping: https://hc-ping.com/UUID
 
   rotate-logs:
     command: bash ~/aos/core/bin/rotate-logs
     at: "03:00"
     timeout: 60
 
+  # ── Tier 2: Knowledge & awareness ───────────────────────────────────────────
+
   compile-daily:
     command: python3 ~/aos/core/bin/compile-daily
     at: "23:30"
     timeout: 120
-
-  # ── Tier 2: System is dumber without these ───────────────────────────────────
 
   inbox-collect:
     command: python3 ~/aos/core/bin/inbox-collect
@@ -60,6 +57,24 @@ jobs:
     weekday: sunday
     timeout: 180
 
+  stale-detector:
+    command: python3 ~/aos/core/bin/stale-detector
+    at: "08:00"
+    timeout: 60
+
+  nightly-pipeline:
+    command: bash ~/aos/core/bin/nightly-pipeline
+    at: "23:00"
+    timeout: 600
+
+  morning-context:
+    command: python3 ~/aos/core/bin/morning-context
+    at: "06:30"
+    timeout: 60
+
+  # ── Tier 3: Disabled until dependencies are met ─────────────────────────────
+  # Enable these as integrations come online.
+
   weekly-digest:
     command: python3 ~/aos/core/bin/weekly-digest
     at: "20:00"
@@ -67,67 +82,19 @@ jobs:
     timeout: 300
     enabled: false  # needs porting from v1
 
-  stale-detector:
-    command: python3 ~/aos/core/bin/stale-detector
-    at: "08:00"
-    timeout: 60
-
-  # ── Tier 3: System becomes proactive ────────────────────────────────────────
-
-  morning-context:
-    command: python3 ~/aos/core/bin/morning-context
-    at: "06:30"
-    timeout: 60
-
-  email-digest:
-    command: python3 ~/aos/core/bin/email-digest
-    at: "07:30"
-    timeout: 120
-    enabled: false  # needs building + email access configured
-
-  nightly-pipeline:
-    command: bash ~/aos/core/bin/nightly-pipeline
-    at: "23:00"
-    timeout: 600
-
   compile-patterns:
     command: python3 ~/aos/core/bin/compile-patterns
     at: "04:00"
     timeout: 120
     enabled: false  # needs execution logging infrastructure
 
-  meeting-prep:
-    command: python3 ~/aos/core/bin/meeting-prep
-    every: 15m
-    active_hours: "08:00-20:00"
-    timeout: 60
-    enabled: false  # needs building + calendar integration
-
-  monthly-review:
-    command: python3 ~/aos/core/bin/monthly-review
-    at: "10:00"
-    monthday: 1
-    timeout: 300
-    enabled: false  # needs 4+ weekly digests first
-
-  # ── Ported from v1 crontab (not yet rewritten for v2) ─────────────────────
-
-  channel-update:
-    command: /opt/homebrew/bin/python3 ~/aos/bin/channel-update
-    every: 1h
-    timeout: 60
-    enabled: false  # v1 script, needs v2 rewrite
-
-  phoenix-weekly:
-    command: ~/aos/apps/phoenix/.venv/bin/python ~/aos/apps/phoenix/weekly_report.py
-    at: "21:00"
-    weekday: sunday
-    timeout: 300
-    enabled: false  # v1 script, needs v2 rewrite
-
-  friction-rules:
-    command: /opt/homebrew/bin/python3 ~/aos/bin/friction-rules propose
-    at: "23:05"
-    timeout: 120
-    enabled: false  # needs bridge approval workflow
-
+  # ── Planned (scripts not yet built) ─────────────────────────────────────────
+  # These entries are placeholders. Scripts will be created when their
+  # integration dependencies are ready.
+  #
+  # email-digest:     needs email integration
+  # meeting-prep:     needs calendar integration
+  # monthly-review:   needs 4+ weekly digests
+  # channel-update:   v1 script, needs v2 rewrite
+  # phoenix-weekly:   v1 script, needs v2 rewrite
+  # friction-rules:   needs bridge approval workflow

@@ -11,14 +11,15 @@ __pycache__/
 # Vendor (large third-party tools, user installs separately)
 vendor/
 
-# Instance data that might accidentally end up here
-logs/
-data/
-*.log
+# Instance symlinks (created by migrations, point to ~/.aos/)
+# Only root-level — don't match core/bin/, core/services/, etc.
+/logs
+/data
+/bin
+/apps
 
-# Compatibility symlinks (point to instance or core)
-bin
-apps
+# Runtime
+*.log
 
 # IDE
 .vscode/
@@ -26,3 +27,4 @@ apps
 
 # Worktrees
 .claude/worktrees/
+*.sqlite3

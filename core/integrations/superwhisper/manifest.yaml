@@ -1,0 +1,43 @@
+# SuperWhisper Integration Manifest
+name: SuperWhisper
+version: "1.0"
+category: input
+
+description: >
+  Voice-to-text transcription via SuperWhisper app.
+  Speak to capture ideas, notes, and commands quickly.
+
+provides:
+  voice_input:
+    type: input
+    description: Voice transcription to clipboard or direct input
+
+requires:
+  apps:
+    - name: SuperWhisper
+      url: https://superwhisper.com
+      description: Must be installed and configured with a hotkey
+
+health:
+  checks:
+    - name: app_installed
+      command: "test -d '/Applications/SuperWhisper.app'"
+      expect: success
+    - name: app_running
+      command: "pgrep -x SuperWhisper"
+      expect: non-empty
+
+layers:
+  - interface
+  - integrations
+
+setup:
+  steps:
+    - description: Install SuperWhisper
+      type: interactive
+      instruction: "Download from https://superwhisper.com and install"
+    - description: Configure hotkey
+      type: interactive
+      instruction: "Open SuperWhisper settings, set your preferred hotkey"
+    - description: Verify
+      type: health_check

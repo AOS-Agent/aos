@@ -1,0 +1,89 @@
+# Obsidian Integration Manifest
+
+name: Obsidian
+version: "1.0"
+category: knowledge
+
+description: >
+  Obsidian vault at ~/vault/ as the knowledge layer. Notes are stored
+  as Markdown, indexed by QMD for semantic search, and structured via
+  Obsidian conventions (daily notes, links, tags). Provides the
+  primary long-term memory and knowledge retrieval for all agents.
+
+# What this integration provides to the system
+provides:
+  notes:
+    type: read_write
+    description: Read and create Markdown notes in the vault
+  search:
+    type: query
+    description: Semantic search via QMD indexing
+  daily_notes:
+    type: read_write
+    description: Access and append to daily notes
+  knowledge_graph:
+    type: read
+    description: Traverse links and tags across the vault
+
+# What this integration needs to function
+requires:
+  secrets: []
+  services:
+    - name: qmd
+      type: binary
+      path: ~/.bun/bin/qmd
+      description: QMD search indexer and query tool
+  config:
+    - key: obsidian.vault_path
+      file: ~/.aos/config/obsidian.yaml
+      description: Absolute path to the Obsidian vault (default ~/vault/)
+    - key: obsidian.daily_notes_folder
+      file: ~/.aos/config/obsidian.yaml
+      description: Subfolder for daily notes (default daily/)
+
+# How to verify this integration is working
+health:
+  checks:
+    - name: vault_exists
+      command: "test -d ~/vault && echo exists"
+      expect: exists
+    - name: qmd_installed
+      command: "~/.bun/bin/qmd --version 2>/dev/null && echo ok || echo missing"
+      expect: ok
+    - name: qmd_query_works
+      command: "~/.bun/bin/qmd query 'test' -n 1 2>/dev/null && echo ok || echo fail"
+      expect: ok
+    - name: vault_has_notes
+      command: "find ~/vault -name '*.md' -maxdepth 3 | head -1 | xargs -I{} echo has_notes"
+      expect: has_notes
+
+# Layers this integration touches
+layers:
+  - knowledge      # Primary knowledge store
+  - integrations   # This manifest
+  - data           # Vault content and QMD index
+
+# Setup steps (run by onboarding agent or manually)
+setup:
+  steps:
+    - description: Create vault directory
+      type: command
+      command: "mkdir -p ~/vault"
+    - description: Install QMD
+      type: command
+      command: "bun install -g qmd"
+    - description: Initialize QMD index
+      type: command
+      command: "cd ~/vault && ~/.bun/bin/qmd index"
+    - description: Configure vault path
+      type: command
+      command: "mkdir -p ~/.aos/config && echo 'vault_path: ~/vault/' > ~/.aos/config/obsidian.yaml"
+    - description: Install Obsidian (optional)
+      type: interactive
+      instruction: >
+        Download Obsidian from https://obsidian.md and open ~/vault/
+        as a vault. Obsidian is optional — AOS accesses the vault
+        directly via the filesystem and QMD. Obsidian adds a nice
+        GUI for browsing and editing notes.
+    - description: Verify
+      type: health_check

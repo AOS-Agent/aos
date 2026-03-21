@@ -1,0 +1,82 @@
+# Email Integration Manifest
+
+name: Email
+version: "1.0"
+category: communication
+
+description: >
+  Email access via IMAP/SMTP. Read inbox, send emails, and monitor
+  for important messages. Supports multiple email accounts with
+  credentials stored in macOS Keychain.
+
+# What this integration provides to the system
+provides:
+  inbox:
+    type: read
+    description: Read and search email inbox via IMAP
+  sending:
+    type: write
+    description: Send emails via SMTP
+  monitoring:
+    type: polling
+    description: Check for new emails on a schedule
+
+# What this integration needs to function
+requires:
+  secrets:
+    - key: EMAIL_ADDRESS
+      store: keychain
+      description: Primary email address
+    - key: EMAIL_PASSWORD
+      store: keychain
+      description: Email password or app-specific password
+    - key: IMAP_HOST
+      store: keychain
+      description: IMAP server hostname (e.g. imap.gmail.com)
+    - key: SMTP_HOST
+      store: keychain
+      description: SMTP server hostname (e.g. smtp.gmail.com)
+  services: []
+  config:
+    - key: email.accounts
+      file: ~/.aos/config/email.yaml
+      description: List of configured email accounts and their settings
+
+# How to verify this integration is working
+health:
+  checks:
+    - name: imap_connect
+      command: "python3 -c \"import imaplib; m=imaplib.IMAP4_SSL('$(agent-secret get IMAP_HOST)'); m.login('$(agent-secret get EMAIL_ADDRESS)','$(agent-secret get EMAIL_PASSWORD)'); print('ok'); m.logout()\""
+      expect: ok
+    - name: credentials_stored
+      command: "agent-secret get EMAIL_ADDRESS >/dev/null 2>&1 && echo stored"
+      expect: stored
+
+# Layers this integration touches
+layers:
+  - integrations   # This manifest
+  - data           # Email content stored/cached locally
+
+# Setup steps (run by onboarding agent or manually)
+setup:
+  steps:
+    - description: Store email address
+      type: command
+      command: "agent-secret set EMAIL_ADDRESS <your-email>"
+    - description: Store email password
+      type: command
+      command: "agent-secret set EMAIL_PASSWORD <app-password>"
+    - description: Store IMAP host
+      type: command
+      command: "agent-secret set IMAP_HOST <imap-host>"
+    - description: Store SMTP host
+      type: command
+      command: "agent-secret set SMTP_HOST <smtp-host>"
+    - description: Create email config
+      type: interactive
+      instruction: >
+        For Gmail, use imap.gmail.com / smtp.gmail.com and generate
+        an App Password at https://myaccount.google.com/apppasswords.
+        For other providers, check your email provider's IMAP/SMTP docs.
+    - description: Verify connection
+      type: health_check

@@ -1,0 +1,107 @@
+#!/bin/bash
+# technician-create-topic — Create the Technician forum topic in system forum group
+# Run this AFTER granting @agentalhadi_bot the "Manage Topics" admin right.
+#
+# Usage: bin/technician-create-topic
+
+set -euo pipefail
+
+WORKSPACE="$(cd "$(dirname "$0")/.." && pwd)"
+AGENT_SECRET="$WORKSPACE/bin/agent-secret"
+PROJECTS_YAML="$WORKSPACE/config/projects.yaml"
+
+echo "Technician topic creator"
+echo "------------------------"
+
+# Get main bot token (needs can_manage_topics)
+TOKEN=$("$AGENT_SECRET" get TELEGRAM_BOT_TOKEN)
+FORUM_GROUP_ID=-1003874890243
+
+# Check if bot now has can_manage_topics
+echo "Checking bot admin rights..."
+ADMIN_STATUS=$(curl -s "https://api.telegram.org/bot${TOKEN}/getChatAdministrators?chat_id=${FORUM_GROUP_ID}")
+CAN_MANAGE=$(echo "$ADMIN_STATUS" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+for admin in data.get('result', []):
+    if admin['user'].get('username') == 'agentalhadi_bot':
+        print(str(admin.get('can_manage_topics', False)).lower())
+        break
+else:
+    print('bot_not_found')
+" 2>/dev/null)
+
+if [ "$CAN_MANAGE" != "true" ]; then
+    echo "ERROR: @agentalhadi_bot does not have can_manage_topics = true"
+    echo "Current value: $CAN_MANAGE"
+    echo ""
+    echo "To fix: Go to system forum group > Administrators > agentalhadi_bot"
+    echo "        Enable 'Manage Topics' toggle"
+    echo "Then re-run this script."
+    exit 1
+fi
+
+echo "Permission confirmed: can_manage_topics = true"
+echo ""
+echo "Creating Technician forum topic..."
+
+# Create the forum topic (using a diagnostic icon color: red = 16478047)
+RESULT=$(curl -s -X POST "https://api.telegram.org/bot${TOKEN}/createForumTopic" \
+    -d "chat_id=${FORUM_GROUP_ID}&name=Technician%20%E2%80%94%20Infrastructure&icon_color=16478047")
+
+OK=$(echo "$RESULT" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('ok','false'))" 2>/dev/null)
+
+if [ "$OK" != "True" ]; then
+    echo "ERROR creating topic:"
+    echo "$RESULT" | python3 -m json.tool 2>/dev/null || echo "$RESULT"
+    exit 1
+fi
+
+THREAD_ID=$(echo "$RESULT" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+print(d['result']['message_thread_id'])
+" 2>/dev/null)
+
+echo "Forum topic created! thread_id = $THREAD_ID"
+echo ""
+
+# Update config/projects.yaml with the new thread ID
+echo "Updating config/projects.yaml..."
+python3 << PYEOF
+import yaml, sys
+
+with open('$PROJECTS_YAML', 'r') as f:
+    content = f.read()
+
+# Simple string replacement to update forum_topic_id
+content = content.replace(
+    'forum_topic_id: null                             # pending: needs can_manage_topics grant',
+    f'forum_topic_id: $THREAD_ID                              # Technician diagnostic alerts topic'
+)
+
+with open('$PROJECTS_YAML', 'w') as f:
+    f.write(content)
+
+print("Updated config/projects.yaml with forum_topic_id: $THREAD_ID")
+PYEOF
+
+# Send a welcome message to the new topic
+echo "Sending welcome message to topic..."
+curl -s -X POST "https://api.telegram.org/bot${TOKEN}/sendMessage" \
+    -H "Content-Type: application/json" \
+    -d "{
+        \"chat_id\": ${FORUM_GROUP_ID},
+        \"message_thread_id\": ${THREAD_ID},
+        \"text\": \"Technician infrastructure topic initialized.\nBot: @TabibAOSBot\nPurpose: infrastructure health alerts, diagnostic reports, bridge status.\n\nAll systems nominal.\"
+    }" > /dev/null
+
+echo ""
+echo "Done! Technician's forum topic is ready."
+echo "  Group: System Forum ($FORUM_GROUP_ID)"
+echo "  Topic: Technician — Infrastructure (thread_id: $THREAD_ID)"
+echo ""
+echo "Restart the bridge to pick up the new topic route:"
+echo "  launchctl unload ~/Library/LaunchAgents/com.agent.bridge.plist"
+echo "  sleep 20"
+echo "  launchctl load ~/Library/LaunchAgents/com.agent.bridge.plist"

@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.aos.listen</string>
+    <key>WorkingDirectory</key>
+    <string>__HOME__/aos/core/services/listen</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>__HOME__/.aos/services/listen/.venv/bin/python</string>
+        <string>__HOME__/aos/core/services/listen/main.py</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>__HOME__/.aos/logs/listen.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/.aos/logs/listen.err.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:__HOME__/.bun/bin:__HOME__/.local/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+</dict>
+</plist>

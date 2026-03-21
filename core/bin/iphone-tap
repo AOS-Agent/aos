@@ -1,0 +1,36 @@
+#!/usr/bin/env osascript -l JavaScript
+
+// Usage: iphone-tap <ocr_x> <ocr_y>
+// Takes Steer OCR coordinates and taps the correct position in iPhone Mirroring
+
+ObjC.import("CoreGraphics");
+
+var args = $.NSProcessInfo.processInfo.arguments;
+var ocrX = parseFloat(args.js[4].js);
+var ocrY = parseFloat(args.js[5].js);
+
+var app = Application("System Events");
+var proc = app.processes.byName("iPhone Mirroring");
+proc.frontmost = true;
+delay(0.2);
+
+var win = proc.windows[0];
+var pos = win.position();
+var sz = win.size();
+
+// iPhone Mirroring has a title bar (~28px) and the phone frame
+// The OCR coords from Steer are in the app's content space
+// Map OCR coords to screen points: scale by window size ratio
+// OCR appears to be in 1x points matching the window content
+
+var screenX = pos[0] + ocrX;
+var screenY = pos[1] + ocrY;
+
+var point = $.CGPointMake(screenX, screenY);
+var mouseDown = $.CGEventCreateMouseEvent(null, $.kCGEventLeftMouseDown, point, $.kCGMouseButtonLeft);
+var mouseUp = $.CGEventCreateMouseEvent(null, $.kCGEventLeftMouseUp, point, $.kCGMouseButtonLeft);
+$.CGEventPost($.kCGHIDEventTap, mouseDown);
+delay(0.05);
+$.CGEventPost($.kCGHIDEventTap, mouseUp);
+
+"Tapped at screen (" + screenX + ", " + screenY + ")";

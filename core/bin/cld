@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# cld — Claude Code with bypassed permissions
+# Shorthand for: claude --dangerously-skip-permissions
+#
+# Usage:
+#   cld                    — start interactive session
+#   cld "do something"     — run with prompt
+#   cld --resume           — resume last session
+
+exec claude --dangerously-skip-permissions "$@"

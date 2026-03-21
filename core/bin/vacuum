@@ -1,0 +1,5 @@
+#!/bin/bash
+# AOS Vacuum CLI — wrapper for Roborock Qrevo Slim control
+# Usage: vacuum status | clean | dock | rooms | scenes | find | ...
+cd /Users/agentalhadi/aos/apps/roborock
+exec uv run python vacuum.py "$@"

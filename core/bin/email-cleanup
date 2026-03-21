@@ -1,0 +1,179 @@
+#!/usr/bin/env python3
+"""Bulk delete marketing emails via IMAP, move to Trash (30-day undo).
+Logs every deletion to vault/projects/aos/email-cleanup-log.md"""
+
+import imaplib
+import email
+import os
+import sys
+import subprocess
+from datetime import datetime
+
+# --- Config ---
+ACCOUNTS = {
+    "mail@hishamalhadi.com": {
+        "secret_key": "GMAIL_APP_PWD_HISHAMALHADI",
+        "searches": [
+            ("IDRF", 'X-GM-RAW "from:idrf.ca -subject:\\"tax receipt\\""'),
+            ("Bayyinah", 'X-GM-RAW "from:(contact@bayyinah.com OR learnarabic@bayyinah.com OR tv@bayyinah.com) -subject:welcome"'),
+            ("Carters", 'X-GM-RAW "from:cartersoshkosh"'),
+        ]
+    },
+    "hisham@nuchay.com": {
+        "secret_key": "GMAIL_APP_PWD_NUCHAY",
+        "searches": [
+            ("Islamic Relief", 'X-GM-RAW "from:islamicreliefcanada -subject:\\"tax receipt\\""'),
+            ("ecobee", 'X-GM-RAW "from:ecobee -subject:\\"service reminder\\" -subject:welcome"'),
+            ("QuranReflect", 'X-GM-RAW "from:(notifications.quran.com OR quran.foundation)"'),
+        ]
+    },
+    "hishamalhadi@gmail.com": {
+        "secret_key": "GMAIL_APP_PWD_PERSONAL",
+        "searches": [
+            ("Zaytuna", 'X-GM-RAW "from:zaytuna.edu"'),
+        ]
+    },
+}
+
+LOG_FILE = os.path.expanduser("~/vault/projects/aos/email-cleanup-deletions.md")
+DRY_RUN = "--dry-run" in sys.argv
+
+
+def get_secret(key):
+    result = subprocess.run(
+        [os.path.expanduser("~/aos/bin/agent-secret"), "get", key],
+        capture_output=True, text=True
+    )
+    return result.stdout.strip()
+
+
+def process_account(email_addr, config):
+    password = get_secret(config["secret_key"])
+    if not password:
+        print(f"  SKIP {email_addr}: no app password found ({config['secret_key']})")
+        return []
+
+    print(f"\n{'='*60}")
+    print(f"Connecting to {email_addr}...")
+
+    try:
+        imap = imaplib.IMAP4_SSL("imap.gmail.com", 993)
+        imap.login(email_addr, password)
+    except Exception as e:
+        print(f"  FAILED to connect: {e}")
+        return []
+
+    all_deleted = []
+
+    for sender_name, search_query in config["searches"]:
+        print(f"\n  --- {sender_name} ---")
+
+        # Select All Mail to find everything
+        imap.select('"[Gmail]/All Mail"')
+
+        try:
+            status, data = imap.uid("SEARCH", search_query)
+        except Exception as e:
+            print(f"  Search failed: {e}")
+            continue
+
+        if status != "OK" or not data[0]:
+            print(f"  No emails found")
+            continue
+
+        uids = data[0].split()
+        print(f"  Found {len(uids)} emails")
+
+        for uid in uids:
+            # Fetch subject and date for logging
+            status, msg_data = imap.uid("FETCH", uid, "(BODY.PEEK[HEADER.FIELDS (SUBJECT DATE FROM)])")
+            if status != "OK":
+                continue
+
+            raw_header = msg_data[0][1].decode("utf-8", errors="replace")
+            msg = email.message_from_string(raw_header)
+            subject = str(email.header.decode_header(msg["Subject"] or "(no subject)")[0][0])
+            if isinstance(subject, bytes):
+                subject = subject.decode("utf-8", errors="replace")
+            date_str = msg["Date"] or "unknown"
+            from_str = msg["From"] or "unknown"
+
+            # Safety check: skip if transactional keywords in subject
+            subj_lower = subject.lower()
+            if any(kw in subj_lower for kw in ["tax receipt", "invoice", "donation confirm", "payout", "order confirm", "welcome", "activated", "service reminder", "password"]):
+                print(f"  KEEP (transactional): {subject[:60]}")
+                continue
+
+            if DRY_RUN:
+                print(f"  [DRY RUN] Would delete: {subject[:60]}")
+            else:
+                # Move to Trash (copy to Trash, then remove from All Mail)
+                imap.uid("COPY", uid, '"[Gmail]/Trash"')
+                imap.uid("STORE", uid, "+FLAGS", "(\\Deleted)")
+                print(f"  DELETED: {subject[:60]}")
+
+            all_deleted.append({
+                "account": email_addr,
+                "sender": sender_name,
+                "subject": subject,
+                "date": date_str,
+                "from": from_str,
+            })
+
+        imap.expunge()
+
+    imap.logout()
+    return all_deleted
+
+
+def write_log(all_deleted):
+    with open(LOG_FILE, "w") as f:
+        f.write("---\n")
+        f.write(f"date: \"{datetime.now().strftime('%Y-%m-%d')}\"\n")
+        f.write("type: deletion-log\n")
+        f.write("---\n\n")
+        f.write(f"# Email Deletion Log\n\n")
+        f.write(f"**Date:** {datetime.now().strftime('%Y-%m-%d %H:%M')}\n")
+        f.write(f"**Total deleted:** {len(all_deleted)}\n")
+        f.write(f"**Method:** IMAP move to [Gmail]/Trash (30-day recovery)\n\n")
+
+        # Group by sender
+        by_sender = {}
+        for item in all_deleted:
+            key = item["sender"]
+            if key not in by_sender:
+                by_sender[key] = []
+            by_sender[key].append(item)
+
+        for sender, items in by_sender.items():
+            f.write(f"## {sender} ({len(items)} emails)\n\n")
+            f.write(f"| Date | Subject | Account |\n")
+            f.write(f"|------|---------|--------|\n")
+            for item in items:
+                subj = item["subject"][:70].replace("|", "/")
+                f.write(f"| {item['date'][:16]} | {subj} | {item['account']} |\n")
+            f.write("\n")
+
+    print(f"\nLog written to {LOG_FILE}")
+
+
+def main():
+    if DRY_RUN:
+        print("*** DRY RUN MODE — no emails will be deleted ***\n")
+    else:
+        print("*** LIVE MODE — emails will be moved to Trash ***\n")
+
+    all_deleted = []
+    for email_addr, config in ACCOUNTS.items():
+        deleted = process_account(email_addr, config)
+        all_deleted.extend(deleted)
+
+    print(f"\n{'='*60}")
+    print(f"Total: {len(all_deleted)} emails {'would be ' if DRY_RUN else ''}deleted")
+
+    if all_deleted:
+        write_log(all_deleted)
+
+
+if __name__ == "__main__":
+    main()

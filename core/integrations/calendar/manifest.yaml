@@ -1,0 +1,66 @@
+# Calendar Integration Manifest
+
+name: Calendar
+version: "1.0"
+category: awareness
+
+description: >
+  Calendar access via macOS Calendar.app and EventKit framework.
+  Read upcoming events, check availability, and provide schedule
+  awareness to agents. Uses native macOS permissions — no external
+  API keys or credentials needed.
+
+# What this integration provides to the system
+provides:
+  events:
+    type: read
+    description: Read upcoming calendar events and details
+  availability:
+    type: read
+    description: Check free/busy status for scheduling
+  schedule_awareness:
+    type: context
+    description: Inject today's schedule into agent context
+
+# What this integration needs to function
+requires:
+  secrets: []
+  services: []
+  config:
+    - key: calendar.default_lookahead_days
+      file: ~/.aos/config/calendar.yaml
+      description: How many days ahead to fetch events (default 7)
+    - key: calendar.excluded_calendars
+      file: ~/.aos/config/calendar.yaml
+      description: Calendar names to exclude from awareness
+
+# How to verify this integration is working
+health:
+  checks:
+    - name: calendar_permission
+      command: "python3 -c \"import subprocess; r=subprocess.run(['swift','-e','import EventKit; let s=EKEventStore(); print(EKEventStore.authorizationStatus(for:.event).rawValue)'], capture_output=True, text=True); print('granted' if r.stdout.strip()=='3' else 'not_granted')\""
+      expect: granted
+    - name: can_read_events
+      command: "icalBuddy -n -li 1 eventsToday 2>/dev/null && echo ok || echo fail"
+      expect: ok
+
+# Layers this integration touches
+layers:
+  - integrations   # This manifest
+  - awareness      # Schedule context for agents
+
+# Setup steps (run by onboarding agent or manually)
+setup:
+  steps:
+    - description: Install icalBuddy for CLI calendar access
+      type: command
+      command: "brew install ical-buddy"
+    - description: Grant calendar access
+      type: interactive
+      instruction: >
+        When prompted by macOS, grant calendar access to Terminal
+        (or your terminal app). This happens automatically on first
+        EventKit access. Check System Settings > Privacy & Security >
+        Calendars if permission was denied.
+    - description: Verify access
+      type: health_check

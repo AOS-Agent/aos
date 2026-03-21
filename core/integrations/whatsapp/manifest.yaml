@@ -1,0 +1,72 @@
+# WhatsApp Integration Manifest
+
+name: WhatsApp
+version: "1.0"
+category: communication
+
+description: >
+  WhatsApp messaging via whatsmeow bridge. Send and receive WhatsApp
+  messages, look up contacts, and read conversation history.
+  Bridge runs as a local Go service on port 7601.
+
+# What this integration provides to the system
+provides:
+  messaging:
+    type: bidirectional
+    description: Send and receive WhatsApp messages
+  contacts:
+    type: lookup
+    description: Search and resolve WhatsApp contacts
+  history:
+    type: read
+    description: Read recent conversation history from local DB
+
+# What this integration needs to function
+requires:
+  secrets: []
+  services:
+    - name: whatsmeow
+      type: process
+      port: 7601
+      description: Go-based WhatsApp Web bridge
+  config:
+    - key: whatsapp.paired
+      file: ~/.aos/services/whatsmeow/config.yaml
+      description: Whether QR code pairing has been completed
+
+# How to verify this integration is working
+health:
+  checks:
+    - name: whatsmeow_running
+      command: "curl -sf http://127.0.0.1:7601/status"
+      expect: non-empty
+    - name: whatsapp_paired
+      command: "test -f ~/.aos/services/whatsmeow/store/device.db && echo paired"
+      expect: paired
+    - name: can_send
+      command: "curl -sf -X POST http://127.0.0.1:7601/send -H 'Content-Type: application/json' -d '{\"to\":\"status@broadcast\",\"text\":\"health-check\"}' || echo fail"
+      expect: non-empty
+
+# Layers this integration touches
+layers:
+  - interface      # WhatsApp is a messaging interface
+  - services       # whatsmeow runs as a background service
+  - integrations   # This manifest
+
+# Setup steps (run by onboarding agent or manually)
+setup:
+  steps:
+    - description: Build whatsmeow bridge
+      type: command
+      command: "cd ~/.aos/services/whatsmeow && go build -o whatsmeow-bridge"
+    - description: Start whatsmeow service
+      type: command
+      command: "core/integrations/whatsapp/install.sh"
+    - description: Pair with QR code
+      type: interactive
+      instruction: >
+        Open http://127.0.0.1:7601/qr in your browser.
+        Scan the QR code with WhatsApp on your phone
+        (Settings > Linked Devices > Link a Device).
+    - description: Verify pairing
+      type: health_check

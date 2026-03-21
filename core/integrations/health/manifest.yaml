@@ -1,0 +1,83 @@
+# Health Integration Manifest
+
+name: Health
+version: "1.0"
+category: awareness
+
+description: >
+  HealthKit data sync via the HealthSync iOS app. The app runs on the
+  operator's iPhone and periodically syncs sleep, activity, heart rate,
+  and other health metrics to AOS. Data lands as JSON files that agents
+  use for wellness awareness and daily reviews.
+
+# What this integration provides to the system
+provides:
+  sleep:
+    type: read
+    description: Sleep duration, stages, and quality metrics
+  activity:
+    type: read
+    description: Steps, active energy, exercise minutes, stand hours
+  vitals:
+    type: read
+    description: Heart rate, HRV, respiratory rate, blood oxygen
+  body:
+    type: read
+    description: Weight, body fat percentage (if tracked)
+
+# What this integration needs to function
+requires:
+  secrets: []
+  services:
+    - name: healthsync_receiver
+      type: endpoint
+      description: HTTP endpoint that receives sync payloads from HealthSync app
+  config:
+    - key: health.sync_dir
+      file: ~/.aos/config/health.yaml
+      description: Directory where sync files are written (default ~/.aos/data/health/)
+    - key: health.metrics
+      file: ~/.aos/config/health.yaml
+      description: List of enabled health metrics to track
+
+# How to verify this integration is working
+health:
+  checks:
+    - name: sync_dir_exists
+      command: "test -d ~/.aos/data/health && echo exists"
+      expect: exists
+    - name: recent_sync
+      command: "find ~/.aos/data/health -name '*.json' -mmin -1440 | head -1 | xargs -I{} echo synced"
+      expect: synced
+    - name: data_readable
+      command: "python3 -c \"import json,glob; f=sorted(glob.glob('/Users/agentalhadi/.aos/data/health/*.json'))[-1]; d=json.load(open(f)); print('ok' if d else 'empty')\" 2>/dev/null || echo no_data"
+      expect: ok
+
+# Layers this integration touches
+layers:
+  - awareness      # Health context for daily reviews
+  - integrations   # This manifest
+  - data           # Synced health JSON files
+
+# Setup steps (run by onboarding agent or manually)
+setup:
+  steps:
+    - description: Create health data directory
+      type: command
+      command: "mkdir -p ~/.aos/data/health"
+    - description: Install HealthSync on iPhone
+      type: interactive
+      instruction: >
+        Install the HealthSync app from the App Store on your iPhone.
+        Grant it access to Health data (sleep, activity, heart rate, etc.).
+    - description: Configure sync endpoint
+      type: interactive
+      instruction: >
+        In HealthSync, set the sync destination to your Mac Mini's
+        local IP or Tailscale address. The app auto-resigns every
+        6 days — re-sign via AltStore or Sideloadly when it expires.
+    - description: Trigger a test sync
+      type: interactive
+      instruction: "Open HealthSync and tap Sync Now. Verify a JSON file appears in ~/.aos/data/health/"
+    - description: Verify
+      type: health_check

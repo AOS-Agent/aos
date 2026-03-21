@@ -1,0 +1,11 @@
+#!/bin/bash
+# Wrapper for claude remote-control that accepts the initial prompt non-interactively.
+# The "Enable Remote Control? (y/n)" prompt is answered with "y" via stdin pipe.
+
+# Find claude on PATH
+CLAUDE_BIN=$(command -v claude 2>/dev/null || echo "$HOME/.local/bin/claude")
+
+exec echo "y" | "$CLAUDE_BIN" remote-control \
+    --name "AOS" \
+    --spawn worktree \
+    --permission-mode default
