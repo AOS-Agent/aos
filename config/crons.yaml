@@ -19,6 +19,19 @@ jobs:
     every: 5m
     timeout: 60
 
+  check-update:
+    command: bash ~/aos/core/bin/check-update
+    every: 2h
+    timeout: 120
+
+  auto-update:
+    command: bash ~/aos/core/bin/check-update --apply
+    at: "04:00"
+    timeout: 300
+    # Runs at 4am daily. Pulls latest, migrates, syncs.
+    # Disable if you prefer manual updates:
+    # enabled: false
+
   auto-commit:
     command: bash ~/aos/core/bin/auto-commit cron
     every: 30m

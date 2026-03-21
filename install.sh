@@ -174,6 +174,18 @@ prereq_git() {
     exit 0
 }
 
+prereq_gh() {
+    if command -v gh &>/dev/null; then
+        _skip "GitHub CLI"
+        return 0
+    fi
+
+    _step "Installing GitHub CLI..."
+    brew install gh 2>&1 | tail -1
+    command -v gh &>/dev/null || _die "GitHub CLI install failed"
+    _ok "GitHub CLI"
+}
+
 prereq_editor() {
     # Check if any supported editor is already installed
     local found=""
@@ -368,6 +380,7 @@ run_prereqs() {
     prereq_bun
     prereq_qmd
     prereq_jq
+    prereq_gh
     prereq_editor
     prereq_obsidian
     prereq_claude

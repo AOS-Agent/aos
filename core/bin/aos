@@ -29,22 +29,12 @@ case "${1:-help}" in
         ;;
 
     update)
-        echo "=== AOS Update ==="
-        echo ""
-        echo "  Pulling latest..."
-        cd "$AOS_DIR"
-        git pull --ff-only 2>&1 | sed 's/^/  /'
-        echo ""
-        echo "  Running migrations..."
-        python3 "$RUNNER" migrate
-        echo ""
-        echo "  Syncing skills..."
-        "$AOS_DIR/core/bin/aos" sync-skills
-        echo ""
-        echo "  Syncing agents..."
-        "$AOS_DIR/core/bin/aos" sync-agents
-        echo ""
-        echo "  ✓ Update complete"
+        # Full update: pull + migrate + sync
+        bash "$AOS_DIR/core/bin/check-update" --apply
+        ;;
+
+    check-update)
+        bash "$AOS_DIR/core/bin/check-update" "${2:---status}"
         ;;
 
     sync-skills)
@@ -332,15 +322,16 @@ print('\n'.join(deps))
         echo "Usage: aos <command>"
         echo ""
         echo "Commands:"
-        echo "  update        Pull latest code + migrate + sync"
-        echo "  status        Show migration version + pending"
-        echo "  self-test     Validate system health"
-        echo "  deploy        Deploy service venvs (all or: aos deploy bridge)"
-        echo "  sync-skills   Re-sync skill symlinks"
-        echo "  sync-agents   Re-sync agent symlinks"
-        echo "  migrate       Run pending migrations"
-        echo "  discover      Scan machine for existing setup"
-        echo "  version       Show current version"
+        echo "  update          Pull latest + migrate + sync"
+        echo "  check-update    Check if updates are available"
+        echo "  status          Show migration version + pending"
+        echo "  self-test       Validate system health"
+        echo "  deploy          Deploy service venvs (all or: aos deploy bridge)"
+        echo "  sync-skills     Re-sync skill symlinks (--all for developer)"
+        echo "  sync-agents     Re-sync agent symlinks"
+        echo "  migrate         Run pending migrations"
+        echo "  discover        Scan machine for existing setup"
+        echo "  version         Show current version"
         echo ""
         ;;
 

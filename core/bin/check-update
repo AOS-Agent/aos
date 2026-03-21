@@ -1,0 +1,211 @@
+#!/usr/bin/env bash
+# check-update — checks if a new AOS version is available
+#
+# Usage:
+#   check-update              — check and notify if update available
+#   check-update --apply      — check and auto-apply if available
+#   check-update --status     — just print current vs remote version
+#
+# Called by:
+#   - Scheduler (crons.yaml) every 2 hours
+#   - User via `aos check-update`
+#   - Dashboard update button
+
+set +e
+
+AOS_DIR="$HOME/aos"
+STATE_FILE="$HOME/.aos/data/update-state.json"
+LOG_PREFIX="[$(date '+%Y-%m-%d %H:%M:%S')]"
+
+mkdir -p "$(dirname "$STATE_FILE")"
+
+log() { echo "$LOG_PREFIX $*"; }
+
+# ── Telegram notification (best-effort) ──────────────────────────────────────
+
+notify() {
+    local msg="$1"
+    local bot_token chat_id
+    bot_token=$("$AOS_DIR/core/bin/agent-secret" get TELEGRAM_BOT_TOKEN 2>/dev/null) || return 0
+    chat_id=$("$AOS_DIR/core/bin/agent-secret" get TELEGRAM_CHAT_ID 2>/dev/null) || return 0
+    [[ -z "$bot_token" || -z "$chat_id" ]] && return 0
+
+    curl -s --max-time 10 -X POST "https://api.telegram.org/bot${bot_token}/sendMessage" \
+        -H "Content-Type: application/json" \
+        -d "{\"chat_id\": ${chat_id}, \"text\": \"${msg}\", \"parse_mode\": \"HTML\"}" \
+        > /dev/null 2>&1 || true
+}
+
+# ── Check for updates ────────────────────────────────────────────────────────
+
+check() {
+    cd "$AOS_DIR" || { log "ERROR: AOS dir not found"; exit 1; }
+
+    # Ensure we have a remote
+    local remote
+    remote=$(git remote 2>/dev/null | head -1)
+    if [[ -z "$remote" ]]; then
+        log "No git remote configured — skipping update check"
+        return 1
+    fi
+
+    # Fetch latest (quiet, no merge)
+    git fetch "$remote" --quiet 2>/dev/null || {
+        log "WARN: git fetch failed (network?)"
+        return 1
+    }
+
+    local branch
+    branch=$(git branch --show-current 2>/dev/null || echo "main")
+    local local_hash remote_hash
+    local_hash=$(git rev-parse HEAD 2>/dev/null)
+    remote_hash=$(git rev-parse "$remote/$branch" 2>/dev/null)
+
+    if [[ -z "$remote_hash" ]]; then
+        log "WARN: could not resolve remote branch"
+        return 1
+    fi
+
+    if [[ "$local_hash" == "$remote_hash" ]]; then
+        log "Up to date"
+        # Write state
+        python3 -c "
+import json, datetime
+state = {
+    'last_check': datetime.datetime.now().isoformat(),
+    'status': 'up_to_date',
+    'local': '$local_hash',
+    'remote': '$remote_hash',
+}
+with open('$STATE_FILE', 'w') as f:
+    json.dump(state, f, indent=2)
+"
+        return 0
+    fi
+
+    # Count new commits
+    local ahead behind
+    ahead=$(git rev-list --count "$remote/$branch..HEAD" 2>/dev/null || echo 0)
+    behind=$(git rev-list --count "HEAD..$remote/$branch" 2>/dev/null || echo 0)
+
+    # Get commit summaries
+    local changes
+    changes=$(git log --oneline "HEAD..$remote/$branch" 2>/dev/null | head -5)
+
+    log "Update available: $behind new commit(s)"
+
+    # Write state
+    python3 -c "
+import json, datetime
+state = {
+    'last_check': datetime.datetime.now().isoformat(),
+    'status': 'update_available',
+    'local': '$local_hash',
+    'remote': '$remote_hash',
+    'behind': $behind,
+    'ahead': $ahead,
+    'changes': '''$changes'''.strip().split('\n'),
+}
+with open('$STATE_FILE', 'w') as f:
+    json.dump(state, f, indent=2)
+"
+
+    return 2  # 2 = update available
+}
+
+# ── Apply update ─────────────────────────────────────────────────────────────
+
+apply() {
+    log "Applying update..."
+
+    cd "$AOS_DIR" || exit 1
+
+    # Pull
+    local pull_output
+    pull_output=$(git pull --ff-only 2>&1)
+    local pull_status=$?
+
+    if [[ $pull_status -ne 0 ]]; then
+        log "ERROR: git pull failed"
+        echo "$pull_output"
+        notify "⚠️ AOS update failed: git pull error"
+        return 1
+    fi
+
+    echo "$pull_output"
+
+    # Run migrations
+    log "Running migrations..."
+    python3 "$AOS_DIR/core/migrations/runner.py" migrate
+
+    # Sync skills and agents
+    log "Syncing skills..."
+    bash "$AOS_DIR/core/bin/aos" sync-skills
+    log "Syncing agents..."
+    bash "$AOS_DIR/core/bin/aos" sync-agents
+
+    # Update state
+    local new_hash
+    new_hash=$(git rev-parse HEAD 2>/dev/null)
+    python3 -c "
+import json, datetime
+state = {
+    'last_check': datetime.datetime.now().isoformat(),
+    'last_update': datetime.datetime.now().isoformat(),
+    'status': 'up_to_date',
+    'local': '$new_hash',
+    'remote': '$new_hash',
+}
+with open('$STATE_FILE', 'w') as f:
+    json.dump(state, f, indent=2)
+"
+
+    log "Update complete"
+    notify "✅ AOS updated to $(git log --oneline -1)"
+}
+
+# ── Status ───────────────────────────────────────────────────────────────────
+
+status() {
+    if [[ -f "$STATE_FILE" ]]; then
+        python3 -c "
+import json
+with open('$STATE_FILE') as f:
+    s = json.load(f)
+print(f\"  Status:     {s.get('status', 'unknown')}\")
+print(f\"  Last check: {s.get('last_check', 'never')}\")
+if s.get('behind', 0) > 0:
+    print(f\"  Behind:     {s['behind']} commit(s)\")
+    for c in s.get('changes', []):
+        print(f\"    {c}\")
+if s.get('last_update'):
+    print(f\"  Last update: {s['last_update']}\")
+"
+    else
+        echo "  No update state — run 'aos check-update' first"
+    fi
+}
+
+# ── Main ─────────────────────────────────────────────────────────────────────
+
+case "${1:-}" in
+    --apply)
+        check
+        result=$?
+        if [[ $result -eq 2 ]]; then
+            apply
+        elif [[ $result -eq 0 ]]; then
+            log "Already up to date"
+        fi
+        ;;
+    --status)
+        status
+        ;;
+    *)
+        check
+        result=$?
+        if [[ $result -eq 2 ]]; then
+            notify "🔄 AOS update available — run 'aos update' to install"
+        fi
+        ;;
+esac
