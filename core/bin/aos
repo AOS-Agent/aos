@@ -38,7 +38,112 @@ case "${1:-help}" in
         echo "  Running migrations..."
         python3 "$RUNNER" migrate
         echo ""
+        echo "  Syncing skills..."
+        "$AOS_DIR/core/bin/aos" sync-skills
+        echo ""
+        echo "  Syncing agents..."
+        "$AOS_DIR/core/bin/aos" sync-agents
+        echo ""
         echo "  ✓ Update complete"
+        ;;
+
+    sync-skills)
+        # Sync skills by tier. Default skills are always installed.
+        # Developer skills only if --all flag or user has opted in.
+        SOURCE="$AOS_DIR/.claude/skills"
+        TARGET="$HOME/.claude/skills"
+        mkdir -p "$TARGET"
+
+        # Default skills — installed for everyone
+        DEFAULT_SKILLS="recall work review step-by-step obsidian-cli extract telegram-admin bridge-ops marketing diagram session-analysis frontend-design architect skill-creator skill-scanner"
+
+        # Developer skills — opt-in via 'aos sync-skills --all' or onboarding
+        DEV_SKILLS="systematic-debugging verification-before-completion requesting-code-review receiving-code-review executing-plans writing-plans dispatching-parallel-agents writing-skills autonomous-execution"
+
+        # Deprecated — never install
+        DEPRECATED="instagram youtube"
+
+        # Determine which set to install
+        skills_to_sync="$DEFAULT_SKILLS"
+        if [ "${2:-}" = "--all" ]; then
+            skills_to_sync="$DEFAULT_SKILLS $DEV_SKILLS"
+            echo "  Installing all skills (default + developer)"
+        elif [ -f "$HOME/.aos/config/developer-mode" ]; then
+            skills_to_sync="$DEFAULT_SKILLS $DEV_SKILLS"
+            echo "  Developer mode — installing all skills"
+        fi
+
+        synced=0
+        for name in $skills_to_sync; do
+            src="$SOURCE/$name/"
+            link="$TARGET/$name"
+            [ -d "$src" ] || continue
+            if [ -L "$link" ] && [ "$(readlink "$link")" = "$src" ]; then
+                continue  # already correct
+            fi
+            # Remove stale link or back up existing
+            if [ -e "$link" ] || [ -L "$link" ]; then
+                if [ -L "$link" ]; then
+                    rm "$link"
+                elif [ ! -e "$TARGET/${name}.pre-aos" ]; then
+                    mv "$link" "$TARGET/${name}.pre-aos"
+                    echo "  Backed up $name → ${name}.pre-aos"
+                else
+                    rm -rf "$link"
+                fi
+            fi
+            ln -s "$src" "$link"
+            echo "  ✓ Linked $name"
+            ((synced++))
+        done
+
+        # Remove deprecated skills if they exist
+        for name in $DEPRECATED; do
+            link="$TARGET/$name"
+            if [ -L "$link" ]; then
+                rm "$link"
+                echo "  ✗ Removed deprecated: $name"
+            fi
+        done
+
+        if [ "$synced" -eq 0 ]; then
+            echo "  ✓ All skills in sync"
+        else
+            echo "  ✓ Synced $synced skill(s)"
+        fi
+        ;;
+
+    sync-agents)
+        # Re-run agent symlinking — picks up new agents
+        SOURCE="$AOS_DIR/core/agents"
+        TARGET="$HOME/.claude/agents"
+        mkdir -p "$TARGET"
+        synced=0
+        for src in "$SOURCE"/*.md; do
+            [ -f "$src" ] || continue
+            name=$(basename "$src")
+            link="$TARGET/$name"
+            if [ -L "$link" ] && [ "$(readlink "$link")" = "$src" ]; then
+                continue
+            fi
+            if [ -e "$link" ] || [ -L "$link" ]; then
+                if [ -L "$link" ]; then
+                    rm "$link"
+                elif [ ! -e "$TARGET/${name}.pre-aos" ]; then
+                    mv "$link" "$TARGET/${name}.pre-aos"
+                else
+                    rm -f "$link"
+                fi
+            fi
+            ln -s "$src" "$link"
+            echo "  ✓ Linked $name"
+            ((synced++))
+        done
+        if [ "$synced" -eq 0 ]; then
+            echo "  ✓ All agents in sync"
+        else
+            echo "  ✓ Synced $synced agent(s)"
+        fi
         ;;
 
     version)
@@ -227,13 +332,15 @@ print('\n'.join(deps))
         echo "Usage: aos <command>"
         echo ""
         echo "Commands:"
-        echo "  migrate     Run pending migrations"
-        echo "  status      Show migration version + pending"
-        echo "  discover    Scan machine for existing setup"
-        echo "  update      Pull latest code + run migrations"
-        echo "  version     Show current version"
-        echo "  self-test   Validate system health"
-        echo "  deploy      Deploy service venvs (all or: aos deploy bridge)"
+        echo "  update        Pull latest code + migrate + sync"
+        echo "  status        Show migration version + pending"
+        echo "  self-test     Validate system health"
+        echo "  deploy        Deploy service venvs (all or: aos deploy bridge)"
+        echo "  sync-skills   Re-sync skill symlinks"
+        echo "  sync-agents   Re-sync agent symlinks"
+        echo "  migrate       Run pending migrations"
+        echo "  discover      Scan machine for existing setup"
+        echo "  version       Show current version"
         echo ""
         ;;
 

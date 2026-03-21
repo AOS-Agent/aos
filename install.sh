@@ -542,6 +542,32 @@ run_bootstrap() {
     python3 "$AOS_DIR/core/migrations/runner.py" migrate 2>&1 | sed 's/^/    /'
     echo ""
     _ok "Migrations complete"
+
+    # Sync agents
+    _step "Syncing agents..."
+    echo ""
+    bash "$AOS_DIR/core/bin/aos" sync-agents 2>&1 | sed 's/^/  /'
+
+    # Sync skills — prompt for developer mode
+    _step "Installing skills..."
+    echo ""
+    _info "14 default skills will be installed (work, recall, review, etc.)"
+    echo ""
+    echo "  ${BOLD}Also install developer skills?${RESET}"
+    echo "  (debugging, code review, execution plans — 9 extra skills)"
+    echo ""
+    printf "  Install developer skills? [y/N]: "
+    read -r dev_choice
+
+    case "${dev_choice:-n}" in
+        [Yy])
+            touch "$USER_DIR/config/developer-mode"
+            bash "$AOS_DIR/core/bin/aos" sync-skills --all 2>&1 | sed 's/^/  /'
+            ;;
+        *)
+            bash "$AOS_DIR/core/bin/aos" sync-skills 2>&1 | sed 's/^/  /'
+            ;;
+    esac
 }
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1043,16 +1069,33 @@ run_health_gate() {
         fi
     done
 
-    # Skills
-    for skill in recall work review step-by-step; do
-        local link="$HOME/.claude/skills/$skill"
-        if [[ -L "$link" ]] || [[ -d "$link" ]]; then
-            _ok "Skill $skill"
+    # Skills — check default skills are symlinked
+    local default_skills="recall work review step-by-step obsidian-cli extract telegram-admin bridge-ops marketing diagram session-analysis frontend-design architect skill-creator skill-scanner"
+    local skill_count=0
+    local skill_missing=0
+    for skill_name in $default_skills; do
+        local link="$HOME/.claude/skills/$skill_name"
+        if [[ -L "$link" ]]; then
+            ((skill_count++))
         else
-            _fail "Skill $skill not installed"
+            _fail "Skill $skill_name not linked"
+            ((skill_missing++))
             ((errors++))
         fi
     done
+    if [[ "$skill_missing" -eq 0 ]]; then
+        _ok "All $skill_count default skills linked"
+    fi
+
+    # Check developer skills if opted in
+    if [[ -f "$USER_DIR/config/developer-mode" ]]; then
+        local dev_count=0
+        for skill_name in systematic-debugging verification-before-completion requesting-code-review receiving-code-review executing-plans writing-plans dispatching-parallel-agents writing-skills autonomous-execution; do
+            local link="$HOME/.claude/skills/$skill_name"
+            [[ -L "$link" ]] && ((dev_count++))
+        done
+        _ok "$dev_count developer skills linked"
+    fi
 
     # Services
     for svc in bridge dashboard listen memory; do
