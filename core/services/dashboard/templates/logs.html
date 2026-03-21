@@ -246,7 +246,8 @@
         div.className = `log-event ${ev.cls}`;
         div.dataset.raw = raw;
         const sumH = ev.summary ? `<span class="ev-summary">${escapeHtml(ev.summary)}</span>` : '';
-        const badH = ev.badge ? `<span class="ev-badge ${ev.badge}">${{ok:'done',running:'working',fail:'error',warn:'warn'}[ev.badge]}</span>` : '';
+        const badgeLabels = {ok:'done',running:'working',fail:'error',warn:'warn'};
+        const badH = ev.badge ? `<span class="ev-badge ${ev.badge}">${badgeLabels[ev.badge] || ev.badge}</span>` : '';
         div.innerHTML = `<span class="ev-time">${ev.time}</span><span class="ev-icon">${ev.icon}</span><span class="ev-text">${escapeHtml(ev.text)}${sumH}</span>${badH}`;
         return div;
     }
