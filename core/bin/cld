@@ -1,10 +1,21 @@
 #!/usr/bin/env bash
-# cld — Claude Code with bypassed permissions, Chief as default agent
-# Shorthand for: claude --dangerously-skip-permissions --agent chief
+# cld — Claude Code with bypassed permissions, loads the main orchestrator agent
 #
 # Usage:
-#   cld                    — start interactive session with Chief
+#   cld                    — start interactive session
 #   cld "do something"     — run with prompt
 #   cld --resume           — resume last session
 
-exec claude --dangerously-skip-permissions --agent chief "$@"
+# Read agent name from operator config (default: chief)
+AGENT_NAME="chief"
+if [[ -f "$HOME/.aos/config/operator.yaml" ]]; then
+    custom=$(python3 -c "
+import yaml
+from pathlib import Path
+d = yaml.safe_load(Path.home().joinpath('.aos/config/operator.yaml').read_text()) or {}
+print(d.get('agent_name', ''))
+" 2>/dev/null)
+    [[ -n "$custom" ]] && AGENT_NAME="$custom"
+fi
+
+exec claude --dangerously-skip-permissions --agent "$AGENT_NAME" "$@"

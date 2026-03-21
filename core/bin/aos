@@ -440,6 +440,79 @@ print('\n'.join(deps))
         bash "$AOS_DIR/core/bin/session-recorder" "$@"
         ;;
 
+    rename-agent)
+        # Rename the main orchestrator agent
+        shift
+        new_name="${1:-}"
+        if [[ -z "$new_name" ]]; then
+            echo "Usage: aos rename-agent <new-name>"
+            echo "Example: aos rename-agent sahib"
+            echo ""
+            # Show current name
+            current=$(python3 -c "
+import yaml
+from pathlib import Path
+d = yaml.safe_load(Path.home().joinpath('.aos/config/operator.yaml').read_text()) or {}
+print(d.get('agent_name', 'chief'))
+" 2>/dev/null || echo "chief")
+            echo "Current agent name: $current"
+            exit 1
+        fi
+
+        # Validate: lowercase, no spaces
+        if [[ "$new_name" =~ [^a-z0-9_-] ]]; then
+            echo "Agent name must be lowercase letters, numbers, hyphens, or underscores."
+            exit 1
+        fi
+
+        agents_dir="$HOME/.claude/agents"
+        chief_source="$AOS_DIR/core/agents/chief.md"
+
+        # Read current name
+        old_name=$(python3 -c "
+import yaml
+from pathlib import Path
+d = yaml.safe_load(Path.home().joinpath('.aos/config/operator.yaml').read_text()) or {}
+print(d.get('agent_name', 'chief'))
+" 2>/dev/null || echo "chief")
+
+        # Create new symlink
+        ln -sf "$chief_source" "$agents_dir/${new_name}.md"
+        echo "  Created agent: $agents_dir/${new_name}.md"
+
+        # Remove old symlink if it was a custom name (don't remove chief.md)
+        if [[ "$old_name" != "chief" ]] && [[ "$old_name" != "$new_name" ]]; then
+            rm -f "$agents_dir/${old_name}.md" 2>/dev/null
+            echo "  Removed old: $agents_dir/${old_name}.md"
+        fi
+
+        # Update operator.yaml
+        python3 -c "
+import yaml
+from pathlib import Path
+p = Path.home() / '.aos/config/operator.yaml'
+d = yaml.safe_load(p.read_text()) or {}
+d['agent_name'] = '$new_name'
+p.write_text(yaml.dump(d, default_flow_style=False, sort_keys=False, allow_unicode=True))
+" 2>/dev/null
+        echo "  Updated operator.yaml: agent_name=$new_name"
+
+        # Update settings.json
+        python3 -c "
+import json
+from pathlib import Path
+p = Path.home() / '.claude/settings.json'
+s = json.loads(p.read_text())
+s['agent'] = '$new_name'
+p.write_text(json.dumps(s, indent=2) + '\n')
+" 2>/dev/null
+        echo "  Updated settings.json: agent=$new_name"
+
+        echo ""
+        echo "  Done! Your agent is now '$new_name'."
+        echo "  Run 'cld' to start a session with $new_name."
+        ;;
+
     help|--help|-h)
         echo "AOS — Agentic Operating System"
         echo ""
@@ -460,6 +533,7 @@ print('\n'.join(deps))
         echo "  trust-log       Log agent trust actions"
         echo "  migrate         Run pending migrations"
         echo "  feedback         Report a bug or issue (auto-files to GitHub)"
+        echo "  rename-agent     Rename your main agent (aos rename-agent sahib)"
         echo "  telemetry        Anonymous usage telemetry (opt-in/out/report)"
         echo "  sessions         View recorded onboarding/setup sessions"
         echo "  discover        Scan machine for existing setup"

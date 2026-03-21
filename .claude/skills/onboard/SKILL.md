@@ -182,19 +182,33 @@ AskUserQuestion:
 
 If "Change it": ask "What should I call you?" (open-ended AskUserQuestion, no options).
 
-**1b. Timezone**
+**1b. Agent Name**
+
+"Right now your main agent is called 'Chief' — that's me. Some people like to
+give their agent a custom name. You can always change this later with `aos rename-agent`."
+
+AskUserQuestion:
+- question: "Want to rename your main agent?"
+- options: ["Keep 'Chief'", "Give it a custom name"]
+
+If custom: ask what name they want (open-ended). Then run:
+```bash
+bash ~/aos/core/bin/aos rename-agent {name}
+```
+
+**1c. Timezone**
 
 AskUserQuestion:
 - question: "Timezone detected: {timezone}. Correct?"
 - options: ["Keep it", "Change it"]
 
-**1c. Communication style**
+**1d. Communication style**
 
 AskUserQuestion:
 - question: "How do you prefer responses?"
 - options: ["Concise", "Detailed", "Conversational"]
 
-**1d. Language**
+**1e. Language**
 
 Default to English. Only ask if the operator's system locale suggests otherwise.
 If their macOS language is non-English, use AskUserQuestion:
