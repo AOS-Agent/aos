@@ -20,7 +20,12 @@ import urllib.request
 from datetime import date
 from pathlib import Path
 
-import yaml
+try:
+    import yaml
+except ImportError:
+    # PyYAML not available for this python — skip gracefully
+    print(json.dumps({}))
+    sys.exit(0)
 
 DASHBOARD_URL = "http://127.0.0.1:4096"
 
