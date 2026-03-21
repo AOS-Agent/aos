@@ -2130,6 +2130,15 @@ main() {
     # Clean checkpoint on success — next run starts fresh
     rm -f "$CHECKPOINT_FILE" 2>/dev/null
     _log "Install complete"
+
+    # Launch aos start — drops the operator into onboarding with Chief
+    if command -v claude &>/dev/null; then
+        echo ""
+        echo "  ${BOLD}Launching AOS...${RESET}"
+        echo ""
+        sleep 1
+        exec aos start
+    fi
 }
 
 main "$@"
