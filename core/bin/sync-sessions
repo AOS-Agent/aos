@@ -1,0 +1,200 @@
+#!/usr/bin/env python3
+"""Sync Claude Code session history into the dashboard's activity.db.
+
+Scans ~/.claude/projects/ for JSONL session files, extracts metadata,
+and inserts missing sessions into activity.db. Idempotent — skips
+sessions already in the DB.
+
+Run manually: python3 ~/aos/core/bin/sync-sessions
+Run via cron: every 30m (add to crons.yaml)
+"""
+
+import json
+import os
+import getpass
+import sqlite3
+from datetime import datetime, timezone
+from pathlib import Path
+
+CLAUDE_PROJECTS = Path.home() / ".claude" / "projects"
+DB_PATH = Path.home() / ".aos" / "data" / "dashboard" / "activity.db"
+
+
+def _get_db():
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(DB_PATH))
+    conn.row_factory = sqlite3.Row
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT UNIQUE NOT NULL,
+            started_at TEXT NOT NULL,
+            ended_at TEXT,
+            working_dir TEXT,
+            agent_name TEXT,
+            status TEXT DEFAULT 'running',
+            files_modified TEXT DEFAULT '[]',
+            tools_used TEXT DEFAULT '{}',
+            total_tools INTEGER DEFAULT 0,
+            last_activity TEXT,
+            project TEXT,
+            key_actions TEXT DEFAULT '[]'
+        )
+    """)
+    # Add project column if missing
+    try:
+        conn.execute("SELECT project FROM sessions LIMIT 1")
+    except sqlite3.OperationalError:
+        conn.execute("ALTER TABLE sessions ADD COLUMN project TEXT")
+    try:
+        conn.execute("SELECT key_actions FROM sessions LIMIT 1")
+    except sqlite3.OperationalError:
+        conn.execute("ALTER TABLE sessions ADD COLUMN key_actions TEXT DEFAULT '[]'")
+    return conn
+
+
+def _clean_project_name(dirname: str) -> str:
+    username = getpass.getuser()
+    prefix = f"-Users-{username}-"
+    name = dirname
+    if name.startswith(prefix):
+        name = name[len(prefix):]
+    for strip in ["Desktop-", "Documents-", "project-"]:
+        if name.startswith(strip):
+            name = name[len(strip):]
+    return name.lower() if name else "home"
+
+
+def _extract_session_meta(jsonl_path: Path) -> dict | None:
+    """Extract metadata from a Claude Code session JSONL file."""
+    try:
+        lines = jsonl_path.read_text().strip().split("\n")
+        if not lines:
+            return None
+
+        session_id = jsonl_path.stem
+        first_ts = None
+        last_ts = None
+        tools = {}
+        files = set()
+        actions = []
+
+        for line in lines:
+            try:
+                msg = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+
+            ts = msg.get("timestamp")
+            if ts:
+                if not first_ts:
+                    first_ts = ts
+                last_ts = ts
+
+            # Count tool uses
+            if msg.get("type") == "tool_use" or msg.get("role") == "assistant":
+                content = msg.get("content", [])
+                if isinstance(content, list):
+                    for block in content:
+                        if isinstance(block, dict) and block.get("type") == "tool_use":
+                            tool_name = block.get("name", "unknown")
+                            # Simplify tool names
+                            if tool_name in ("Read", "Glob", "Grep"):
+                                tool_name = "Read"
+                            elif tool_name in ("Edit", "Write"):
+                                tool_name = "Edit"
+                            tools[tool_name] = tools.get(tool_name, 0) + 1
+
+                            # Track files
+                            inp = block.get("input", {})
+                            fp = inp.get("file_path") or inp.get("path") or ""
+                            if fp:
+                                files.add(Path(fp).name)
+
+                            # Track significant actions
+                            if tool_name == "Agent":
+                                desc = inp.get("description", "")
+                                if desc:
+                                    actions.append({"action": "Launched agent", "summary": desc})
+                            elif tool_name == "Bash":
+                                cmd = inp.get("command", "")
+                                if "git commit" in cmd:
+                                    actions.append({"action": "Git commit", "summary": cmd[:80]})
+
+        if not first_ts:
+            # Use file mtime as fallback
+            stat = jsonl_path.stat()
+            first_ts = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat()
+            last_ts = first_ts
+
+        total = sum(tools.values())
+
+        return {
+            "session_id": session_id,
+            "started_at": first_ts,
+            "ended_at": last_ts,
+            "status": "completed",
+            "files_modified": json.dumps(list(files)[:20]),
+            "tools_used": json.dumps(tools),
+            "total_tools": total,
+            "key_actions": json.dumps(actions[:10]),
+        }
+    except Exception as e:
+        return None
+
+
+def sync():
+    conn = _get_db()
+
+    # Get existing session IDs
+    existing = {row[0] for row in conn.execute("SELECT session_id FROM sessions").fetchall()}
+
+    synced = 0
+    skipped = 0
+
+    for project_dir in sorted(CLAUDE_PROJECTS.iterdir()):
+        if not project_dir.is_dir():
+            continue
+
+        project_name = _clean_project_name(project_dir.name)
+
+        for jsonl in sorted(project_dir.glob("*.jsonl")):
+            session_id = jsonl.stem
+            if session_id in existing:
+                skipped += 1
+                continue
+
+            meta = _extract_session_meta(jsonl)
+            if not meta:
+                continue
+
+            try:
+                conn.execute("""
+                    INSERT OR IGNORE INTO sessions
+                    (session_id, started_at, ended_at, status, files_modified,
+                     tools_used, total_tools, project, key_actions)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    meta["session_id"],
+                    meta["started_at"],
+                    meta["ended_at"],
+                    meta["status"],
+                    meta["files_modified"],
+                    meta["tools_used"],
+                    meta["total_tools"],
+                    project_name,
+                    meta["key_actions"],
+                ))
+                synced += 1
+            except Exception:
+                pass
+
+    conn.commit()
+    conn.close()
+
+    print(f"  Synced {synced} sessions, {skipped} already in DB")
+    return synced
+
+
+if __name__ == "__main__":
+    sync()

@@ -424,8 +424,13 @@ def get_recent_sessions_enriched(limit: int = 10) -> list[dict]:
         else:
             s["duration_str"] = ""
 
-        # Project name from working dir
-        s["project"] = s["working_dir"].rstrip("/").rsplit("/", 1)[-1] if s.get("working_dir") else "unknown"
+        # Project name — prefer DB project column, fall back to working_dir
+        if s.get("project") and s["project"] != "unknown":
+            pass  # Already set from DB
+        elif s.get("working_dir"):
+            s["project"] = s["working_dir"].rstrip("/").rsplit("/", 1)[-1]
+        else:
+            s["project"] = "unknown"
 
         # File names only
         s["file_names"] = [f.rsplit("/", 1)[-1] for f in s.get("files_modified", [])]

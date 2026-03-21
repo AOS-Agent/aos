@@ -32,6 +32,11 @@ jobs:
     # Disable if you prefer manual updates:
     # enabled: false
 
+  sync-sessions:
+    command: python3 ~/aos/core/bin/sync-sessions
+    every: 30m
+    timeout: 120
+
   auto-commit:
     command: bash ~/aos/core/bin/auto-commit cron
     every: 30m
@@ -93,13 +98,20 @@ jobs:
     at: "20:00"
     weekday: sunday
     timeout: 300
-    enabled: false  # needs porting from v1
+    # Sends Telegram summary + writes vault review note
 
   compile-patterns:
     command: python3 ~/aos/core/bin/compile-patterns
     at: "04:00"
     timeout: 120
-    enabled: false  # needs execution logging infrastructure
+    # Scans sessions for repeated behaviors, compiles to scripts/docs
+
+  reconcile-sessions:
+    command: python3 ~/aos/core/bin/reconcile-sessions --quiet
+    every: 2h
+    timeout: 60
+    # Catch-up reconciliation. Primary trigger is SessionEnd hook.
+    # This catches sessions that didn't end cleanly.
 
   # ── Planned (scripts not yet built) ─────────────────────────────────────────
   # These entries are placeholders. Scripts will be created when their
