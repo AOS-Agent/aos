@@ -1046,6 +1046,45 @@ else:
 " 2>/dev/null
     fi
 
+    # Repair hooks — fix flat format ({"command": "..."}) to correct nested format ({"hooks": [{"type": "command", ...}]})
+    python3 -c "
+import json
+from pathlib import Path
+
+p = Path('$settings_file')
+if not p.exists():
+    exit()
+s = json.loads(p.read_text())
+hooks = s.get('hooks', {})
+changed = False
+
+for event in list(hooks.keys()):
+    entries = hooks[event]
+    if not isinstance(entries, list):
+        continue
+    fixed = []
+    for entry in entries:
+        if isinstance(entry, dict) and 'command' in entry and 'hooks' not in entry:
+            # Flat format — wrap it
+            hook_obj = {'type': 'command', 'command': entry['command']}
+            if entry.get('statusMessage'):
+                hook_obj['statusMessage'] = entry['statusMessage']
+            if entry.get('async'):
+                hook_obj['async'] = True
+            fixed.append({'hooks': [hook_obj]})
+            changed = True
+        else:
+            fixed.append(entry)
+    hooks[event] = fixed
+
+if changed:
+    s['hooks'] = hooks
+    p.write_text(json.dumps(s, indent=2) + '\n')
+    print('repaired')
+else:
+    print('ok')
+" 2>/dev/null
+
     # Wire hooks if missing — run migration 005 directly
     if ! python3 -c "
 import json

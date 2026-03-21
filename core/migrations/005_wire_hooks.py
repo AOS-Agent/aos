@@ -19,11 +19,13 @@ AOS_DIR = Path.home() / "aos"
 
 HOOKS = {
     "SessionStart": {
-        "command": f"python3 {AOS_DIR}/core/work/inject_context.py",
+        "command": "python3 ~/aos/core/work/inject_context.py",
+        "statusMessage": "Loading work context...",
         "description": "AOS: inject active tasks and threads",
     },
     "SessionEnd": {
-        "command": f"python3 {AOS_DIR}/core/work/session_close.py",
+        "command": "python3 ~/aos/core/work/session_close.py",
+        "async": True,
         "description": "AOS: link session to tasks and capture outcomes",
     },
 }
@@ -81,8 +83,13 @@ def up() -> bool:
         if event not in settings["hooks"]:
             settings["hooks"][event] = []
 
+        hook_entry = {"type": "command", "command": hook["command"]}
+        if hook.get("statusMessage"):
+            hook_entry["statusMessage"] = hook["statusMessage"]
+        if hook.get("async"):
+            hook_entry["async"] = True
         settings["hooks"][event].append({
-            "command": hook["command"],
+            "hooks": [hook_entry],
         })
         print(f"       Registered {event} → {hook['description']}")
 
