@@ -1560,6 +1560,43 @@ configure_macos() {
     if [[ "$prefs_changed" -gt 0 ]]; then
         _info "Some preferences may require logout to take full effect"
     fi
+
+    # ── Always-On Configuration ────────────────────────────
+    # Mac Mini should never sleep, auto-restart on power loss, and stay logged in
+    _step "Configuring always-on settings..."
+
+    if sudo -n true 2>/dev/null; then
+        # Prevent sleep (display can sleep, but system stays awake)
+        sudo pmset -a sleep 0 2>/dev/null && _ok "System sleep disabled" || _warn "Could not disable sleep"
+
+        # Prevent disk sleep
+        sudo pmset -a disksleep 0 2>/dev/null
+
+        # Wake on network access (Wake on LAN)
+        sudo pmset -a womp 1 2>/dev/null && _ok "Wake on LAN enabled" || true
+
+        # Auto restart on power failure
+        sudo pmset -a autorestart 1 2>/dev/null && _ok "Auto-restart on power loss" || _warn "Could not set auto-restart"
+
+        # Start up automatically after power failure (hardware level)
+        sudo nvram AutoBoot=%01 2>/dev/null || true
+
+        # Disable screen saver lock (headless machine, no one to unlock)
+        defaults write com.apple.screensaver askForPassword -int 0 2>/dev/null
+        _ok "Screen lock disabled"
+
+        # Disable auto-logout (System Settings > Security > Advanced)
+        sudo defaults write /Library/Preferences/.GlobalPreferences com.apple.autologout.AutoLogOutDelay -int 0 2>/dev/null
+        _ok "Auto-logout disabled"
+
+        # Disable display sleep on AC power (keep it awake for screen sharing)
+        sudo pmset -a displaysleep 0 2>/dev/null
+        _ok "Display sleep disabled"
+    else
+        _info "Always-on settings require sudo — configure manually:"
+        _info "  sudo pmset -a sleep 0 displaysleep 0 disksleep 0"
+        _info "  sudo pmset -a autorestart 1 womp 1"
+    fi
 }
 
 setup_statusline() {
