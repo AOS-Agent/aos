@@ -273,7 +273,12 @@ prereq_pyyaml() {
     fi
 
     _step "Installing PyYAML..."
-    pip3 install --quiet pyyaml 2>&1
+    # Use uv if available (installed in prereq_uv), fall back to pip
+    if command -v uv &>/dev/null; then
+        uv pip install --system --quiet pyyaml 2>&1
+    else
+        pip3 install --quiet --disable-pip-version-check pyyaml 2>&1
+    fi
     python3 -c "import yaml" 2>/dev/null || _die "PyYAML install failed"
     _ok "PyYAML"
 }
@@ -750,8 +755,8 @@ run_prereqs() {
     prereq_git
     prereq_homebrew
     prereq_python3
-    prereq_pyyaml
     prereq_uv
+    prereq_pyyaml
     prereq_bun
     prereq_qmd
     prereq_jq
