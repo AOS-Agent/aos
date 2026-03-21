@@ -314,9 +314,9 @@ prereq_qmd() {
     fi
 
     _step "Installing qmd..."
-    # bun install -g puts binaries in ~/.bun/bin/ — use bun from brew PATH
+    # Ensure bun global dir exists — fresh machines won't have it
+    mkdir -p "$HOME/.bun/bin"
     bun install -g qmd 2>&1 | tail -1
-    # Add globals to PATH for the rest of the install
     export PATH="$HOME/.bun/bin:$PATH"
     command -v qmd &>/dev/null || [[ -f "$HOME/.bun/bin/qmd" ]] || _die "qmd install failed"
     _ok "qmd"
