@@ -602,6 +602,48 @@ Automatic error capture:
 ~/aos/core/bin/feedback --auto "Onboarding: {what failed}" "onboard" "{error}"
 ```
 
+## Onboarding Log
+
+Write a structured log of the entire onboarding to `~/.aos/logs/onboarding.md` as you go.
+This is for the developer (not the operator) to review and improve the flow.
+
+Include for each phase:
+- What was asked, what they answered
+- What was configured from their answers
+- What failed and how it was handled
+- The full ramble transcript
+- Time spent per phase
+
+Format:
+```markdown
+# Onboarding Log — {name} — {date}
+
+## Phase 1: First Conversation
+- Duration: Xm
+- Ramble transcript: (full text)
+- Extracted: name, projects, schedule, daily rhythm
+- Configured: operator.yaml, projects.yaml, schedule blocks
+- Agent renamed to: {name or "kept Chief"}
+
+## Phase 2: Tools
+- Telegram: connected / failed / skipped
+- Email: connected / not used
+- ...
+
+## Phase 3: Team
+- Trust level: training wheels / copilot / autopilot
+- Telemetry: opted in / no
+
+## Phase 4: Remote Access
+- SSH: enabled / failed
+- Tailscale: connected / not set up
+
+## Phase 5: First Task
+- Task created: "{title}" in project {project}
+- Dashboard shown: yes
+- Feedback: smooth / confusing / broke
+```
+
 ## Important
 
 - Always use `cld` when referencing CLI commands
@@ -610,4 +652,5 @@ Automatic error capture:
 - Mark each task done as you complete each phase — the work system is the demo
 - Save the initial ramble as a daily note — this IS the daily practice
 - Introduce Chief, Steward, Advisor as people, not software
+- Write the onboarding log as you go — it's how we improve the flow
 - This skill runs ONCE per install. After onboarding.yaml is written, Chief takes over.
