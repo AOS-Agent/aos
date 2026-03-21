@@ -29,6 +29,14 @@ WORKSPACE = Path.home() / "aos"
 registry = AgentRegistry(WORKSPACE)
 
 app = FastAPI(title="AOS Dashboard")
+
+from starlette.staticfiles import StaticFiles
+
+# Serve static CSS/JS
+static_dir = Path(__file__).parent / "static"
+if static_dir.exists():
+    app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 
 
@@ -265,6 +273,125 @@ async def api_work():
         return {"error": str(e)}
 
 
+@app.post("/api/tasks")
+async def api_create_task(request: Request):
+    """Create a new task."""
+    body = await request.json()
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("engine", str(Path.home() / "aos" / "core" / "work" / "engine.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    task = mod.add_task(
+        title=body.get("title", "Untitled"),
+        priority=body.get("priority", 3),
+        project=body.get("project"),
+        status=body.get("status", "todo"),
+        parent=body.get("parent"),
+    )
+    return task
+
+@app.patch("/api/tasks/{task_id}")
+async def api_update_task(task_id: str, request: Request):
+    """Update a task (status, title, priority, project, etc.)."""
+    body = await request.json()
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("engine", str(Path.home() / "aos" / "core" / "work" / "engine.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    # Handle special status transitions
+    status = body.pop("status", None)
+    if status == "done":
+        mod.complete_task(task_id)
+    elif status == "active":
+        mod.start_task(task_id)
+    elif status == "cancelled":
+        mod.cancel_task(task_id)
+    elif status:
+        body["status"] = status
+
+    if body:
+        result = mod.update_task(task_id, **body)
+    else:
+        result = mod.get_task(task_id)
+
+    return result or {"error": "Task not found"}
+
+@app.delete("/api/tasks/{task_id}")
+async def api_delete_task(task_id: str):
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("engine", str(Path.home() / "aos" / "core" / "work" / "engine.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    ok = mod.delete_task(task_id)
+    return {"ok": ok}
+
+@app.post("/api/projects")
+async def api_create_project(request: Request):
+    body = await request.json()
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("engine", str(Path.home() / "aos" / "core" / "work" / "engine.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    project = mod.add_project(
+        title=body.get("title", "Untitled"),
+        goal=body.get("goal"),
+        done_when=body.get("done_when"),
+    )
+    return project
+
+@app.patch("/api/projects/{project_id}")
+async def api_update_project(project_id: str, request: Request):
+    body = await request.json()
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("engine", str(Path.home() / "aos" / "core" / "work" / "engine.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    result = mod.update_project(project_id, **body)
+    return result or {"error": "Project not found"}
+
+@app.delete("/api/projects/{project_id}")
+async def api_delete_project(project_id: str):
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("engine", str(Path.home() / "aos" / "core" / "work" / "engine.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    ok = mod.delete_project(project_id)
+    return {"ok": ok}
+
+@app.post("/api/goals")
+async def api_create_goal(request: Request):
+    body = await request.json()
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("engine", str(Path.home() / "aos" / "core" / "work" / "engine.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    goal = mod.add_goal(
+        title=body.get("title", "Untitled"),
+        weight=body.get("weight"),
+    )
+    return goal
+
+@app.post("/api/inbox")
+async def api_create_inbox(request: Request):
+    body = await request.json()
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("engine", str(Path.home() / "aos" / "core" / "work" / "engine.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    item = mod.add_inbox(text=body.get("text", ""))
+    return item
+
+@app.delete("/api/inbox/{inbox_id}")
+async def api_delete_inbox(inbox_id: str):
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("engine", str(Path.home() / "aos" / "core" / "work" / "engine.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    ok = mod.delete_inbox(inbox_id)
+    return {"ok": ok}
+
+
 @app.get("/api/detected-projects")
 async def api_detected_projects():
     """Auto-detect projects from session patterns and directories."""
@@ -352,6 +479,7 @@ async def work_page(request: Request):
         "inbox": inbox,
         "summary": summary,
         "detected_projects": detected_projects,
+        "all_tasks": tasks,
     })
 
 

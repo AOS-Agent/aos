@@ -71,7 +71,8 @@ def _now() -> str:
 
 def add_task(title: str, priority: int = 3, project: str = None,
              status: str = "todo", tags: list = None, source: str = "manual",
-             due: str = None, energy: str = None, context: str = None) -> dict:
+             due: str = None, energy: str = None, context: str = None,
+             parent: str = None) -> dict:
     """Add a new task. Returns the created task."""
     data = _load()
     task = {
@@ -92,6 +93,8 @@ def add_task(title: str, priority: int = 3, project: str = None,
         task["energy"] = energy
     if context:
         task["context"] = context
+    if parent:
+        task["parent"] = parent
     data["tasks"].append(task)
     _save(data)
     return task
@@ -141,6 +144,17 @@ def cancel_task(task_id: str) -> dict | None:
     return update_task(task_id, status="cancelled")
 
 
+def delete_task(task_id: str) -> bool:
+    """Permanently remove a task."""
+    data = _load()
+    before = len(data["tasks"])
+    data["tasks"] = [t for t in data["tasks"] if t["id"] != task_id]
+    if len(data["tasks"]) < before:
+        _save(data)
+        return True
+    return False
+
+
 def get_task(task_id: str) -> dict | None:
     """Get a single task by ID."""
     data = _load()
@@ -181,6 +195,32 @@ def get_all_projects() -> list:
     return _load()["projects"]
 
 
+def update_project(project_id: str, **fields) -> dict | None:
+    """Update arbitrary fields on a project."""
+    data = _load()
+    for project in data["projects"]:
+        if project["id"] == project_id:
+            for key, val in fields.items():
+                if val is None and key in project:
+                    del project[key]
+                elif val is not None:
+                    project[key] = val
+            _save(data)
+            return project
+    return None
+
+
+def delete_project(project_id: str) -> bool:
+    """Remove a project. Does NOT delete its tasks."""
+    data = _load()
+    before = len(data["projects"])
+    data["projects"] = [p for p in data["projects"] if p["id"] != project_id]
+    if len(data["projects"]) < before:
+        _save(data)
+        return True
+    return False
+
+
 # --- Goal CRUD ---
 
 def add_goal(title: str, goal_type: str = "committed", weight: float = None) -> dict:
@@ -200,6 +240,31 @@ def add_goal(title: str, goal_type: str = "committed", weight: float = None) -> 
 
 def get_all_goals() -> list:
     return _load()["goals"]
+
+
+def update_goal(goal_id: str, **fields) -> dict | None:
+    """Update arbitrary fields on a goal."""
+    data = _load()
+    for goal in data["goals"]:
+        if goal["id"] == goal_id:
+            for key, val in fields.items():
+                if val is None and key in goal:
+                    del goal[key]
+                elif val is not None:
+                    goal[key] = val
+            _save(data)
+            return goal
+    return None
+
+
+def delete_goal(goal_id: str) -> bool:
+    data = _load()
+    before = len(data["goals"])
+    data["goals"] = [g for g in data["goals"] if g["id"] != goal_id]
+    if len(data["goals"]) < before:
+        _save(data)
+        return True
+    return False
 
 
 # --- Thread CRUD ---
@@ -303,6 +368,16 @@ def promote_inbox(inbox_id: str, as_title: str = None) -> dict | None:
             _save(data)
             return add_task(title, source="inbox")
     return None
+
+
+def delete_inbox(inbox_id: str) -> bool:
+    data = _load()
+    before = len(data["inbox"])
+    data["inbox"] = [i for i in data["inbox"] if i["id"] != inbox_id]
+    if len(data["inbox"]) < before:
+        _save(data)
+        return True
+    return False
 
 
 # --- Session Linking ---
