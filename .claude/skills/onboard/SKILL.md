@@ -76,10 +76,13 @@ is the telemetry opt-in question in Phase 6 (Trust).
 
 - **One thing at a time.** Never present a wall of options.
 - **Smart defaults.** Offer a sensible default for everything.
-- **Skip-friendly.** Every phase can be skipped. Say so warmly.
+- **Complete, not optional.** Each phase matters for the system to work. Don't offer to skip — guide them through it.
 - **No jargon.** The operator may be a teacher, a chef, a freelancer.
 - **Record as you go.** Write choices to config files after each answer, not at the end.
-- **Use structured choices.** Present numbered options for selections. The operator types "1", "2", etc.
+- **Educate as you go.** At each phase, briefly explain what that part of the system does
+  and why it matters — 1-2 sentences max. The operator should finish onboarding understanding
+  the architecture: agents, work system, knowledge vault, integrations, dashboard, services.
+- **Use structured choices.** Use AskUserQuestion for all decisions.
 
 ## Choice Format
 
@@ -90,10 +93,10 @@ Rules:
 - Use `question` for the prompt text
 - Use `options` array for all possible answers — the operator picks one
 - Keep option labels short (2-5 words). Put detail in the question, not the options.
-- Always include a "Skip" option where skipping makes sense
+- Do NOT include "Skip" options — each phase is needed for the system to work properly
 - For open-ended input (name, custom values): use AskUserQuestion with a text field
   by setting `options` to an empty array and asking them to type their answer
-- For confirmations: use AskUserQuestion with options like ["Yes", "Change it", "Skip"]
+- For confirmations: use AskUserQuestion with options like ["Yes", "Change it"]
 - NEVER present numbered lists in prose text — always use AskUserQuestion
 
 ---
@@ -120,10 +123,8 @@ Then greet with a warm message explaining what AOS is — keep it to 3-4 sentenc
 Use the operator's name from operator.yaml.
 
 Then use AskUserQuestion:
-- question: "This takes about 5 minutes. You can skip anything. Ready?"
-- options: ["Let's go", "Skip setup"]
-
-If they skip, write a minimal `onboarding.yaml` with all phases marked "skipped" and exit.
+- question: "This takes about 5 minutes. Ready to set up your system?"
+- options: ["Let's go"]
 
 ### Bootstrap the Work System (Onboarding as a Live Demo)
 
@@ -167,6 +168,10 @@ in real time. This is the demo — not a separate thing.
 
 ### Phase 1: Profile
 
+**Teach:** "Your profile lives at `~/.aos/config/operator.yaml`. Chief (that's me) reads this
+at the start of every session to personalize how I work with you — your name, timezone,
+communication style. It's how the system knows who it's working for."
+
 Refine `~/.aos/config/operator.yaml`. Ask one at a time using AskUserQuestion.
 
 **1a. Name**
@@ -204,9 +209,13 @@ Write each update to `operator.yaml` immediately after the answer.
 
 ### Phase 2: Schedule
 
+**Teach:** "AOS has three agents that work for you: Chief (me — orchestrator), Steward
+(system health), and Advisor (analysis and reviews). We respect your schedule — if you
+tell us when you're busy, we won't interrupt during those times."
+
 AskUserQuestion:
 - question: "Do you have regular blocks where you shouldn't be interrupted? (teaching, meetings, prayer, focus time)"
-- options: ["Yes, add some", "Skip for now"]
+- options: ["Yes, add some", "No, I don't have fixed blocks"]
 
 If yes, ask for each block using AskUserQuestion for each field:
 - Name: open-ended
@@ -220,6 +229,10 @@ Write to `operator.yaml` schedule.blocks.
 ---
 
 ### Phase 3: Integrations
+
+**Teach:** "Integrations connect AOS to your tools — Telegram for messaging, email for
+inbox, GitHub for code. Each integration has a setup script and health check. Once
+connected, agents can read messages, send notifications, and work with your data."
 
 Read `~/aos/core/integrations/registry.yaml` for the full landscape.
 
@@ -241,8 +254,8 @@ I checked -- {N} are accessible. macOS will prompt for the rest when agents firs
 Explain briefly: "Telegram lets you talk to your agents from your phone."
 
 AskUserQuestion:
-- question: "Set up Telegram now? (I'll automate it in Chrome — takes 2 minutes)"
-- options: ["Set it up", "Skip"]
+- question: "Telegram lets you talk to AOS from your phone. Set it up now? (I'll automate it in Chrome — 2 minutes)"
+- options: ["Set it up", "Not right now — I'll do it later"]
 
 If yes, follow the **Telegram Chrome MCP Protocol** below.
 
@@ -253,19 +266,19 @@ Present each one individually using AskUserQuestion:
 **Email:**
 AskUserQuestion:
 - question: "Do you use email accounts you'd like AOS to read?"
-- options: ["Set up email", "Skip"]
+- options: ["Set up email", "I don't use email for this"]
 If yes: `bash ~/aos/core/integrations/email/setup.sh`
 
 **WhatsApp:**
 AskUserQuestion:
 - question: "Want AOS to read and send WhatsApp messages? (requires QR code scan)"
-- options: ["Set up WhatsApp", "Skip"]
+- options: ["Set up WhatsApp", "I don't use WhatsApp"]
 If yes: `bash ~/aos/core/integrations/whatsapp/setup.sh`
 
 **GitHub:**
 AskUserQuestion:
 - question: "Do you use GitHub for code?"
-- options: ["Connect GitHub", "Skip"]
+- options: ["Connect GitHub", "I don't use GitHub"]
 If yes: `bash ~/aos/core/integrations/github/setup.sh`
 
 **Obsidian:** Already set up by install.sh. Just confirm:
@@ -427,6 +440,10 @@ If Chrome MCP tools aren't available:
 
 ### Phase 4: Projects
 
+**Teach:** "AOS organizes work by project. Each project gets its own tasks, goals, and
+context. Your knowledge vault at `~/vault/` stores everything you learn — session summaries,
+research, notes — indexed for search so agents can find what they need."
+
 Scan for existing project directories:
 ```bash
 # Look for directories with CLAUDE.md, .git, or package.json — signs of a project
@@ -438,7 +455,7 @@ Also check `~/aos/config/projects.yaml`.
 
 Mention what you found, then AskUserQuestion:
 - question: "Want me to register these so AOS tracks work per-project?"
-- options: ["Register all", "Let me pick", "Skip"]
+- options: ["Register all", "Let me pick which ones"]
 
 For each registered project: ask display name via AskUserQuestion (open-ended, default: directory name).
 Add to `~/aos/config/projects.yaml`.
@@ -447,7 +464,13 @@ Add to `~/aos/config/projects.yaml`.
 
 ### Phase 5: Daily Loop
 
-Explain briefly what the daily loop does, then AskUserQuestion:
+**Teach:** "AOS has a daily loop — a morning briefing and evening check-in. The morning
+briefing shows you what's active, what's due, and what happened overnight. The evening
+check-in captures what you accomplished. Over time, the system learns your patterns and
+gets smarter. Sessions are exported to your vault, friction patterns are analyzed weekly,
+and repeated tasks get compiled into automated scripts."
+
+AskUserQuestion:
 - question: "Morning briefing at {morning_time}, evening check-in at {evening_time}. Good?"
 - options: ["Keep these times", "Change times", "Disable daily loop"]
 ```
@@ -458,7 +481,10 @@ Write changes to `operator.yaml` daily_loop section.
 
 ### Phase 6: Trust
 
-Explain briefly what trust levels mean, then AskUserQuestion:
+**Teach:** "Trust controls how much autonomy agents have. It's per-capability, not
+per-agent — I might be fully trusted for file operations but need your approval for
+sending messages. You can change this anytime. Most people start with 'Training wheels'
+and graduate as they see the system prove reliable."
 - question: "How much autonomy should AOS have? You can change this anytime."
 - options: ["Training wheels — approve everything", "Copilot — routine is automatic", "Autopilot — handle everything"]
 
@@ -500,7 +526,7 @@ you to enable it manually — I can't do it programmatically."
 
 AskUserQuestion:
 - question: "Let's enable Remote Login. I'll walk you through it."
-- options: ["Open System Settings for me", "I'll do it myself", "Skip"]
+- options: ["Open System Settings for me", "I'll do it myself"]
 
 If "Open System Settings for me":
 ```bash
@@ -537,7 +563,7 @@ No port forwarding, no dynamic DNS."
 
 AskUserQuestion:
 - question: "Connect Tailscale now? Takes 30 seconds."
-- options: ["Connect now", "Skip"]
+- options: ["Connect now", "I'll set this up later"]
 
 If yes:
 ```bash
@@ -651,7 +677,7 @@ Show: "Looks like we got through {phases}. Picking up at {next phase}."
 
 - Secret store fails: note it, move on. "Couldn't store that -- we'll set it up later."
 - Integration health check fails: warn, don't block. "Not responding yet. Verify later with `aos self-test`."
-- Operator confused/frustrated: "No worries -- skip this for now?"
+- Operator confused/frustrated: "No worries -- let me explain why this matters, then we'll get it done together."
 
 **Automatic error capture:** When any phase fails, automatically file feedback:
 ```bash
