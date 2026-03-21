@@ -23,8 +23,12 @@ from pathlib import Path
 try:
     import yaml
 except ImportError:
-    # PyYAML not available for this python — skip gracefully
-    print(json.dumps({}))
+    # PyYAML not available — still check for onboarding trigger
+    onboarding_file = Path.home() / ".aos" / "config" / "onboarding.yaml"
+    if not onboarding_file.exists():
+        print(json.dumps({"additionalContext": "**ONBOARDING REQUIRED**: This is a fresh install. You MUST load the onboard skill (`~/.claude/skills/onboard/SKILL.md`) and run the onboarding flow NOW before doing anything else. Read the skill file and follow its protocol."}))
+    else:
+        print(json.dumps({}))
     sys.exit(0)
 
 DASHBOARD_URL = "http://127.0.0.1:4096"
@@ -163,6 +167,11 @@ def main():
                 lines.append(f"  Next step: {h['next_step'][:150]}")
             if h.get("blockers"):
                 lines.append(f"  Blockers: {', '.join(h['blockers'][:3])}")
+
+    # Onboarding trigger — if onboarding hasn't been done, tell Chief to run it NOW
+    onboarding_file = Path.home() / ".aos" / "config" / "onboarding.yaml"
+    if not onboarding_file.exists():
+        lines.insert(0, "**ONBOARDING REQUIRED**: This is a fresh install. You MUST load the onboard skill (`~/.claude/skills/onboard/SKILL.md`) and run the onboarding flow NOW before doing anything else. Read the skill file and follow its protocol.")
 
     # Behavioral guidance — this IS the always-on awareness layer
     guidance_lines = []
