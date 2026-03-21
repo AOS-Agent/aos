@@ -52,6 +52,23 @@
             --font: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
             --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
+            /* Backward compat aliases for old templates */
+            --bg-primary: var(--bg-page);
+            --bg-surface: var(--bg-page);
+            --bg-surface-alt: var(--bg-sidebar);
+            --bg-surface-hover: var(--bg-hover);
+            --text-primary: var(--text);
+            --text-secondary: var(--text-secondary);
+            --text-tertiary: var(--text-tertiary);
+            --accent: var(--orange);
+            --accent-hover: #C4650B;
+            --accent-muted: var(--orange-bg);
+            --status-online: var(--tag-green);
+            --status-warning: var(--tag-yellow);
+            --status-error: var(--tag-red);
+            --status-info: var(--tag-blue);
+            --font-mono: var(--font-mono);
+            --font-sans: var(--font);
             {% block css_vars %}{% endblock %}
         }
 
@@ -422,7 +439,7 @@
     <div class="main">
         {% block header %}
         <div class="page-header">
-            <div class="page-title">{% block page_title %}Dashboard{% endblock %}</div>
+            <div class="page-title">{% block page_title %}{% block page_name %}Dashboard{% endblock %}{% endblock %}</div>
             {% block page_subtitle %}{% endblock %}
             {% block page_actions_block %}{% endblock %}
         </div>
