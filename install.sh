@@ -1642,31 +1642,27 @@ if 'CLAUDE_CODE_TEAMMATE_MODE' not in s['env']:
 if 'hooks' not in s:
     s['hooks'] = {}
 
-aos_home = Path.home() / 'aos'
-
 hook_defs = {
-    'SessionStart': {
-        'command': f'python3 {aos_home}/core/work/inject_context.py',
-        'statusMessage': 'Loading work context...',
-    },
-    'PostCompact': {
-        'command': f'python3 {aos_home}/core/work/inject_context.py',
-        'statusMessage': 'Reloading work context...',
-    },
-    'Stop': {
-        'command': f'python3 {aos_home}/core/work/reconcile.py',
-        'async': True,
-    },
-    'SessionEnd': {
-        'command': f'python3 {aos_home}/core/work/session_close.py',
-        'async': True,
-    },
+    'SessionStart': [
+        {'matcher': '', 'hooks': [{'type': 'command', 'command': 'python3 ~/aos/core/work/inject_context.py', 'statusMessage': 'Loading work context...'}]},
+    ],
+    'PostCompact': [
+        {'matcher': '', 'hooks': [{'type': 'command', 'command': 'python3 ~/aos/core/work/inject_context.py', 'statusMessage': 'Reloading work context...'}]},
+    ],
+    'Stop': [
+        {'matcher': '', 'hooks': [{'type': 'command', 'command': 'python3 ~/aos/core/work/reconcile.py', 'async': True}]},
+    ],
+    'SessionEnd': [
+        {'matcher': '', 'hooks': [
+            {'type': 'command', 'command': 'python3 ~/aos/core/work/session_close.py', 'async': True},
+            {'type': 'command', 'command': 'python3 ~/aos/core/bin/reconcile-sessions --hook --quiet', 'async': True},
+        ]},
+    ],
 }
 
-for event, hook_props in hook_defs.items():
+for event, hook_entries in hook_defs.items():
     if event not in s['hooks'] or not s['hooks'][event]:
-        hook_entry = {'hooks': [{'type': 'command', **hook_props}]}
-        s['hooks'][event] = [hook_entry]
+        s['hooks'][event] = hook_entries
         changed.append(f'hook:{event}')
 
 if changed:
