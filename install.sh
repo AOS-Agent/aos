@@ -710,8 +710,9 @@ prereq_claude_auth() {
 }
 
 prereq_ssh() {
-    # SSH / Remote Login — essential for headless Mac Mini access
-    # Check if Remote Login is enabled
+    # SSH / Remote Login — check status only, don't try to enable
+    # Enabling requires Full Disk Access on macOS 15+ and often fails in scripts.
+    # Onboarding will walk the operator through enabling it manually if needed.
     local status
     status=$(sudo -n systemsetup -getremotelogin 2>/dev/null | grep -i "on" || echo "")
 
@@ -720,18 +721,7 @@ prereq_ssh() {
         return 0
     fi
 
-    # Try to enable — reuse existing sudo ticket if available
-    _step "Enabling SSH (Remote Login)..."
-    if sudo -n true 2>/dev/null || sudo -v 2>/dev/null; then
-        if sudo systemsetup -setremotelogin on 2>/dev/null; then
-            _ok "SSH (Remote Login)"
-        else
-            _warn "SSH — could not enable Remote Login (enable manually in System Settings > General > Sharing)"
-            _log "SSH enable failed — may need manual setup"
-        fi
-    else
-        _warn "SSH — skipped (no sudo access). Enable manually: System Settings > General > Sharing > Remote Login"
-    fi
+    _info "SSH (Remote Login) is off — onboarding will help you enable it"
 }
 
 prereq_tailscale() {
