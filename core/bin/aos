@@ -340,7 +340,10 @@ except py_compile.PyCompileError as e:
             # Install deps from framework source
             uv pip install --quiet -p "$dst/.venv/bin/python" -r <(
                 python3 -c "
-import tomllib, sys
+try:
+    import tomllib
+except ImportError:
+    import tomli as tomllib
 with open('$src/pyproject.toml', 'rb') as f:
     deps = tomllib.load(f).get('project', {}).get('dependencies', [])
 print('\n'.join(deps))
