@@ -263,6 +263,13 @@ prereq_homebrew() {
 }
 
 prereq_python3() {
+    # Always prefer Homebrew python over macOS system python
+    # Put brew paths first so python3 resolves correctly for this session
+    if [[ -d /opt/homebrew/bin ]]; then
+        export PATH="/opt/homebrew/bin:$PATH"
+    fi
+    export PATH="$HOME/.local/bin:$PATH"
+
     if command -v python3 &>/dev/null; then
         local ver
         ver=$(python3 --version 2>&1 | awk '{print $2}')
@@ -284,9 +291,9 @@ prereq_python3() {
     # Force the link so python3 points to brew's version, not macOS 3.9
     brew link --overwrite python@3.13 2>/dev/null || true
 
-    # Verify — check brew's python directly
+    # Find brew's python and make it the default for this session + future shells
     local brew_python=""
-    for p in /opt/homebrew/bin/python3 /usr/local/bin/python3 /opt/homebrew/bin/python3.13 /usr/local/bin/python3.13; do
+    for p in /opt/homebrew/bin/python3.13 /opt/homebrew/bin/python3 /usr/local/bin/python3.13 /usr/local/bin/python3; do
         if [[ -f "$p" ]]; then
             local pver
             pver=$("$p" --version 2>&1 | awk '{print $2}')
@@ -301,16 +308,11 @@ prereq_python3() {
 
     if [[ -n "$brew_python" ]]; then
         _ok "Python $("$brew_python" --version 2>&1 | awk '{print $2}') ($brew_python)"
-        # If python3 on PATH is still old, alias it for this session
-        local current_ver
-        current_ver=$(python3 --version 2>&1 | awk '{print $2}')
-        local current_minor
-        current_minor=$(echo "$current_ver" | cut -d. -f2)
-        if [[ "$current_minor" -lt 11 ]]; then
-            _info "Symlinking python3 → $brew_python"
-            ln -sf "$brew_python" "$HOME/.local/bin/python3" 2>/dev/null || true
-            export PATH="$HOME/.local/bin:$PATH"
-        fi
+        # Symlink so python3 resolves to brew python everywhere
+        mkdir -p "$HOME/.local/bin"
+        ln -sf "$brew_python" "$HOME/.local/bin/python3"
+        # Rehash so this session sees the new python3
+        hash -r 2>/dev/null || true
     else
         _warn "Python 3.11+ not found — some features won't work"
     fi
@@ -323,11 +325,12 @@ prereq_pyyaml() {
     fi
 
     _step "Installing PyYAML..."
-    # Use uv if available (installed in prereq_uv), fall back to pip
+    # Use uv if available, fall back to pip. Target the active python3 explicitly.
     if command -v uv &>/dev/null; then
-        uv pip install --system --quiet pyyaml 2>&1
+        uv pip install --python "$(which python3)" --quiet pyyaml 2>&1 || \
+        python3 -m pip install --quiet --disable-pip-version-check --break-system-packages pyyaml 2>&1
     else
-        pip3 install --quiet --disable-pip-version-check pyyaml 2>&1
+        python3 -m pip install --quiet --disable-pip-version-check --break-system-packages pyyaml 2>&1
     fi
     python3 -c "import yaml" 2>/dev/null || _die "PyYAML install failed"
     _ok "PyYAML"
@@ -362,25 +365,27 @@ prereq_bun() {
 }
 
 prereq_qmd() {
-    if command -v qmd &>/dev/null || [[ -f "$HOME/.bun/bin/qmd" ]]; then
+    export BUN_INSTALL="$HOME/.bun"
+    export PATH="$BUN_INSTALL/bin:$PATH"
+
+    if [[ -f "$HOME/.bun/bin/qmd" ]] && "$HOME/.bun/bin/qmd" --version &>/dev/null; then
         _skip "qmd"
         return 0
     fi
 
     _step "Installing qmd..."
-    export BUN_INSTALL="$HOME/.bun"
-    export PATH="$BUN_INSTALL/bin:$PATH"
     mkdir -p "$BUN_INSTALL/bin" "$BUN_INSTALL/install/global"
 
-    # The real package is @tobilu/qmd — "qmd" alone is an empty shim
+    # Install the real package — @tobilu/qmd (not the empty "qmd" shim)
     local qmd_out
     qmd_out=$(BUN_INSTALL="$HOME/.bun" bun install -g @tobilu/qmd 2>&1) || true
     _log "qmd install output: $qmd_out"
+    hash -r 2>/dev/null || true
 
-    if command -v qmd &>/dev/null || [[ -f "$HOME/.bun/bin/qmd" ]]; then
+    if [[ -f "$HOME/.bun/bin/qmd" ]] && "$HOME/.bun/bin/qmd" --version &>/dev/null; then
         _ok "qmd"
     else
-        _warn "qmd — install failed (run: BUN_INSTALL=~/.bun bun install -g @tobilu/qmd)"
+        _warn "qmd — install failed (vault search won't work until fixed: BUN_INSTALL=~/.bun bun install -g @tobilu/qmd)"
         _log "qmd not found after install attempt"
     fi
 }
