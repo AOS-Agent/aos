@@ -318,12 +318,17 @@ prereq_qmd() {
     fi
 
     _step "Installing qmd..."
-    # Ensure bun global dir exists — fresh machines won't have it
-    mkdir -p "$HOME/.bun/bin"
-    bun install -g qmd 2>&1 | tail -1
-    export PATH="$HOME/.bun/bin:$PATH"
-    command -v qmd &>/dev/null || [[ -f "$HOME/.bun/bin/qmd" ]] || _die "qmd install failed"
-    _ok "qmd"
+    # Ensure bun global dir structure exists — fresh machines won't have it
+    mkdir -p "$HOME/.bun/bin" "$HOME/.bun/install/global"
+    if bun install -g qmd 2>&1 | tail -3; then
+        export PATH="$HOME/.bun/bin:$PATH"
+        if command -v qmd &>/dev/null || [[ -f "$HOME/.bun/bin/qmd" ]]; then
+            _ok "qmd"
+            return 0
+        fi
+    fi
+    # Non-fatal — vault search is nice-to-have, not a blocker
+    _warn "qmd — install failed (vault search won't work until fixed: bun install -g qmd)"
 }
 
 prereq_git() {
