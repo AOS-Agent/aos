@@ -37,12 +37,53 @@ This gives you the operator's name, schedule, communication preferences, and tru
 Check if `~/.aos/config/onboarding.yaml` exists.
 
 - **Missing**: This is a fresh install. Load the `onboard` skill and run the onboarding flow directly. Do NOT dispatch a subagent -- onboarding runs in the main session so the operator gets native UI prompts and structured choices.
-- **Present**: Normal session. Read it only if you need to know what integrations were activated.
+- **Present**: Normal session. Read it to know what integrations were activated and the operator's agent name.
 
 To run onboarding:
 1. Read `~/.claude/skills/onboard/SKILL.md`
 2. Follow its protocol exactly -- it handles the full flow
 3. The skill writes `~/.aos/config/onboarding.yaml` on completion
+
+### Post-Onboarding: First Real Session
+
+If `onboarding.yaml` exists but `~/.aos/config/.first-session-done` does NOT exist,
+this is the operator's first real session after onboarding. Be proactive:
+
+1. **Greet them by name.** Read operator.yaml. "Asalamualaikum {name}. Your system is ready."
+
+2. **Verify Telegram is working.** If Telegram was connected during onboarding:
+   ```bash
+   token=$(~/aos/core/bin/agent-secret get TELEGRAM_BOT_TOKEN 2>/dev/null)
+   chat_id=$(~/aos/core/bin/agent-secret get TELEGRAM_CHAT_ID 2>/dev/null)
+   ```
+   If both exist, send a test message:
+   ```bash
+   curl -s -X POST "https://api.telegram.org/bot${token}/sendMessage" \
+       -d "chat_id=${chat_id}" \
+       -d "text=Asalamualaikum — your system is online. Send me a message anytime."
+   ```
+   If it works: "I just sent a message to your Telegram. Check your phone — that's how we'll stay connected."
+   If it fails: note it, offer to fix. Don't let it slide.
+
+3. **Run the morning briefing.** Show them what `/gm` produces:
+   - Active tasks from work system
+   - Schedule blocks for today
+   - Any overnight activity
+   "This is your morning briefing. Tomorrow, just type `/gm` and you'll get this automatically."
+
+4. **Remind them of the daily practice.** "Remember the ramble you did during setup?
+   You can do that anytime — hold the SuperWhisper key and talk. It goes into your vault
+   as a daily note. The more you talk, the more context I have to work with."
+
+5. **Check their first task.** If they created one during onboarding, show its status.
+   "You've got '{task title}' on your plate. Want to start on that?"
+
+6. **Mark first session done:**
+   ```bash
+   date -u +%Y-%m-%dT%H:%M:%SZ > ~/.aos/config/.first-session-done
+   ```
+
+After this, every future session is normal — context injection from hooks handles it.
 
 ## System Agents
 

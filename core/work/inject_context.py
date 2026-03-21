@@ -175,8 +175,11 @@ def main():
 
     # Onboarding trigger — if onboarding hasn't been done, tell Chief to run it NOW
     onboarding_file = Path.home() / ".aos" / "config" / "onboarding.yaml"
+    first_session_file = Path.home() / ".aos" / "config" / ".first-session-done"
     if not onboarding_file.exists():
         lines.insert(0, "**ONBOARDING REQUIRED**: This is a fresh install. You MUST load the onboard skill (`~/.claude/skills/onboard/SKILL.md`) and run the onboarding flow NOW before doing anything else. Read the skill file and follow its protocol.")
+    elif not first_session_file.exists():
+        lines.insert(0, "**FIRST SESSION AFTER ONBOARDING**: Read the 'Post-Onboarding: First Real Session' section in your agent definition and follow it. Verify Telegram, run morning briefing, remind about daily practice, check their first task.")
 
     # Behavioral guidance — this IS the always-on awareness layer
     guidance_lines = []
