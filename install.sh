@@ -408,9 +408,17 @@ prereq_editor() {
             fi
             ;;
         3)
-            _info "Antigravity is not available via Homebrew."
-            _info "Download from: https://antigravity.app"
-            _warn "Skipping editor — install Antigravity manually"
+            _info "Opening Antigravity download page..."
+            open "https://antigravity.app" 2>/dev/null || true
+            echo ""
+            echo "  ${MUTED}Install Antigravity, then press Enter to continue.${RESET}"
+            read -r
+            if [[ -d "/Applications/Antigravity.app" ]]; then
+                _ok "Antigravity"
+                _save_editor "antigravity"
+            else
+                _warn "Antigravity not found in /Applications — you can install it later"
+            fi
             ;;
         4|*)
             _info "Skipping editor install"
