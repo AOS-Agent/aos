@@ -87,8 +87,73 @@ body {
     display: flex;
     flex-direction: column;
     padding: 12px 8px;
-    transition: transform 0.2s ease;
+    transition: width 0.15s ease, transform 0.2s ease;
+    overflow: hidden;
 }
+
+/* Collapsed sidebar — icon-only */
+body.sidebar-collapsed .sidebar {
+    width: 48px;
+    padding: 12px 4px;
+}
+
+body.sidebar-collapsed .sidebar-title,
+body.sidebar-collapsed .sidebar-label,
+body.sidebar-collapsed .sidebar-link span,
+body.sidebar-collapsed .sidebar-link .badge,
+body.sidebar-collapsed .sidebar-footer span,
+body.sidebar-collapsed .sidebar-status span {
+    display: none;
+}
+
+body.sidebar-collapsed .sidebar-brand {
+    justify-content: center;
+    padding: 4px 0 12px;
+}
+
+body.sidebar-collapsed .sidebar-link {
+    justify-content: center;
+    padding: 7px 0;
+}
+
+body.sidebar-collapsed .sidebar-link i {
+    width: 20px; height: 20px;
+}
+
+body.sidebar-collapsed .sidebar-footer {
+    display: flex;
+    justify-content: center;
+}
+
+body.sidebar-collapsed .main {
+    margin-left: 48px;
+}
+
+body.sidebar-collapsed .page-header,
+body.sidebar-collapsed .page-content {
+    max-width: unset;
+}
+
+/* Collapse toggle button */
+.sidebar-collapse-btn {
+    position: absolute;
+    top: 14px;
+    right: -12px;
+    width: 24px; height: 24px;
+    border-radius: 50%;
+    border: 1px solid var(--border);
+    background: var(--bg-page);
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    opacity: 0;
+    transition: opacity 0.15s;
+    z-index: 101;
+    color: var(--text-tertiary);
+}
+
+.sidebar:hover .sidebar-collapse-btn { opacity: 1; }
+.sidebar-collapse-btn:hover { background: var(--bg-hover); }
+.sidebar-collapse-btn i { width: 14px; height: 14px; }
 
 .sidebar-brand {
     padding: 4px 10px 16px;
@@ -213,6 +278,7 @@ body {
     flex: 1;
     margin-left: var(--sidebar-width);
     min-height: 100vh;
+    transition: margin-left 0.15s ease;
 }
 
 .page-header {
