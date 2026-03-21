@@ -1098,13 +1098,13 @@ print('\n'.join(deps))
 
     # Post-deploy: download NLTK tokenizer data for memory service
     local memory_venv="$services_dst/memory/.venv/bin/python"
-    if [[ -f "$memory_venv" ]]; then
+    if [[ -f "$memory_venv" ]] && "$memory_venv" -c "import nltk" 2>/dev/null; then
         if "$memory_venv" -c "import nltk; nltk.data.find('tokenizers/punkt')" 2>/dev/null; then
             _skip "NLTK data (punkt)"
-        else
-            _info "Downloading NLTK tokenizer data..."
-            "$memory_venv" -c "import nltk; nltk.download('punkt', quiet=True); nltk.download('punkt_tab', quiet=True)" 2>/dev/null
+        elif "$memory_venv" -c "import nltk; nltk.download('punkt', quiet=True); nltk.download('punkt_tab', quiet=True)" 2>/dev/null; then
             _ok "NLTK data (punkt)"
+        else
+            _warn "NLTK data — download failed (run 'aos deploy memory' later)"
         fi
     fi
 
