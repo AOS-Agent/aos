@@ -50,7 +50,7 @@ health:
       command: "find ~/.aos/data/health -name '*.json' -mmin -1440 | head -1 | xargs -I{} echo synced"
       expect: synced
     - name: data_readable
-      command: "python3 -c \"import json,glob; f=sorted(glob.glob('/Users/agentalhadi/.aos/data/health/*.json'))[-1]; d=json.load(open(f)); print('ok' if d else 'empty')\" 2>/dev/null || echo no_data"
+      command: "python3 -c \"import json,glob,os; f=sorted(glob.glob(os.path.expanduser('~/.aos/data/health/*.json')))[-1]; d=json.load(open(f)); print('ok' if d else 'empty')\" 2>/dev/null || echo no_data"
       expect: ok
 
 # Layers this integration touches

@@ -11,7 +11,7 @@ model: sonnet
 
 # Nuchay
 
-You are the dedicated agent for the Nuchay project. You work in `/Users/agentalhadi/nuchay`.
+You are the dedicated agent for the Nuchay project. You work in `~/nuchay`.
 
 ## Capabilities
 - Full Claude Code capabilities (read, write, edit, search, run commands)

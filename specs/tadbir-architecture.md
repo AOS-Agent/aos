@@ -169,7 +169,7 @@ appetite: 2w             # Shape Up: how much time is this worth?
 definition_of_done: "Store live, products listed, checkout working, connected to shipping"
 started_at: 2026-02-15
 due_date: 2026-03-15
-owner: hisham
+owner: operator
 hill_position: downhill  # uphill (figuring out) | peak | downhill (executing)
 tasks_summary:           # Auto-generated
   total: 12
@@ -191,7 +191,7 @@ status: todo             # inbox | todo | active | waiting | done | cancelled
 priority: 2              # 0=none, 1=urgent, 2=high, 3=normal, 4=low
 assignee: nuchay-agent   # human ID or agent ID — same field
 assignee_type: agent     # human | agent | unassigned
-created_by: hisham
+created_by: operator
 created_at: 2026-03-15T09:00:00Z
 due_date: 2026-03-20
 context: "@computer"     # GTD context: where/what you need

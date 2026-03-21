@@ -641,7 +641,7 @@ install_launchagents() {
 
         local temp_plist
         temp_plist=$(mktemp)
-        sed "s|/Users/agentalhadi|$HOME|g" "$plist_file" > "$temp_plist"
+        sed "s|__HOME__|$HOME|g" "$plist_file" > "$temp_plist"
 
         if [[ -f "$target" ]] && diff -q "$temp_plist" "$target" &>/dev/null; then
             _skip "LaunchAgent $name"
@@ -1012,6 +1012,30 @@ with open('$HOME/.claude/settings.json', 'w') as f:
         _ok "Statusline wired into settings.json"
     else
         _skip "Statusline in settings.json"
+    fi
+
+    # Set Chief as default agent if not already set
+    local has_agent
+    has_agent=$(python3 -c "
+import json
+with open('$HOME/.claude/settings.json') as f:
+    s = json.load(f)
+print('yes' if s.get('agent') else 'no')
+" 2>/dev/null || echo "no")
+
+    if [[ "$has_agent" == "no" ]]; then
+        python3 -c "
+import json
+with open('$HOME/.claude/settings.json') as f:
+    s = json.load(f)
+s['agent'] = 'chief'
+with open('$HOME/.claude/settings.json', 'w') as f:
+    json.dump(s, f, indent=2)
+    f.write('\n')
+" 2>/dev/null
+        _ok "Default agent set to Chief"
+    else
+        _skip "Default agent already configured"
     fi
 }
 

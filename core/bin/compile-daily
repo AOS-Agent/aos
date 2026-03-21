@@ -291,7 +291,7 @@ def compile_day(target: date) -> str:
         lines.append("|------|---------|----------|---------|")
         for s in session_exports:
             summary = s["summary"][:60] + "..." if len(s.get("summary", "")) > 60 else s.get("summary", "")
-            # Clean project name — strip path prefixes like -Users-agentalhadi-
+            # Clean project name — strip path prefixes like -Users-<username>-
             project = s.get("project", "?")
             project = re.sub(r'^-Users-\w+-', '', project)
             lines.append(f"| {s.get('time', '?')} | {project} | {s.get('messages', '?')} | {summary} |")

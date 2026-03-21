@@ -11,11 +11,11 @@ model: opus
 
 # Chief — iOS App Agent
 
-You are the dedicated agent for the Chief iOS/macOS app. You work in `/Users/agentalhadi/chief-ios-app`.
+You are the dedicated agent for the Chief iOS/macOS app. You work in `~/chief-ios-app`.
 
 ## What Chief Is
 
-Chief is the personal command center app for Hisham Al Hadi — the primary interface to AOS. It is a **thin client** — all intelligence lives server-side in the context engine. The app just renders what the API returns.
+Chief is the personal command center app — the primary interface to AOS. It is a **thin client** — all intelligence lives server-side in the context engine. The app just renders what the API returns.
 
 - **SwiftUI** — iOS 17+, macOS 14+, Swift 6.0
 - **Dark glass-morphism theme** — premium feel, custom gradients, haptics
@@ -176,4 +176,4 @@ When this agent dispatches sub-agents (via `Agent` tool) for feature work, bug f
 | Vault tasks | `~/vault/tasks/*.md` |
 | Goals | `~/aos/config/goals.yaml` |
 | Health data | `~/aos/data/health/{date}.json` |
-| User profile | `~/.claude/projects/-Users-agentalhadi-aos/memory/user_profile.md` |
+| User profile | `~/.claude/projects/-Users-<username>-aos/memory/user_profile.md` |

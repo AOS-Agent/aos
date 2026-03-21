@@ -10,30 +10,43 @@ import subprocess
 from datetime import datetime
 
 # --- Config ---
-ACCOUNTS = {
-    "mail@hishamalhadi.com": {
-        "secret_key": "GMAIL_APP_PWD_HISHAMALHADI",
-        "searches": [
-            ("IDRF", 'X-GM-RAW "from:idrf.ca -subject:\\"tax receipt\\""'),
-            ("Bayyinah", 'X-GM-RAW "from:(contact@bayyinah.com OR learnarabic@bayyinah.com OR tv@bayyinah.com) -subject:welcome"'),
-            ("Carters", 'X-GM-RAW "from:cartersoshkosh"'),
-        ]
-    },
-    "hisham@nuchay.com": {
-        "secret_key": "GMAIL_APP_PWD_NUCHAY",
-        "searches": [
-            ("Islamic Relief", 'X-GM-RAW "from:islamicreliefcanada -subject:\\"tax receipt\\""'),
-            ("ecobee", 'X-GM-RAW "from:ecobee -subject:\\"service reminder\\" -subject:welcome"'),
-            ("QuranReflect", 'X-GM-RAW "from:(notifications.quran.com OR quran.foundation)"'),
-        ]
-    },
-    "hishamalhadi@gmail.com": {
-        "secret_key": "GMAIL_APP_PWD_PERSONAL",
-        "searches": [
-            ("Zaytuna", 'X-GM-RAW "from:zaytuna.edu"'),
-        ]
-    },
-}
+# Accounts loaded from ~/.aos/config/email.yaml
+# Expected format:
+#   accounts:
+#     user@example.com:
+#       secret_key: GMAIL_APP_PWD_EXAMPLE
+#       searches:
+#         - name: SenderName
+#           query: 'X-GM-RAW "from:example.com"'
+#
+EMAIL_CONFIG = os.path.expanduser("~/.aos/config/email.yaml")
+
+
+def load_accounts() -> dict:
+    """Load email accounts from user config file."""
+    import yaml
+
+    if not os.path.exists(EMAIL_CONFIG):
+        print(f"ERROR: Config file not found: {EMAIL_CONFIG}")
+        print("Create it with your email accounts. See core/bin/email-cleanup for format.")
+        sys.exit(1)
+
+    with open(EMAIL_CONFIG) as f:
+        config = yaml.safe_load(f) or {}
+
+    raw_accounts = config.get("accounts", {})
+    if not raw_accounts:
+        print(f"ERROR: No accounts defined in {EMAIL_CONFIG}")
+        sys.exit(1)
+
+    # Convert to the format expected by process_account()
+    accounts = {}
+    for addr, acct in raw_accounts.items():
+        accounts[addr] = {
+            "secret_key": acct["secret_key"],
+            "searches": [(s["name"], s["query"]) for s in acct.get("searches", [])],
+        }
+    return accounts
 
 LOG_FILE = os.path.expanduser("~/vault/projects/aos/email-cleanup-deletions.md")
 DRY_RUN = "--dry-run" in sys.argv
@@ -41,7 +54,7 @@ DRY_RUN = "--dry-run" in sys.argv
 
 def get_secret(key):
     result = subprocess.run(
-        [os.path.expanduser("~/aos/bin/agent-secret"), "get", key],
+        [os.path.expanduser("~/aos/core/bin/agent-secret"), "get", key],
         capture_output=True, text=True
     )
     return result.stdout.strip()
@@ -163,6 +176,7 @@ def main():
     else:
         print("*** LIVE MODE — emails will be moved to Trash ***\n")
 
+    ACCOUNTS = load_accounts()
     all_deleted = []
     for email_addr, config in ACCOUNTS.items():
         deleted = process_account(email_addr, config)

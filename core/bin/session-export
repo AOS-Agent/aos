@@ -29,8 +29,9 @@ REGENERATE = "--regenerate" in sys.argv
 # Project name overrides for special cases only.
 # Default behavior: strip the '-Users-{username}-' prefix automatically.
 # Add entries here only when the directory name doesn't produce a good result.
+import getpass
 PROJECT_ALIASES = {
-    "-Users-agentalhadi": "home",  # root home dir has no project segment after stripping
+    f"-Users-{getpass.getuser()}": "home",  # root home dir has no project segment after stripping
 }
 
 # Messages to skip entirely — system noise, not real conversation

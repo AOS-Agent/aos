@@ -208,7 +208,7 @@
                         <div class="session-files">
                             <div class="session-files-title">Files Modified</div>
                             {% for f in s.files_modified %}
-                            <div class="file-path">{{ f | replace('/Users/agentalhadi/', '~/') }}</div>
+                            <div class="file-path">{{ f | replace_home }}</div>
                             {% endfor %}
                         </div>
                         {% endif %}

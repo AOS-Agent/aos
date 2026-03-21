@@ -1,6 +1,6 @@
 #!/bin/bash
 # technician-create-topic — Create the Technician forum topic in system forum group
-# Run this AFTER granting @agentalhadi_bot the "Manage Topics" admin right.
+# Run this AFTER granting the system bot the "Manage Topics" admin right.
 #
 # Usage: bin/technician-create-topic
 
@@ -15,16 +15,20 @@ echo "------------------------"
 
 # Get main bot token (needs can_manage_topics)
 TOKEN=$("$AGENT_SECRET" get TELEGRAM_BOT_TOKEN)
-FORUM_GROUP_ID=-1003874890243
+FORUM_GROUP_ID=$("$AGENT_SECRET" get TELEGRAM_FORUM_GROUP_ID)
+
+# Get the bot's username dynamically
+BOT_INFO=$(curl -s "https://api.telegram.org/bot${TOKEN}/getMe")
+BOT_USERNAME=$(echo "$BOT_INFO" | python3 -c "import json,sys; print(json.load(sys.stdin)['result']['username'])" 2>/dev/null)
 
 # Check if bot now has can_manage_topics
-echo "Checking bot admin rights..."
+echo "Checking bot admin rights for @${BOT_USERNAME}..."
 ADMIN_STATUS=$(curl -s "https://api.telegram.org/bot${TOKEN}/getChatAdministrators?chat_id=${FORUM_GROUP_ID}")
 CAN_MANAGE=$(echo "$ADMIN_STATUS" | python3 -c "
 import json, sys
 data = json.load(sys.stdin)
 for admin in data.get('result', []):
-    if admin['user'].get('username') == 'agentalhadi_bot':
+    if admin['user'].get('username') == '${BOT_USERNAME}':
         print(str(admin.get('can_manage_topics', False)).lower())
         break
 else:
@@ -32,10 +36,10 @@ else:
 " 2>/dev/null)
 
 if [ "$CAN_MANAGE" != "true" ]; then
-    echo "ERROR: @agentalhadi_bot does not have can_manage_topics = true"
+    echo "ERROR: @${BOT_USERNAME} does not have can_manage_topics = true"
     echo "Current value: $CAN_MANAGE"
     echo ""
-    echo "To fix: Go to system forum group > Administrators > agentalhadi_bot"
+    echo "To fix: Go to system forum group > Administrators > @${BOT_USERNAME}"
     echo "        Enable 'Manage Topics' toggle"
     echo "Then re-run this script."
     exit 1

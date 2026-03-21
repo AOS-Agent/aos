@@ -19,7 +19,9 @@ from pathlib import Path
 
 AOS_DIR = Path.home() / "aos"
 VAULT_REVIEWS = Path.home() / "vault" / "reviews"
-MEMORY_DIR = Path.home() / ".claude" / "projects" / "-Users-agentalhadi-aos" / "memory"
+import getpass
+_USERNAME = getpass.getuser()
+MEMORY_DIR = Path.home() / ".claude" / "projects" / f"-Users-{_USERNAME}-aos" / "memory"
 MEMORY_INDEX = MEMORY_DIR / "MEMORY.md"
 PENDING_FILE = AOS_DIR / "apps" / "bridge" / "data" / "bridge" / "pending_rules.json"
 STATE_FILE = AOS_DIR / "apps" / "bridge" / "data" / "bridge" / "friction_rules_state.json"

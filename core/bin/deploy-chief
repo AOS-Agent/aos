@@ -8,12 +8,12 @@
 set -euo pipefail
 
 LANE="${1:-beta}"
-PROJECT_DIR="/Users/agentalhadi/chief-ios-app"
-LOG_DIR="/Users/agentalhadi/aos/logs"
+PROJECT_DIR="$HOME/chief-ios-app"
+LOG_DIR="$HOME/aos/logs"
 TIMESTAMP=$(date +%Y-%m-%dT%H:%M:%S)
 LOG_FILE="$LOG_DIR/deploy-chief.log"
 METRICS_FILE="$LOG_DIR/deploy-chief-metrics.log"
-AGENT_SECRET="/Users/agentalhadi/aos/bin/agent-secret"
+AGENT_SECRET="$HOME/aos/bin/agent-secret"
 
 log() { echo "[$TIMESTAMP] $*" | tee -a "$LOG_FILE"; }
 
@@ -132,7 +132,7 @@ log "Preflight passed — all App Store checks OK"
 # ---- Pull secrets from Keychain ----
 export ASC_KEY_ID="$($AGENT_SECRET get ASC_KEY_ID)"
 export ASC_ISSUER_ID="$($AGENT_SECRET get ASC_ISSUER_ID)"
-export ASC_KEY_PATH="/Users/agentalhadi/aos/config/keys/AuthKey_${ASC_KEY_ID}.p8"
+export ASC_KEY_PATH="$HOME/aos/config/keys/AuthKey_${ASC_KEY_ID}.p8"
 
 if [[ ! -f "$ASC_KEY_PATH" ]]; then
   log "ERROR: API key file not found at $ASC_KEY_PATH"

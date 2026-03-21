@@ -7,7 +7,7 @@ At runtime, scripts merge: defaults ← user overrides.
 
 This migration:
 - Moves current config/ files to config/defaults/ (if not already split)
-- Creates user config stubs from current values (for Hisham's migration)
+- Creates user config stubs from current values (for existing installs)
 - For new users: user config stays empty, defaults apply
 """
 

@@ -438,6 +438,7 @@ def _duration_filter(start: str, end: str) -> str:
 
 # Register the filter in Jinja
 templates.env.globals["duration"] = _duration_filter
+templates.env.filters["replace_home"] = lambda path: path.replace(str(Path.home()) + "/", "~/") if path else ""
 
 
 @app.get("/sessions", response_class=HTMLResponse)
@@ -482,7 +483,7 @@ async def api_session_hook(request: Request):
         return {"ok": False, "error": "no session_id"}
 
     def _shorten(path: str) -> str:
-        return path.replace("/Users/agentalhadi/", "~/") if path else ""
+        return path.replace(str(Path.home()) + "/", "~/") if path else ""
 
     def _filename(path: str) -> str:
         """Get just the filename from a path."""

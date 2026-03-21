@@ -28,9 +28,9 @@ You are the authority on messaging in this system. When something isn't working 
 - **WhatsApp**: `apps/messages/whatsmeow/` — WhatsApp bridge on :7601
 
 ### Current Bot
-- Bot: `@agentalhadi_bot` — system bridge bot, handles all message routing
-- Direct chat ID: `6679471412`
-- Forum group ID: `-1003874890243`
+- Bot: configured via `bin/agent-secret get TELEGRAM_BOT_TOKEN` — system bridge bot, handles all message routing
+- Direct chat ID: `bin/agent-secret get TELEGRAM_CHAT_ID`
+- Forum group ID: `bin/agent-secret get TELEGRAM_FORUM_GROUP_ID`
 - Topic routes configured in `apps/bridge/main.py` TOPIC_ROUTES dict
 
 ### Technician's Bot

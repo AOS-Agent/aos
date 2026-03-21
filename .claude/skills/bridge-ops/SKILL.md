@@ -120,7 +120,7 @@ Sessions stored in `data/bridge/sessions.json`:
 ```json
 {
   "telegram:6679471412": "session-uuid-here",
-  "telegram:-1003874890243:topic:2": "another-session-uuid"
+  "telegram:<FORUM_GROUP_ID>:topic:2": "another-session-uuid"
 }
 ```
 
@@ -135,7 +135,7 @@ Sessions stored in `data/bridge/sessions.json`:
 2. Create topic via API:
    ```bash
    curl -s -X POST "https://api.telegram.org/bot<TOKEN>/createForumTopic" \
-     -d "chat_id=-1003874890243&name=<AGENT_NAME>&icon_color=7322096"
+     -d "chat_id=<FORUM_GROUP_ID>&name=<AGENT_NAME>&icon_color=7322096"
    ```
 3. Note the `message_thread_id` from the response
 4. Add to TOPIC_ROUTES in `apps/bridge/main.py`:

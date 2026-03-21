@@ -38,7 +38,7 @@ ACTIVITY_DB = WORKSPACE / "data" / "dashboard" / "activity.db"
 GOALS_PATH = WORKSPACE / "config" / "goals.yaml"
 STATE_PATH = WORKSPACE / "config" / "state.yaml"
 
-FORUM_GROUP_ID = -1003874890243  # الملأ group
+FORUM_GROUP_ID = None  # Loaded from keychain at runtime
 
 # Setup logging — log everything for performance review
 logging.basicConfig(
@@ -358,7 +358,7 @@ def format_update(health, services, activity, sessions, crons, goals, errors, tz
     if sessions:
         lines.append(f"🔧 <b>Active Sessions</b> ({len(sessions)})")
         for s in sessions:
-            wd = s.get("working_dir", "").replace("/Users/agentalhadi/", "~/")
+            wd = s.get("working_dir", "").replace(str(Path.home()) + "/", "~/")
             tools = s.get("total_tools", 0)
             lines.append(f"  • {wd} ({tools} ops)")
         lines.append("")
@@ -480,6 +480,8 @@ def main():
     log.info("=" * 60)
     log.info("Channel update starting")
 
+    global FORUM_GROUP_ID
+
     # Load secrets
     bot_token = get_secret("TELEGRAM_BOT_TOKEN")
     chat_id_str = get_secret("TELEGRAM_CHAT_ID")
@@ -487,6 +489,11 @@ def main():
         log.error("Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID")
         sys.exit(1)
     chat_id = int(chat_id_str)
+
+    # Load forum group ID from keychain (optional — falls back to direct chat)
+    forum_id_str = get_secret("TELEGRAM_FORUM_GROUP_ID")
+    if forum_id_str:
+        FORUM_GROUP_ID = int(forum_id_str)
 
     # Check timezone
     goals_data = load_yaml(GOALS_PATH)
@@ -508,8 +515,8 @@ def main():
     config = get_channel_config()
     thread_id = config.get("forum_topic_id")
 
-    # If no topic configured, try to create one
-    if not thread_id:
+    # If no topic configured and forum group exists, try to create one
+    if not thread_id and FORUM_GROUP_ID:
         thread_id = try_create_topic(bot_token)
         if thread_id:
             save_topic_id(thread_id)

@@ -1116,7 +1116,7 @@ class TelegramChannel:
         if not context.args:
             # List available .md files
             from pathlib import Path
-            workspace = Path("/Users/agentalhadi/aos")
+            workspace = Path.home() / "aos"
             md_files = sorted(
                 [str(p.relative_to(workspace)) for p in workspace.rglob("*.md")
                  if not any(part.startswith(".") or part in ("node_modules", "vendor", ".venv")
@@ -1131,14 +1131,14 @@ class TelegramChannel:
             return
 
         filepath = context.args[0]
-        full_path = f"/Users/agentalhadi/aos/{filepath}"
+        full_path = str(Path.home() / "aos" / filepath)
 
         from pathlib import Path
         p = Path(full_path)
         if not p.exists():
             # Try common locations
             for prefix in ["docs/", "specs/", "config/", ""]:
-                alt = Path(f"/Users/agentalhadi/aos/{prefix}{filepath}")
+                alt = Path.home() / "aos" / f"{prefix}{filepath}"
                 if alt.exists():
                     p = alt
                     break

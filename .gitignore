@@ -25,6 +25,9 @@ vendor/
 .vscode/
 .xcodebuildmcp/
 
+# Listen jobs (runtime data, not system code)
+core/services/listen/jobs/
+
 # Worktrees
 .claude/worktrees/
 *.sqlite3

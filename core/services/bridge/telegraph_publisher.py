@@ -3,6 +3,7 @@
 import logging
 import re
 import subprocess
+from pathlib import Path
 
 import mistune
 from mistune.plugins.table import table
@@ -21,7 +22,7 @@ def _get_telegraph() -> Telegraph:
             result = subprocess.run(
                 ["bin/agent-secret", "get", "TELEGRAPH_TOKEN"],
                 capture_output=True, text=True, timeout=5,
-                cwd="/Users/agentalhadi/aos",
+                cwd=str(Path.home() / "aos"),
             )
             _TOKEN = result.stdout.strip()
         except Exception as e:

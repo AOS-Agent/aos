@@ -1,8 +1,8 @@
 # Life OS — Task & Life Management Design
 
-**For:** Hisham Al Hadi
-**Problem:** Everything lives in his head. No external system. Overwhelmed by the volume across teaching, businesses, family, faith, health, and projects. Snooze-then-scramble pattern erodes self-trust.
-**Goal:** AOS holds everything so his head doesn't have to, and puts the right thing in front of him at the right time.
+**For:** The operator
+**Problem:** Everything lives in their head. No external system. Overwhelmed by the volume across teaching, businesses, family, faith, health, and projects. Snooze-then-scramble pattern erodes self-trust.
+**Goal:** AOS holds everything so their head doesn't have to, and puts the right thing in front of them at the right time.
 
 ---
 
@@ -15,7 +15,7 @@ If checking in takes effort, it won't happen. The primary interface is Telegram 
 Never present a wall of tasks. The daily message shows: one focus item, one thing AOS did overnight, one thing that needs a decision. That's it. More is available if he asks.
 
 ### 3. Do the work, don't just track it
-The gap isn't awareness — Hisham knows what needs to happen. The gap is activation energy. AOS should do real work (draft emails, research apartments, prepare course notes) and present it for review, not just remind.
+The gap isn't awareness — the operator knows what needs to happen. The gap is activation energy. AOS should do real work (draft emails, research apartments, prepare course notes) and present it for review, not just remind.
 
 ### 4. Trust is earned, not assumed
 Start at Level 1: everything gets reviewed. As AOS proves reliable on small things, trust grows. The system tracks its own accuracy so trust is data-driven, not emotional.
@@ -27,7 +27,7 @@ Teaching is Mon–Thu 8:30–9:45. Weekend classes Sat–Sun after Fajr. Ramadan
 
 ## Life Domains
 
-Everything in Hisham's life falls into these areas. Each domain has its own weight and rhythm:
+Everything in the operator's life falls into these areas. Each domain has its own weight and rhythm:
 
 | Domain | Examples | Rhythm |
 |--------|----------|--------|
@@ -93,7 +93,7 @@ Optional body with context, links, log entries.
 Sent at 8:00 AM, before class:
 
 ```
-Salaam Hisham — Tuesday, March 18
+Salaam — Tuesday, March 18
 
 FOCUS (1 of 3)
 → Review Nuchay email drafts (AOS prepared 3 last night)
@@ -292,9 +292,9 @@ QMD                  → semantic search across active + archived tasks
 |--------|-------|
 | Plane (11 containers, 1.6GB RAM) | Markdown files in vault |
 | config/tasks.yaml (empty) | ~/vault/tasks/*.md |
-| Everything in Hisham's head | Captured in task files |
+| Everything in the operator's head | Captured in task files |
 | Snooze-then-scramble | System surfaces deadlines with math, not guilt |
-| "I should do X" with no follow-through | AOS does the first draft, Hisham reviews |
+| "I should do X" with no follow-through | AOS does the first draft, the operator reviews |
 
 ---
 
@@ -354,7 +354,7 @@ Cache last context response. Captures queue locally, sync on reconnect.
 The most natural input for stream-of-consciousness thinkers.
 
 ### How it works
-1. Hisham taps "Ramble" in Chief (or sends a voice note via Telegram)
+1. The operator taps "Ramble" in Chief (or sends a voice note via Telegram)
 2. Audio transcribed (Whisper on-device or server-side)
 3. AOS parses the transcript into structured data:
    - **Tasks** → created as vault task files with auto-detected domain
@@ -454,12 +454,12 @@ Chief improves itself based on usage patterns and operator feedback.
 
 1. **Usage telemetry** — Chief reports anonymized interaction data to AOS:
    which screens opened, which cards tapped, how long spent, what was ignored
-2. **Voice ramble parsing** — when Hisham mentions UI issues ("the font is too small",
+2. **Voice ramble parsing** — when the operator mentions UI issues ("the font is too small",
    "I keep missing the capture button"), AOS extracts these as Chief improvement tasks
 3. **Research** — AOS proactively researches iOS design patterns, SwiftUI best practices,
    accessibility guidelines, and applies relevant improvements
 4. **Implementation** — engineer agent modifies SwiftUI code, builds, runs tests
-5. **Deployment** — TestFlight upload → auto-installs on Hisham's phone (OTA)
+5. **Deployment** — TestFlight upload → auto-installs on the operator's phone (OTA)
 6. **Feedback loop** — next usage telemetry shows if the change helped
 
 ### Technician Agent (self-healing)
@@ -479,7 +479,7 @@ Code change (by engineer agent or technician)
     → xcsift filters errors (only actionable output)
     → Screenshot at 1x (ImageMagick resize) → visual verify
     → fastlane beta (match + gym + pilot)
-    → TestFlight auto-distributes to Hisham's phone
+    → TestFlight auto-distributes to the operator's phone
     → Push notification: "Chief updated — [what changed]"
 ```
 
@@ -509,9 +509,9 @@ Same codebase, SwiftUI with platform conditionals:
 |--------|-------|
 | Plane (11 containers, 1.6GB RAM) | Markdown files in vault |
 | config/tasks.yaml (empty) | ~/vault/tasks/*.md |
-| Everything in Hisham's head | Captured in task files + voice rambles |
+| Everything in the operator's head | Captured in task files + voice rambles |
 | Snooze-then-scramble | System surfaces deadlines with math, not guilt |
-| "I should do X" with no follow-through | AOS does the first draft, Hisham reviews |
+| "I should do X" with no follow-through | AOS does the first draft, the operator reviews |
 | Multiple apps per life area | Chief — one app, all domains |
 | Manual app updates | OTA via TestFlight, autonomous deployment |
 | Static app that never changes | Self-improving based on usage + feedback |
