@@ -13,7 +13,8 @@
 #  Idempotent. Safe to re-run. Resumes from where it left off.
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-set -euo pipefail
+set -uo pipefail
+# No set -e — installer handles errors per-step, never exits on failure
 
 # Don't run as root — Homebrew refuses it and files get wrong ownership
 if [[ $EUID -eq 0 ]]; then
@@ -28,8 +29,10 @@ fi
 # Cache sudo upfront — one password prompt, then it's good for the whole install
 echo "AOS needs admin access for Homebrew, SSH, and system config."
 echo ""
-sudo true
-echo ""
+if ! sudo true; then
+    echo "  Failed to get admin access. Some steps may fail."
+    echo ""
+fi
 
 # ── Version ──────────────────────────────────────────
 AOS_VERSION="0.1.0"
@@ -322,18 +325,21 @@ prereq_qmd() {
     fi
 
     _step "Installing qmd..."
-    # Tell bun where to put globals and ensure the dirs exist
     export BUN_INSTALL="$HOME/.bun"
+    export PATH="$BUN_INSTALL/bin:$PATH"
     mkdir -p "$BUN_INSTALL/bin" "$BUN_INSTALL/install/global"
-    if BUN_INSTALL="$HOME/.bun" bun install -g qmd 2>&1 | tail -3; then
-        export PATH="$HOME/.bun/bin:$PATH"
-        if command -v qmd &>/dev/null || [[ -f "$HOME/.bun/bin/qmd" ]]; then
-            _ok "qmd"
-            return 0
-        fi
+
+    # Try install, capture output for debugging
+    local qmd_out
+    qmd_out=$(BUN_INSTALL="$HOME/.bun" bun install -g qmd 2>&1) || true
+    _log "qmd install output: $qmd_out"
+
+    if command -v qmd &>/dev/null || [[ -f "$HOME/.bun/bin/qmd" ]]; then
+        _ok "qmd"
+    else
+        _warn "qmd — install failed (run manually: BUN_INSTALL=~/.bun bun install -g qmd)"
+        _log "qmd not found after install attempt"
     fi
-    # Non-fatal — vault search is nice-to-have, not a blocker
-    _warn "qmd — install failed (vault search won't work until fixed: bun install -g qmd)"
 }
 
 prereq_git() {
@@ -968,9 +974,58 @@ OPERATOR
     # Run migrations
     _info "Running migrations..."
     echo ""
-    python3 "$AOS_DIR/core/migrations/runner.py" migrate 2>&1 | sed 's/^/    /'
+    if python3 "$AOS_DIR/core/migrations/runner.py" migrate 2>&1 | sed 's/^/    /'; then
+        _ok "Migrations complete"
+    else
+        _warn "Some migrations failed — system may need manual fixes"
+    fi
+
+    # ── Ensure critical files exist (fallback if migrations missed them) ──
+
+    # settings.json — Claude Code config with hooks
+    local settings_file="$HOME/.claude/settings.json"
+    if [[ ! -f "$settings_file" ]]; then
+        _info "Creating Claude Code settings..."
+        cat > "$settings_file" << 'SETTINGS'
+{
+  "permissions": {
+    "allow": ["Bash(*)", "Read(*)", "Write(*)", "Edit(*)", "Glob(*)", "Grep(*)"],
+    "deny": []
+  },
+  "env": {},
+  "hooks": {}
+}
+SETTINGS
+        _ok "settings.json created"
+    fi
+
+    # Wire hooks if missing — run migration 005 directly
+    if ! python3 -c "
+import json
+with open('$settings_file') as f:
+    s = json.load(f)
+assert s.get('hooks', {}).get('SessionStart')
+" 2>/dev/null; then
+        _info "Wiring work system hooks..."
+        python3 "$AOS_DIR/core/migrations/005_wire_hooks.py" 2>/dev/null && _ok "Hooks wired" || _warn "Hooks — wire manually later"
+    fi
+
+    # mcp.json — MCP server config (memory service)
+    local mcp_file="$HOME/.claude/mcp.json"
+    if [[ ! -f "$mcp_file" ]]; then
+        _info "Creating MCP config..."
+        cat > "$mcp_file" << MCPJSON
+{
+  "mcpServers": {}
+}
+MCPJSON
+        _ok "mcp.json created"
+    fi
+
+    # projects dir — Claude Code per-project memory
+    mkdir -p "$HOME/.claude/projects"
+
     echo ""
-    _ok "Migrations complete"
 
     # Sync agents (system agents: chief, steward, advisor)
     _step "Syncing agents..."
