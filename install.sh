@@ -300,6 +300,10 @@ prereq_uv() {
 }
 
 prereq_bun() {
+    # Set global install dir — Homebrew bun doesn't set this by default
+    export BUN_INSTALL="$HOME/.bun"
+    export PATH="$BUN_INSTALL/bin:$PATH"
+
     if command -v bun &>/dev/null; then
         _skip "bun"
         return 0
@@ -318,9 +322,10 @@ prereq_qmd() {
     fi
 
     _step "Installing qmd..."
-    # Ensure bun global dir structure exists — fresh machines won't have it
-    mkdir -p "$HOME/.bun/bin" "$HOME/.bun/install/global"
-    if bun install -g qmd 2>&1 | tail -3; then
+    # Tell bun where to put globals and ensure the dirs exist
+    export BUN_INSTALL="$HOME/.bun"
+    mkdir -p "$BUN_INSTALL/bin" "$BUN_INSTALL/install/global"
+    if BUN_INSTALL="$HOME/.bun" bun install -g qmd 2>&1 | tail -3; then
         export PATH="$HOME/.bun/bin:$PATH"
         if command -v qmd &>/dev/null || [[ -f "$HOME/.bun/bin/qmd" ]]; then
             _ok "qmd"
