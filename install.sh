@@ -280,27 +280,39 @@ prereq_python3() {
     _step "Installing Python 3..."
     brew install python@3.13 2>&1 | tail -1
 
-    # Ensure brew's python3 takes priority over macOS system python
+    # brew install python@3.13 creates python3.13 but may not create python3
+    # Force the link so python3 points to brew's version, not macOS 3.9
+    brew link --overwrite python@3.13 2>/dev/null || true
+
+    # Verify — check brew's python directly
     local brew_python=""
-    if [[ -f /opt/homebrew/bin/python3 ]]; then
-        brew_python="/opt/homebrew/bin/python3"
-    elif [[ -f /usr/local/bin/python3 ]]; then
-        brew_python="/usr/local/bin/python3"
-    fi
+    for p in /opt/homebrew/bin/python3 /usr/local/bin/python3 /opt/homebrew/bin/python3.13 /usr/local/bin/python3.13; do
+        if [[ -f "$p" ]]; then
+            local pver
+            pver=$("$p" --version 2>&1 | awk '{print $2}')
+            local pminor
+            pminor=$(echo "$pver" | cut -d. -f2)
+            if [[ "$pminor" -ge 11 ]]; then
+                brew_python="$p"
+                break
+            fi
+        fi
+    done
 
     if [[ -n "$brew_python" ]]; then
-        local brew_ver
-        brew_ver=$("$brew_python" --version 2>&1 | awk '{print $2}')
-        local brew_minor
-        brew_minor=$(echo "$brew_ver" | cut -d. -f2)
-        if [[ "$brew_minor" -ge 11 ]]; then
-            _ok "Python $brew_ver (Homebrew)"
-        else
-            _warn "Homebrew Python is $brew_ver — expected 3.11+"
+        _ok "Python $("$brew_python" --version 2>&1 | awk '{print $2}') ($brew_python)"
+        # If python3 on PATH is still old, alias it for this session
+        local current_ver
+        current_ver=$(python3 --version 2>&1 | awk '{print $2}')
+        local current_minor
+        current_minor=$(echo "$current_ver" | cut -d. -f2)
+        if [[ "$current_minor" -lt 11 ]]; then
+            _info "Symlinking python3 → $brew_python"
+            ln -sf "$brew_python" "$HOME/.local/bin/python3" 2>/dev/null || true
+            export PATH="$HOME/.local/bin:$PATH"
         fi
     else
-        command -v python3 &>/dev/null || _die "Python3 install failed"
-        _ok "Python $(python3 --version 2>&1 | awk '{print $2}')"
+        _warn "Python 3.11+ not found — some features won't work"
     fi
 }
 
@@ -360,15 +372,15 @@ prereq_qmd() {
     export PATH="$BUN_INSTALL/bin:$PATH"
     mkdir -p "$BUN_INSTALL/bin" "$BUN_INSTALL/install/global"
 
-    # Try install, capture output for debugging
+    # The real package is @tobilu/qmd — "qmd" alone is an empty shim
     local qmd_out
-    qmd_out=$(BUN_INSTALL="$HOME/.bun" bun install -g qmd 2>&1) || true
+    qmd_out=$(BUN_INSTALL="$HOME/.bun" bun install -g @tobilu/qmd 2>&1) || true
     _log "qmd install output: $qmd_out"
 
     if command -v qmd &>/dev/null || [[ -f "$HOME/.bun/bin/qmd" ]]; then
         _ok "qmd"
     else
-        _warn "qmd — install failed (run manually: BUN_INSTALL=~/.bun bun install -g qmd)"
+        _warn "qmd — install failed (run: BUN_INSTALL=~/.bun bun install -g @tobilu/qmd)"
         _log "qmd not found after install attempt"
     fi
 }
