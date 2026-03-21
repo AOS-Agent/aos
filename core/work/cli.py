@@ -281,44 +281,82 @@ def cmd_list(args):
             unassigned.append(t)
 
     # Display
+    all_tasks = engine.get_all_tasks()
+    print()
     for proj_id, proj_tasks in sorted(by_project.items()):
-        progress = query.project_progress(proj_id, engine.get_all_tasks())
-        print(f"\n  [{proj_id}] ({progress['done']}/{progress['total']})")
+        # Find project title
+        projects = engine.get_all_projects()
+        proj_title = proj_id
+        for p in projects:
+            if p["id"] == proj_id:
+                proj_title = p.get("title", proj_id)
+                break
+        progress = query.project_progress(proj_id, all_tasks)
+        pct = int(progress["done"] / progress["total"] * 100) if progress["total"] else 0
+        print(f"  {proj_title}")
+        print(f"  {progress['done']}/{progress['total']} done ({pct}%)")
+        print()
         _print_task_list(proj_tasks)
+        print()
 
     if unassigned:
-        print(f"\n  [unassigned]")
+        print(f"  Unassigned")
+        print()
         _print_task_list(unassigned)
+        print()
 
 
-def _print_task_list(tasks: list, indent: int = 4):
-    """Print tasks with subtask trees."""
+def _print_task_list(tasks: list, indent: int = 2):
+    """Print tasks with clean formatting."""
+    STATUS = {"active": "\033[34m>\033[0m", "todo": " ", "done": "\033[32m\u2713\033[0m", "cancelled": "\033[90m-\033[0m"}
+    PRIORITY_COLOR = {1: "\033[31m", 2: "\033[33m", 3: "", 4: "\033[90m"}
+    RESET = "\033[0m"
+    DIM = "\033[90m"
+
     for t in tasks:
-        p = t.get("priority", 0)
-        priority_marker = {1: "!!", 2: "!", 3: " ", 4: "~", 0: "?"}
-        marker = priority_marker.get(p, " ")
-        status_icon = {"active": ">", "todo": " ", "done": "x", "cancelled": "-"}.get(t.get("status"), "?")
+        status = t.get("status", "todo")
+        p = t.get("priority", 3)
+        icon = STATUS.get(status, " ")
+        p_color = PRIORITY_COLOR.get(p, "")
 
-        due = f" (due {t['due']})" if t.get("due") else ""
+        # Title — dim if done
+        title = t["title"]
+        if status == "done":
+            title = f"{DIM}{title}{RESET}"
+        elif p_color:
+            title = f"{p_color}{title}{RESET}"
+
+        # Metadata chips
+        chips = []
+        if p <= 2:
+            chips.append(f"{PRIORITY_COLOR[p]}P{p}{RESET}")
         sessions = len(t.get("sessions", []))
-        sess = f" [{sessions}s]" if sessions > 0 else ""
-        handoff_marker = " *" if t.get("handoff") else ""
+        if sessions:
+            chips.append(f"{DIM}{sessions}s{RESET}")
+        if t.get("handoff"):
+            chips.append(f"\033[35m\u2192{RESET}")
+        if t.get("due"):
+            chips.append(f"{DIM}due {t['due']}{RESET}")
 
-        # Subtask progress
         subtasks = t.get("subtasks", [])
-        sub_info = ""
         if subtasks:
             sub_done = sum(1 for s in subtasks if s.get("status") == "done")
-            sub_info = f" ({sub_done}/{len(subtasks)})"
+            chips.append(f"{DIM}{sub_done}/{len(subtasks)}{RESET}")
+
+        chip_str = f"  {' '.join(chips)}" if chips else ""
+        tid = f"{DIM}{t['id']}{RESET}"
 
         prefix = " " * indent
-        print(f"{prefix}{marker} [{status_icon}] {t['id']:12s}  {t['title']}{sub_info}{due}{sess}{handoff_marker}")
+        print(f"{prefix}  {icon}  {title}{chip_str}  {tid}")
 
-        # Print subtasks
+        # Subtasks
         for sub in subtasks:
-            sub_status = {"active": ">", "todo": " ", "done": "x", "cancelled": "-"}.get(sub.get("status"), "?")
-            sub_prefix = " " * (indent + 4)
-            print(f"{sub_prefix}  [{sub_status}] {sub['id']:14s}  {sub['title']}")
+            sub_icon = STATUS.get(sub.get("status", "todo"), " ")
+            sub_title = sub["title"]
+            if sub.get("status") == "done":
+                sub_title = f"{DIM}{sub_title}{RESET}"
+            sub_id = f"{DIM}{sub['id']}{RESET}"
+            print(f"{prefix}     {sub_icon}  {sub_title}  {sub_id}")
 
 
 def cmd_subtask(args):
