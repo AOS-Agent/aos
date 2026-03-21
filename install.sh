@@ -217,7 +217,8 @@ prereq_homebrew() {
     fi
 
     _step "Installing Homebrew..."
-    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+    # sudo is already active from main() — NONINTERACTIVE skips Homebrew's own prompts
+    NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 
     # Add to PATH for this session (Apple Silicon vs Intel)
     if [[ -f /opt/homebrew/bin/brew ]]; then
@@ -662,20 +663,24 @@ prereq_ssh() {
     # SSH / Remote Login — essential for headless Mac Mini access
     # Check if Remote Login is enabled
     local status
-    status=$(sudo systemsetup -getremotelogin 2>/dev/null | grep -i "on" || echo "")
+    status=$(sudo -n systemsetup -getremotelogin 2>/dev/null | grep -i "on" || echo "")
 
     if [[ -n "$status" ]]; then
         _skip "SSH (Remote Login)"
         return 0
     fi
 
-    # Try to enable (requires sudo — may prompt)
+    # Try to enable — reuse existing sudo ticket if available
     _step "Enabling SSH (Remote Login)..."
-    if sudo systemsetup -setremotelogin on 2>/dev/null; then
-        _ok "SSH (Remote Login)"
+    if sudo -n true 2>/dev/null || sudo -v 2>/dev/null; then
+        if sudo systemsetup -setremotelogin on 2>/dev/null; then
+            _ok "SSH (Remote Login)"
+        else
+            _warn "SSH — could not enable Remote Login (enable manually in System Settings > General > Sharing)"
+            _log "SSH enable failed — may need manual setup"
+        fi
     else
-        _warn "SSH — could not enable Remote Login (enable manually in System Settings > General > Sharing)"
-        _log "SSH enable failed — may need manual setup"
+        _warn "SSH — skipped (no sudo access). Enable manually: System Settings > General > Sharing > Remote Login"
     fi
 }
 
@@ -1802,7 +1807,7 @@ for name, job in (data.get('jobs') or {}).items():
 
     # ── Remote access ──────────────────────────────────────────
     _step "Remote access"
-    _check "SSH"            "sudo systemsetup -getremotelogin 2>/dev/null | grep -qi on"
+    _check "SSH"            "sudo -n systemsetup -getremotelogin 2>/dev/null | grep -qi on"
     _check "Tailscale"      "command -v tailscale"
     _check "Claude Remote"  "launchctl list 2>/dev/null | grep -q claude-remote"
 
@@ -1941,6 +1946,22 @@ main() {
 
     # Network check — fail fast
     _check_network
+
+    # Front-load sudo — ask once, keep the ticket alive for the entire install.
+    # Homebrew, SSH setup, and macOS provisioning all need it.
+    if ! sudo -n true 2>/dev/null; then
+        echo ""
+        echo "  ${BOLD}AOS needs admin access to install system tools.${RESET}"
+        echo "  ${MUTED}You'll only be asked once.${RESET}"
+        echo ""
+        if ! sudo -v; then
+            _die "Admin access is required. Run from an interactive terminal."
+        fi
+    fi
+    # Keep sudo ticket alive in background (refreshes every 50s)
+    ( while true; do sudo -n true 2>/dev/null; sleep 50; done ) &
+    SUDO_KEEPALIVE_PID=$!
+    trap "kill $SUDO_KEEPALIVE_PID 2>/dev/null" EXIT
 
     # Part 1: Prerequisites
     if _checkpoint_skip "prereqs"; then
