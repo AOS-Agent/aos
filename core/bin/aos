@@ -293,11 +293,17 @@ except py_compile.PyCompileError as e:
         mkdir -p "$vscode_dir"
 
         # Set terminal to open in editor area (main panel, not bottom)
-        cat > "$vscode_dir/settings.json" << 'VSSETTINGS'
-{
-  "terminal.integrated.defaultLocation": "editor"
-}
-VSSETTINGS
+        # VS Code settings: terminal in editor area, hide bottom panel
+        # Merge with existing settings if present
+        python3 -c "
+import json
+from pathlib import Path
+p = Path('$vscode_dir/settings.json')
+s = json.loads(p.read_text()) if p.exists() else {}
+s['terminal.integrated.defaultLocation'] = 'editor'
+s['terminal.integrated.tabs.enabled'] = False
+p.write_text(json.dumps(s, indent=2) + '\n')
+" 2>/dev/null
 
         cat > "$vscode_dir/tasks.json" << 'TASKS'
 {
@@ -322,6 +328,9 @@ TASKS
 
         echo ""
         echo "  Opening $EDITOR_CMD..."
+
+        # Close the bottom panel after VS Code opens
+        ( sleep 3 && "$EDITOR_CMD" --command "workbench.action.closePanel" 2>/dev/null ) &
         if [[ ! -f "$HOME/.aos/config/onboarding.yaml" ]]; then
             echo "  Claude Code will start automatically — Sahib will walk you through setup."
         else
