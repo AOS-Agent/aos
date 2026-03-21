@@ -46,6 +46,16 @@ LOG_DIR="$USER_DIR/logs"
 INSTALL_LOG="$LOG_DIR/install.log"
 MACHINE_ID_FILE="$USER_DIR/.machine-id"
 
+# ── Ensure PATH is correct (critical for resume) ────
+# On resume, prereqs are skipped but brew/bun paths are still needed.
+if [[ -f /opt/homebrew/bin/brew ]]; then
+    eval "$(/opt/homebrew/bin/brew shellenv)"
+elif [[ -f /usr/local/bin/brew ]]; then
+    eval "$(/usr/local/bin/brew shellenv)"
+fi
+export BUN_INSTALL="$HOME/.bun"
+export PATH="$HOME/.local/bin:$BUN_INSTALL/bin:$PATH"
+
 # ── Modes ──────────────────────────────────────────
 DRY_RUN=false
 CHECKPOINT_FILE="$HOME/.aos/.install-checkpoint"
@@ -269,8 +279,29 @@ prereq_python3() {
 
     _step "Installing Python 3..."
     brew install python@3.13 2>&1 | tail -1
-    command -v python3 &>/dev/null || _die "Python3 install failed"
-    _ok "Python $(python3 --version 2>&1 | awk '{print $2}')"
+
+    # Ensure brew's python3 takes priority over macOS system python
+    local brew_python=""
+    if [[ -f /opt/homebrew/bin/python3 ]]; then
+        brew_python="/opt/homebrew/bin/python3"
+    elif [[ -f /usr/local/bin/python3 ]]; then
+        brew_python="/usr/local/bin/python3"
+    fi
+
+    if [[ -n "$brew_python" ]]; then
+        local brew_ver
+        brew_ver=$("$brew_python" --version 2>&1 | awk '{print $2}')
+        local brew_minor
+        brew_minor=$(echo "$brew_ver" | cut -d. -f2)
+        if [[ "$brew_minor" -ge 11 ]]; then
+            _ok "Python $brew_ver (Homebrew)"
+        else
+            _warn "Homebrew Python is $brew_ver — expected 3.11+"
+        fi
+    else
+        command -v python3 &>/dev/null || _die "Python3 install failed"
+        _ok "Python $(python3 --version 2>&1 | awk '{print $2}')"
+    fi
 }
 
 prereq_pyyaml() {
@@ -1825,9 +1856,15 @@ assert s.get('hooks', {}).get('$hook_name')
     local cron_errors=0
     if [[ -f "$AOS_DIR/config/crons.yaml" ]]; then
         while IFS= read -r cmd_line; do
-            # Extract the actual binary/script path from the command
-            local script_path
-            script_path=$(echo "$cmd_line" | sed 's|^[a-z]*[0-9]* ||' | awk '{print $2}')
+            [[ -z "$cmd_line" ]] && continue
+            # Find the first path-like argument (contains /)
+            local script_path=""
+            for word in $cmd_line; do
+                if [[ "$word" == */* ]]; then
+                    script_path="$word"
+                    break
+                fi
+            done
             # Expand ~ to $HOME
             script_path="${script_path/#\~/$HOME}"
             if [[ -n "$script_path" ]] && [[ ! -f "$script_path" ]]; then
