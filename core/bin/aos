@@ -305,14 +305,20 @@ s['terminal.integrated.tabs.enabled'] = False
 p.write_text(json.dumps(s, indent=2) + '\n')
 " 2>/dev/null
 
-        cat > "$vscode_dir/tasks.json" << 'TASKS'
+        # Build the cld command — if onboarding isn't done, pass initial prompt
+        cld_command="cld"
+        if [[ ! -f "$HOME/.aos/config/onboarding.yaml" ]]; then
+            cld_command="cld 'Start onboarding. Read ~/.claude/skills/onboard/SKILL.md and follow the protocol.'"
+        fi
+
+        cat > "$vscode_dir/tasks.json" << TASKS
 {
   "version": "2.0.0",
   "tasks": [
     {
       "label": "Claude Code",
       "type": "shell",
-      "command": "cld",
+      "command": "${cld_command}",
       "runOptions": { "runOn": "folderOpen" },
       "presentation": {
         "reveal": "always",

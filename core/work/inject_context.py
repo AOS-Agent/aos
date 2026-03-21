@@ -39,8 +39,13 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__))))
 try:
     import engine
     import query
-except ImportError:
-    print(json.dumps({}))
+except Exception:
+    # engine.py uses Python 3.10+ syntax (str | None) — fails on 3.9
+    onboarding_file = Path.home() / ".aos" / "config" / "onboarding.yaml"
+    if not onboarding_file.exists():
+        print(json.dumps({"additionalContext": "**ONBOARDING REQUIRED**: This is a fresh install. You MUST load the onboard skill (`~/.claude/skills/onboard/SKILL.md`) and run the onboarding flow NOW before doing anything else. Read the skill file and follow its protocol."}))
+    else:
+        print(json.dumps({}))
     sys.exit(0)
 
 
