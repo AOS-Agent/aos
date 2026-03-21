@@ -125,6 +125,44 @@ Then use AskUserQuestion:
 
 If they skip, write a minimal `onboarding.yaml` with all phases marked "skipped" and exit.
 
+### Bootstrap the Work System (Onboarding as a Live Demo)
+
+**The onboarding IS the first project.** Don't just configure settings — use the work
+system to track the onboarding itself. This way the operator sees tasks being created,
+started, completed, and the dashboard filling up with real data, all during setup.
+
+**Step 1: Create the onboarding project and all its tasks:**
+
+```bash
+# Create project
+python3 ~/aos/core/work/cli.py add "Set up profile" --project onboarding --priority 2
+python3 ~/aos/core/work/cli.py add "Configure schedule" --project onboarding --priority 3
+python3 ~/aos/core/work/cli.py add "Connect integrations" --project onboarding --priority 2
+python3 ~/aos/core/work/cli.py add "Register projects" --project onboarding --priority 3
+python3 ~/aos/core/work/cli.py add "Set up daily loop" --project onboarding --priority 3
+python3 ~/aos/core/work/cli.py add "Configure trust & telemetry" --project onboarding --priority 2
+python3 ~/aos/core/work/cli.py add "Set up remote access" --project onboarding --priority 2
+```
+
+**Step 2: Tell the operator what's happening:**
+
+"I just created your first project — 'onboarding' — with 7 tasks. As we work through
+each one, I'll mark them done. By the end, you'll have a completed project in your
+dashboard showing exactly how the work system tracks things."
+
+**Step 3: At each phase start/end, use the work CLI:**
+
+```bash
+# Starting a phase:
+python3 ~/aos/core/work/cli.py start "set up profile"
+
+# Completing a phase:
+python3 ~/aos/core/work/cli.py done "set up profile"
+```
+
+Do this for EVERY phase. The operator should see tasks moving from todo → active → done
+in real time. This is the demo — not a separate thing.
+
 ---
 
 ### Phase 1: Profile
@@ -436,38 +474,169 @@ Explain briefly (no personal data, just phase timings and skip rates), then AskU
 If yes: `~/aos/core/bin/telemetry opt-in`
 If no: that's it — telemetry stays off, no data collected.
 
+Mark done: `python3 ~/aos/core/work/cli.py done "trust"`
+
 ---
 
-### Completion
+### Phase 7: Remote Access
 
-Write `~/.aos/config/onboarding.yaml`:
+This phase makes the Mac Mini accessible from other devices. It's critical for
+headless operation — the operator needs to be able to SSH in from their laptop,
+phone, or other machines.
 
-```yaml
-completed: "{timestamp}"
-version: "1.0"
-phases:
-  profile: completed    # or "skipped"
-  schedule: completed
-  integrations:
-    selected: [telegram, obsidian]
-    skipped: [whatsapp, email]
-  projects: completed
-  daily_loop: completed
-  trust: completed
-operator_name: "{name}"
+Mark start: `python3 ~/aos/core/work/cli.py start "remote access"`
+
+#### 7a. SSH / Remote Login
+
+Check current status:
+```bash
+sudo -n systemsetup -getremotelogin 2>/dev/null || echo "unknown"
 ```
 
-Then print:
+If not enabled, walk the operator through it:
+
+"Remote Login lets you SSH into this Mac from other devices. macOS requires
+you to enable it manually — I can't do it programmatically."
+
+AskUserQuestion:
+- question: "Let's enable Remote Login. I'll walk you through it."
+- options: ["Open System Settings for me", "I'll do it myself", "Skip"]
+
+If "Open System Settings for me":
+```bash
+open "x-apple.systempreferences:com.apple.preferences.sharing"
+```
+
+Then guide them step by step:
+1. "Look for 'Remote Login' in the sharing settings"
+2. "Toggle it ON"
+3. "Under 'Allow access for', select 'All users' (or add specific users)"
+4. Wait for confirmation, then verify:
+```bash
+sudo -n systemsetup -getremotelogin 2>/dev/null
+```
+
+After enabled, show them their SSH address:
+```bash
+echo "  SSH address: $(whoami)@$(hostname).local"
+echo "  Test it from another device: ssh $(whoami)@$(hostname).local"
+```
+
+#### 7b. Tailscale (Remote Access from Anywhere)
+
+Check status:
+```bash
+tailscale status 2>/dev/null
+```
+
+If Tailscale is installed but not connected:
+
+"Tailscale is installed but not connected. It gives you a private network —
+you can SSH into this Mac from your laptop, phone, or anywhere in the world.
+No port forwarding, no dynamic DNS."
+
+AskUserQuestion:
+- question: "Connect Tailscale now? Takes 30 seconds."
+- options: ["Connect now", "Skip"]
+
+If yes:
+```bash
+open "https://login.tailscale.com/start"
+```
+
+Guide them:
+1. "Sign in with Google, GitHub, or Apple"
+2. "Approve this device"
+3. Wait, then verify:
+```bash
+tailscale status
+tailscale ip -4
+```
+
+After connected, show them the full picture:
+```
+Your Mac Mini is now accessible from anywhere:
+
+  Local:     ssh {user}@{hostname}.local
+  Tailscale: ssh {user}@{tailscale_ip}
+
+Install Tailscale on your laptop/phone too — then you can
+reach this machine from anywhere without exposing it to the internet.
+```
+
+If Tailscale isn't installed:
+```bash
+brew install --cask tailscale
+open /Applications/Tailscale.app
+```
+Then follow the connection flow above.
+
+Mark done: `python3 ~/aos/core/work/cli.py done "remote access"`
+
+---
+
+### Completion — The Dashboard Moment
+
+This is the payoff. The operator has been watching tasks get created and completed
+throughout onboarding. Now show them the result.
+
+**Step 1: Mark the onboarding project complete and write onboarding.yaml:**
+
+```bash
+# Complete any remaining tasks
+python3 ~/aos/core/work/cli.py done "set up profile" 2>/dev/null
+python3 ~/aos/core/work/cli.py done "configure schedule" 2>/dev/null
+python3 ~/aos/core/work/cli.py done "connect integrations" 2>/dev/null
+python3 ~/aos/core/work/cli.py done "register projects" 2>/dev/null
+python3 ~/aos/core/work/cli.py done "set up daily loop" 2>/dev/null
+python3 ~/aos/core/work/cli.py done "trust" 2>/dev/null
+python3 ~/aos/core/work/cli.py done "remote access" 2>/dev/null
+```
+
+Write `~/.aos/config/onboarding.yaml` with completed/skipped status for each phase.
+
+**Step 2: Show the dashboard:**
+
+"Your onboarding project is complete. Let me show you the dashboard — this is
+where you'll see all your work, agents, sessions, and system health."
+
+Open the dashboard in Chrome:
+```bash
+open "http://localhost:4096"
+```
+
+Then explain what they're seeing:
+- "The main page shows system health and recent activity"
+- "The Work page shows your onboarding project — 7/7 tasks done"
+- "The Agents page shows Chief, Steward, and Advisor"
+- "This is your command center. Bookmark it."
+
+**Step 3: Show them what's next:**
+
+"You're all set. Here's what you can do now:"
 
 ```
-You're all set! AOS is personalized and ready.
-
-  aos start        open your editor with Claude Code
-  cld              quick terminal session with Chief
-  aos self-test    verify system health
-
-Welcome aboard.
+  cld                 Talk to Chief (me) anytime
+  /work add "..."     Create a task
+  /work list          See your tasks
+  aos status          Check system health
+  aos update          Pull latest updates
 ```
+
+"Just type what you need. I'm always here."
+
+**Step 4: Feedback**
+
+AskUserQuestion:
+- question: "One last thing — how was the setup experience?"
+- options: ["Smooth", "Something was confusing", "Something broke"]
+
+If confusing or broke: ask what, then file:
+```bash
+~/aos/core/bin/feedback --auto "Onboarding feedback: {response}" "onboard"
+```
+
+"Got it — filed that so it gets fixed. Thanks for the feedback."
 
 ---
 
@@ -475,6 +644,7 @@ Welcome aboard.
 
 If a session ends mid-onboarding, `onboarding.yaml` will be partially written.
 On next trigger, read it to see which phases completed and resume from there.
+Check which onboarding tasks are already done to know where to pick up.
 Show: "Looks like we got through {phases}. Picking up at {next phase}."
 
 ## Error Handling
@@ -483,39 +653,16 @@ Show: "Looks like we got through {phases}. Picking up at {next phase}."
 - Integration health check fails: warn, don't block. "Not responding yet. Verify later with `aos self-test`."
 - Operator confused/frustrated: "No worries -- skip this for now?"
 
-**Automatic error capture:** When any phase fails (setup script errors, Chrome MCP failures,
-secret store issues), automatically file feedback:
-
+**Automatic error capture:** When any phase fails, automatically file feedback:
 ```bash
 ~/aos/core/bin/feedback --auto "Onboarding: {what failed}" "onboard" "{error output}"
 ```
-
-This queues locally and pushes to GitHub Issues when the repo has a remote.
 Don't tell the operator about every filed issue — just note the failure and move on.
-The issues are there for the developer to fix later.
-
-## Post-Onboarding Feedback
-
-After the completion message, ask one final question:
-
-```
-One last thing — did anything feel off or confusing during setup?
-
-  1. Everything was smooth
-  2. Something was confusing (tell me what)
-  3. Something broke (tell me what)
-```
-
-If 2 or 3: capture their response and file it:
-```bash
-~/aos/core/bin/feedback --auto "Onboarding feedback: {their response}" "onboard"
-```
-
-Then: "Got it — filed that so it gets fixed. Thanks for the feedback."
 
 ## Important
 
 - Always use `cld` (not `claude`) when referencing CLI commands
 - Always use `~/aos/core/bin/agent-secret` for secrets -- never write to files
 - The operator may not be technical -- plain language always
+- Mark each onboarding task done as you complete each phase — this IS the demo
 - This skill runs ONCE per install. After onboarding.yaml is written, Chief never loads it again.
