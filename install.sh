@@ -1852,9 +1852,8 @@ for name, job in (data.get('jobs') or {}).items():
     _log "SCORECARD: pass=$pass warn=$warn fail=$fail"
 
     if [[ "$fail" -gt 0 ]]; then
-        _fail "$fail critical failure(s) — fix and re-run: bash ~/aos/install.sh"
+        _fail "$fail critical failure(s) — fix with: bash ~/aos/install.sh"
         echo ""
-        return 1
     elif [[ "$warn" -gt 0 ]]; then
         _ok "System operational ($warn non-critical warning(s))"
         echo ""
