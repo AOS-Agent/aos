@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# cld — Claude Code with bypassed permissions
-# Shorthand for: claude --dangerously-skip-permissions
+# cld — Claude Code with bypassed permissions, Chief as default agent
+# Shorthand for: claude --dangerously-skip-permissions --agent chief
 #
 # Usage:
-#   cld                    — start interactive session
+#   cld                    — start interactive session with Chief
 #   cld "do something"     — run with prompt
 #   cld --resume           — resume last session
 
-exec claude --dangerously-skip-permissions "$@"
+exec claude --dangerously-skip-permissions --agent chief "$@"

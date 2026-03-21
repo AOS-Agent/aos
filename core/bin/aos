@@ -288,9 +288,17 @@ except py_compile.PyCompileError as e:
             exit 1
         fi
 
-        # Write a VS Code workspace task that auto-runs cld on folder open
+        # Write VS Code workspace settings + task that auto-runs cld on folder open
         vscode_dir="$HOME/.vscode"
         mkdir -p "$vscode_dir"
+
+        # Set terminal to open in editor area (main panel, not bottom)
+        cat > "$vscode_dir/settings.json" << 'VSSETTINGS'
+{
+  "terminal.integrated.defaultLocation": "editor"
+}
+VSSETTINGS
+
         cat > "$vscode_dir/tasks.json" << 'TASKS'
 {
   "version": "2.0.0",
