@@ -114,9 +114,3 @@ jobs:
     timeout: 300
     enabled: false  # needs 4+ weekly digests first
 
-  # ── Test ─────────────────────────────────────────────────────────────────────
-
-  test-echo:
-    command: echo "scheduler is alive"
-    every: 5m
-    timeout: 10
