@@ -25,7 +25,9 @@ if [[ ! -t 0 ]]; then
     if [[ ! -d "$HOME/aos/.git" ]]; then
         git clone https://github.com/hishamalhadi/aos.git "$HOME/aos" 2>&1
     else
-        git -C "$HOME/aos" pull --ff-only 2>&1 || true
+        echo "  Updating to latest..."
+        git -C "$HOME/aos" fetch origin main 2>&1
+        git -C "$HOME/aos" reset --hard origin/main 2>&1
     fi
     # Re-exec with a real terminal attached
     exec bash "$HOME/aos/install.sh" "$@" </dev/tty
