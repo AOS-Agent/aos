@@ -247,15 +247,47 @@ thinking, your patterns. That's how it gets smarter."
 
 ### Show the Vault
 
-Open Obsidian briefly:
+"Let me show you your vault — it's where everything you learn gets stored."
+
+First, check if Obsidian already has the vault open:
 ```bash
-open -a Obsidian ~/vault/
+# Check if Obsidian is running and has the vault
+pgrep -x Obsidian && echo "running" || echo "not running"
+ls ~/vault/.obsidian 2>/dev/null && echo "vault configured" || echo "needs setup"
 ```
 
-"This is your vault — ~/vault/. It's where everything you learn gets stored.
-Daily notes, session summaries, research, ideas. It's indexed for search, so
-any agent can find what it needs. Obsidian is just the viewer — the data is
-plain markdown files."
+If Obsidian isn't running or the vault isn't connected:
+
+```bash
+open -a Obsidian
+```
+
+Then walk them through connecting the vault:
+
+"Obsidian just opened. It might ask you to open a vault — here's what to do:
+
+1. Click 'Open' (not 'Create')
+2. Navigate to your home folder
+3. Select the 'vault' folder
+4. Click 'Open'
+
+That's it — your vault is now connected to Obsidian."
+
+AskUserQuestion:
+- question: "Got it open?"
+- options: ["Yes, I can see my vault", "Need help"]
+
+If "Need help": guide them step by step. Use Chrome MCP to take a screenshot
+if needed to see what they're seeing. The vault folder is at `~/vault/`.
+
+Once connected, show them the daily note:
+
+"See your daily note? That's what you just recorded. Every morning, a new one
+gets created. Sessions get exported here. Ideas get saved here. It's all plain
+markdown — Obsidian just makes it beautiful and navigable.
+
+The vault is indexed for search every 30 minutes. Any agent can find what's
+in here. The more you put in, the more context the system has to work with."
 
 `python3 ~/aos/core/work/cli.py done "first conversation"`
 
