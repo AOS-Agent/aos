@@ -718,9 +718,22 @@ Click on BotFather in the results:
 mcp__claude-in-chrome__computer with tabId: {tab_id}, action: "click", x: {x}, y: {y}
 ```
 
-### Step 4: Send /newbot
+### Step 4: Create a NEW bot
 
-Find the message input and type /newbot:
+**IMPORTANT: Always create a new bot. Never reuse an existing one.**
+
+If you see existing bots in the BotFather chat, ignore them. Do NOT select or
+modify any existing bot. If for any reason you're about to interact with an
+existing bot, STOP and ask the operator first:
+
+AskUserQuestion:
+- question: "I see you already have bots with BotFather. I'll create a fresh one for AOS — that okay?"
+- options: ["Yes, create a new one", "Use an existing one"]
+
+If they want to use an existing one, ask which one and get the token from BotFather
+via `/token` command. Otherwise, always `/newbot`.
+
+Send /newbot — find the message input and type:
 ```
 mcp__claude-in-chrome__form_input with tabId: {tab_id}, selector: ".input-message-input", value: "/newbot"
 ```
