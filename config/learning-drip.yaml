@@ -1,228 +1,105 @@
-# AOS Learning Drip — First 14 Days
+# AOS Learning Drip — First 7 Days
 #
 # One or two Telegram messages per day teaching the operator
 # about a feature, skill, or concept. Sent at varied times
 # to feel natural, not scheduled.
 #
-# Each entry has:
-#   day: which day after onboarding (1-14)
-#   time: "morning" (with prompt), "midday", or "evening"
-#   message: the Telegram message (plain text, keep it short)
-#   skill: optional — which skill this relates to (for tracking)
-#
-# After day 14, the system switches to contextual tips
-# (triggered by behavior, not schedule).
+# After day 7, the system switches to contextual tips
+# triggered by behavior, not schedule.
 
 days:
 
-  # ── Day 1: They just finished onboarding ────────────────
+  # ── Day 1: Foundations ──────────────────────────────────
   - day: 1
     time: evening
     message: |
-      Quick tip — if your Claude session feels slow or confused, type /clear to start fresh.
+      Quick tip — if Claude's responses feel off or slow, type /clear to start fresh. It clears the conversation (like closing and reopening) but keeps all your files and settings.
 
-      It clears the context window (like RAM) but keeps all your files and settings.
-      Think of it as closing and reopening a conversation.
+      Also: press / to see all available commands. There's a lot in there.
 
-  # ── Day 2: The vault ────────────────────────────────────
+  # ── Day 2: Your vault + voice ───────────────────────────
   - day: 2
     time: morning
     message: |
-      Your knowledge vault is at ~/vault/. Everything you learn gets stored there — daily notes, session summaries, ideas, research.
+      Your knowledge vault is at ~/vault/. Daily notes, session summaries, ideas, research — it all goes there and gets indexed every 30 minutes.
 
-      Open Obsidian to browse it, or search from anywhere:
-        qmd query "what did I work on last week" -n 5
+      Open Obsidian to browse it. Or search from Claude Code: "recall what I said about my projects"
 
-      The vault is indexed every 30 minutes. The more you put in, the smarter the system gets.
+      The more you put in, the smarter the system gets.
 
   - day: 2
     time: evening
     message: |
-      Try this — tell Chief to recall something:
+      SuperWhisper works everywhere on your Mac — not just in Claude Code. Hold the shortcut key in any app and speak.
 
-        "recall what I said during onboarding about my projects"
+      And anytime you want to think out loud, just tell Chief "let me ramble" or "brain dump." It organizes your thoughts into tasks, ideas, and notes.
 
-      The /recall skill searches your vault and pulls up relevant context. It's how the system remembers what you've told it across sessions.
-
-  # ── Day 3: Work system depth ────────────────────────────
+  # ── Day 3: Work system + dashboard ──────────────────────
   - day: 3
     time: midday
     message: |
-      Your work system has more than just tasks. Try these:
+      Your work system tracks tasks, projects, and goals. Try these:
 
-        /work add "Research competitors" --priority 2
+        /work add "Research competitors"
         /work list
-        /work done "competitor research"
+        /work done "competitors"
 
-      Tasks auto-assign to the project you're working in. They link to sessions automatically.
+      Tasks auto-assign to whatever project you're working in. Check your dashboard to see it all: http://localhost:4096
 
-  - day: 3
-    time: evening
-    message: |
-      You can also create goals that span multiple projects:
-
-        /work goal "Launch by Q2"
-
-      Goals sit above projects. Projects sit above tasks. Everything rolls up — your dashboard shows the full picture.
-
-  # ── Day 4: Voice everywhere ─────────────────────────────
+  # ── Day 4: Build things + extract ───────────────────────
   - day: 4
-    time: morning
-    message: |
-      SuperWhisper works everywhere on your Mac — not just in Claude Code.
-
-      Hold the shortcut key in any app and speak. The text appears wherever your cursor is. Browser, Notes, Terminal, anywhere.
-
-      In Claude Code, you can use it to dictate instead of typing. Just hold the key and talk.
-
-  - day: 4
-    time: evening
-    message: |
-      You can also ramble anytime — not just mornings.
-
-      In Claude Code, just say "let me brain dump" or "I want to think out loud" and Chief will activate the ramble skill. It organizes your thoughts into tasks, ideas, and vault notes.
-
-  # ── Day 5: Extracting content ───────────────────────────
-  - day: 5
     time: midday
     message: |
-      Found a YouTube video or article worth saving? Paste the link and Chief will extract it.
+      Two things to try today:
 
-      Works with YouTube, Instagram, TikTok, and X/Twitter. It pulls the transcript, metadata, and saves it to your vault.
+      1. Paste any YouTube or social media link — Chief extracts the transcript and saves it to your vault.
 
-      Try it — paste any YouTube link into Claude Code.
+      2. Tell Chief to build something: "build me a landing page for my tutoring business" — it generates real, polished code you can use immediately.
 
-  # ── Day 6: The dashboard ───────────────────────────────
-  - day: 6
-    time: morning
-    message: |
-      Your dashboard is at http://localhost:4096
-
-      It updates in real time — when you complete a task in Claude Code, the dashboard reflects it instantly.
-
-      Pages to explore:
-        / — System health + activity feed
-        /work — Your tasks, projects, goals
-        /history — Every session and conversation
-        /docs — Full system documentation
-
-  - day: 6
+  # ── Day 5: Agents + delegation ──────────────────────────
+  - day: 5
     time: evening
     message: |
-      The dashboard has a docs page that explains the entire system — architecture, agents, work system, services, knowledge layer, filesystem.
+      Chief handles most things directly, but can delegate to specialists:
 
-      Worth reading once: http://localhost:4096/docs
+      • Steward — system health ("is the bridge running?")
+      • Advisor — analysis + reviews ("/review weekly")
+      • Catalog agents — aos activate engineer, aos activate developer
 
-  # ── Day 7: First weekly review ──────────────────────────
+      Chief decides who handles what. You just ask.
+
+  # ── Day 6: Context, memory, and how it all connects ─────
+  - day: 6
+    time: midday
+    message: |
+      How the system remembers:
+
+      Context window = RAM. Cleared on /clear or new session.
+      Memory files = disk. Persists forever across sessions.
+      Vault = your second brain. Searchable, indexed, permanent.
+
+      When Chief learns something important, it saves to memory automatically. You can also say "remember that I prefer X."
+
+      12 automated jobs run 24/7 behind the scenes — session exports, vault indexing, pattern analysis. Type "aos status" to see them.
+
+  # ── Day 7: Your first review ────────────────────────────
   - day: 7
     time: evening
     message: |
-      It's been a week. Try your first review:
+      One week. Try this:
 
         /review weekly
 
-      Advisor will analyze your sessions, tasks, and vault notes from this week and produce a summary — what got done, what didn't, patterns noticed, and suggestions for next week.
+      Advisor analyzes your sessions, tasks, and vault notes — what got done, what didn't, patterns noticed, and what to focus on next week.
 
-      This happens automatically every Sunday evening, but you can run it anytime.
+      This runs automatically every Sunday. But the real power is the compounding — next week's review will be smarter than this one because there's more data.
 
-  # ── Day 8: Step by step ─────────────────────────────────
-  - day: 8
-    time: midday
-    message: |
-      When something feels too big, tell Chief: "let's do this step by step"
+      The system learns. Keep using it. Bismillah.
 
-      The /step-by-step skill breaks any task into parts and presents them one at a time. One decision, one action, then next. No overwhelm.
-
-      Works for anything — setting up a server, planning a project, organizing your week.
-
-  # ── Day 9: Building things ─────────────────────────────
-  - day: 9
-    time: morning
-    message: |
-      Want to build a web page or dashboard? Tell Chief:
-
-        "build me a landing page for my tutoring business"
-
-      The frontend-design skill generates production-quality code — not generic AI templates, but distinctive, polished designs. Try it.
-
-  - day: 9
-    time: evening
-    message: |
-      You can also build with the Claude API directly:
-
-        "build me a simple chatbot using the Anthropic SDK"
-
-      The claude-api skill knows the latest API patterns and SDK usage. Good for building tools that use AI.
-
-  # ── Day 10: Agents and delegation ──────────────────────
-  - day: 10
-    time: midday
-    message: |
-      Chief can dispatch work to specialist agents. You've met Steward and Advisor. There's also a catalog:
-
-        aos activate engineer    — infrastructure + system work
-        aos activate developer   — coding + software projects
-
-      Activated agents appear in your dashboard and can be dispatched by Chief when the work matches their expertise.
-
-  # ── Day 11: Telegram power ─────────────────────────────
-  - day: 11
-    time: morning
-    message: |
-      Telegram isn't just for morning prompts. You can send commands anytime:
-
-      Send a message and Chief processes it. Ask questions, create tasks, check on things — all from your phone.
-
-      Voice notes work too — speak, and it gets transcribed and processed.
-
-  # ── Day 12: Context and memory ─────────────────────────
-  - day: 12
-    time: midday
-    message: |
-      Claude Code has two types of memory:
-
-      1. Context window — like RAM. Cleared when you /clear or start a new session.
-      2. CLAUDE.md + memory files — like disk. Persists forever across all sessions.
-
-      When Chief learns something important about you, it saves to memory automatically. You can also say "remember that I prefer X" and it gets stored.
-
-      Your memories are at ~/.claude/projects/.../memory/
-
-  # ── Day 13: Automation awareness ───────────────────────
-  - day: 13
-    time: evening
-    message: |
-      12 automated jobs run on your machine around the clock:
-
-        aos status          — see what's running
-        aos self-test       — verify everything works
-
-      The scheduler runs every 5 minutes. If the machine reboots, it auto-recovers and sends you a Telegram notification.
-
-      Check the Automations section on your dashboard to see recent runs.
-
-  # ── Day 14: You're on your own (but never alone) ───────
-  - day: 14
-    time: morning
-    message: |
-      Two weeks in. By now you've seen:
-      — Morning rambles that turn into tasks
-      — A vault that remembers what you forget
-      — Agents that handle specialist work
-      — A dashboard that shows everything at a glance
-      — Automated jobs running 24/7
-
-      The system compounds from here. Every session, every ramble, every task makes it smarter.
-
-      You don't need to learn anything else. Just use it. Talk to Chief like a person. The system adapts to you, not the other way around.
-
-      Bismillah. Keep building.
-
-# After day 14, switch to contextual tips triggered by behavior:
-# - First time they use /review → explain review options
-# - First time they paste a URL → explain extract skill
-# - Long session without breaks → suggest /clear
+# After day 7, switch to contextual tips triggered by behavior:
+# - First time they use a new skill → explain it
 # - No ramble in 3 days → gentle nudge
 # - Task overdue → surface it
-#
+# - Long session without /clear → suggest it
+# - Completed 5+ tasks → celebrate momentum
 # These are handled by the bridge, not this config file.

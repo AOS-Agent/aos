@@ -509,7 +509,7 @@ def _send_learning_drip(bot_token: str, chat_id: int, time_slot: str):
         today = datetime.now().date()
         day_number = (today - completed_date).days + 1
 
-        if day_number > 14:
+        if day_number > 7:
             return  # Past the drip period
 
         # Check if already sent this drip today
