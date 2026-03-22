@@ -3,17 +3,18 @@
 Detects when Claude's response contains a question with selectable options,
 and renders them as Telegram InlineKeyboardButtons. Also provides default
 quick-action buttons for long responses.
-
-Revert: delete this file and remove 3 integration points from telegram_channel.py.
 """
 
 import re
 import logging
+import time
 from dataclasses import dataclass
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 logger = logging.getLogger(__name__)
+
+OPTION_MAX_AGE = 3600  # 1 hour — auto-expire stale pending options
 
 # ── Detection ────────────────────────────────────────────
 
@@ -95,8 +96,17 @@ def detect_options(response_text: str) -> DetectedOptions | None:
 
 # ── Keyboard Building ───────────────────────────────────
 
-# In-memory store: session_suffix -> {index: full_option_text}
-_pending_options: dict[str, dict[int, str]] = {}
+# In-memory store: session_suffix -> {"options": {index: text}, "ts": timestamp}
+_pending_options: dict[str, dict] = {}
+
+
+def _prune_stale():
+    """Remove entries older than OPTION_MAX_AGE."""
+    cutoff = time.time() - OPTION_MAX_AGE
+    stale = [k for k, v in _pending_options.items()
+             if v.get("ts", 0) < cutoff]
+    for k in stale:
+        del _pending_options[k]
 
 
 def _session_suffix(session_id: str) -> str:
@@ -109,6 +119,7 @@ def build_option_keyboard(
     session_id: str,
 ) -> InlineKeyboardMarkup:
     """Build InlineKeyboardMarkup from detected options."""
+    _prune_stale()  # clean up old entries on each new keyboard build
     suffix = _session_suffix(session_id)
     option_map = {}
     buttons = []
@@ -118,7 +129,7 @@ def build_option_keyboard(
         label = option_text[:37] + "..." if len(option_text) > 40 else option_text
         buttons.append([InlineKeyboardButton(label, callback_data=f"opt:{suffix}:{i}")])
 
-    _pending_options[suffix] = option_map
+    _pending_options[suffix] = {"options": option_map, "ts": time.time()}
     return InlineKeyboardMarkup(buttons)
 
 

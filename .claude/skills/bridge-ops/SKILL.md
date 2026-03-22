@@ -76,7 +76,7 @@ tail -50 logs/bridge.err.log | grep getUpdates
 
 ### 5. Forum Topic Not Routing
 **Symptom**: Messages in a topic go to default handler instead of agent
-**Diagnose**: Check `TOPIC_ROUTES` in `core/services/bridge/main.py`
+**Diagnose**: Check `projects.yaml` in `~/.aos/config/` or `~/aos/config/`
 **Fix**: Ensure `message_thread_id` matches the topic's actual thread ID
 
 ## Log Analysis
@@ -138,9 +138,14 @@ Sessions stored in `data/bridge/sessions.json`:
      -d "chat_id=<FORUM_GROUP_ID>&name=<AGENT_NAME>&icon_color=7322096"
    ```
 3. Note the `message_thread_id` from the response
-4. Add to TOPIC_ROUTES in `core/services/bridge/main.py`:
-   ```python
-   <thread_id>: {"cwd": "/path/to/project", "agent": "agent-name"},
+4. Add to `~/.aos/config/projects.yaml`:
+   ```yaml
+   projects:
+     agent-name:
+       path: ~/path/to/project
+       telegram:
+         forum_group_id: <GROUP_ID>
+         forum_topic_id: <THREAD_ID>
    ```
 5. Restart bridge (safe procedure above)
 6. Test: send a message in the new topic

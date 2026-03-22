@@ -1,6 +1,7 @@
 """Telegram channel — polls for messages, routes to Claude, sends responses."""
 
 import asyncio
+import fcntl
 import json
 import logging
 import os
@@ -37,16 +38,20 @@ from evening_checkin import (
     was_checkin_replied, _save_checkin_to_daily,
 )
 from execution_logger import log_execution
+from bridge_events import bridge_event
 
 logger = logging.getLogger(__name__)
 
 # In-flight message persistence — survives bridge restarts
-_INFLIGHT_PATH = Path(__file__).resolve().parent / ".inflight.json"
+# Stored in runtime dir (~/.aos/), NOT in the git-tracked code tree
+_RUNTIME_DIR = Path.home() / ".aos" / "services" / "bridge"
+_RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+_INFLIGHT_PATH = _RUNTIME_DIR / ".inflight.json"
 
 
 def _save_inflight(chat_id: int, text: str, user_key: str,
                    thread_id: int = None, cwd: str = None):
-    """Persist an in-flight message so it can be replayed after restart."""
+    """Persist an in-flight message atomically so it can be replayed after restart."""
     data = {
         "chat_id": chat_id,
         "text": text,
@@ -56,9 +61,21 @@ def _save_inflight(chat_id: int, text: str, user_key: str,
         "timestamp": _time.time(),
     }
     try:
-        _INFLIGHT_PATH.write_text(json.dumps(data))
+        fd, tmp_path = tempfile.mkstemp(dir=_RUNTIME_DIR, suffix=".tmp")
+        with os.fdopen(fd, "w") as f:
+            fcntl.flock(f, fcntl.LOCK_EX)
+            json.dump(data, f)
+            f.flush()
+            os.fsync(f.fileno())
+            fcntl.flock(f, fcntl.LOCK_UN)
+        os.rename(tmp_path, _INFLIGHT_PATH)
+        bridge_event("inflight_saved", user_key=user_key)
     except Exception as e:
         logger.warning(f"Failed to save in-flight message: {e}")
+        try:
+            os.unlink(tmp_path)
+        except Exception:
+            pass
 
 
 def _clear_inflight():
@@ -74,10 +91,16 @@ def _load_inflight() -> dict | None:
     try:
         if not _INFLIGHT_PATH.exists():
             return None
-        data = json.loads(_INFLIGHT_PATH.read_text())
+        with open(_INFLIGHT_PATH, "r") as f:
+            fcntl.flock(f, fcntl.LOCK_SH)
+            try:
+                data = json.load(f)
+            finally:
+                fcntl.flock(f, fcntl.LOCK_UN)
         age = _time.time() - data.get("timestamp", 0)
         if age > 300:  # older than 5 minutes — stale, discard
             _INFLIGHT_PATH.unlink(missing_ok=True)
+            bridge_event("inflight_stale", level="warn", age_s=int(age))
             return None
         return data
     except Exception as e:
@@ -100,12 +123,37 @@ _SPLIT_PATTERN = re.compile(
 
 WORKSPACE = Path.home() / "aos"
 
-def _get_secret(name: str) -> str:
-    result = subprocess.run(
-        [str(WORKSPACE / "bin" / "agent-secret"), "get", name],
-        capture_output=True, text=True, timeout=5,
-    )
-    return result.stdout.strip()
+# Telegram-supported HTML tags
+_TG_TAGS = {"b", "strong", "i", "em", "u", "ins", "s", "strike", "del",
+            "code", "pre", "a", "blockquote", "tg-spoiler", "tg-emoji"}
+
+
+def _sanitize_html(text: str) -> str:
+    """Ensure all opened HTML tags are properly closed for Telegram.
+
+    Fixes unclosed <pre>, <code>, <b>, etc. that cause BadRequest errors.
+    """
+    # Track open tags (only Telegram-supported ones)
+    open_tags = []
+    for m in re.finditer(r"<(/?)(\w[\w-]*)([^>]*)>", text):
+        is_close = m.group(1) == "/"
+        tag = m.group(2).lower()
+        if tag not in _TG_TAGS:
+            continue
+        if is_close:
+            # Remove matching open tag (innermost first)
+            for i in range(len(open_tags) - 1, -1, -1):
+                if open_tags[i] == tag:
+                    open_tags.pop(i)
+                    break
+        else:
+            open_tags.append(tag)
+
+    # Close any unclosed tags in reverse order
+    for tag in reversed(open_tags):
+        text += f"</{tag}>"
+
+    return text
 
 
 class TelegramChannel:
@@ -145,6 +193,13 @@ class TelegramChannel:
     async def _ack_message(self, message):
         """React to a message with eyes to confirm receipt."""
         await self._react(message, "👀")
+
+    async def _safe_delete(self, message):
+        """Delete a message, silently ignoring errors."""
+        try:
+            await message.delete()
+        except Exception:
+            pass
 
     # ── Typing keepalive ────────────────────────────────────
 
@@ -237,11 +292,13 @@ class TelegramChannel:
         """Send a message with HTML formatting, falling back to plain text.
 
         Automatically splits messages that exceed Telegram's 4096 char limit.
+        Sanitizes HTML to close any unclosed tags before sending.
         """
         chunks = self._split_for_telegram(text)
         last_msg = None
 
         for chunk in chunks:
+            chunk = _sanitize_html(chunk)
             kwargs = {"parse_mode": "HTML"}
             if thread_id:
                 kwargs["message_thread_id"] = thread_id
@@ -258,6 +315,7 @@ class TelegramChannel:
 
     async def _edit_html(self, msg, text: str):
         """Edit a message with HTML formatting, falling back to plain text."""
+        text = _sanitize_html(text)
         try:
             await msg.edit_text(text, parse_mode="HTML")
         except BadRequest as e:
@@ -328,7 +386,7 @@ class TelegramChannel:
 
         try:
             # Start streaming from Claude
-            agent_name, events = await stream_claude(
+            agent_name, is_resumed, events = await stream_claude(
                 message=message,
                 user_key=user_key,
                 cwd=cwd,
@@ -346,6 +404,7 @@ class TelegramChannel:
                 events=events,
                 thread_id=thread_id,
                 is_dm=is_dm,
+                is_resumed=is_resumed,
             )
 
             duration_ms = int((_time.time() - start) * 1000)
@@ -562,15 +621,22 @@ class TelegramChannel:
         await self._ack_message(update.message)
         log_activity("telegram", "voice_received", summary=f"voice {update.message.voice.duration}s")
 
+        # Show processing status
+        status_msg = await update.message.reply_text("🎤 Transcribing audio...")
+
         # Download and transcribe
         try:
             voice_file = await update.message.voice.get_file()
             text = await transcribe_voice(voice_file)
         except Exception as e:
             logger.error(f"Voice transcription failed: {e}")
+            await self._safe_delete(status_msg)
             await self._react(update.message, "💔")
             await update.message.reply_text(f"Transcription failed: {e}")
+            bridge_event("voice_transcription_failed", level="error", error=str(e))
             return
+
+        await self._safe_delete(status_msg)
 
         if not text or not text.strip():
             await self._react(update.message, "💔")
@@ -680,6 +746,13 @@ class TelegramChannel:
         # Acknowledge receipt immediately
         await self._ack_message(msg)
 
+        # Show processing status for media that takes time
+        media_status_msg = None
+        if msg.video:
+            media_status_msg = await msg.reply_text("🎬 Processing video...")
+        elif msg.photo:
+            media_status_msg = await msg.reply_text("📎 Processing image...")
+
         try:
             if msg.photo:
                 # Photos: download the largest size
@@ -747,9 +820,15 @@ class TelegramChannel:
 
         except Exception as e:
             logger.error(f"Media download failed: {e}")
+            if media_status_msg:
+                await self._safe_delete(media_status_msg)
             await self._react(msg, "💔")
             await msg.reply_text(f"Failed to download media: {e}")
             return
+
+        # Clear processing status
+        if media_status_msg:
+            await self._safe_delete(media_status_msg)
 
         if not image_paths:
             await self._react(msg, "💔")
@@ -803,9 +882,14 @@ class TelegramChannel:
         result = resolve_callback(query.data)
         if not result:
             try:
-                await query.edit_message_text("(button expired)")
+                await query.edit_message_text(
+                    "This button is from an older session.\n"
+                    "Send your message again to get fresh options."
+                )
             except Exception:
                 pass
+            bridge_event("button_expired", level="info",
+                         callback_data=query.data[:30])
             return
 
         kind, message_text = result
@@ -1368,7 +1452,29 @@ class TelegramChannel:
 
     def start(self):
         """Start the Telegram bot (blocking)."""
-        self.app = Application.builder().token(self.bot_token).concurrent_updates(True).build()
+        # Global error handler — registered FIRST so no errors are ever unhandled
+        async def _error_handler(update, context):
+            logger.error(f"Unhandled error: {context.error}", exc_info=context.error)
+            if update and update.effective_chat:
+                try:
+                    await context.bot.send_message(
+                        chat_id=update.effective_chat.id,
+                        text="Something went wrong processing your message. Please try again.",
+                    )
+                except Exception:
+                    pass
+
+        self.app = (
+            Application.builder()
+            .token(self.bot_token)
+            .concurrent_updates(True)
+            .post_init(self._replay_inflight)
+            .build()
+        )
+
+        # Error handler before any message handlers
+        self.app.add_error_handler(_error_handler)
+
         self.app.add_handler(CommandHandler("new", self._handle_new))
         self.app.add_handler(CommandHandler("status", self._handle_status))
         self.app.add_handler(CommandHandler("tasks", self._handle_tasks))
@@ -1384,23 +1490,6 @@ class TelegramChannel:
         ))
         self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_message))
         self.app.add_handler(CallbackQueryHandler(self._handle_callback))
-
-        # Global error handler — no message is ever silently lost
-        async def _error_handler(update, context):
-            logger.error(f"Unhandled error: {context.error}", exc_info=context.error)
-            if update and update.effective_chat:
-                try:
-                    await context.bot.send_message(
-                        chat_id=update.effective_chat.id,
-                        text="Something went wrong processing your message. Please try again.",
-                    )
-                except Exception:
-                    pass
-
-        self.app.add_error_handler(_error_handler)
-
-        # Replay any in-flight message that was interrupted by a restart
-        self.app.post_init = self._replay_inflight
 
         logger.info(f"Telegram channel started (chat_id={self.allowed_chat_id})")
         self.app.run_polling(drop_pending_updates=True)

@@ -1,14 +1,19 @@
 """Session manager — spawns Claude Code processes and parses streaming events."""
 
 import asyncio
+import fcntl
 import json
 import logging
+import os
 import re
 import subprocess
+import tempfile
 import time
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from pathlib import Path
+
+from bridge_events import bridge_event
 
 logger = logging.getLogger("bridge.session_manager")
 
@@ -216,37 +221,91 @@ def parse_event(raw: str) -> StreamEvent | None:
 # ── Session persistence ──────────────────────────────────────
 
 
-def _load_sessions() -> dict:
-    if SESSIONS_FILE.exists():
+def _locked_json_read(path: Path) -> dict:
+    """Read a JSON file with shared (read) lock."""
+    if not path.exists():
+        return {}
+    try:
+        with open(path, "r") as f:
+            fcntl.flock(f, fcntl.LOCK_SH)
+            try:
+                return json.load(f)
+            finally:
+                fcntl.flock(f, fcntl.LOCK_UN)
+    except (json.JSONDecodeError, OSError) as e:
+        logger.warning(f"Failed to read {path.name}: {e}")
+        return {}
+
+
+def _locked_json_write(path: Path, data: dict):
+    """Write a JSON file atomically with exclusive lock.
+
+    Writes to a temp file first, then renames — so readers never see
+    a partial write even without locking on the read side.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            fcntl.flock(f, fcntl.LOCK_EX)
+            json.dump(data, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+            fcntl.flock(f, fcntl.LOCK_UN)
+        os.rename(tmp_path, path)
+    except Exception:
+        # Clean up temp file on failure
         try:
-            return json.loads(SESSIONS_FILE.read_text())
-        except (json.JSONDecodeError, OSError):
-            return {}
-    return {}
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
-def _save_sessions(sessions: dict):
-    SESSIONS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    SESSIONS_FILE.write_text(json.dumps(sessions, indent=2))
+SESSION_MAX_AGE = 24 * 3600  # 24 hours
 
 
 def get_session_id(user_key: str) -> str | None:
     """Get stored session ID for a user key."""
-    return _load_sessions().get(user_key)
+    entry = _locked_json_read(SESSIONS_FILE).get(user_key)
+    if entry is None:
+        return None
+    # Backward compat: old format stored bare session_id string
+    if isinstance(entry, str):
+        return entry
+    # Check age
+    if time.time() - entry.get("last_used", 0) > SESSION_MAX_AGE:
+        clear_session(user_key)
+        bridge_event("session_auto_expired", level="info",
+                     user_key=user_key, age_h=24)
+        return None
+    return entry.get("session_id")
 
 
 def save_session_id(user_key: str, session_id: str):
     """Persist session ID for a user key."""
-    sessions = _load_sessions()
-    sessions[user_key] = session_id
-    _save_sessions(sessions)
+    sessions = _locked_json_read(SESSIONS_FILE)
+    sessions[user_key] = {
+        "session_id": session_id,
+        "last_used": time.time(),
+    }
+    # Prune stale entries while we're writing
+    cutoff = time.time() - SESSION_MAX_AGE
+    stale = [k for k, v in sessions.items()
+             if isinstance(v, dict) and v.get("last_used", 0) < cutoff]
+    for k in stale:
+        sessions.pop(k)
+        bridge_event("session_pruned", user_key=k)
+    _locked_json_write(SESSIONS_FILE, sessions)
+    bridge_event("session_saved", user_key=user_key, session_id=session_id[:12])
 
 
 def clear_session(user_key: str):
     """Clear stored session for a user key."""
-    sessions = _load_sessions()
+    sessions = _locked_json_read(SESSIONS_FILE)
     sessions.pop(user_key, None)
-    _save_sessions(sessions)
+    _locked_json_write(SESSIONS_FILE, sessions)
+    bridge_event("session_cleared", user_key=user_key)
 
 
 # ── Agent dispatch ───────────────────────────────────────────
@@ -304,10 +363,10 @@ async def stream_claude(
     image_paths: list[str] | None = None,
     max_turns: int = 25,
     max_budget_usd: float = 5.0,
-) -> tuple[str | None, AsyncGenerator[StreamEvent, None]]:
+) -> tuple[str | None, bool, AsyncGenerator[StreamEvent, None]]:
     """Spawn a claude process and stream typed events.
 
-    Returns (agent_name, event_generator).
+    Returns (agent_name, is_resumed, event_generator).
     The caller must fully consume the generator.
     """
     agent_name, clean_message = detect_dispatch(message)
@@ -337,10 +396,14 @@ async def stream_claude(
 
     # Session resumption (not for agent dispatches — they get fresh context)
     session_id = None
+    is_resumed = False
     if not agent_name:
         session_id = get_session_id(user_key)
         if session_id:
             cmd.extend(["--resume", session_id])
+            is_resumed = True
+            bridge_event("session_resuming", user_key=user_key,
+                         session_id=session_id[:12])
 
     # Agent system prompt
     if agent_name:
@@ -348,10 +411,10 @@ async def stream_claude(
         if agent_path.exists():
             cmd.extend(["--append-system-prompt-file", str(agent_path)])
 
-    work_dir = cwd or str(WORKSPACE)
+    work_dir = cwd or str(Path.home())
 
     async def _generate():
-        nonlocal session_id
+        nonlocal session_id, is_resumed
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -416,7 +479,10 @@ async def stream_claude(
         # Handle stale session: retry without --resume
         if is_stale_session and session_id:
             logger.warning(f"Stale session {session_id} for {user_key}, retrying fresh")
+            bridge_event("session_stale", level="warn",
+                         user_key=user_key, session_id=session_id[:12])
             clear_session(user_key)
+            is_resumed = False  # override — we're starting fresh
             async for event in _retry_fresh(
                 clean_message, user_key, agent_name, work_dir,
                 max_turns, max_budget_usd,
@@ -431,7 +497,7 @@ async def stream_claude(
         # Auto-commit
         _auto_commit()
 
-    return agent_name, _generate()
+    return agent_name, is_resumed, _generate()
 
 
 async def _retry_fresh(

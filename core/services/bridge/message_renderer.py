@@ -21,6 +21,7 @@ from session_manager import (
     RateLimit,
 )
 from telegram_formatter import md_to_telegram_html
+from bridge_events import bridge_event
 
 logger = logging.getLogger("bridge.renderer")
 
@@ -121,6 +122,7 @@ async def render_stream(
     events: AsyncGenerator[StreamEvent, None],
     thread_id: int | None = None,
     is_dm: bool = False,
+    is_resumed: bool = False,
 ) -> tuple[str, SessionResult | None]:
     """Render a stream of Claude events to Telegram.
 
@@ -132,6 +134,7 @@ async def render_stream(
     last_update_time = 0.0
     tool_status_msg_id = None
     session_result = None
+    showed_session_indicator = False
     send_kwargs = {}
     if thread_id:
         send_kwargs["message_thread_id"] = thread_id
@@ -202,6 +205,12 @@ async def render_stream(
 
     # Process events
     async for event in events:
+        if isinstance(event, SessionInit):
+            if is_resumed and not showed_session_indicator:
+                await _show_tool_status("↩️ Resuming conversation...")
+                showed_session_indicator = True
+            continue
+
         if isinstance(event, TextDelta):
             # Clean up tool status when text starts flowing
             if tool_status_msg_id:
@@ -235,11 +244,20 @@ async def render_stream(
             # Full text from an assistant turn — use as authoritative
             accumulated_text = event.text
 
+        elif isinstance(event, RateLimit):
+            wait_s = max(0, event.resets_at - int(time.time()))
+            if wait_s > 0:
+                await _show_tool_status(f"⏳ Rate limited — resuming in ~{wait_s}s")
+            bridge_event("rate_limit", level="warn",
+                         status=event.status, resets_at=event.resets_at, wait_s=wait_s)
+
         elif isinstance(event, ApiRetry):
             await _show_tool_status(
                 f"API retry ({event.attempt}/{event.max_retries}), "
                 f"waiting {event.delay_ms}ms..."
             )
+            bridge_event("api_retry", level="warn",
+                         attempt=event.attempt, delay_ms=event.delay_ms)
 
         elif isinstance(event, SessionResult):
             session_result = event
