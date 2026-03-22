@@ -55,24 +55,26 @@ def _get_changelog() -> list[dict]:
             version = match.group(1)
             date = match.group(2).strip()
             body = match.group(3).strip()
-            # Extract bullet points
-            notes = [l.strip().lstrip('- ') for l in body.split('\n')
-                     if l.strip().startswith('-')]
-            # Extract section headers
-            sections = {}
-            current_section = "Changes"
-            for line in body.split('\n'):
-                if line.strip().startswith('###'):
-                    current_section = line.strip().lstrip('# ').strip()
-                    sections[current_section] = []
-                elif line.strip().startswith('-'):
-                    sections.setdefault(current_section, []).append(
-                        line.strip().lstrip('- '))
+            # Flat format: each non-empty line is a change
+            changes = [l.strip() for l in body.split('\n')
+                       if l.strip() and not l.startswith('#')]
+            # Group by prefix (Added/Changed/Fixed/Removed)
+            grouped = {"Added": [], "Changed": [], "Fixed": [], "Removed": [], "Other": []}
+            for line in changes:
+                placed = False
+                for prefix in ("Added", "Changed", "Fixed", "Removed"):
+                    if line.startswith(prefix + " "):
+                        grouped[prefix].append(line[len(prefix)+1:])
+                        placed = True
+                        break
+                if not placed:
+                    grouped["Other"].append(line)
             entries.append({
                 "version": version,
                 "date": date,
-                "notes": notes,
-                "sections": sections,
+                "changes": changes,
+                "grouped": {k: v for k, v in grouped.items() if v},
+                "total": len(changes),
             })
     return entries
 

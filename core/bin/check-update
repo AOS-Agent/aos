@@ -220,25 +220,29 @@ apply() {
         return 1
     fi
 
-    # Read release notes from CHANGELOG.md
+    # Read release notes from CHANGELOG.md — flat format, no bullets
     local release_notes
     release_notes=$(python3 -c "
 from pathlib import Path
+import re
 cl = Path('$AOS_DIR/CHANGELOG.md')
 if not cl.exists():
     print('System updated.')
     exit()
 content = cl.read_text()
 # Find the section for this version
-import re
 pattern = r'## $new_version.*?\n(.*?)(?=\n## v|\Z)'
 match = re.search(pattern, content, re.DOTALL)
 if match:
     notes = match.group(1).strip()
-    # Clean up: take first 5 bullet points
-    lines = [l.strip() for l in notes.split('\n') if l.strip().startswith('-')][:5]
-    for l in lines:
-        print(l)
+    # Take non-empty lines (flat format — each line is a change)
+    lines = [l.strip() for l in notes.split('\n') if l.strip() and not l.startswith('#')]
+    # Show first 6 for Telegram (keep it readable)
+    for l in lines[:6]:
+        # Strip leading 'Added/Changed/Fixed' prefix for cleaner display
+        print('• ' + l)
+    if len(lines) > 6:
+        print(f'... and {len(lines) - 6} more changes')
 else:
     print('System updated.')
 " 2>/dev/null)

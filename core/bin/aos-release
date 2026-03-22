@@ -69,10 +69,10 @@ echo "  ${DIM}Updated VERSION → $VERSION${RESET}"
 
 DATE=$(date +%Y-%m-%d)
 
-# Build the new entry
+# Build the new entry — flat lines, no bullets
 ENTRY="## $VERSION — $DATE"$'\n'$'\n'
 for note in "${NOTES[@]}"; do
-    ENTRY+="- $note"$'\n'
+    ENTRY+="$note"$'\n'
 done
 
 # Prepend after the header line
