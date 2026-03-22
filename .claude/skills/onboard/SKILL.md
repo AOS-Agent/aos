@@ -500,14 +500,31 @@ Verify by asking them to confirm it's enabled.
 
 ### SSH / Remote Login
 
-Check: `sudo -n systemsetup -getremotelogin 2>/dev/null`
+SSH is built into macOS — it just needs to be turned on. Try to enable it programmatically first:
 
-If not enabled:
+```bash
+# Check if already enabled
+ssh_status=$(sudo -n systemsetup -getremotelogin 2>/dev/null || echo "unknown")
+```
 
-"Remote Login needs to be turned on in System Settings. I'll open it for you."
+If not enabled, try the programmatic approach:
+
+```bash
+# Method 1: launchctl (works without Full Disk Access)
+sudo -n launchctl load -w /System/Library/LaunchDaemons/ssh.plist 2>/dev/null
+
+# Verify
+sudo -n systemsetup -getremotelogin 2>/dev/null | grep -qi "on" && echo "SSH enabled"
+```
+
+If that worked: "SSH is enabled. No manual steps needed."
+
+If it failed (no sudo or permission issue), fall back to System Settings:
+
+"I need you to enable Remote Login manually — macOS requires it."
 
 AskUserQuestion:
-- question: "Let me open System Settings — you'll toggle Remote Login on."
+- question: "Let me open System Settings for you."
 - options: ["Open it", "I'll do it myself"]
 
 If "Open it": `open "x-apple.systempreferences:com.apple.preferences.sharing"`
@@ -515,32 +532,52 @@ If "Open it": `open "x-apple.systempreferences:com.apple.preferences.sharing"`
 Walk through:
 1. "Find 'Remote Login' and toggle it ON"
 2. "Under 'Allow access for,' choose 'All users'"
-3. Wait for confirmation, verify
 
-Show SSH address:
+Either way, show the SSH address:
 ```bash
 echo "Your SSH address: $(whoami)@$(hostname).local"
 ```
 
 ### Tailscale
 
-Check: `tailscale status 2>/dev/null`
+"Tailscale gives you a private network. You can SSH into this Mac from
+anywhere — coffee shop, airport, different country. No port forwarding."
 
-If not connected:
+Check if installed and status:
+```bash
+command -v tailscale && tailscale status 2>/dev/null || echo "not installed"
+```
 
-"Tailscale gives you a private network. Once both this Mac and your laptop are on it,
-you can SSH in from anywhere — coffee shop, airport, different country. No port
-forwarding, no dynamic DNS. It just works."
+If not installed — install via Homebrew (no browser needed):
+```bash
+brew install tailscale
+```
+
+Then start and authenticate:
+```bash
+# Start the Tailscale daemon
+sudo -n tailscaled install-system-daemon 2>/dev/null || brew services start tailscale
+
+# Authenticate — this prints a URL for the operator to visit
+sudo -n tailscale up 2>/dev/null || tailscale up
+```
+
+The `tailscale up` command prints an auth URL. Tell the operator:
+
+"Tailscale printed a link. Open it on your phone or laptop, sign in
+(Google, GitHub, or Apple), and approve this device."
 
 AskUserQuestion:
-- question: "Set up Tailscale? Takes 30 seconds."
-- options: ["Let's do it", "I'll set this up later"]
+- question: "Approved the device?"
+- options: ["Yes, it's connected"]
 
-If yes:
-- If not installed: `brew install --cask tailscale && open /Applications/Tailscale.app`
-- If installed: `open "https://login.tailscale.com/start"`
+Verify:
+```bash
+tailscale status
+tailscale ip -4
+```
 
-Guide through: sign in → approve device → verify with `tailscale status`
+If already installed but not connected, just run `tailscale up`.
 
 Show the result:
 ```
