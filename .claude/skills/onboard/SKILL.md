@@ -816,9 +816,27 @@ if updates: print(updates[-1]['message']['chat']['id'])
 ~/aos/core/bin/agent-secret set TELEGRAM_CHAT_ID "$chat_id"
 ```
 
-### Step 8: Send Test Message
+### Step 8: Restart Bridge + Send Test Message
 
-Read the operator's agent name from operator.yaml (default: Chief).
+The bridge service started at install time but had no Telegram credentials.
+Now that we've stored the token and chat_id, restart it so it picks them up:
+
+```bash
+# Restart the bridge so it connects to Telegram with the new credentials
+launchctl unload ~/Library/LaunchAgents/com.aos.bridge.plist 2>/dev/null
+sleep 1
+launchctl load ~/Library/LaunchAgents/com.aos.bridge.plist 2>/dev/null
+sleep 3
+# Verify it's running
+launchctl list 2>/dev/null | grep com.aos.bridge && echo "Bridge running" || echo "Bridge failed to start"
+```
+
+If the bridge didn't start, check the error log:
+```bash
+tail -5 ~/.aos/logs/bridge.err.log 2>/dev/null
+```
+
+Now send the introduction message. Read the operator's agent name from operator.yaml (default: Chief).
 
 ```bash
 token=$(~/aos/core/bin/agent-secret get TELEGRAM_BOT_TOKEN)
