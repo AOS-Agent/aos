@@ -584,6 +584,50 @@ p.write_text(json.dumps(s, indent=2) + '\n')
         echo "  Run 'cld' to start a session with $new_name."
         ;;
 
+    repair)
+        # Full repair — pull latest, rebuild venvs, reload services, fix config
+        echo ""
+        echo "  Repairing AOS..."
+        echo ""
+
+        # Pull latest
+        echo "  Pulling latest..."
+        git -C "$AOS_DIR" pull origin main 2>&1 | tail -3
+        echo ""
+
+        # Delete and rebuild venvs
+        echo "  Rebuilding service venvs..."
+        for svc in bridge dashboard listen memory; do
+            rm -rf "$HOME/.aos/services/$svc/.venv"
+        done
+        bash "$0" deploy
+        echo ""
+
+        # Migrate secrets to login keychain
+        echo "  Migrating secrets..."
+        bash "$AOS_DIR/core/bin/agent-secret" migrate 2>/dev/null || true
+
+        # Repair hooks in settings.json
+        echo "  Repairing settings..."
+        bash "$AOS_DIR/install.sh" 2>/dev/null | grep -E "patched|repaired|OK|CHANGED" || true
+
+        # Sync agents and skills
+        echo "  Syncing agents..."
+        bash "$0" sync-agents 2>/dev/null
+        bash "$0" sync-skills 2>/dev/null
+
+        # Reload all LaunchAgents
+        echo "  Reloading services..."
+        for la in com.aos.scheduler com.aos.bridge com.aos.dashboard com.aos.listen; do
+            launchctl unload "$HOME/Library/LaunchAgents/${la}.plist" 2>/dev/null
+            launchctl load "$HOME/Library/LaunchAgents/${la}.plist" 2>/dev/null
+        done
+
+        echo ""
+        echo "  Repair complete. Run 'aos self-test' to verify."
+        echo ""
+        ;;
+
     help|--help|-h)
         echo "AOS — Agentic Operating System"
         echo ""
@@ -605,6 +649,7 @@ p.write_text(json.dumps(s, indent=2) + '\n')
         echo "  migrate         Run pending migrations"
         echo "  feedback         Report a bug or issue (auto-files to GitHub)"
         echo "  rename-agent     Rename your main agent (aos rename-agent sahib)"
+        echo "  repair           Pull latest, rebuild venvs, reload everything"
         echo "  telemetry        Anonymous usage telemetry (opt-in/out/report)"
         echo "  sessions         View recorded onboarding/setup sessions"
         echo "  discover        Scan machine for existing setup"
