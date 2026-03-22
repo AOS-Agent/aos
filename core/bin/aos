@@ -366,9 +366,27 @@ TASKS
             echo "  Deploying $name..."
             mkdir -p "$dst"
 
-            # Create or rebuild venv
+            # Create or rebuild venv — use Homebrew python, not system 3.9
             if [ ! -d "$dst/.venv" ]; then
-                uv venv "$dst/.venv" --quiet
+                # Find the best python (prefer homebrew, fall back to PATH)
+                local py_bin=""
+                for p in /opt/homebrew/bin/python3 "$HOME/.local/bin/python3" python3; do
+                    if command -v "$p" &>/dev/null; then
+                        local ver
+                        ver=$("$p" --version 2>&1 | awk '{print $2}')
+                        local minor
+                        minor=$(echo "$ver" | cut -d. -f2)
+                        if [[ "$minor" -ge 11 ]]; then
+                            py_bin="$p"
+                            break
+                        fi
+                    fi
+                done
+                if [[ -n "$py_bin" ]]; then
+                    uv venv "$dst/.venv" --python "$py_bin" --quiet
+                else
+                    uv venv "$dst/.venv" --quiet
+                fi
                 echo "    Created venv"
             fi
 

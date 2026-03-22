@@ -926,6 +926,18 @@ run_bootstrap() {
         _ok "Machine ID: $machine_id"
     fi
 
+    # Create agent keychain for secrets (if it doesn't exist)
+    if security list-keychains 2>/dev/null | grep -q "agent.keychain"; then
+        _skip "Agent keychain"
+    else
+        security create-keychain -p "" agent.keychain 2>/dev/null
+        # Add to search list so agent-secret can find it
+        security list-keychains -s login.keychain-db agent.keychain-db $(security list-keychains | tr -d '"' | tr '\n' ' ') 2>/dev/null
+        # Set no-lock so services can access it without password
+        security set-keychain-settings agent.keychain 2>/dev/null
+        _ok "Agent keychain created"
+    fi
+
     # Create project directory
     local project_dir="$HOME/project"
     if [[ -d "$project_dir" ]]; then
@@ -1223,7 +1235,19 @@ deploy_services() {
             mkdir -p "$dst"
 
             # Each service deploy is best-effort — don't kill the install
-            if uv venv "$dst/.venv" --quiet 2>/dev/null && \
+            # Use Homebrew python for venv, not system 3.9
+            local py_flag=""
+            for p in /opt/homebrew/bin/python3 "$HOME/.local/bin/python3"; do
+                if [[ -f "$p" ]]; then
+                    local pver
+                    pver=$("$p" --version 2>&1 | awk '{print $2}' | cut -d. -f2)
+                    if [[ "$pver" -ge 11 ]]; then
+                        py_flag="--python $p"
+                        break
+                    fi
+                fi
+            done
+            if uv venv "$dst/.venv" $py_flag --quiet 2>/dev/null && \
                uv pip install --quiet -p "$dst/.venv/bin/python" \
                  -r <(python3 -c "
 import re, sys
@@ -1911,8 +1935,13 @@ assert s.get('hooks', {}).get('$hook_name')
     for svc in bridge dashboard listen memory; do
         _check "Service $svc venv" "[[ -f '$USER_DIR/services/$svc/.venv/bin/python' ]]" critical
     done
+    # Verify critical imports in service venvs
+    _check "Bridge: yaml+httpx" "'$USER_DIR/services/bridge/.venv/bin/python' -c 'import yaml, httpx'"
+    _check "Dashboard: yaml+httpx" "'$USER_DIR/services/dashboard/.venv/bin/python' -c 'import yaml, httpx, fastapi'"
+    _check "Listen: yaml+fastapi" "'$USER_DIR/services/listen/.venv/bin/python' -c 'import yaml, fastapi'"
 
-    # NLTK removed — memory service doesn't use it
+    # Agent keychain
+    _check "Agent keychain" "security list-keychains 2>/dev/null | grep -q agent.keychain"
 
     # ── LaunchAgents ───────────────────────────────────────────
     _step "LaunchAgents"
