@@ -1,0 +1,144 @@
+#!/usr/bin/env bash
+# aos-release — tag a version, merge to main, push
+#
+# Usage:
+#   aos-release v0.2.1 "Fixed voice transcription on Intel Macs"
+#   aos-release v0.3.0 "Morning ramble system" "Voice notes → tasks" "7-day learning drip"
+#
+# What it does:
+#   1. Verifies you're on dev branch with clean working tree
+#   2. Updates VERSION file
+#   3. Prepends release notes to CHANGELOG.md
+#   4. Commits the release
+#   5. Merges dev → main (fast-forward)
+#   6. Tags the release on main
+#   7. Pushes main + tag to origin
+#   8. Switches back to dev
+#
+# Users' machines auto-update at 4am from main.
+# They get a Telegram notification with the release notes.
+
+set -euo pipefail
+
+AOS_DIR="$HOME/aos"
+VERSION_FILE="$AOS_DIR/VERSION"
+CHANGELOG="$AOS_DIR/CHANGELOG.md"
+
+RED=$'\033[31m' GREEN=$'\033[32m' YELLOW=$'\033[33m'
+BOLD=$'\033[1m' DIM=$'\033[2m' RESET=$'\033[0m'
+
+die() { echo "  ${RED}$*${RESET}" >&2; exit 1; }
+
+# ── Validate ─────────────────────────────────────────
+
+VERSION="${1:-}"
+shift || true
+
+[[ -z "$VERSION" ]] && die "Usage: aos-release <version> <note1> [note2] [note3] ..."
+[[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "Version must be like v0.2.1"
+
+# Collect release notes from remaining args
+NOTES=("$@")
+[[ ${#NOTES[@]} -eq 0 ]] && die "Provide at least one release note"
+
+cd "$AOS_DIR"
+
+# Must be on dev branch
+BRANCH=$(git branch --show-current)
+[[ "$BRANCH" != "dev" ]] && die "Must be on dev branch (currently on $BRANCH)"
+
+# Working tree must be clean
+if [[ -n "$(git status --porcelain)" ]]; then
+    echo ""
+    echo "  ${YELLOW}Uncommitted changes:${RESET}"
+    git status --short | head -10
+    echo ""
+    die "Commit or stash changes before releasing"
+fi
+
+echo ""
+echo "  ${BOLD}Releasing AOS $VERSION${RESET}"
+echo ""
+
+# ── Step 1: Update VERSION file ──────────────────────
+
+echo "$VERSION" > "$VERSION_FILE"
+echo "  ${DIM}Updated VERSION → $VERSION${RESET}"
+
+# ── Step 2: Prepend to CHANGELOG.md ──────────────────
+
+DATE=$(date +%Y-%m-%d)
+
+# Build the new entry
+ENTRY="## $VERSION — $DATE"$'\n'$'\n'
+for note in "${NOTES[@]}"; do
+    ENTRY+="- $note"$'\n'
+done
+
+# Prepend after the header line
+if [[ -f "$CHANGELOG" ]]; then
+    # Insert after "# AOS Changelog" header
+    python3 -c "
+from pathlib import Path
+cl = Path('$CHANGELOG')
+content = cl.read_text()
+header = '# AOS Changelog'
+if header in content:
+    parts = content.split(header, 1)
+    new = parts[0] + header + '\n\n' + '''$ENTRY''' + '\n' + parts[1].lstrip()
+    cl.write_text(new)
+else:
+    cl.write_text(header + '\n\n' + '''$ENTRY''' + '\n' + content)
+"
+else
+    echo "# AOS Changelog" > "$CHANGELOG"
+    echo "" >> "$CHANGELOG"
+    echo "$ENTRY" >> "$CHANGELOG"
+fi
+echo "  ${DIM}Updated CHANGELOG.md${RESET}"
+
+# ── Step 3: Commit on dev ────────────────────────────
+
+git add VERSION CHANGELOG.md
+git commit -m "release: $VERSION" --quiet
+echo "  ${DIM}Committed on dev${RESET}"
+
+# ── Step 4: Merge to main ────────────────────────────
+
+git checkout main --quiet
+git merge dev --ff-only --quiet
+echo "  ${DIM}Merged dev → main${RESET}"
+
+# ── Step 5: Tag ──────────────────────────────────────
+
+# Build tag message from notes
+TAG_MSG="$VERSION"$'\n'$'\n'
+for note in "${NOTES[@]}"; do
+    TAG_MSG+="- $note"$'\n'
+done
+
+git tag -a "$VERSION" -m "$TAG_MSG"
+echo "  ${DIM}Tagged $VERSION${RESET}"
+
+# ── Step 6: Push ─────────────────────────────────────
+
+git push origin main --quiet 2>&1
+git push origin "$VERSION" --quiet 2>&1
+echo "  ${DIM}Pushed main + tag${RESET}"
+
+# ── Step 7: Back to dev ──────────────────────────────
+
+git checkout dev --quiet
+# Merge main back so dev has the version commit
+git merge main --ff-only --quiet 2>/dev/null || true
+git push origin dev --quiet 2>&1
+
+echo ""
+echo "  ${GREEN}${BOLD}Released AOS $VERSION${RESET}"
+echo ""
+for note in "${NOTES[@]}"; do
+    echo "  ${DIM}- $note${RESET}"
+done
+echo ""
+echo "  ${DIM}Users auto-update at 4am. Telegram notification on apply.${RESET}"
+echo ""
