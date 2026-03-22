@@ -278,12 +278,20 @@ except py_compile.PyCompileError as e:
         if [[ -f "$EDITOR_FILE" ]]; then
             EDITOR_CMD=$(cat "$EDITOR_FILE")
         else
-            command -v cursor &>/dev/null && EDITOR_CMD="cursor"
             command -v code &>/dev/null && EDITOR_CMD="code"
         fi
 
+        # If 'code' isn't on PATH but VS Code app exists, fix the symlink
+        if [[ -z "$EDITOR_CMD" ]] && [[ -d "/Applications/Visual Studio Code.app" ]]; then
+            local code_bin="/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code"
+            if [[ -x "$code_bin" ]]; then
+                ln -sf "$code_bin" /usr/local/bin/code 2>/dev/null || true
+                command -v code &>/dev/null && EDITOR_CMD="code"
+            fi
+        fi
+
         if [[ -z "$EDITOR_CMD" ]]; then
-            echo "No editor found. Install VS Code or Cursor, then run aos start."
+            echo "VS Code not found. Install it, then run aos start."
             echo "Or run cld directly: cld"
             exit 1
         fi

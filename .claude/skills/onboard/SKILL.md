@@ -338,7 +338,35 @@ AskUserQuestion:
 
 If yes, follow the Telegram Chrome MCP Protocol (below).
 
-**Email, WhatsApp, GitHub** — ask based on what they mentioned:
+**GitHub** (always set up — required for code workflows):
+
+"GitHub is how your agents interact with code — pull requests, issues, repositories.
+Let's sign you in."
+
+```bash
+if gh auth status &>/dev/null 2>&1; then
+    echo "Already authenticated"
+else
+    gh auth login --web --git-protocol https
+fi
+```
+
+"A browser window will open — sign in to GitHub and authorize the CLI."
+
+AskUserQuestion:
+- question: "Signed in to GitHub?"
+- options: ["Yes, it worked", "Need help"]
+
+If "Need help": check `gh auth status` for error details and guide them through it.
+
+Verify:
+```bash
+gh auth status
+```
+
+"Good — your agents can now create PRs, manage issues, and work with your repos."
+
+**Email, WhatsApp** — ask based on what they mentioned:
 
 For each relevant tool:
 AskUserQuestion:

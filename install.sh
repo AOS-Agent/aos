@@ -416,68 +416,40 @@ prereq_gh() {
 }
 
 prereq_editor() {
-    # Check if any supported editor is already installed
-    local found=""
-    local editor_cmd=""
-    command -v code &>/dev/null && found="VS Code" && editor_cmd="code"
-    [[ -d "/Applications/Cursor.app" ]] && found="Cursor" && editor_cmd="cursor"
-    [[ -d "/Applications/Antigravity.app" ]] && found="Antigravity" && editor_cmd="antigravity"
-
-    if [[ -n "$found" ]]; then
-        _save_editor "$editor_cmd"
-        _skip "$found"
+    # VS Code is the default editor for AOS
+    if command -v code &>/dev/null; then
+        _save_editor "code"
+        _skip "VS Code"
         return 0
     fi
 
-    echo ""
-    echo "  ${BOLD}Which code editor would you like?${RESET}"
-    echo ""
-    echo "    1) VS Code          (free, most extensions)"
-    echo "    2) Cursor            (AI-native, VS Code fork)"
-    echo "    3) Antigravity       (lightweight, fast)"
-    echo "    4) Skip              (install one yourself later)"
-    echo ""
-    printf "  Choice [1-4]: "
-    read -r editor_choice
+    # Check if VS Code app exists but CLI isn't on PATH yet
+    if [[ -d "/Applications/Visual Studio Code.app" ]]; then
+        # Install the 'code' CLI command
+        local code_bin="/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code"
+        if [[ -x "$code_bin" ]]; then
+            ln -sf "$code_bin" /usr/local/bin/code 2>/dev/null || true
+        fi
+        if command -v code &>/dev/null; then
+            _save_editor "code"
+            _skip "VS Code"
+            return 0
+        fi
+    fi
 
-    case "${editor_choice:-1}" in
-        1)
-            _info "Installing VS Code..."
-            brew install --cask visual-studio-code 2>&1 | tail -3
-            if command -v code &>/dev/null; then
-                _ok "VS Code"
-                _save_editor "code"
-            else
-                _warn "VS Code install failed"
-            fi
-            ;;
-        2)
-            _info "Installing Cursor..."
-            brew install --cask cursor 2>&1 | tail -3
-            if [[ -d "/Applications/Cursor.app" ]]; then
-                _ok "Cursor"
-                _save_editor "cursor"
-            else
-                _warn "Cursor install failed"
-            fi
-            ;;
-        3)
-            _info "Opening Antigravity download page..."
-            open "https://antigravity.app" 2>/dev/null || true
-            echo ""
-            echo "  ${MUTED}Install Antigravity, then press Enter to continue.${RESET}"
-            read -r
-            if [[ -d "/Applications/Antigravity.app" ]]; then
-                _ok "Antigravity"
-                _save_editor "antigravity"
-            else
-                _warn "Antigravity not found in /Applications — you can install it later"
-            fi
-            ;;
-        4|*)
-            _info "Skipping editor install"
-            ;;
-    esac
+    _info "Installing VS Code..."
+    brew install --cask visual-studio-code 2>&1 | tail -3
+    if [[ -d "/Applications/Visual Studio Code.app" ]]; then
+        # Ensure 'code' CLI is on PATH
+        local code_bin="/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code"
+        if [[ -x "$code_bin" ]] && ! command -v code &>/dev/null; then
+            ln -sf "$code_bin" /usr/local/bin/code 2>/dev/null || true
+        fi
+        _ok "VS Code"
+        _save_editor "code"
+    else
+        _warn "VS Code install failed — install it manually later"
+    fi
 }
 
 _save_editor() {
