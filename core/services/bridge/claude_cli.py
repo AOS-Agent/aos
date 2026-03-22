@@ -161,9 +161,8 @@ def _build_cmd(clean_message: str, agent_name: str | None, user_key: str,
         "claude", "-p", clean_message,
         "--output-format", output_format,
         "--allowedTools", "*",
-        "--dangerouslySkipPermissions",
+        "--dangerously-skip-permissions",
         "--chrome",
-        "--cwd", str(Path.home()),
     ]
 
     if output_format == "stream-json":
