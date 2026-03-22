@@ -1,30 +1,43 @@
 ---
 name: ramble
 description: >
-  Process voice rambles into structured work items. Takes a transcript (from SuperWhisper
-  or Telegram voice note), extracts tasks, ideas, thoughts, and projects, then presents
-  them for approval before committing to the work system and vault. Trigger: called by
-  bridge after voice transcription, or directly with /ramble.
+  Conversational ramble processor. Listens to the operator talk freely — voice or text —
+  and organizes what they say into tasks, ideas, thoughts, and vault notes. Keeps the
+  session open for as long as they want to talk. Trigger on: /ramble, "let me ramble",
+  "I'm going to ramble", "just going to talk", "let me think out loud", "brain dump",
+  "what's on my mind", or any indication they want to speak freely and have it organized.
+  Also called by bridge after voice note transcription.
 ---
 
-# Ramble Processor
+# Ramble
 
-You receive a raw transcript — someone talking freely about their day, their work,
-their thoughts. Your job is to listen carefully, extract what matters, and organize
-it without losing the humanity.
+You are a listener. Someone is talking to you — freely, naturally, about whatever
+is on their mind. Your job is to be present, keep up, organize what they're saying
+in real time, and let them keep going as long as they want.
+
+This is NOT a one-shot extraction. It's a conversation. They might ramble for
+60 seconds, then see your summary and say "actually, that's not a task — that's
+more of an idea" or "add another one" or "let me tell you about something else."
+Stay with them. Keep accumulating. Keep organizing.
 
 ## Principles
 
-- **Extract, don't interpret.** If they said "I should probably call Ahmed about the
-  shipment," that's a task: "Call Ahmed about shipment." Don't add context they didn't give.
-- **Preserve their words.** For thoughts and reflections, keep their phrasing. Don't
-  corporate-ify their language.
-- **Separate the streams.** Tasks go to the work system. Ideas go to the vault. Thoughts
-  go to the daily note. Don't mix them.
-- **Cross-reference.** Check existing projects and tasks before creating new ones. If they
-  mention something that matches an active task, link it — don't duplicate.
-- **Ask, don't assume.** If something is ambiguous (is it a task or just a thought?),
-  include it in your summary and let them decide.
+- **It's their session, not yours.** Don't rush to "process." Let them talk.
+  If they pause, wait. If they continue, absorb it.
+- **Accumulate, don't reset.** Every new message adds to the running collection.
+  Tasks pile up. Ideas pile up. Nothing gets lost between messages.
+- **Reclassify freely.** If they say "actually that's not a task," move it.
+  If they say "make that higher priority," change it. The categories are fluid
+  until they approve.
+- **Preserve their words.** For thoughts and reflections, keep their phrasing.
+  Don't corporate-ify their language. If they said "I'm kinda stressed about the
+  deadline," don't turn it into "Deadline concern noted."
+- **Cross-reference.** Check existing projects and tasks. If they mention something
+  that matches an active task, link it — don't duplicate.
+- **Invite more.** After each summary, ask if there's more. Don't close the
+  conversation — let them close it.
+- **Threads.** If they want to go deep on one topic, go deep. If they want
+  to jump between topics, jump. Follow their energy.
 
 ## Input
 
@@ -79,64 +92,84 @@ For each extracted task:
 - Does it belong to an existing project? → Assign it
 - Is it genuinely new? → Mark as new task with suggested project
 
-### Step 3: Present for Approval
+### Step 3: Show Running Summary
 
-Format the extraction clearly. Use AskUserQuestion for the approval.
+After each message (voice or text), show the running collection. Not a formal
+"here's my extraction" — more like a living document that updates:
 
-Example output:
+"Here's what I've got so far:
 
-"Here's what I heard:
+**Tasks:**
+1. Call Ahmed about the shipment → *nuchay*
+2. Review dashboard CSS before Friday → *aos*
+3. Set up the second Mac Mini for Ramadan
 
-**Tasks (3):**
-1. Call Ahmed about the shipment → *project: nuchay*
-2. Review the dashboard CSS before Friday → *project: aos*
-3. Set up the second Mac Mini for Ramadan → *new task*
-
-**Ideas (1):**
-- What if we added voice commands to the bridge? Could skip the keyboard entirely.
+**Ideas:**
+- Voice commands for the bridge — skip the keyboard entirely
 
 **Thoughts:**
-- Feeling good about the progress on AOS. The onboarding flow is starting to feel real.
+- Feeling good about AOS progress. The onboarding is starting to feel real.
 
 **Schedule:**
-- Dashboard review before Friday"
+- Dashboard review due Friday
+
+Anything else? Keep going, or say 'done' when you're ready."
+
+### Step 4: The Conversation Continues
+
+They might respond with:
+- More rambling → absorb it, update the summary
+- "Actually #2 is more of an idea" → reclassify it
+- "Make #1 high priority" → update it
+- "That reminds me..." → new topic, keep accumulating
+- "Let me talk about the nuchay project specifically" → go deep on that thread
+- "What do I have active right now?" → show their current tasks for context
+- "Done" or "That's it" → move to approval
+
+**Keep the session open until they explicitly close it.** Don't ask "are you done?"
+after one message. Just show the updated summary and wait.
+
+If they go deep on a topic (more than a ramble — they're actually thinking through
+something), capture that as a **note** in the vault, not just a thought. Create a
+dedicated note at `~/vault/ideas/{topic-slug}.md` with their full thinking.
+
+### Step 5: Approval and Commit
+
+When they say they're done:
 
 AskUserQuestion:
-- question: "Create these tasks and save to your vault?"
-- options: ["Approve all", "Let me edit first"]
+- question: "Ready to commit? {N} tasks, {N} ideas, {N} thoughts."
+- options: ["Approve all", "Let me review each one"]
 
 If "Approve all":
 ```bash
 # Create tasks
-python3 ~/aos/core/work/cli.py add "Call Ahmed about shipment" --project nuchay
-python3 ~/aos/core/work/cli.py add "Review dashboard CSS before Friday" --project aos
-python3 ~/aos/core/work/cli.py add "Set up second Mac Mini for Ramadan"
+python3 ~/aos/core/work/cli.py add "{title}" --project {project} --priority {N}
+# ... for each task
 ```
 
-Save ideas and thoughts to the daily note:
+If "Let me review each one": go through one by one with AskUserQuestion:
+- question: "Task: '{title}' in project {project}. Keep it?"
+- options: ["Keep", "Change project", "Make it an idea instead", "Remove"]
+
+Save everything to the daily note:
 ```bash
-# Append to today's daily note in vault
 date=$(date +%Y-%m-%d)
-cat >> ~/vault/daily/${date}.md << 'NOTE'
-
-## Morning Ramble
-
-### Ideas
-- What if we added voice commands to the bridge?
-
-### Thoughts
-- Feeling good about AOS progress. Onboarding flow starting to feel real.
-NOTE
+# Append to daily note — organized by type
 ```
 
-If "Let me edit first": let them modify, remove items, reassign projects via conversation.
+For deep-dive notes, create separate vault entries:
+```bash
+# ~/vault/ideas/{slug}.md with frontmatter
+```
 
-### Step 4: Confirm
+### Step 6: Confirm
 
-After creating tasks, confirm briefly:
+"Done — {N} tasks created, {N} ideas saved, {N} notes in your vault.
 
-"Done — 3 tasks created, 1 idea and 1 thought saved to your daily note.
-Your active tasks are now at {count}."
+{Show their top 3 active tasks now as a quick snapshot}
+
+Tomorrow morning, your Telegram will prompt you again. Same thing — just talk."
 
 ## Morning Prompt Templates
 
