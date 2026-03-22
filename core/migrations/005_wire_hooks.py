@@ -47,15 +47,27 @@ def _save_settings(data: dict):
 
 
 def _hook_installed(settings: dict, event: str, command: str) -> bool:
-    """Check if a specific hook command is already registered."""
+    """Check if a specific hook command is already registered.
+
+    Handles both flat format (command directly in list) and nested format
+    ({"hooks": [{"type": "command", "command": "..."}]}).
+    """
     hooks = settings.get("hooks", {})
     event_hooks = hooks.get(event, [])
-    if isinstance(event_hooks, list):
-        return any(
-            (isinstance(h, dict) and h.get("command") == command) or
-            (isinstance(h, str) and h == command)
-            for h in event_hooks
-        )
+    if not isinstance(event_hooks, list):
+        return False
+    for h in event_hooks:
+        # Flat format: {"command": "..."}
+        if isinstance(h, dict) and h.get("command") == command:
+            return True
+        # String format
+        if isinstance(h, str) and h == command:
+            return True
+        # Nested format: {"hooks": [{"command": "..."}]}
+        if isinstance(h, dict) and "hooks" in h:
+            for inner in h["hooks"]:
+                if isinstance(inner, dict) and inner.get("command") == command:
+                    return True
     return False
 
 

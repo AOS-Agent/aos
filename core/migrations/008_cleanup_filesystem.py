@@ -42,9 +42,10 @@ def _find_issues() -> list[str]:
     issues = []
 
     # Framework dirs that should be empty or not exist
+    # (symlinks to ~/.aos/ are fine — they're compatibility shims)
     for d in ["data", "logs"]:
         p = AOS_DIR / d
-        if p.exists() and any(p.iterdir()):
+        if p.exists() and not p.is_symlink() and any(p.iterdir()):
             issues.append(f"~/aos/{d}/ has instance data")
 
     # Leftover .aos-v2

@@ -48,7 +48,7 @@ case "${1:-help}" in
         mkdir -p "$TARGET"
 
         # Default skills — installed for everyone
-        DEFAULT_SKILLS="recall work review step-by-step obsidian-cli extract telegram-admin bridge-ops marketing diagram session-analysis frontend-design architect skill-creator skill-scanner"
+        DEFAULT_SKILLS="recall work review step-by-step obsidian-cli extract telegram-admin bridge-ops marketing diagram session-analysis frontend-design architect skill-creator skill-scanner ramble"
 
         # Developer skills — opt-in via 'aos sync-skills --all' or onboarding
         DEV_SKILLS="systematic-debugging verification-before-completion requesting-code-review receiving-code-review executing-plans writing-plans dispatching-parallel-agents writing-skills autonomous-execution"
@@ -628,6 +628,104 @@ p.write_text(json.dumps(s, indent=2) + '\n')
         echo ""
         ;;
 
+    doctor)
+        echo "=== AOS Doctor ==="
+        echo ""
+        echo "Checking migration state vs actual filesystem..."
+        echo ""
+        python3 -c "
+import sys, importlib.util
+from pathlib import Path
+
+AOS_DIR = Path.home() / 'aos'
+MIGRATION_DIR = AOS_DIR / 'core' / 'migrations'
+errors = 0
+
+# Run each migration's check()
+for f in sorted(MIGRATION_DIR.glob('[0-9][0-9][0-9]_*.py')):
+    num = int(f.stem.split('_')[0])
+    name = f.stem
+    spec = importlib.util.spec_from_file_location(name, f)
+    mod = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(mod)
+    except Exception as e:
+        print(f'  ✗ [{num:03d}] {name}: failed to load ({e})')
+        errors += 1
+        continue
+
+    desc = getattr(mod, 'DESCRIPTION', name)
+    if hasattr(mod, 'check'):
+        try:
+            ok = mod.check()
+            if ok:
+                print(f'  ✓ [{num:03d}] {desc}')
+            else:
+                print(f'  ✗ [{num:03d}] {desc} — DRIFTED (check() returned False)')
+                errors += 1
+        except Exception as e:
+            print(f'  ✗ [{num:03d}] {desc} — check() error: {e}')
+            errors += 1
+    else:
+        print(f'  ~ [{num:03d}] {desc} — no check()')
+
+# Check symlinks
+print()
+print('Symlinks:')
+agents_dir = Path.home() / '.claude' / 'agents'
+for agent in ['chief.md', 'steward.md', 'advisor.md']:
+    link = agents_dir / agent
+    source = AOS_DIR / 'core' / 'agents' / agent
+    if link.is_symlink() and link.resolve() == source.resolve():
+        print(f'  ✓ {agent}')
+    elif link.exists():
+        print(f'  ~ {agent} (exists but not symlinked)')
+        errors += 1
+    else:
+        print(f'  ✗ {agent} missing')
+        errors += 1
+
+# Check for stale plists
+print()
+print('LaunchAgents:')
+la_dir = Path.home() / 'Library' / 'LaunchAgents'
+stale = list(la_dir.glob('com.agent.*'))
+active = list(la_dir.glob('com.aos.*'))
+if stale:
+    for p in stale:
+        print(f'  ✗ Stale: {p.name}')
+        errors += 1
+else:
+    print(f'  ✓ No stale com.agent.* plists')
+print(f'  ✓ {len(active)} active com.aos.* plists')
+
+# Check events
+print()
+events = Path.home() / '.aos' / 'events.jsonl'
+if events.exists():
+    print(f'  ✓ Event bus exists')
+else:
+    print(f'  ✗ Event bus missing')
+    errors += 1
+
+# Check work engine
+work_file = Path.home() / '.aos' / 'work' / 'work.yaml'
+if work_file.exists():
+    print(f'  ✓ Work system exists')
+else:
+    print(f'  ✗ Work system missing')
+    errors += 1
+
+# Summary
+print()
+if errors == 0:
+    print('  ✓ All checks passed')
+else:
+    print(f'  ✗ {errors} issue(s) found — run \"aos migrate\" to fix')
+sys.exit(0 if errors == 0 else 1)
+"
+        ;;
+
     help|--help|-h)
         echo "AOS — Agentic Operating System"
         echo ""
@@ -639,6 +737,7 @@ p.write_text(json.dumps(s, indent=2) + '\n')
         echo "  check-update    Check if updates are available"
         echo "  status          Show migration version + pending"
         echo "  self-test       Validate system health"
+        echo "  doctor          Check migration state vs actual filesystem"
         echo "  deploy          Deploy service venvs (all or: aos deploy bridge)"
         echo "  sync-skills     Re-sync skill symlinks (--all for developer)"
         echo "  sync-agents     Re-sync agent symlinks"
