@@ -139,10 +139,9 @@ def main():
     start_daily_briefing(bot_token, chat_id, hour=8, minute=0)
     logger.info("Daily briefing scheduled at 08:00")
 
-    # Start evening check-in (9:00 PM)
-    from evening_checkin import start_evening_checkin
-    start_evening_checkin(bot_token, chat_id, hour=21, minute=0)
-    logger.info("Evening check-in scheduled at 21:00")
+    # Evening check-in disabled — will be rebuilt based on operator preferences
+    # from evening_checkin import start_evening_checkin
+    # start_evening_checkin(bot_token, chat_id, hour=21, minute=0)
 
     # Optional: Slack
     slack_bot_token = _get_secret("SLACK_BOT_TOKEN")
