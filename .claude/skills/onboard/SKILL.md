@@ -842,7 +842,61 @@ This machine is now working for you. Bismillah.
 
 "Check your phone — {agent_name} just introduced itself. That's your direct line."
 
-### Step 9: Verify
+### Step 9: Let Them Try It
+
+Don't move on yet. Get them to actually use Telegram right now — this is how they'll
+interact with the system 90% of the time.
+
+"Before we move on — try two things from your phone right now:
+
+1. Send a text message to your bot. Anything — a question, a task, a thought.
+2. Send a voice note. Just hold the mic button and say what's on your mind."
+
+AskUserQuestion:
+- question: "Try sending a text message to your bot from your phone. What did you send?"
+- options: ["Sent it"]
+
+Wait for the message to arrive. Check if the bridge is running and received it:
+```bash
+# Check bridge logs for the incoming message
+tail -5 ~/.aos/logs/bridge.log 2>/dev/null
+```
+
+Acknowledge what they sent: "I see it — '{their message}'. That's the pipeline working.
+You send a message, the bridge receives it, dispatches it to {agent_name}, and
+{agent_name} responds."
+
+Now voice:
+
+"Now try a voice note — hold the mic button in Telegram and talk for 10 seconds.
+Say anything."
+
+AskUserQuestion:
+- question: "Sent a voice note?"
+- options: ["Sent it"]
+
+Check if the voice note was received and transcribed:
+```bash
+# Check bridge logs for voice transcription
+tail -20 ~/.aos/logs/bridge.log 2>/dev/null | grep -i "transcri\|voice\|audio"
+```
+
+If transcription worked, read back what they said:
+"I heard: '{transcribed text}'. That's your voice → text → system pipeline working."
+
+If transcription didn't work, check if mlx-whisper is installed:
+```bash
+ls ~/.aos/services/mlx-whisper/.venv/bin/python 2>/dev/null
+```
+If not, note it and move on — transcription can be set up later.
+
+"Every morning when I send you a prompt, you respond with a voice note just
+like that. The system transcribes it, extracts tasks and ideas, and sends
+them back for your approval. One tap — everything organized.
+
+This is your daily practice. Phone → voice note → system organizes it."
+
+### Step 10: Verify
 
 ```bash
 bash ~/aos/core/integrations/telegram/setup.sh --check
