@@ -818,15 +818,29 @@ if updates: print(updates[-1]['message']['chat']['id'])
 
 ### Step 8: Send Test Message
 
+Read the operator's agent name from operator.yaml (default: Chief).
+
 ```bash
 token=$(~/aos/core/bin/agent-secret get TELEGRAM_BOT_TOKEN)
 chat_id=$(~/aos/core/bin/agent-secret get TELEGRAM_CHAT_ID)
 curl -s -X POST "https://api.telegram.org/bot${token}/sendMessage" \
     -d "chat_id=${chat_id}" \
-    -d "text=Asalamualaikum — your AOS is connected. Talk to your agents from here."
+    -d "parse_mode=HTML" \
+    -d "text=Asalamualaikum {name} 👋
+
+Your AOS is live. This is {agent_name} — your personal AI agent.
+
+From here you can:
+• Send me a message anytime — I'll handle it
+• Send a voice note — I'll transcribe and organize it
+• Every morning I'll check in with you
+
+This machine is now working for you. Bismillah.
+
+— {agent_name}"
 ```
 
-"Check your phone — you should see a message from your bot. That's how we'll stay connected."
+"Check your phone — {agent_name} just introduced itself. That's your direct line."
 
 ### Step 9: Verify
 
