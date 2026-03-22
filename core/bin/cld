@@ -18,4 +18,4 @@ print(d.get('agent_name', ''))
     [[ -n "$custom" ]] && AGENT_NAME="$custom"
 fi
 
-exec claude --dangerously-skip-permissions --chrome --agent "$AGENT_NAME" "$@"
+exec claude --dangerously-skip-permissions --agent "$AGENT_NAME" "$@"

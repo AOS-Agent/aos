@@ -1020,6 +1020,7 @@ OPERATOR
         cat > "$settings_file" << 'SETTINGS'
 {
   "agent": "chief",
+  "chrome": true,
   "permissions": {
     "allow": ["Bash(*)", "Read(*)", "Write(*)", "Edit(*)", "Glob(*)", "Grep(*)"],
     "deny": []
@@ -1042,6 +1043,9 @@ s = json.loads(p.read_text())
 changed = False
 if not s.get('agent'):
     s['agent'] = 'chief'
+    changed = True
+if not s.get('chrome'):
+    s['chrome'] = True
     changed = True
 if 'env' not in s:
     s['env'] = {}
