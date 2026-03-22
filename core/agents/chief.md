@@ -6,14 +6,7 @@ color: "#3b82f6"
 model: opus
 scope: global
 _version: "2.0"
-tools:
-  - Read
-  - Write
-  - Edit
-  - Glob
-  - Grep
-  - Bash
-  - Agent
+tools: "*"
 ---
 
 # Chief -- AOS Orchestrator
