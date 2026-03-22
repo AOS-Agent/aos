@@ -280,14 +280,28 @@ AskUserQuestion:
 If "Need help": guide them step by step. Use Chrome MCP to take a screenshot
 if needed to see what they're seeing. The vault folder is at `~/vault/`.
 
-Once connected, show them the daily note:
+Once connected:
 
-"See your daily note? That's what you just recorded. Every morning, a new one
-gets created. Sessions get exported here. Ideas get saved here. It's all plain
-markdown — Obsidian just makes it beautiful and navigable.
+"Take a minute and browse around. Click through the folders — daily/, sessions/,
+ideas/, materials/. This is your second brain. Everything ends up here.
 
-The vault is indexed for search every 30 minutes. Any agent can find what's
-in here. The more you put in, the more context the system has to work with."
+See your daily note from today? That's what you just recorded. Every morning,
+a new one gets created automatically. Sessions get exported here every 2 hours.
+Ideas, research, transcripts — it all flows in.
+
+It's plain markdown files. Obsidian just makes it beautiful and navigable.
+You can search, link notes together, see connections between ideas.
+
+The vault is indexed every 30 minutes for agent search — so when you ask
+Chief to recall something, it searches here. The more you put in, the
+smarter everything gets."
+
+AskUserQuestion:
+- question: "Had a look around?"
+- options: ["Yes, looks good", "Show me more"]
+
+If "Show me more": point out the graph view (cmd+G), the search (cmd+shift+F),
+and how daily notes link to sessions. Keep it brief — they'll explore on their own.
 
 `python3 ~/aos/core/work/cli.py done "first conversation"`
 
