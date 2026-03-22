@@ -1148,6 +1148,26 @@ MCPJSON
     # projects dir — Claude Code per-project memory
     mkdir -p "$HOME/.claude/projects"
 
+    # Pre-accept trust dialog for ~ and ~/aos (prevents interactive prompt on first run)
+    python3 -c "
+import json
+from pathlib import Path
+
+p = Path.home() / '.claude.json'
+d = json.loads(p.read_text()) if p.exists() else {}
+if 'projects' not in d:
+    d['projects'] = {}
+
+for path in [str(Path.home()), str(Path.home() / 'aos')]:
+    if path not in d['projects']:
+        d['projects'][path] = {}
+    d['projects'][path]['hasTrustDialogAccepted'] = True
+    d['projects'][path]['hasTrustDialogHooksAccepted'] = True
+
+p.write_text(json.dumps(d, indent=2) + '\n')
+print('ok')
+" 2>/dev/null && _ok "Trust dialog pre-accepted" || _warn "Trust dialog — may prompt on first run"
+
     echo ""
 
     # Sync agents (system agents: chief, steward, advisor)
