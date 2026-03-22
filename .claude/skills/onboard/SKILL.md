@@ -579,15 +579,85 @@ tailscale ip -4
 
 If already installed but not connected, just run `tailscale up`.
 
-Show the result:
+Once connected, get the IP:
+```bash
+ts_ip=$(tailscale ip -4)
+echo "$ts_ip"
 ```
-Your Mac Mini is accessible:
-  Local:     ssh {user}@{hostname}.local
-  Tailscale: ssh {user}@{tailscale_ip}
 
-Install Tailscale on your laptop too — then you can reach
-this machine from anywhere.
+### Tailscale on Your Other Devices
+
+"This Mac is on Tailscale now. But you need Tailscale on your other devices too —
+otherwise they can't reach it."
+
+AskUserQuestion:
+- question: "What devices do you want to access this Mac from?"
+- options: ["MacBook/laptop", "iPhone", "Both", "I'll do it later"]
+
+**If MacBook/laptop:**
+
+"On your MacBook, open Terminal and run:"
+
+Show them the exact commands:
 ```
+brew install tailscale
+tailscale up
+```
+
+"Sign in with the same account you just used. Once it's connected,
+you can SSH into this Mac from your laptop with one command."
+
+**If iPhone:**
+
+"Open the App Store on your phone and search for 'Tailscale'. Install it,
+sign in with the same account. Once connected, you can access your
+dashboard from your phone at:"
+
+```
+http://{tailscale_ip}:4096
+```
+
+"Bookmark that — it's your dashboard from anywhere."
+
+**If both:** walk through laptop first, then phone.
+
+### SSH Shortcuts
+
+"Let me set up a shortcut so you don't have to remember the IP."
+
+Create an SSH config entry on this machine (for reference) and show them
+what to add on their laptop:
+
+```bash
+# Show the operator what to add to their laptop's ~/.ssh/config
+cat << SSHCONFIG
+
+Add this to ~/.ssh/config on your MacBook:
+
+Host aos
+    HostName {tailscale_ip}
+    User {username}
+
+Then you can just type: ssh aos
+
+SSHCONFIG
+```
+
+"From your laptop, you'll just type `ssh aos` and you're in."
+
+### Test the Connection
+
+"Let's verify everything works right now."
+
+AskUserQuestion:
+- question: "Try SSH from your laptop — open Terminal and type: ssh {user}@{tailscale_ip}"
+- options: ["I'm connected", "It didn't work"]
+
+If it didn't work: check if Tailscale is running on both devices, verify the IP,
+check if SSH is enabled. Troubleshoot step by step.
+
+If it works: "You're in. From anywhere in the world, you can now reach
+this machine. That's the power of Tailscale + SSH."
 
 `python3 ~/aos/core/work/cli.py done "remote access"`
 
