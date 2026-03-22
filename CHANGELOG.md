@@ -2,6 +2,14 @@
 
 ## v0.2.0 — 2026-03-22
 
+Added: onboarding v2 — conversation-first with Sahib
+Added: morning ramble system — voice note → tasks
+Added: 7-day learning drip via Telegram
+Added: versioned releases with silent auto-updates
+Changed: 35+ fixes from ship-readiness audit
+
+## v0.2.0 — 2026-03-22
+
 Added: onboarding v2 — conversation-first flow with Sahib personality, SuperWhisper ramble, and system education at each phase
 Added: morning ramble system — Telegram sends personalized prompt, operator replies with voice note, system extracts tasks/ideas and saves to vault
 Added: 7-day learning drip — daily Telegram tips teaching one system feature per day (vault, work system, agents, dashboard, etc.)
