@@ -1,5 +1,7 @@
 """MCP server for persistent memory — 4 tools over stdio transport."""
 
+import setproctitle; setproctitle.setproctitle("aos-memory")
+
 import json
 from typing import Optional
 

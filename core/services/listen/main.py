@@ -1,3 +1,5 @@
+import setproctitle; setproctitle.setproctitle("aos-listen")
+
 import os
 import shutil
 import signal

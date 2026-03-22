@@ -1,5 +1,7 @@
 """Messaging bridge — Telegram + Slack + heartbeat."""
 
+import setproctitle; setproctitle.setproctitle("aos-bridge")
+
 import atexit
 import glob as _glob
 import logging

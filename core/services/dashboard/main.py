@@ -1,5 +1,7 @@
 """Dashboard server — FastAPI on port 4096."""
 
+import setproctitle; setproctitle.setproctitle("aos-dashboard")
+
 import asyncio
 import json
 import shutil
