@@ -489,6 +489,63 @@ def _send_briefing(bot_token: str, chat_id: int):
         logger.error(f"Daily briefing failed: {e}")
 
 
+def _send_learning_drip(bot_token: str, chat_id: int, time_slot: str):
+    """Send the day's learning drip message if one is due.
+
+    Reads onboarding completion date to determine which day they're on,
+    then sends the appropriate tip for this time slot.
+    """
+    try:
+        onboarding_file = Path.home() / ".aos" / "config" / "onboarding.yaml"
+        if not onboarding_file.exists():
+            return  # Not onboarded yet
+
+        onboarding = yaml.safe_load(onboarding_file.read_text()) or {}
+        completed_str = onboarding.get("completed", "")
+        if not completed_str:
+            return
+
+        completed_date = datetime.fromisoformat(completed_str.replace("Z", "+00:00")).date()
+        today = datetime.now().date()
+        day_number = (today - completed_date).days + 1
+
+        if day_number > 14:
+            return  # Past the drip period
+
+        # Check if already sent this drip today
+        drip_state_file = WORKSPACE / "data" / "bridge" / "drip_state.txt"
+        drip_state_file.parent.mkdir(parents=True, exist_ok=True)
+        drip_key = f"{today}:{time_slot}"
+        if drip_state_file.exists() and drip_key in drip_state_file.read_text():
+            return  # Already sent
+
+        # Load the drip config
+        drip_config = WORKSPACE / "config" / "learning-drip.yaml"
+        if not drip_config.exists():
+            return
+
+        drips = yaml.safe_load(drip_config.read_text()) or {}
+        today_drips = [d for d in drips.get("days", [])
+                       if d.get("day") == day_number and d.get("time") == time_slot]
+
+        for drip in today_drips:
+            msg = drip.get("message", "").strip()
+            if msg:
+                httpx.post(
+                    f"https://api.telegram.org/bot{bot_token}/sendMessage",
+                    json={"chat_id": chat_id, "text": msg},
+                    timeout=10,
+                )
+                logger.info(f"Learning drip sent: day {day_number}, {time_slot}")
+
+        # Mark as sent
+        with open(drip_state_file, "a") as f:
+            f.write(drip_key + "\n")
+
+    except Exception as e:
+        logger.debug(f"Learning drip error: {e}")
+
+
 def start_daily_briefing(bot_token: str, chat_id: int, hour: int = 8, minute: int = 0):
     """Start the daily briefing as a daemon thread.
 
@@ -525,6 +582,7 @@ def start_daily_briefing(bot_token: str, chat_id: int, hour: int = 8, minute: in
                 if (now.hour == hour and now.minute >= minute and
                         last_sent_date != now.date() and not prompt_sent):
                     _send_morning_prompt(bot_token, chat_id)
+                    _send_learning_drip(bot_token, chat_id, "morning")
                     state_file.with_suffix(".prompt").write_text(str(now.date()))
 
                 # Send briefing 15 min after prompt (or at hour+1 if prompt was missed)
@@ -537,6 +595,14 @@ def start_daily_briefing(bot_token: str, chat_id: int, hour: int = 8, minute: in
                     _send_briefing(bot_token, chat_id)
                     last_sent_date = now.date()
                     state_file.write_text(str(last_sent_date))
+
+                # Midday learning drip (12:00-12:30)
+                if now.hour == 12 and now.minute < 30:
+                    _send_learning_drip(bot_token, chat_id, "midday")
+
+                # Evening learning drip (20:00-20:30)
+                if now.hour == 20 and now.minute < 30:
+                    _send_learning_drip(bot_token, chat_id, "evening")
 
             except Exception as e:
                 logger.error(f"Daily briefing loop error: {e}")
