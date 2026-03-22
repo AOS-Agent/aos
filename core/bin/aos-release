@@ -31,10 +31,48 @@ die() { echo "  ${RED}$*${RESET}" >&2; exit 1; }
 
 # ── Validate ─────────────────────────────────────────
 
-VERSION="${1:-}"
+BUMP="${1:-}"
 shift || true
 
-[[ -z "$VERSION" ]] && die "Usage: aos-release <version> <note1> [note2] [note3] ..."
+# Support both explicit version and bump type
+case "$BUMP" in
+    patch)
+        # Read current version and increment patch
+        CURRENT=$(cat "$VERSION_FILE" 2>/dev/null || echo "v0.0.0")
+        IFS='.' read -r major minor patch <<< "${CURRENT#v}"
+        VERSION="v${major}.${minor}.$((patch + 1))"
+        echo "  ${DIM}Patch bump: $CURRENT → $VERSION${RESET}"
+        ;;
+    minor)
+        CURRENT=$(cat "$VERSION_FILE" 2>/dev/null || echo "v0.0.0")
+        IFS='.' read -r major minor patch <<< "${CURRENT#v}"
+        VERSION="v${major}.$((minor + 1)).0"
+        echo "  ${DIM}Minor bump: $CURRENT → $VERSION${RESET}"
+        ;;
+    major)
+        CURRENT=$(cat "$VERSION_FILE" 2>/dev/null || echo "v0.0.0")
+        IFS='.' read -r major minor patch <<< "${CURRENT#v}"
+        VERSION="v$((major + 1)).0.0"
+        echo "  ${DIM}Major bump: $CURRENT → $VERSION${RESET}"
+        ;;
+    v*)
+        VERSION="$BUMP"
+        ;;
+    *)
+        echo ""
+        echo "  Usage: aos-release <patch|minor|major|vX.Y.Z> <note1> [note2] ..."
+        echo ""
+        echo "  Semver:"
+        echo "    ${BOLD}patch${RESET}  — bug fixes, small tweaks (v0.2.0 → v0.2.1)"
+        echo "    ${BOLD}minor${RESET}  — new features, improvements (v0.2.1 → v0.3.0)"
+        echo "    ${BOLD}major${RESET}  — breaking changes (v0.3.0 → v1.0.0)"
+        echo ""
+        echo "  Current: $(cat "$VERSION_FILE" 2>/dev/null || echo "no version")"
+        echo ""
+        exit 1
+        ;;
+esac
+
 [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "Version must be like v0.2.1"
 
 # Collect release notes from remaining args
