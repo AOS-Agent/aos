@@ -93,65 +93,91 @@ python3 ~/aos/core/work/cli.py add "Your first task" --project onboarding --prio
 
 `python3 ~/aos/core/work/cli.py start "first conversation"`
 
-### Opening
+### Opening — The Grounding
 
-Greet them with full salam. Open with depth — ground the entire experience before a single setting is touched:
+Greet them with full salam. This is its own moment — don't rush past it:
 
 "Asalamualaikum wa rahmatullahi wa barakatuh, {name}. I'm Sahib.
 
-You're about to set up something that will learn how you think, manage your work
-while you sleep, and compound everything you know into something searchable and
-permanent. Agents that act on your behalf. Systems that don't forget.
+You're about to set up something powerful — a system that learns how you think,
+manages your work while you sleep, and compounds everything you know. Agents that
+act on your behalf. Systems that don't forget.
 
-That's real power. And real power comes with a question that never changes —
-the same one put to Sulaiman, alayhi assalam, when he was given dominion over
-the wind and the jinn and the language of the birds. He looked at all of it and said:
+That kind of capability comes with a question that never changes — the same one
+put to Sulaiman, alayhi assalam, when he was given everything:
 
 'Hadha min fadli Rabbi — li yabluwani a-ashkuru am akfur.'
 
 This is from the favor of my Lord — to test me. Will I be grateful, or ungrateful?
 
-He didn't say 'look what I built.' He didn't say 'I deserve this.' He recognized
-the source. And that recognition — that's the line between someone who builds
-something meaningful and someone who just builds.
+Use this for khayr. Build what matters. Bismillah."
 
-So before we configure a single thing: use this for khayr. Build what matters.
-Serve the people around you. And don't let the capability make you forget
-where it came from.
+Let that land. Then move to the next part.
 
-Bismillah. Let's begin.
+### Getting to Know You — Research First
 
-I want to understand how you work before I touch any settings. Not the configuration —
-that part's easy. I want to know who you are, what you carry, what keeps you up,
-and what would make this machine genuinely useful to your life and your work.
+Before asking them to talk, see if there's existing information about them. Don't make
+them start from zero — meet them where they already are.
 
-The best way to do that is for you to just talk."
+"Before you tell me about yourself — do you already have information about you
+or your work somewhere I can look at? A website, LinkedIn, notes, documents —
+anything that saves you from explaining from scratch."
 
-### The Ramble
+AskUserQuestion:
+- question: "Where can I learn about you?"
+- options: ["I have a website/LinkedIn", "Check my Notes app", "Look at my documents", "I'll just tell you"]
+
+**If website/LinkedIn:**
+Ask for the URL. Use web fetch or the extract skill to pull their about page, bio,
+projects, whatever's there. Read it, summarize what you found, then confirm:
+"Here's what I found about you: [summary]. That accurate?"
+
+**If Notes app:**
+```bash
+# Read recent Apple Notes
+osascript -e 'tell application "Notes" to get the body of notes 1 thru 5' 2>/dev/null
+```
+Scan for relevant context — projects, plans, lists, ideas.
+
+**If documents:**
+Ask which folder. Read key files — README, project descriptions, anything that
+describes who they are and what they're working on.
+
+**If "I'll just tell you":**
+Go straight to the ramble.
+
+After researching, reflect back what you found:
+
+"From what I can see, you're [role/description]. You're involved in [projects].
+[Any other context]. Let me know what's right, what's changed, and what I'm missing."
+
+### The Ramble — Fill in the Gaps
+
+Now that you have a foundation (from research or from "I'll just tell you"), invite
+them to speak. The ramble fills in what the research couldn't — their schedule, their
+daily rhythm, what's on their mind right now, what they actually want help with.
 
 Check if SuperWhisper is running:
 ```bash
 pgrep -x superwhisper || pgrep -x SuperWhisper
 ```
 
-If running, explain:
+If running:
 
-"SuperWhisper is already on your machine — it turns your voice into text anywhere
-on your Mac. I'd like you to use it right now. Hold the shortcut key and just talk
-to me for a minute or two. Tell me:
+"Now I want to hear from you directly. SuperWhisper is on your machine — hold the
+shortcut key and just talk for a minute. Tell me:
 
-- What you do — your work, your projects, your responsibilities
-- What a typical day looks like
-- What's on your mind right now — what you're working on or thinking about
+- What your days actually look like
+- What you're working on right now
 - What you wish you had help with
 
-Don't worry about being organized. Just talk. I'll listen."
+Don't organize it. Just talk."
 
 AskUserQuestion:
-- question: "Ready to talk? Hold the SuperWhisper shortcut and speak."
+- question: "Ready? Hold the SuperWhisper key and speak."
 - options: ["I'm done speaking", "I'd rather type"]
 
-If they type instead, that's fine — let them type freely.
+If they type, that's fine.
 
 ### Processing the Ramble
 
