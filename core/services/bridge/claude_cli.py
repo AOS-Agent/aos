@@ -146,26 +146,41 @@ def _build_cmd(clean_message: str, agent_name: str | None, user_key: str,
             f"{img_instructions}"
         )
 
+    # Read operator's agent name (default: chief)
+    default_agent = "chief"
+    try:
+        import yaml
+        op_file = Path.home() / ".aos" / "config" / "operator.yaml"
+        if op_file.exists():
+            op = yaml.safe_load(op_file.read_text()) or {}
+            default_agent = op.get("agent_name", "chief")
+    except Exception:
+        pass
+
     cmd = [
         "claude", "-p", clean_message,
         "--output-format", output_format,
         "--allowedTools", "*",
         "--dangerouslySkipPermissions",
+        "--chrome",
+        "--cwd", str(Path.home()),
     ]
 
     if output_format == "stream-json":
         cmd.extend(["--verbose", "--include-partial-messages"])
 
     if agent_name:
-        agent_prompt = _get_agent_prompt(agent_name)
-        if agent_prompt:
-            cmd.extend(["--append-system-prompt", agent_prompt])
+        # Use --agent for proper agent loading (respects frontmatter: model, tools)
+        cmd.extend(["--agent", agent_name])
         log_agent = agent_name
     else:
         session_id = sessions.get(user_key)
         if session_id:
             cmd.extend(["--resume", session_id])
-        log_agent = "claude"
+        else:
+            # Default to the operator's main agent
+            cmd.extend(["--agent", default_agent])
+        log_agent = default_agent
 
     return cmd, log_agent
 
