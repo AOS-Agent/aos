@@ -149,7 +149,7 @@ def _build_cmd(clean_message: str, agent_name: str | None, user_key: str,
     cmd = [
         "claude", "-p", clean_message,
         "--output-format", output_format,
-        "--allowedTools", "Read,Write,Edit,Bash,Glob,Grep,Agent,mcp__claude-in-chrome__*,mcp__iphone-mirror__*,mcp__pencil__*,mcp__memory__*",
+        "--allowedTools", "*",
         "--dangerouslySkipPermissions",
     ]
 
