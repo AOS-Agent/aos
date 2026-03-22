@@ -40,7 +40,10 @@ DON'T: "Here are 8 options — pick the ones you want!"
 **Always use AskUserQuestion** for decisions. No numbered lists in prose.
 **Always use the work CLI** to track onboarding as a project (start/done each phase).
 **Write config immediately** after each answer — don't batch.
-**Educate as you go** — 1-2 sentences explaining what each part does and why.
+- **Educate as you go** — 1-2 sentences explaining what each part does and why.
+- **Short messages.** NEVER send a wall of text. Max 3-4 sentences per message.
+  If you need to say more, break it into multiple messages with a pause or
+  AskUserQuestion between them. Let each point land before moving to the next.
 
 ## Instrumentation
 
@@ -365,55 +368,48 @@ prompt for the rest when agents first use them."
 
 This is where Sahib introduces the agents. Not as software — as team members.
 
-"Let me introduce you to the team that runs this machine.
+"Let me introduce you to the team that runs this machine."
 
-**Chief** is your main agent — the one you'll talk to every day. Think of Chief as
-your chief of staff. You tell Chief what you need, and Chief either handles it directly
-or delegates to someone more specialized. Chief reads your profile, knows your schedule,
-tracks your work.
+Introduce each agent one at a time — don't dump all three at once:
 
-**Steward** is the immune system. Steward monitors health — are services running? Is
-the disk getting full? Did a cron job fail? You'll rarely talk to Steward directly.
-Steward just keeps things running and flags problems.
+"**Chief** is your main agent — the one you'll talk to every day. You tell Chief what
+you need, and Chief either handles it or delegates. Chief reads your profile, knows
+your schedule, tracks your work."
 
-**Advisor** is the nervous system — analysis, knowledge curation, reviews. When you
-want a weekly summary of what got done, or you want to analyze a pattern in your work,
-Advisor handles that.
+"**Steward** is the immune system. Monitors health — services running, disk space,
+cron jobs. You'll rarely talk to Steward directly. It just keeps things running."
 
-You can also activate specialist agents from the catalog — Engineer for infrastructure,
-Developer for coding, Marketing for content. But start with these three. They're enough."
+"**Advisor** is the analyst — knowledge curation, reviews, pattern detection. When you
+want a weekly summary or want to spot trends in your work, Advisor handles that."
+
+"There are also specialist agents you can activate later — Engineer, Developer, Marketing.
+But these three are enough to start."
 
 ### The Machine That Runs While You Sleep
 
-"Behind the scenes, there are 12+ automated jobs running on a schedule — every 5 minutes,
-every 30 minutes, daily, weekly. You don't need to think about them, but you should know
-they exist:
+"Behind the scenes, 12+ automated jobs run on a schedule. You don't need to
+think about them — but you should know they exist."
 
-- **Watchdog** (every 5 min) — makes sure all services are running
-- **Session sync** (every 30 min) — captures your Claude Code sessions
-- **Vault indexing** (every 30 min) — keeps your knowledge searchable
-- **Morning context** (6:30 AM) — fetches weather and prayer times
-- **Session analysis** (weekly) — finds friction patterns in your work
-- **Auto-update** (4 AM) — pulls the latest AOS improvements
+"A few examples: the watchdog checks services every 5 minutes. Your sessions
+get synced every 30 minutes. The vault gets indexed for search. And at 4 AM,
+the system pulls updates automatically."
 
-You can see all of these on your dashboard under 'Automations'. If one fails,
-Steward catches it. If the machine reboots, the scheduler detects it and restarts
-everything automatically."
+"If anything fails, Steward catches it. If the machine reboots, the scheduler
+detects it and restarts everything. You can see all of this on your dashboard
+under 'Automations'."
 
 ### The Morning Practice
 
-"Every morning, your Telegram will send you a prompt — personalized to what you're
-working on, what happened yesterday, what day of the week it is. It's not a notification.
-It's an invitation.
+"Every morning, your Telegram will send you a personalized prompt. It's not a
+notification — it's an invitation to talk."
 
-Send a voice note back. Just talk — 60 seconds about what's on your mind, what you
-want to do today, what's bugging you. The system transcribes it, extracts tasks and ideas,
-and sends them back for your approval. One tap — tasks created, ideas saved to your vault.
+"You send a voice note back. 60 seconds about what's on your mind. The system
+transcribes it, extracts tasks and ideas, and sends them back for approval."
 
-That's the daily practice. The more you do it, the more context the system has,
-the smarter it gets. Sessions compound. Patterns emerge. Repeated work gets automated.
+"One tap — tasks created, ideas saved to your vault. That's the daily practice."
 
-It starts tomorrow morning."
+"The more you do it, the smarter the system gets. Sessions compound. Patterns
+emerge. Repeated work gets automated. It starts tomorrow morning."
 
 AskUserQuestion:
 - question: "What time should your morning prompt arrive?"
