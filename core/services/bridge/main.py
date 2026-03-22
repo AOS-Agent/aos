@@ -139,9 +139,26 @@ def main():
     start_daily_briefing(bot_token, chat_id, hour=8, minute=0)
     logger.info("Daily briefing scheduled at 08:00")
 
-    # Evening check-in disabled — will be rebuilt based on operator preferences
-    # from evening_checkin import start_evening_checkin
-    # start_evening_checkin(bot_token, chat_id, hour=21, minute=0)
+    # Evening check-in — only if operator configured it during onboarding
+    try:
+        op_config = yaml.safe_load((Path.home() / ".aos" / "config" / "operator.yaml").read_text()) or {}
+        evening_time = op_config.get("daily_loop", {}).get("evening_checkin")
+        if evening_time:
+            # Parse "21:00" or "9:00 PM" format
+            ev_hour, ev_minute = 21, 0
+            if isinstance(evening_time, str):
+                if "PM" in evening_time.upper():
+                    parts = evening_time.upper().replace("PM", "").strip().split(":")
+                    ev_hour = int(parts[0]) + (12 if int(parts[0]) != 12 else 0)
+                    ev_minute = int(parts[1]) if len(parts) > 1 else 0
+                elif ":" in evening_time:
+                    parts = evening_time.split(":")
+                    ev_hour, ev_minute = int(parts[0]), int(parts[1])
+            from evening_checkin import start_evening_checkin
+            start_evening_checkin(bot_token, chat_id, hour=ev_hour, minute=ev_minute)
+            logger.info(f"Evening check-in scheduled at {ev_hour:02d}:{ev_minute:02d}")
+    except Exception as e:
+        logger.debug(f"Evening check-in not configured: {e}")
 
     # Optional: Slack
     slack_bot_token = _get_secret("SLACK_BOT_TOKEN")

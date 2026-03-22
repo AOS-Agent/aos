@@ -421,6 +421,25 @@ AskUserQuestion:
 
 Write the selected time to `operator.yaml` → `daily_loop.morning_briefing`.
 
+"The other end of the day — do you want an evening check-in? It's a short
+prompt asking what you accomplished, what's still open, and how you're feeling.
+It becomes your evening daily note."
+
+AskUserQuestion:
+- question: "Want an evening check-in via Telegram?"
+- options: ["Yes", "No"]
+
+If yes:
+
+AskUserQuestion:
+- question: "What time?"
+- options: ["8:00 PM", "8:30 PM", "9:00 PM", "9:30 PM", "10:00 PM"]
+
+Write to `operator.yaml` → `daily_loop.evening_checkin`.
+
+The bridge reads this and activates the evening check-in at their chosen time.
+If they said no, leave `evening_checkin` unset — the bridge won't send anything.
+
 ### Trust
 
 "Now — how much rope do you want to give them?

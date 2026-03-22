@@ -928,14 +928,22 @@ run_bootstrap() {
 
     # Create agent keychain for secrets (if it doesn't exist)
     if security list-keychains 2>/dev/null | grep -q "agent.keychain"; then
+        # Ensure it's unlocked and never locks (idempotent)
+        security unlock-keychain -p "" agent.keychain 2>/dev/null || true
+        security set-keychain-settings agent.keychain 2>/dev/null || true
         _skip "Agent keychain"
     else
+        # Create with empty password
         security create-keychain -p "" agent.keychain 2>/dev/null
-        # Add to search list so agent-secret can find it
-        security list-keychains -s login.keychain-db agent.keychain-db $(security list-keychains | tr -d '"' | tr '\n' ' ') 2>/dev/null
-        # Set no-lock so services can access it without password
+        # Unlock it immediately
+        security unlock-keychain -p "" agent.keychain 2>/dev/null
+        # Never lock — no timeout, no lock-on-sleep
         security set-keychain-settings agent.keychain 2>/dev/null
-        _ok "Agent keychain created"
+        # Add to search list (preserve existing keychains)
+        local existing_keychains
+        existing_keychains=$(security list-keychains | tr -d '"' | tr '\n' ' ')
+        security list-keychains -s $existing_keychains "$HOME/Library/Keychains/agent.keychain-db" 2>/dev/null
+        _ok "Agent keychain created (no password, never locks)"
     fi
 
     # Create project directory
