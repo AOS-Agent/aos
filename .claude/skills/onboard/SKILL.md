@@ -585,79 +585,70 @@ ts_ip=$(tailscale ip -4)
 echo "$ts_ip"
 ```
 
-### Tailscale on Your Other Devices
+### Connect Your Other Devices
 
-"This Mac is on Tailscale now. But you need Tailscale on your other devices too —
-otherwise they can't reach it."
+"This Mac is on Tailscale. Now let's connect your other devices."
+
+Generate the connect script:
+```bash
+bash ~/aos/core/bin/generate-connect-script ~/Desktop/connect-to-aos.sh
+```
+
+This creates a personalized script on the Desktop with this machine's
+Tailscale IP, username, and agent name baked in.
+
+**For MacBook/laptop:**
+
+"I made a script that sets everything up on your MacBook — Tailscale,
+SSH shortcut, desktop shortcuts. Let me AirDrop it to you."
+
+Open Finder to the Desktop so they can see the file:
+```bash
+open ~/Desktop/
+```
+
+"See 'connect-to-aos.sh' on the Desktop? AirDrop it to your MacBook.
+On your MacBook, double-click it — it handles everything."
 
 AskUserQuestion:
-- question: "What devices do you want to access this Mac from?"
-- options: ["MacBook/laptop", "iPhone", "Both", "I'll do it later"]
+- question: "AirDrop the file to your MacBook and run it."
+- options: ["Done — it worked", "Need help with AirDrop"]
 
-**If MacBook/laptop:**
+If need help: "On this Mac, right-click the file → Share → AirDrop.
+Select your MacBook. On the MacBook, accept it, then open Terminal
+and run: `bash ~/Downloads/connect-to-aos.sh`"
 
-"On your MacBook, open Terminal and run:"
+The script creates:
+- `AOS Terminal.command` on their Desktop — double-click to SSH in
+- `AOS Dashboard.webloc` on their Desktop — opens the dashboard
+- SSH config entry — `ssh aos` works from Terminal
 
-Show them the exact commands:
-```
-brew install tailscale
-tailscale up
-```
+**For iPhone:**
 
-"Sign in with the same account you just used. Once it's connected,
-you can SSH into this Mac from your laptop with one command."
+"On your phone, open the App Store and search for 'Tailscale'."
 
-**If iPhone:**
+AskUserQuestion:
+- question: "Install Tailscale on your phone and sign in with the same account."
+- options: ["Done"]
 
-"Open the App Store on your phone and search for 'Tailscale'. Install it,
-sign in with the same account. Once connected, you can access your
-dashboard from your phone at:"
+"Now open Safari on your phone and go to:"
 
 ```
 http://{tailscale_ip}:4096
 ```
 
-"Bookmark that — it's your dashboard from anywhere."
+"Bookmark that — tap Share → Add to Home Screen. You now have your
+dashboard on your phone's home screen."
 
-**If both:** walk through laptop first, then phone.
-
-### SSH Shortcuts
-
-"Let me set up a shortcut so you don't have to remember the IP."
-
-Create an SSH config entry on this machine (for reference) and show them
-what to add on their laptop:
-
-```bash
-# Show the operator what to add to their laptop's ~/.ssh/config
-cat << SSHCONFIG
-
-Add this to ~/.ssh/config on your MacBook:
-
-Host aos
-    HostName {tailscale_ip}
-    User {username}
-
-Then you can just type: ssh aos
-
-SSHCONFIG
-```
-
-"From your laptop, you'll just type `ssh aos` and you're in."
-
-### Test the Connection
-
-"Let's verify everything works right now."
+### Verify
 
 AskUserQuestion:
-- question: "Try SSH from your laptop — open Terminal and type: ssh {user}@{tailscale_ip}"
-- options: ["I'm connected", "It didn't work"]
+- question: "Try 'ssh aos' from your laptop."
+- options: ["Connected", "Didn't work"]
 
-If it didn't work: check if Tailscale is running on both devices, verify the IP,
-check if SSH is enabled. Troubleshoot step by step.
+If didn't work: troubleshoot — Tailscale running? Same account? SSH enabled?
 
-If it works: "You're in. From anywhere in the world, you can now reach
-this machine. That's the power of Tailscale + SSH."
+If works: "You're in. From anywhere in the world — `ssh aos`."
 
 `python3 ~/aos/core/work/cli.py done "remote access"`
 

@@ -1,0 +1,173 @@
+#!/usr/bin/env bash
+# generate-connect-script — creates a personalized connect.sh for the operator's laptop
+#
+# Usage: generate-connect-script [output_path]
+#
+# Generates a self-contained script that:
+# 1. Installs Tailscale on the laptop (if needed)
+# 2. Connects to Tailscale
+# 3. Adds SSH config for this Mac Mini
+# 4. Creates a desktop shortcut (.command file) for one-click SSH
+# 5. Creates a dashboard bookmark shortcut
+#
+# The script is meant to be AirDropped to the operator's laptop during onboarding.
+
+set -euo pipefail
+
+# Gather this machine's info
+USER=$(whoami)
+HOSTNAME=$(hostname -s)
+TS_IP=$(tailscale ip -4 2>/dev/null || echo "TAILSCALE_NOT_CONNECTED")
+MACHINE_NAME=$(scutil --get ComputerName 2>/dev/null || hostname -s)
+
+# Read operator name
+OP_NAME="there"
+if [[ -f "$HOME/.aos/config/operator.yaml" ]]; then
+    OP_NAME=$(python3 -c "
+import yaml
+from pathlib import Path
+d = yaml.safe_load(Path.home().joinpath('.aos/config/operator.yaml').read_text()) or {}
+print(d.get('name', 'there'))
+" 2>/dev/null || echo "there")
+fi
+
+# Read agent name
+AGENT_NAME="Chief"
+if [[ -f "$HOME/.aos/config/operator.yaml" ]]; then
+    AGENT_NAME=$(python3 -c "
+import yaml
+from pathlib import Path
+d = yaml.safe_load(Path.home().joinpath('.aos/config/operator.yaml').read_text()) or {}
+print(d.get('agent_name', 'Chief'))
+" 2>/dev/null || echo "Chief")
+fi
+
+OUTPUT="${1:-$HOME/Desktop/connect-to-aos.sh}"
+
+cat > "$OUTPUT" << SCRIPT
+#!/usr/bin/env bash
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  Connect to AOS — ${MACHINE_NAME}
+#
+#  Run this on your MacBook/laptop to set up remote access.
+#  Double-click or run: bash connect-to-aos.sh
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+set -euo pipefail
+
+AOS_USER="${USER}"
+AOS_HOST="${TS_IP}"
+AOS_NAME="${MACHINE_NAME}"
+AGENT="${AGENT_NAME}"
+
+echo ""
+echo "  Connecting to AOS — \${AOS_NAME}"
+echo ""
+
+# ── Step 1: Install Tailscale ────────────────────────
+if command -v tailscale &>/dev/null; then
+    echo "  ✓ Tailscale already installed"
+else
+    echo "  Installing Tailscale..."
+    if command -v brew &>/dev/null; then
+        brew install tailscale 2>&1 | tail -2
+    else
+        echo "  Homebrew not found. Installing..."
+        /bin/bash -c "\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+        brew install tailscale
+    fi
+    echo "  ✓ Tailscale installed"
+fi
+
+# ── Step 2: Connect to Tailscale ─────────────────────
+ts_status=\$(tailscale status 2>/dev/null | head -1 || echo "not connected")
+if echo "\$ts_status" | grep -q "\${AOS_HOST}"; then
+    echo "  ✓ Tailscale connected — can see \${AOS_NAME}"
+else
+    echo "  Connecting to Tailscale..."
+    echo "  A browser window will open — sign in with the same account"
+    echo "  you used on \${AOS_NAME}."
+    echo ""
+    tailscale up 2>/dev/null || sudo tailscale up
+    echo ""
+    echo "  ✓ Tailscale connected"
+fi
+
+# ── Step 3: SSH config ───────────────────────────────
+SSH_CONFIG="\$HOME/.ssh/config"
+mkdir -p "\$HOME/.ssh"
+
+if grep -q "Host aos" "\$SSH_CONFIG" 2>/dev/null; then
+    echo "  ✓ SSH config already has 'aos' entry"
+else
+    cat >> "\$SSH_CONFIG" << EOF
+
+# AOS — ${MACHINE_NAME}
+Host aos
+    HostName ${TS_IP}
+    User ${USER}
+    StrictHostKeyChecking no
+    UserKnownHostsFile /dev/null
+    LogLevel ERROR
+EOF
+    chmod 600 "\$SSH_CONFIG"
+    echo "  ✓ SSH config added — type 'ssh aos' to connect"
+fi
+
+# ── Step 4: Desktop shortcut — SSH ───────────────────
+SSH_SHORTCUT="\$HOME/Desktop/AOS Terminal.command"
+cat > "\$SSH_SHORTCUT" << 'CMD'
+#!/bin/bash
+clear
+echo ""
+echo "  Connecting to AOS..."
+echo ""
+ssh aos
+CMD
+chmod +x "\$SSH_SHORTCUT"
+echo "  ✓ Desktop shortcut: 'AOS Terminal.command'"
+
+# ── Step 5: Desktop shortcut — Dashboard ─────────────
+DASH_SHORTCUT="\$HOME/Desktop/AOS Dashboard.webloc"
+cat > "\$DASH_SHORTCUT" << WEBLOC
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>URL</key>
+    <string>http://${TS_IP}:4096</string>
+</dict>
+</plist>
+WEBLOC
+echo "  ✓ Desktop shortcut: 'AOS Dashboard.webloc'"
+
+# ── Step 6: Test connection ──────────────────────────
+echo ""
+echo "  Testing SSH connection..."
+if ssh -o ConnectTimeout=5 aos "echo 'connected'" 2>/dev/null; then
+    echo "  ✓ SSH connection works!"
+else
+    echo "  ✗ SSH failed — check Tailscale is running on both devices"
+fi
+
+# ── Done ─────────────────────────────────────────────
+echo ""
+echo "  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+echo "  You're connected to \${AOS_NAME}."
+echo ""
+echo "  From this laptop:"
+echo "    ssh aos              — Terminal into your Mac Mini"
+echo "    AOS Terminal.command — Double-click on Desktop"
+echo "    AOS Dashboard.webloc — Opens dashboard in browser"
+echo ""
+echo "  \${AGENT} is running on \${AOS_NAME} 24/7."
+echo "  Talk to it via Telegram, or SSH in and type 'cld'."
+echo ""
+echo "  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+SCRIPT
+
+chmod +x "$OUTPUT"
+echo "Generated: $OUTPUT"
+echo "AirDrop this to the operator's MacBook."
