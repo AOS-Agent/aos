@@ -63,8 +63,8 @@ def _get_changelog() -> list[dict]:
             for line in changes:
                 placed = False
                 for prefix in ("Added", "Changed", "Fixed", "Removed"):
-                    if line.startswith(prefix + " "):
-                        grouped[prefix].append(line[len(prefix)+1:])
+                    if line.startswith(prefix + ": "):
+                        grouped[prefix].append(line[len(prefix)+2:])
                         placed = True
                         break
                 if not placed:
