@@ -656,67 +656,179 @@ No goodbye. No "see you tomorrow." The work has already begun.
 
 ## Telegram Chrome MCP Protocol
 
-Automate the entire Telegram bot setup in Chrome while the operator watches.
+Automate the entire Telegram bot setup using Chrome MCP tools. The operator watches
+while you drive the browser. Use these EXACT tool calls — don't describe what to do,
+actually call the tools.
 
 ### Prerequisites
-- Chrome running (install.sh ensures this)
-- Claude-in-Chrome extension installed
 
-### Steps
+Before starting, get browser context:
+```
+mcp__claude-in-chrome__tabs_context_mcp
+```
+This tells you what tabs are open and gives you the tab IDs you need.
 
-**1. Open Telegram Web**
-- `mcp__claude-in-chrome__tabs_create_mcp` to open `https://web.telegram.org`
-- Wait for load
+### Step 1: Open Telegram Web
 
-**2. QR Code Login**
-"On your phone: Telegram → Settings → Devices → Link Desktop Device → scan the QR code."
-Wait for confirmation.
+```
+mcp__claude-in-chrome__tabs_create_mcp with url: "https://web.telegram.org/k/"
+```
 
-**3. Navigate to @BotFather**
-Search for @BotFather, open the chat.
+Wait 3 seconds, then take a screenshot to see the state:
+```
+mcp__claude-in-chrome__read_page with tabId: {tab_id}
+```
 
-**4. Create the Bot**
-Send `/newbot`. Ask operator for a display name.
+### Step 2: QR Code Login
 
-**5. Set Bot Username**
-Suggest `{name}_aos_bot`. If taken, try variations.
+Tell the operator:
+"I've opened Telegram Web. You need to scan the QR code with your phone:
+1. Open Telegram on your phone
+2. Settings → Devices → Link Desktop Device
+3. Point your camera at the QR code on screen"
 
-**6. Extract Token**
-Read BotFather's response for the token. Store:
-`~/aos/core/bin/agent-secret set TELEGRAM_BOT_TOKEN <token>`
+AskUserQuestion:
+- question: "Scanned the QR code?"
+- options: ["Yes, I'm logged in"]
 
-**7. Get Chat ID**
-Navigate to the new bot, send `/start`, then:
+Take a screenshot to verify they're logged in:
+```
+mcp__claude-in-chrome__read_page with tabId: {tab_id}
+```
+
+### Step 3: Search for BotFather
+
+Use the find tool to locate the search input, then type into it:
+```
+mcp__claude-in-chrome__find with tabId: {tab_id}, query: "search"
+```
+
+Click the search area and type "BotFather":
+```
+mcp__claude-in-chrome__form_input with tabId: {tab_id}, selector: "[type='text']", value: "BotFather"
+```
+
+Wait for results, then read the page to find BotFather:
+```
+mcp__claude-in-chrome__read_page with tabId: {tab_id}
+```
+
+Click on BotFather in the results:
+```
+mcp__claude-in-chrome__computer with tabId: {tab_id}, action: "click", x: {x}, y: {y}
+```
+
+### Step 4: Send /newbot
+
+Find the message input and type /newbot:
+```
+mcp__claude-in-chrome__form_input with tabId: {tab_id}, selector: ".input-message-input", value: "/newbot"
+```
+
+Press Enter to send:
+```
+mcp__claude-in-chrome__computer with tabId: {tab_id}, action: "press", key: "Enter"
+```
+
+Wait 2 seconds, read BotFather's response:
+```
+mcp__claude-in-chrome__read_page with tabId: {tab_id}
+```
+
+BotFather asks for a name. Ask the operator:
+
+AskUserQuestion:
+- question: "BotFather wants a display name for your bot. Something like '{name}'s AOS'?"
+- options: ["Use that", "I'll type my own"]
+
+Type the chosen name and send:
+```
+mcp__claude-in-chrome__form_input with tabId: {tab_id}, selector: ".input-message-input", value: "{bot_name}"
+mcp__claude-in-chrome__computer with tabId: {tab_id}, action: "press", key: "Enter"
+```
+
+### Step 5: Set Bot Username
+
+Wait for BotFather's response, read it:
+```
+mcp__claude-in-chrome__read_page with tabId: {tab_id}
+```
+
+Suggest a username: `{name}_aos_bot`
+
+Type and send:
+```
+mcp__claude-in-chrome__form_input with tabId: {tab_id}, selector: ".input-message-input", value: "{username}"
+mcp__claude-in-chrome__computer with tabId: {tab_id}, action: "press", key: "Enter"
+```
+
+If username is taken (BotFather says so), try `{name}_aos_agent_bot` or ask the operator.
+
+### Step 6: Extract Token
+
+Read BotFather's response — it contains the token (format: `digits:alphanumeric`):
+```
+mcp__claude-in-chrome__read_page with tabId: {tab_id}
+```
+
+Extract the token from the response text. Store it securely:
+```bash
+~/aos/core/bin/agent-secret set TELEGRAM_BOT_TOKEN {token}
+```
+
+Tell operator: "Got the token. Stored securely in your Keychain."
+
+### Step 7: Get Chat ID
+
+Navigate to the new bot by searching for it:
+```
+mcp__claude-in-chrome__form_input with tabId: {tab_id}, selector: "[type='text']", value: "{bot_username}"
+```
+
+Click on the bot, send /start:
+```
+mcp__claude-in-chrome__form_input with tabId: {tab_id}, selector: ".input-message-input", value: "/start"
+mcp__claude-in-chrome__computer with tabId: {tab_id}, action: "press", key: "Enter"
+```
+
+Now get the chat ID via API:
 ```bash
 token=$(~/aos/core/bin/agent-secret get TELEGRAM_BOT_TOKEN)
-curl -s "https://api.telegram.org/bot${token}/getUpdates" | python3 -c "
+chat_id=$(curl -s "https://api.telegram.org/bot${token}/getUpdates" | python3 -c "
 import json, sys
 data = json.load(sys.stdin)
 updates = data.get('result', [])
 if updates: print(updates[-1]['message']['chat']['id'])
-"
+")
+~/aos/core/bin/agent-secret set TELEGRAM_CHAT_ID "$chat_id"
 ```
-Store: `~/aos/core/bin/agent-secret set TELEGRAM_CHAT_ID <chat_id>`
 
-**8. Send Test Message**
+### Step 8: Send Test Message
+
 ```bash
 token=$(~/aos/core/bin/agent-secret get TELEGRAM_BOT_TOKEN)
 chat_id=$(~/aos/core/bin/agent-secret get TELEGRAM_CHAT_ID)
 curl -s -X POST "https://api.telegram.org/bot${token}/sendMessage" \
     -d "chat_id=${chat_id}" \
-    -d "text=Your AOS is connected. Talk to your agents from here."
+    -d "text=Asalamualaikum — your AOS is connected. Talk to your agents from here."
 ```
 
-"Check your phone — you should see a message from your bot."
+"Check your phone — you should see a message from your bot. That's how we'll stay connected."
 
-**9. Verify**
-`bash ~/aos/core/integrations/telegram/setup.sh --check`
+### Step 9: Verify
+
+```bash
+bash ~/aos/core/integrations/telegram/setup.sh --check
+```
 
 ### Error Recovery
-- QR expired: refresh page, scan again
-- Username taken: suggest alternatives
-- Token extraction failed: ask operator to paste it
-- Chrome MCP not working: fall back to manual walkthrough
+- **QR expired**: refresh the page (`mcp__claude-in-chrome__navigate`), ask to scan again
+- **Username taken**: try variations, or ask operator to choose
+- **Token extraction failed**: read the page again, or ask operator to copy-paste the token
+- **Chrome MCP not responding**: fall back to manual — tell them to open Telegram on their
+  phone, message @BotFather directly, and paste the token when they get it
+- **Can't find UI elements**: take a screenshot (`mcp__claude-in-chrome__read_page`),
+  analyze what's on screen, adapt selectors accordingly
 
 ---
 
