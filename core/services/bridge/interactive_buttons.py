@@ -161,7 +161,8 @@ def resolve_callback(callback_data: str) -> tuple[str, str] | None:
             idx = int(value)
         except ValueError:
             return None
-        option_map = _pending_options.get(suffix, {})
+        entry = _pending_options.get(suffix, {})
+        option_map = entry.get("options", {}) if isinstance(entry, dict) and "options" in entry else entry
         text = option_map.get(idx)
         if text:
             _pending_options.pop(suffix, None)

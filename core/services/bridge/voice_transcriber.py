@@ -158,10 +158,15 @@ print(json.dumps({{"text": result.get("text", ""), "language": result.get("langu
             return text
         else:
             logger.error(f"mlx-whisper failed: {result.stderr[:200]}")
-            # Fall back to faster-whisper
+            from bridge_events import bridge_event
+            bridge_event("mlx_whisper_failed", level="error",
+                         stderr=result.stderr[:200], model=model_name)
             return _transcribe_faster(wav_path)
     except Exception as e:
         logger.error(f"mlx-whisper error: {e}")
+        from bridge_events import bridge_event
+        bridge_event("mlx_whisper_error", level="error",
+                     error=str(e), model=model_name)
         return _transcribe_faster(wav_path)
 
 
