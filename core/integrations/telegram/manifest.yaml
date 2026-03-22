@@ -34,7 +34,7 @@ requires:
   services:
     - name: bridge
       type: launchagent
-      plist: com.agent.bridge
+      plist: com.aos.bridge
   config:
     - key: telegram.bot_username
       file: ~/.aos/services/bridge/config.yaml
@@ -43,7 +43,7 @@ requires:
 health:
   checks:
     - name: bridge_running
-      command: "launchctl list | grep com.agent.bridge"
+      command: "launchctl list | grep com.aos.bridge"
       expect: running
     - name: bot_reachable
       command: "curl -s https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getMe"

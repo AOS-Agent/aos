@@ -40,7 +40,7 @@ fi
 
 # ── Bridge Service ────────────────────────────────────────
 
-check_service "Bridge service" "com.agent.bridge" || ((errors++))
+check_service "Bridge service" "com.aos.bridge" || ((errors++))
 
 # ── Result ────────────────────────────────────────────────
 

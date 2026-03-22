@@ -65,7 +65,7 @@ Monitor -> Detect -> Correct -> Report
 |---------|------|-------------|
 | Dashboard | 4096 | `curl -s http://127.0.0.1:4096/health` |
 | Listen | 7600 | `curl -s http://127.0.0.1:7600/health` |
-| Bridge | daemon | `launchctl list \| grep com.agent.bridge` |
+| Bridge | daemon | `launchctl list \| grep com.aos.bridge` |
 | Memory | stdio | MCP server, check process |
 
 ## Operator Context

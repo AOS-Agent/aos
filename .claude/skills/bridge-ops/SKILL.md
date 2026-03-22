@@ -10,13 +10,13 @@ Operational knowledge for diagnosing and managing the Telegram bridge system.
 ps aux | grep "claude -p" | grep -v grep
 
 # 2. Unload (stops the process)
-launchctl unload ~/Library/LaunchAgents/com.agent.bridge.plist
+launchctl unload ~/Library/LaunchAgents/com.aos.bridge.plist
 
 # 3. Wait for Telegram lock to release (CRITICAL — prevents Conflict errors)
 sleep 20
 
 # 4. Load (starts fresh)
-launchctl load ~/Library/LaunchAgents/com.agent.bridge.plist
+launchctl load ~/Library/LaunchAgents/com.aos.bridge.plist
 
 # 5. Verify
 sleep 3 && ps aux | grep "bridge.*main.py" | grep -v grep
@@ -25,7 +25,7 @@ sleep 3 && ps aux | grep "bridge.*main.py" | grep -v grep
 ### Check Service Status
 ```bash
 # Bridge
-launchctl list | grep com.agent.bridge
+launchctl list | grep com.aos.bridge
 ps aux | grep "bridge.*main.py" | grep -v grep
 
 # Listen server
@@ -42,9 +42,9 @@ curl -sf http://localhost:4096/api/health && echo "OK" || echo "DOWN"
 **Cause**: Two bridge instances running simultaneously
 **Fix**: Kill all bridge processes, wait 20 seconds, restart one instance
 ```bash
-pkill -f "apps/bridge/main.py"
+pkill -f "core/services/bridge/main.py"
 sleep 20
-launchctl load ~/Library/LaunchAgents/com.agent.bridge.plist
+launchctl load ~/Library/LaunchAgents/com.aos.bridge.plist
 ```
 
 ### 2. Voice Not Transcribing
@@ -76,7 +76,7 @@ tail -50 logs/bridge.err.log | grep getUpdates
 
 ### 5. Forum Topic Not Routing
 **Symptom**: Messages in a topic go to default handler instead of agent
-**Diagnose**: Check `TOPIC_ROUTES` in `apps/bridge/main.py`
+**Diagnose**: Check `TOPIC_ROUTES` in `core/services/bridge/main.py`
 **Fix**: Ensure `message_thread_id` matches the topic's actual thread ID
 
 ## Log Analysis
@@ -103,16 +103,16 @@ grep "setMessageReaction" logs/bridge.err.log | tail -10
 
 | File | Purpose |
 |------|---------|
-| `apps/bridge/main.py` | Entry point — secrets, forum config, service startup |
-| `apps/bridge/telegram_channel.py` | Message handlers, streaming, buttons |
-| `apps/bridge/claude_cli.py` | Claude CLI wrapper, StreamEvent, session management |
-| `apps/bridge/voice_transcriber.py` | Whisper transcription (fast/accurate modes) |
-| `apps/bridge/telegram_formatter.py` | Markdown → Telegram HTML |
-| `apps/bridge/interactive_buttons.py` | Inline keyboards (option detection, quick actions) |
-| `apps/bridge/heartbeat.py` | 30-min health checks |
-| `apps/bridge/activity_client.py` | Dashboard activity logging |
+| `core/services/bridge/main.py` | Entry point — secrets, forum config, service startup |
+| `core/services/bridge/telegram_channel.py` | Message handlers, streaming, buttons |
+| `core/services/bridge/claude_cli.py` | Claude CLI wrapper, StreamEvent, session management |
+| `core/services/bridge/voice_transcriber.py` | Whisper transcription (fast/accurate modes) |
+| `core/services/bridge/telegram_formatter.py` | Markdown → Telegram HTML |
+| `core/services/bridge/interactive_buttons.py` | Inline keyboards (option detection, quick actions) |
+| `core/services/bridge/heartbeat.py` | 30-min health checks |
+| `core/services/bridge/activity_client.py` | Dashboard activity logging |
 | `data/bridge/sessions.json` | Per-user Claude session IDs |
-| `~/Library/LaunchAgents/com.agent.bridge.plist` | LaunchAgent config |
+| `~/Library/LaunchAgents/com.aos.bridge.plist` | LaunchAgent config |
 
 ## Session Management
 
@@ -138,7 +138,7 @@ Sessions stored in `data/bridge/sessions.json`:
      -d "chat_id=<FORUM_GROUP_ID>&name=<AGENT_NAME>&icon_color=7322096"
    ```
 3. Note the `message_thread_id` from the response
-4. Add to TOPIC_ROUTES in `apps/bridge/main.py`:
+4. Add to TOPIC_ROUTES in `core/services/bridge/main.py`:
    ```python
    <thread_id>: {"cwd": "/path/to/project", "agent": "agent-name"},
    ```

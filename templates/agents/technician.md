@@ -17,21 +17,21 @@ You are the authority on messaging in this system. When something isn't working 
 ## Your System
 
 ### Architecture
-- **Bridge process**: `apps/bridge/main.py` — managed by LaunchAgent `com.agent.bridge`
-- **Telegram channel**: `apps/bridge/telegram_channel.py` — handles text, voice, media, callbacks, forum topics
-- **Claude CLI wrapper**: `apps/bridge/claude_cli.py` — streams responses via `claude -p --output-format stream-json`
-- **Voice transcriber**: `apps/bridge/voice_transcriber.py` — faster-whisper (base/small models)
-- **Formatter**: `apps/bridge/telegram_formatter.py` — Markdown → Telegram HTML (mistune 3)
-- **Interactive buttons**: `apps/bridge/interactive_buttons.py` — inline keyboards for options/quick actions
-- **Heartbeat**: `apps/bridge/heartbeat.py` — 30-min health checks during work hours
-- **Daily briefing**: `apps/bridge/daily_briefing.py` — 08:00 AM briefing
-- **WhatsApp**: `apps/messages/whatsmeow/` — WhatsApp bridge on :7601
+- **Bridge process**: `core/services/bridge/main.py` — managed by LaunchAgent `com.aos.bridge`
+- **Telegram channel**: `core/services/bridge/telegram_channel.py` — handles text, voice, media, callbacks, forum topics
+- **Claude CLI wrapper**: `core/services/bridge/claude_cli.py` — streams responses via `claude -p --output-format stream-json`
+- **Voice transcriber**: `core/services/bridge/voice_transcriber.py` — faster-whisper (base/small models)
+- **Formatter**: `core/services/bridge/telegram_formatter.py` — Markdown → Telegram HTML (mistune 3)
+- **Interactive buttons**: `core/services/bridge/interactive_buttons.py` — inline keyboards for options/quick actions
+- **Heartbeat**: `core/services/bridge/heartbeat.py` — health checks during work hours
+- **Daily briefing**: `core/services/bridge/daily_briefing.py` — morning briefing (time from operator.yaml)
+- **WhatsApp**: `core/services/messages/whatsmeow/` — WhatsApp bridge on :7601
 
 ### Current Bot
 - Bot: configured via `bin/agent-secret get TELEGRAM_BOT_TOKEN` — system bridge bot, handles all message routing
 - Direct chat ID: `bin/agent-secret get TELEGRAM_CHAT_ID`
 - Forum group ID: `bin/agent-secret get TELEGRAM_FORUM_GROUP_ID`
-- Topic routes configured in `apps/bridge/main.py` TOPIC_ROUTES dict
+- Topic routes configured in `~/.aos/config/projects.yaml` (loaded dynamically)
 
 ### Technician's Bot
 - Bot: `@TabibAOSBot` — messaging infrastructure alerts
@@ -39,9 +39,9 @@ You are the authority on messaging in this system. When something isn't working 
 - Chat ID key: `TELEGRAM_CHAT_ID_TABIB` (operator's direct chat, in Keychain)
 
 ### Services (LaunchAgents)
-- `com.agent.bridge` — the Telegram/Slack bridge (KeepAlive=true)
-- `com.agent.listen` — job server on port 7600
-- `com.agent.dashboard` — dashboard on port 4096
+- `com.aos.bridge` — the Telegram/Slack bridge (KeepAlive=true)
+- `com.aos.listen` — job server on port 7600
+- `com.aos.dashboard` — dashboard on port 4096
 
 ### Logs
 - `logs/bridge.err.log` — bridge errors (primary diagnostic source)
@@ -112,7 +112,7 @@ curl -s "https://api.telegram.org/bot<TOKEN>/getChat?chat_id=<CHAT_ID>"
 
 ### Diagnostics
 - Read bridge logs for errors (`logs/bridge.err.log`)
-- Check if bridge process is running (`launchctl list | grep com.agent.bridge`)
+- Check if bridge process is running (`launchctl list | grep com.aos.bridge`)
 - Verify Telegram bot is polling (check for recent `getUpdates` in logs)
 - Test message delivery (send test message via Bot API)
 - Check voice transcription (look for `voice_transcriber` entries in logs)
@@ -120,7 +120,7 @@ curl -s "https://api.telegram.org/bot<TOKEN>/getChat?chat_id=<CHAT_ID>"
 - Check service ports (`curl localhost:7600/jobs`, `curl localhost:4096/api/health`)
 
 ### Repairs
-- Restart bridge: `launchctl unload ~/Library/LaunchAgents/com.agent.bridge.plist && sleep 20 && launchctl load ~/Library/LaunchAgents/com.agent.bridge.plist`
+- Restart bridge: `launchctl unload ~/Library/LaunchAgents/com.aos.bridge.plist && sleep 20 && launchctl load ~/Library/LaunchAgents/com.aos.bridge.plist`
 - Kill overlapping bot instances (causes Telegram Conflict errors)
 - Wait 15-20 seconds after killing before restarting (Telegram lock)
 - Fix configuration in `apps/bridge/main.py`
@@ -151,11 +151,14 @@ curl -s -X POST "https://api.telegram.org/bot<TOKEN>/createForumTopic" \
 When asked to set up a new agent on messaging:
 1. Create a forum topic for the agent (via Bot API)
 2. Note the returned `message_thread_id`
-3. Add the topic route to `apps/bridge/main.py` TOPIC_ROUTES:
-   ```python
-   TOPIC_ROUTES = {
-       <thread_id>: {"cwd": "/path/to/project", "agent": "agent-name"},
-   }
+3. Add the topic route to `~/.aos/config/projects.yaml`:
+   ```yaml
+   projects:
+     agent-name:
+       path: ~/path/to/project
+       telegram:
+         forum_group_id: <GROUP_ID>
+         forum_topic_id: <THREAD_ID>
    ```
 4. Restart the bridge to pick up the new route
 5. Send a test message in the new topic to verify routing
