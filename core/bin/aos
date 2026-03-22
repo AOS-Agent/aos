@@ -353,6 +353,21 @@ TASKS
         SERVICES_DST="$HOME/.aos/services"
         svc="${2:-}"
 
+        # Find best python for venvs (3.11+, prefer homebrew)
+        _find_python() {
+            for p in /opt/homebrew/bin/python3.13 /opt/homebrew/bin/python3 "$HOME/.local/bin/python3"; do
+                if [[ -f "$p" ]]; then
+                    local minor
+                    minor=$("$p" --version 2>&1 | awk '{print $2}' | cut -d. -f2)
+                    if [[ "$minor" -ge 11 ]]; then
+                        echo "$p"
+                        return
+                    fi
+                fi
+            done
+            echo "python3"
+        }
+
         deploy_one() {
             local name="$1"
             local src="$SERVICES_SRC/$name"
@@ -366,43 +381,81 @@ TASKS
             echo "  Deploying $name..."
             mkdir -p "$dst"
 
-            # Create or rebuild venv — use Homebrew python, not system 3.9
-            if [ ! -d "$dst/.venv" ]; then
-                # Find the best python (prefer homebrew, fall back to PATH)
-                local py_bin=""
-                for p in /opt/homebrew/bin/python3 "$HOME/.local/bin/python3" python3; do
-                    if command -v "$p" &>/dev/null; then
-                        local ver
-                        ver=$("$p" --version 2>&1 | awk '{print $2}')
-                        local minor
-                        minor=$(echo "$ver" | cut -d. -f2)
-                        if [[ "$minor" -ge 11 ]]; then
-                            py_bin="$p"
-                            break
-                        fi
-                    fi
-                done
-                if [[ -n "$py_bin" ]]; then
-                    uv venv "$dst/.venv" --python "$py_bin" --quiet
-                else
-                    uv venv "$dst/.venv" --quiet
+            local py_bin
+            py_bin=$(_find_python)
+
+            # Always rebuild venv if python version is wrong
+            if [[ -d "$dst/.venv" ]]; then
+                local venv_ver
+                venv_ver=$("$dst/.venv/bin/python" --version 2>&1 | awk '{print $2}' | cut -d. -f2 || echo "0")
+                if [[ "$venv_ver" -lt 11 ]]; then
+                    echo "    Venv has Python 3.$venv_ver — rebuilding with 3.11+"
+                    rm -rf "$dst/.venv"
                 fi
-                echo "    Created venv"
             fi
 
-            # Install deps from framework source
-            uv pip install --quiet -p "$dst/.venv/bin/python" -r <(
-                python3 -c "
+            if [[ ! -d "$dst/.venv" ]]; then
+                echo "    Creating venv with $py_bin..."
+                uv venv "$dst/.venv" --python "$py_bin" 2>&1 | tail -2
+                if [[ ! -f "$dst/.venv/bin/python" ]]; then
+                    echo "  ✗ $name: venv creation failed"
+                    return 1
+                fi
+            fi
+
+            # Extract deps from pyproject.toml
+            local deps
+            deps=$(python3 -c "
 try:
     import tomllib
 except ImportError:
-    import tomli as tomllib
+    try:
+        import tomli as tomllib
+    except ImportError:
+        import re, sys
+        deps = []
+        in_deps = False
+        for line in open('$src/pyproject.toml'):
+            s = line.strip()
+            if s == 'dependencies = [': in_deps = True; continue
+            if in_deps and s == ']': break
+            if in_deps:
+                m = re.search(r'\"(.+?)\"', line)
+                if m: deps.append(m.group(1))
+        print('\n'.join(deps))
+        sys.exit(0)
 with open('$src/pyproject.toml', 'rb') as f:
     deps = tomllib.load(f).get('project', {}).get('dependencies', [])
 print('\n'.join(deps))
-"
-            )
-            echo "    ✓ $name deployed"
+" 2>/dev/null)
+
+            if [[ -z "$deps" ]]; then
+                echo "  ✗ $name: could not read dependencies"
+                return 1
+            fi
+
+            # Install deps — show output so failures are visible
+            echo "    Installing: $(echo "$deps" | tr '\n' ' ')"
+            if ! echo "$deps" | uv pip install -p "$dst/.venv/bin/python" -r - 2>&1 | tail -5; then
+                echo "  ✗ $name: pip install failed"
+                return 1
+            fi
+
+            # Verify critical imports work
+            local verify_ok=true
+            for mod in yaml; do
+                if ! "$dst/.venv/bin/python" -c "import $mod" 2>/dev/null; then
+                    echo "    ✗ Missing: $mod"
+                    verify_ok=false
+                fi
+            done
+
+            if [[ "$verify_ok" == true ]]; then
+                echo "    ✓ $name deployed (Python $("$dst/.venv/bin/python" --version 2>&1 | awk '{print $2}'))"
+            else
+                echo "  ✗ $name: deployed but missing dependencies — try: aos deploy $name"
+                return 1
+            fi
         }
 
         echo "=== AOS Deploy ==="

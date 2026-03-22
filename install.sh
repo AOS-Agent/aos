@@ -1221,6 +1221,19 @@ deploy_services() {
     local services_src="$AOS_DIR/core/services"
     local services_dst="$USER_DIR/services"
 
+    # Find best python for service venvs
+    local svc_python=""
+    for p in /opt/homebrew/bin/python3.13 /opt/homebrew/bin/python3 "$HOME/.local/bin/python3"; do
+        if [[ -f "$p" ]]; then
+            local pminor
+            pminor=$("$p" --version 2>&1 | awk '{print $2}' | cut -d. -f2)
+            if [[ "$pminor" -ge 11 ]]; then
+                svc_python="$p"
+                break
+            fi
+        fi
+    done
+
     for src_dir in "$services_src"/*/; do
         local name
         name=$(basename "$src_dir")
@@ -1228,28 +1241,42 @@ deploy_services() {
 
         local dst="$services_dst/$name"
 
-        if [[ -d "$dst/.venv" ]] && [[ -f "$dst/.venv/bin/python" ]]; then
-            _skip "Service $name"
+        # Check if venv exists AND uses Python 3.11+
+        local needs_deploy=false
+        if [[ ! -d "$dst/.venv" ]] || [[ ! -f "$dst/.venv/bin/python" ]]; then
+            needs_deploy=true
         else
+            local venv_minor
+            venv_minor=$("$dst/.venv/bin/python" --version 2>&1 | awk '{print $2}' | cut -d. -f2 || echo "0")
+            if [[ "$venv_minor" -lt 11 ]]; then
+                _info "Service $name has Python 3.$venv_minor — rebuilding"
+                rm -rf "$dst/.venv"
+                needs_deploy=true
+            elif ! "$dst/.venv/bin/python" -c "import yaml" 2>/dev/null; then
+                _info "Service $name missing deps — reinstalling"
+                needs_deploy=true
+            else
+                _skip "Service $name"
+            fi
+        fi
+
+        if [[ "$needs_deploy" == true ]]; then
             _info "Deploying $name..."
             mkdir -p "$dst"
 
-            # Each service deploy is best-effort — don't kill the install
-            # Use Homebrew python for venv, not system 3.9
-            local py_flag=""
-            for p in /opt/homebrew/bin/python3 "$HOME/.local/bin/python3"; do
-                if [[ -f "$p" ]]; then
-                    local pver
-                    pver=$("$p" --version 2>&1 | awk '{print $2}' | cut -d. -f2)
-                    if [[ "$pver" -ge 11 ]]; then
-                        py_flag="--python $p"
-                        break
-                    fi
+            # Create venv with correct python
+            if [[ ! -d "$dst/.venv" ]]; then
+                local py_arg=""
+                [[ -n "$svc_python" ]] && py_arg="--python $svc_python"
+                if ! uv venv "$dst/.venv" $py_arg 2>&1 | tail -2; then
+                    _warn "Service $name — venv creation failed"
+                    continue
                 fi
-            done
-            if uv venv "$dst/.venv" $py_flag --quiet 2>/dev/null && \
-               uv pip install --quiet -p "$dst/.venv/bin/python" \
-                 -r <(python3 -c "
+            fi
+
+            # Install deps
+            local deps
+            deps=$(python3 -c "
 import re, sys
 toml_path = '$src_dir/pyproject.toml'
 try:
@@ -1269,11 +1296,17 @@ except Exception:
             m = re.search(r'\"(.+?)\"', line)
             if m: deps.append(m.group(1))
 print('\n'.join(deps))
-"
-               ) 2>&1 | tail -3 >> "$INSTALL_LOG"; then
-                _ok "Service $name"
+" 2>/dev/null)
+
+            if echo "$deps" | uv pip install -p "$dst/.venv/bin/python" -r - 2>&1 | tail -3 >> "$INSTALL_LOG"; then
+                # Verify critical import
+                if "$dst/.venv/bin/python" -c "import yaml" 2>/dev/null; then
+                    _ok "Service $name"
+                else
+                    _warn "Service $name — deployed but yaml import failed"
+                fi
             else
-                _warn "Service $name — deploy failed (run 'aos deploy $name' later)"
+                _warn "Service $name — pip install failed (run 'aos deploy $name' later)"
             fi
         fi
     done
