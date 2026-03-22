@@ -1094,17 +1094,9 @@ assert s.get('hooks', {}).get('SessionStart')
         python3 "$AOS_DIR/core/migrations/005_wire_hooks.py" 2>/dev/null && _ok "Hooks wired" || _warn "Hooks — wire manually later"
     fi
 
-    # mcp.json — MCP server config (memory service)
-    local mcp_file="$HOME/.claude/mcp.json"
-    if [[ ! -f "$mcp_file" ]]; then
-        _info "Creating MCP config..."
-        cat > "$mcp_file" << MCPJSON
-{
-  "mcpServers": {}
-}
-MCPJSON
-        _ok "mcp.json created"
-    fi
+    # MCP servers — register AOS services into Claude Code's config
+    _info "Syncing MCP servers..."
+    bash "$AOS_DIR/core/bin/aos" sync-mcp 2>/dev/null && _ok "MCP servers synced" || _warn "MCP sync — run 'aos sync-mcp' after deploy"
 
     # projects dir — Claude Code per-project memory
     mkdir -p "$HOME/.claude/projects"

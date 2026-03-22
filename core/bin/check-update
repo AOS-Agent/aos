@@ -163,6 +163,7 @@ apply() {
     log "Syncing..."
     bash "$AOS_DIR/core/bin/aos" sync-skills 2>/dev/null || true
     bash "$AOS_DIR/core/bin/aos" sync-agents 2>/dev/null || true
+    bash "$AOS_DIR/core/bin/aos" sync-mcp 2>/dev/null || true
 
     # Check if any pyproject.toml changed — rebuild affected venvs
     local changed_services

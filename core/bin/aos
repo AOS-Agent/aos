@@ -106,6 +106,60 @@ case "${1:-help}" in
         fi
         ;;
 
+    sync-mcp)
+        # Register AOS MCP servers into ~/.claude/mcp.json (where Claude Code reads them)
+        MCP_FILE="$HOME/.claude/mcp.json"
+        mkdir -p "$HOME/.claude"
+
+        python3 - "$AOS_DIR" "$MCP_FILE" << 'SYNCMCP'
+import json, sys
+from pathlib import Path
+
+aos_dir = Path(sys.argv[1])
+mcp_file = Path(sys.argv[2])
+home = Path.home()
+
+# Load existing config (preserve non-AOS servers)
+if mcp_file.exists():
+    try:
+        config = json.loads(mcp_file.read_text())
+    except json.JSONDecodeError:
+        config = {}
+else:
+    config = {}
+
+servers = config.setdefault("mcpServers", {})
+
+# AOS MCP servers — defined here, single source of truth
+aos_servers = {
+    "memory": {
+        "type": "stdio",
+        "command": str(home / ".aos/services/memory/.venv/bin/python"),
+        "args": [str(aos_dir / "core/services/memory/main.py")],
+        "cwd": str(aos_dir / "core/services/memory"),
+        "env": {}
+    }
+}
+
+changed = 0
+for name, spec in aos_servers.items():
+    # Only register if the service venv exists
+    if not Path(spec["command"]).exists():
+        print(f"  - Skipping {name} (venv not deployed)")
+        continue
+    if servers.get(name) != spec:
+        servers[name] = spec
+        print(f"  ✓ Registered {name}")
+        changed += 1
+
+if changed == 0:
+    print("  ✓ All MCP servers in sync")
+else:
+    mcp_file.write_text(json.dumps(config, indent=2) + "\n")
+    print(f"  ✓ Synced {changed} MCP server(s)")
+SYNCMCP
+        ;;
+
     sync-agents)
         # Re-run agent symlinking — picks up new agents
         SOURCE="$AOS_DIR/core/agents"
@@ -620,9 +674,10 @@ p.write_text(json.dumps(s, indent=2) + '\n')
         bash "$AOS_DIR/install.sh" 2>/dev/null | grep -E "patched|repaired|OK|CHANGED" || true
 
         # Sync agents and skills
-        echo "  Syncing agents..."
+        echo "  Syncing agents, skills, MCP..."
         bash "$0" sync-agents 2>/dev/null
         bash "$0" sync-skills 2>/dev/null
+        bash "$0" sync-mcp 2>/dev/null
 
         # Reload all LaunchAgents
         echo "  Reloading services..."
@@ -749,6 +804,7 @@ sys.exit(0 if errors == 0 else 1)
         echo "  deploy          Deploy service venvs (all or: aos deploy bridge)"
         echo "  sync-skills     Re-sync skill symlinks (--all for developer)"
         echo "  sync-agents     Re-sync agent symlinks"
+        echo "  sync-mcp        Register AOS MCP servers with Claude Code"
         echo "  activate        Activate a catalog agent (aos activate engineer)"
         echo "  deactivate      Deactivate a catalog agent"
         echo "  trust           Review agent trust levels"
