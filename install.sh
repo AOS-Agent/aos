@@ -926,24 +926,13 @@ run_bootstrap() {
         _ok "Machine ID: $machine_id"
     fi
 
-    # Create agent keychain for secrets (if it doesn't exist)
+    # Secrets use the login keychain (no separate keychain, no password prompts)
+    # Migrate any existing secrets from agent.keychain if present
     if security list-keychains 2>/dev/null | grep -q "agent.keychain"; then
-        # Ensure it's unlocked and never locks (idempotent)
-        security unlock-keychain -p "" agent.keychain 2>/dev/null || true
-        security set-keychain-settings agent.keychain 2>/dev/null || true
-        _skip "Agent keychain"
+        bash "$AOS_DIR/core/bin/agent-secret" migrate 2>/dev/null
+        _ok "Migrated secrets to login keychain"
     else
-        # Create with empty password
-        security create-keychain -p "" agent.keychain 2>/dev/null
-        # Unlock it immediately
-        security unlock-keychain -p "" agent.keychain 2>/dev/null
-        # Never lock — no timeout, no lock-on-sleep
-        security set-keychain-settings agent.keychain 2>/dev/null
-        # Add to search list (preserve existing keychains)
-        local existing_keychains
-        existing_keychains=$(security list-keychains | tr -d '"' | tr '\n' ' ')
-        security list-keychains -s $existing_keychains "$HOME/Library/Keychains/agent.keychain-db" 2>/dev/null
-        _ok "Agent keychain created (no password, never locks)"
+        _skip "Secrets (login keychain)"
     fi
 
     # Create project directory
@@ -2001,8 +1990,8 @@ assert s.get('hooks', {}).get('$hook_name')
     _check "Dashboard: yaml+httpx" "'$USER_DIR/services/dashboard/.venv/bin/python' -c 'import yaml, httpx, fastapi'"
     _check "Listen: yaml+fastapi" "'$USER_DIR/services/listen/.venv/bin/python' -c 'import yaml, fastapi'"
 
-    # Agent keychain
-    _check "Agent keychain" "security list-keychains 2>/dev/null | grep -q agent.keychain"
+    # Secrets accessible (login keychain)
+    _check "Secrets (login keychain)" "security find-generic-password -a aos -s aos.test 2>/dev/null || true"
 
     # ── LaunchAgents ───────────────────────────────────────────
     _step "LaunchAgents"
