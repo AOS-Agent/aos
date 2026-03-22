@@ -30,6 +30,52 @@ registry = AgentRegistry(WORKSPACE)
 
 app = FastAPI(title="AOS Dashboard")
 
+
+def _get_version() -> str:
+    """Read current AOS version from VERSION file."""
+    version_file = WORKSPACE / "VERSION"
+    if version_file.exists():
+        return version_file.read_text().strip()
+    return "dev"
+
+
+def _get_changelog() -> list[dict]:
+    """Parse CHANGELOG.md into structured release entries."""
+    changelog_file = WORKSPACE / "CHANGELOG.md"
+    if not changelog_file.exists():
+        return []
+    import re
+    content = changelog_file.read_text()
+    entries = []
+    # Split by ## vX.Y.Z headers
+    parts = re.split(r'\n(?=## v)', content)
+    for part in parts:
+        match = re.match(r'## (v[\d.]+)\s*—?\s*(.*?)\n(.*)', part, re.DOTALL)
+        if match:
+            version = match.group(1)
+            date = match.group(2).strip()
+            body = match.group(3).strip()
+            # Extract bullet points
+            notes = [l.strip().lstrip('- ') for l in body.split('\n')
+                     if l.strip().startswith('-')]
+            # Extract section headers
+            sections = {}
+            current_section = "Changes"
+            for line in body.split('\n'):
+                if line.strip().startswith('###'):
+                    current_section = line.strip().lstrip('# ').strip()
+                    sections[current_section] = []
+                elif line.strip().startswith('-'):
+                    sections.setdefault(current_section, []).append(
+                        line.strip().lstrip('- '))
+            entries.append({
+                "version": version,
+                "date": date,
+                "notes": notes,
+                "sections": sections,
+            })
+    return entries
+
 # ── In-memory SSE event bus ──────────────────────────
 # Each connected SSE client gets a Queue. Work mutations broadcast to all.
 _sse_subscribers: list[asyncio.Queue] = []
@@ -325,6 +371,7 @@ async def dashboard(request: Request):
         "attention": attention,
         "morning": morning,
         "weekly": weekly,
+        "version": _get_version(),
     })
 
 
@@ -333,6 +380,16 @@ async def dashboard(request: Request):
 @app.get("/api/health")
 async def api_health():
     return await asyncio.get_event_loop().run_in_executor(None, _system_health)
+
+
+@app.get("/api/version")
+async def api_version():
+    return {"version": _get_version()}
+
+
+@app.get("/api/changelog")
+async def api_changelog():
+    return _get_changelog()
 
 
 @app.get("/api/services")

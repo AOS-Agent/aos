@@ -120,29 +120,128 @@ apply() {
 
     cd "$AOS_DIR" || exit 1
 
-    # Pull
+    # Snapshot for rollback
+    local old_hash
+    old_hash=$(git rev-parse HEAD 2>/dev/null)
+    local old_version
+    old_version=$(cat "$AOS_DIR/VERSION" 2>/dev/null || echo "unknown")
+
+    # Pull (main branch only, fast-forward)
     local pull_output
-    pull_output=$(git pull --ff-only 2>&1)
+    pull_output=$(git pull --ff-only origin main 2>&1)
     local pull_status=$?
 
     if [[ $pull_status -ne 0 ]]; then
-        log "ERROR: git pull failed"
-        echo "$pull_output"
-        notify "⚠️ AOS update failed: git pull error"
-        return 1
+        log "ERROR: git pull failed — attempting reset"
+        # Reset any dirty state and try again
+        git checkout -- . 2>/dev/null
+        pull_output=$(git pull --ff-only origin main 2>&1)
+        pull_status=$?
+        if [[ $pull_status -ne 0 ]]; then
+            log "ERROR: git pull failed after reset"
+            notify "⚠️ System update failed. Will retry next cycle."
+            return 1
+        fi
     fi
 
-    echo "$pull_output"
+    local new_version
+    new_version=$(cat "$AOS_DIR/VERSION" 2>/dev/null || echo "unknown")
+
+    # Skip if version didn't change
+    if [[ "$old_version" == "$new_version" ]]; then
+        log "No version change ($old_version)"
+        return 0
+    fi
+
+    log "Updating $old_version → $new_version"
 
     # Run migrations
     log "Running migrations..."
-    python3 "$AOS_DIR/core/migrations/runner.py" migrate
+    python3 "$AOS_DIR/core/migrations/runner.py" migrate 2>/dev/null || true
 
     # Sync skills and agents
-    log "Syncing skills..."
-    bash "$AOS_DIR/core/bin/aos" sync-skills
-    log "Syncing agents..."
-    bash "$AOS_DIR/core/bin/aos" sync-agents
+    log "Syncing..."
+    bash "$AOS_DIR/core/bin/aos" sync-skills 2>/dev/null || true
+    bash "$AOS_DIR/core/bin/aos" sync-agents 2>/dev/null || true
+
+    # Check if any pyproject.toml changed — rebuild affected venvs
+    local changed_services
+    changed_services=$(git diff --name-only "$old_hash..HEAD" 2>/dev/null | grep "core/services/.*/pyproject.toml" | sed 's|core/services/\(.*\)/pyproject.toml|\1|' || true)
+    if [[ -n "$changed_services" ]]; then
+        log "Dependencies changed in: $changed_services"
+        for svc in $changed_services; do
+            log "Rebuilding $svc venv..."
+            rm -rf "$HOME/.aos/services/$svc/.venv"
+            bash "$AOS_DIR/core/bin/aos" deploy "$svc" 2>/dev/null || true
+        done
+    fi
+
+    # Reload services if bridge or dashboard code changed
+    local reload_bridge=false reload_dashboard=false reload_listen=false
+    git diff --name-only "$old_hash..HEAD" 2>/dev/null | grep -q "core/services/bridge/" && reload_bridge=true
+    git diff --name-only "$old_hash..HEAD" 2>/dev/null | grep -q "core/services/dashboard/" && reload_dashboard=true
+    git diff --name-only "$old_hash..HEAD" 2>/dev/null | grep -q "core/services/listen/" && reload_listen=true
+
+    if [[ "$reload_bridge" == true ]]; then
+        log "Reloading bridge..."
+        launchctl unload "$HOME/Library/LaunchAgents/com.aos.bridge.plist" 2>/dev/null
+        launchctl load "$HOME/Library/LaunchAgents/com.aos.bridge.plist" 2>/dev/null
+    fi
+    if [[ "$reload_dashboard" == true ]]; then
+        log "Reloading dashboard..."
+        launchctl unload "$HOME/Library/LaunchAgents/com.aos.dashboard.plist" 2>/dev/null
+        launchctl load "$HOME/Library/LaunchAgents/com.aos.dashboard.plist" 2>/dev/null
+    fi
+    if [[ "$reload_listen" == true ]]; then
+        log "Reloading listen..."
+        launchctl unload "$HOME/Library/LaunchAgents/com.aos.listen.plist" 2>/dev/null
+        launchctl load "$HOME/Library/LaunchAgents/com.aos.listen.plist" 2>/dev/null
+    fi
+
+    # Health check after update
+    sleep 3
+    local health_ok=true
+    for svc in bridge dashboard listen; do
+        if ! launchctl list 2>/dev/null | grep -q "com.aos.$svc"; then
+            log "WARN: $svc not running after update"
+            health_ok=false
+        fi
+    done
+
+    if [[ "$health_ok" == false ]]; then
+        log "Health check failed — rolling back to $old_hash"
+        git checkout "$old_hash" 2>/dev/null
+        for la in com.aos.bridge com.aos.dashboard com.aos.listen; do
+            launchctl unload "$HOME/Library/LaunchAgents/${la}.plist" 2>/dev/null
+            launchctl load "$HOME/Library/LaunchAgents/${la}.plist" 2>/dev/null
+        done
+        notify "⚠️ Update to $new_version rolled back — services were unhealthy. Developer notified."
+        bash "$AOS_DIR/core/bin/feedback" --auto "Update rollback: $new_version → $old_version" "auto-update" 2>/dev/null || true
+        return 1
+    fi
+
+    # Read release notes from CHANGELOG.md
+    local release_notes
+    release_notes=$(python3 -c "
+from pathlib import Path
+cl = Path('$AOS_DIR/CHANGELOG.md')
+if not cl.exists():
+    print('System updated.')
+    exit()
+content = cl.read_text()
+# Find the section for this version
+import re
+pattern = r'## $new_version.*?\n(.*?)(?=\n## v|\Z)'
+match = re.search(pattern, content, re.DOTALL)
+if match:
+    notes = match.group(1).strip()
+    # Clean up: take first 5 bullet points
+    lines = [l.strip() for l in notes.split('\n') if l.strip().startswith('-')][:5]
+    for l in lines:
+        print(l)
+else:
+    print('System updated.')
+" 2>/dev/null)
 
     # Update state
     local new_hash
@@ -153,6 +252,7 @@ state = {
     'last_check': datetime.datetime.now().isoformat(),
     'last_update': datetime.datetime.now().isoformat(),
     'status': 'up_to_date',
+    'version': '$new_version',
     'local': '$new_hash',
     'remote': '$new_hash',
 }
@@ -160,8 +260,11 @@ with open('$STATE_FILE', 'w') as f:
     json.dump(state, f, indent=2)
 "
 
-    log "Update complete"
-    notify "✅ AOS updated to $(git log --oneline -1)"
+    log "Update complete: $new_version"
+
+    # Send clean release notification (not "aos updated to commit hash")
+    local note_text="AOS $new_version"$'\n'$'\n'"$release_notes"$'\n'$'\n'"Already applied. No action needed."
+    notify "$note_text"
 }
 
 # ── Status ───────────────────────────────────────────────────────────────────
