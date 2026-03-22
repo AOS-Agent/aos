@@ -127,7 +127,16 @@ CMD
 chmod +x "\$SSH_SHORTCUT"
 echo "  ✓ Desktop shortcut: 'AOS Terminal.command'"
 
-# ── Step 5: Desktop shortcut — Dashboard ─────────────
+# ── Step 5: Desktop shortcut — Screen Sharing ────────
+SCREEN_SHORTCUT="\$HOME/Desktop/AOS Screen Share.command"
+cat > "\$SCREEN_SHORTCUT" << CMD
+#!/bin/bash
+open "vnc://${TS_IP}"
+CMD
+chmod +x "\$SCREEN_SHORTCUT"
+echo "  ✓ Desktop shortcut: 'AOS Screen Share.command'"
+
+# ── Step 6: Desktop shortcut — Dashboard ─────────────
 DASH_SHORTCUT="\$HOME/Desktop/AOS Dashboard.webloc"
 cat > "\$DASH_SHORTCUT" << WEBLOC
 <?xml version="1.0" encoding="UTF-8"?>
@@ -141,7 +150,7 @@ cat > "\$DASH_SHORTCUT" << WEBLOC
 WEBLOC
 echo "  ✓ Desktop shortcut: 'AOS Dashboard.webloc'"
 
-# ── Step 6: Test connection ──────────────────────────
+# ── Step 7: Test connection ──────────────────────────
 echo ""
 echo "  Testing SSH connection..."
 if ssh -o ConnectTimeout=5 aos "echo 'connected'" 2>/dev/null; then
@@ -157,9 +166,10 @@ echo ""
 echo "  You're connected to \${AOS_NAME}."
 echo ""
 echo "  From this laptop:"
-echo "    ssh aos              — Terminal into your Mac Mini"
-echo "    AOS Terminal.command — Double-click on Desktop"
-echo "    AOS Dashboard.webloc — Opens dashboard in browser"
+echo "    ssh aos                    — Terminal into your Mac Mini"
+echo "    AOS Terminal.command       — Double-click for SSH"
+echo "    AOS Screen Share.command   — Double-click for screen sharing"
+echo "    AOS Dashboard.webloc       — Opens dashboard in browser"
 echo ""
 echo "  \${AGENT} is running on \${AOS_NAME} 24/7."
 echo "  Talk to it via Telegram, or SSH in and type 'cld'."

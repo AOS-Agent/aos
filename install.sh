@@ -1670,6 +1670,18 @@ configure_macos() {
         # Disable display sleep on AC power (keep it awake for screen sharing)
         sudo pmset -a displaysleep 0 2>/dev/null
         _ok "Display sleep disabled"
+
+        # Enable Screen Sharing
+        if nc -z localhost 5900 2>/dev/null; then
+            _skip "Screen Sharing"
+        else
+            sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.screensharing.plist 2>/dev/null
+            if nc -z localhost 5900 2>/dev/null; then
+                _ok "Screen Sharing enabled"
+            else
+                _warn "Screen Sharing — enable manually: System Settings > Sharing > Screen Sharing"
+            fi
+        fi
     else
         _info "Always-on settings require sudo — configure manually:"
         _info "  sudo pmset -a sleep 0 displaysleep 0 disksleep 0"

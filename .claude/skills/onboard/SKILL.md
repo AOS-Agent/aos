@@ -498,44 +498,48 @@ Walk through:
 
 Verify by asking them to confirm it's enabled.
 
-### SSH / Remote Login
+### SSH + Screen Sharing
 
-SSH is built into macOS — it just needs to be turned on. Try to enable it programmatically first:
+"Two things to enable — SSH for terminal access, and Screen Sharing
+so you can see the desktop remotely."
 
-```bash
-# Check if already enabled
-ssh_status=$(sudo -n systemsetup -getremotelogin 2>/dev/null || echo "unknown")
-```
-
-If not enabled, try the programmatic approach:
+Try to enable both programmatically:
 
 ```bash
-# Method 1: launchctl (works without Full Disk Access)
-sudo -n launchctl load -w /System/Library/LaunchDaemons/ssh.plist 2>/dev/null
+# SSH
+nc -z localhost 22 2>/dev/null && echo "SSH already on" || \
+    sudo -n launchctl load -w /System/Library/LaunchDaemons/ssh.plist 2>/dev/null
+
+# Screen Sharing
+nc -z localhost 5900 2>/dev/null && echo "Screen Sharing already on" || \
+    sudo -n launchctl load -w /System/Library/LaunchDaemons/com.apple.screensharing.plist 2>/dev/null
 
 # Verify
-sudo -n systemsetup -getremotelogin 2>/dev/null | grep -qi "on" && echo "SSH enabled"
+nc -z localhost 22 && echo "SSH: ON" || echo "SSH: OFF"
+nc -z localhost 5900 && echo "Screen Sharing: ON" || echo "Screen Sharing: OFF"
 ```
 
-If that worked: "SSH is enabled. No manual steps needed."
+If both worked: "SSH and Screen Sharing are enabled."
 
-If it failed (no sudo or permission issue), fall back to System Settings:
+If either failed (no sudo), fall back to System Settings:
 
-"I need you to enable Remote Login manually — macOS requires it."
+"I need you to enable these manually."
 
 AskUserQuestion:
-- question: "Let me open System Settings for you."
+- question: "Let me open System Settings — you'll toggle both on."
 - options: ["Open it", "I'll do it myself"]
 
 If "Open it": `open "x-apple.systempreferences:com.apple.preferences.sharing"`
 
 Walk through:
-1. "Find 'Remote Login' and toggle it ON"
-2. "Under 'Allow access for,' choose 'All users'"
+1. "Toggle 'Remote Login' ON"
+2. "Toggle 'Screen Sharing' ON"
+3. "Under both, set 'Allow access for: All users'"
 
-Either way, show the SSH address:
+Either way, confirm:
 ```bash
-echo "Your SSH address: $(whoami)@$(hostname).local"
+echo "SSH: $(whoami)@$(hostname).local"
+echo "Screen Sharing: vnc://$(hostname).local"
 ```
 
 ### Tailscale
