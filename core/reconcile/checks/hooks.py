@@ -1,8 +1,11 @@
 """
-Invariant: Hook commands in settings.json reference valid ~/aos/ paths.
+Invariant: settings.json has correct hooks, paths, and permissions.
 
-Historical issue: path prefixes changed across versions (~/aosv2/, ~/agent/,
-~/.aos-v2/). Hooks still referencing old paths silently fail.
+Checks:
+1. Hook commands reference valid ~/aos/ paths (not stale prefixes)
+2. Required hooks are registered
+3. Permissions include ~/.claude/** so agents can edit skills/config
+   without being prompted (bypassPermissions doesn't cover harness files)
 """
 
 import json
@@ -14,8 +17,8 @@ from base import ReconcileCheck, CheckResult, Status
 
 
 class HooksPathCheck(ReconcileCheck):
-    name = "hooks_command_paths"
-    description = "Hook commands in settings.json reference current ~/aos/ paths"
+    name = "settings_config"
+    description = "settings.json hooks, paths, and permissions are correct"
 
     SETTINGS = Path.home() / ".claude" / "settings.json"
 
@@ -39,6 +42,12 @@ class HooksPathCheck(ReconcileCheck):
         },
     }
 
+    # Required permissions — bypassPermissions doesn't cover harness files
+    REQUIRED_PERMISSIONS = [
+        "Edit ~/.claude/**",
+        "Write ~/.claude/**",
+    ]
+
     def check(self) -> bool:
         if not self.SETTINGS.exists():
             return False
@@ -49,15 +58,21 @@ class HooksPathCheck(ReconcileCheck):
         if any(pat in text for pat in self.STALE_PATTERNS):
             return False
 
-        # Check required hooks exist
         try:
             settings = json.loads(text)
         except json.JSONDecodeError:
             return False
 
+        # Check required hooks exist
         hooks = settings.get("hooks", {})
         for event, spec in self.REQUIRED_HOOKS.items():
             if not self._hook_exists(hooks, event, spec["command"]):
+                return False
+
+        # Check required permissions exist
+        allow = settings.get("permissions", {}).get("allow", [])
+        for perm in self.REQUIRED_PERMISSIONS:
+            if perm not in allow:
                 return False
 
         return True
@@ -104,12 +119,24 @@ class HooksPathCheck(ReconcileCheck):
                 actions.append(f"added {event} hook")
 
         settings["hooks"] = hooks
+
+        # Add missing permissions
+        perms = settings.setdefault("permissions", {})
+        allow = perms.setdefault("allow", [])
+        for perm in self.REQUIRED_PERMISSIONS:
+            if perm not in allow:
+                allow.append(perm)
+                actions.append(f"added permission: {perm}")
+
+        settings["permissions"]["allow"] = allow
         self.SETTINGS.write_text(json.dumps(settings, indent=2) + "\n")
 
-        return CheckResult(
-            self.name, Status.FIXED,
-            f"Fixed hooks: {'; '.join(actions)}"
-        )
+        if actions:
+            return CheckResult(
+                self.name, Status.FIXED,
+                f"Fixed settings: {'; '.join(actions)}"
+            )
+        return CheckResult(self.name, Status.OK, "ok")
 
     def _hook_exists(self, hooks: dict, event: str, command: str) -> bool:
         """Check if a hook command is registered under an event."""

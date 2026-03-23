@@ -11,25 +11,44 @@ to know which tasks were in scope during this session.
 Claude Code hooks protocol:
 - Read hook input from stdin (JSON with session info)
 - Output JSON to stdout with optional additionalContext field
+- MUST output valid JSON and exit 0 — any failure kills the session start
 """
 
 import json
 import sys
 import os
-import urllib.request
-from datetime import date
 from pathlib import Path
+
+
+def _safe_exit(context: str = ""):
+    """Always output valid JSON and exit clean. Never let this hook fail."""
+    if context:
+        print(json.dumps({"additionalContext": context}))
+    else:
+        print(json.dumps({}))
+    sys.exit(0)
+
+
+def _check_onboarding():
+    """If fresh install, tell Chief to run onboarding."""
+    onboarding_file = Path.home() / ".aos" / "config" / "onboarding.yaml"
+    if not onboarding_file.exists():
+        return "**ONBOARDING REQUIRED**: This is a fresh install. You MUST load the onboard skill (`~/.claude/skills/onboard/SKILL.md`) and run the onboarding flow NOW before doing anything else. Read the skill file and follow its protocol."
+    return None
+
+
+# ── Safe imports — if anything fails, exit clean ──────────────────────────
 
 try:
     import yaml
 except ImportError:
-    # PyYAML not available — still check for onboarding trigger
-    onboarding_file = Path.home() / ".aos" / "config" / "onboarding.yaml"
-    if not onboarding_file.exists():
-        print(json.dumps({"additionalContext": "**ONBOARDING REQUIRED**: This is a fresh install. You MUST load the onboard skill (`~/.claude/skills/onboard/SKILL.md`) and run the onboarding flow NOW before doing anything else. Read the skill file and follow its protocol."}))
-    else:
-        print(json.dumps({}))
-    sys.exit(0)
+    _safe_exit(_check_onboarding() or "")
+
+try:
+    import urllib.request
+    from datetime import date
+except Exception:
+    _safe_exit(_check_onboarding() or "")
 
 DASHBOARD_URL = "http://127.0.0.1:4096"
 
@@ -41,12 +60,7 @@ try:
     import query
 except Exception:
     # engine.py uses Python 3.10+ syntax (str | None) — fails on 3.9
-    onboarding_file = Path.home() / ".aos" / "config" / "onboarding.yaml"
-    if not onboarding_file.exists():
-        print(json.dumps({"additionalContext": "**ONBOARDING REQUIRED**: This is a fresh install. You MUST load the onboard skill (`~/.claude/skills/onboard/SKILL.md`) and run the onboarding flow NOW before doing anything else. Read the skill file and follow its protocol."}))
-    else:
-        print(json.dumps({}))
-    sys.exit(0)
+    _safe_exit(_check_onboarding() or "")
 
 
 def main():
@@ -227,4 +241,8 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception:
+        # This hook must NEVER fail — a crash here blocks session start
+        _safe_exit()
