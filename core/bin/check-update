@@ -147,7 +147,12 @@ apply() {
     local new_version
     new_version=$(cat "$AOS_DIR/VERSION" 2>/dev/null || echo "unknown")
 
-    # Skip if version didn't change
+    # Always run reconcile — even if version didn't change.
+    # Catches drift from Homebrew updates, manual edits, etc.
+    log "Running reconcile..."
+    python3 "$AOS_DIR/core/reconcile/runner.py" run 2>>"$HOME/.aos/logs/reconcile-stderr.log" || true
+
+    # Skip the rest if version didn't change
     if [[ "$old_version" == "$new_version" ]]; then
         log "No version change ($old_version)"
         return 0

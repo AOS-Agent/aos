@@ -40,6 +40,11 @@ case "${1:-help}" in
         bash "$AOS_DIR/core/bin/check-update" "${2:---status}"
         ;;
 
+    reconcile)
+        # Run invariant checks — fixes drift from wrong installs, brew updates, etc.
+        python3 "$AOS_DIR/core/reconcile/runner.py" "${2:-run}"
+        ;;
+
     sync-skills)
         # Sync skills by tier. Default skills are always installed.
         # Developer skills only if --all flag or user has opted in.
@@ -802,6 +807,7 @@ sys.exit(0 if errors == 0 else 1)
         echo "  self-test       Validate system health"
         echo "  doctor          Check migration state vs actual filesystem"
         echo "  deploy          Deploy service venvs (all or: aos deploy bridge)"
+        echo "  reconcile       Run invariant checks and auto-fix drift"
         echo "  sync-skills     Re-sync skill symlinks (--all for developer)"
         echo "  sync-agents     Re-sync agent symlinks"
         echo "  sync-mcp        Register AOS MCP servers with Claude Code"

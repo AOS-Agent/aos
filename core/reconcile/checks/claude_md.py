@@ -1,0 +1,230 @@
+"""
+Invariant: CLAUDE.md files have current AOS-managed sections.
+
+AOS owns specific sections marked with HTML comments:
+    <!-- AOS:MANAGED name="section-name" version="N" -->
+    ...content...
+    <!-- AOS:END -->
+
+User content outside these markers is NEVER touched.
+When AOS ships updated content, it bumps the version number.
+Reconcile replaces only outdated blocks.
+
+Files that don't have markers yet get sections appended (not overwritten).
+"""
+
+import re
+from pathlib import Path
+
+import sys
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from base import ReconcileCheck, CheckResult, Status
+
+
+# Regex to find managed blocks
+BLOCK_RE = re.compile(
+    r'<!-- AOS:MANAGED name="(?P<name>[^"]+)" version="(?P<version>\d+)" -->\n'
+    r'(?P<content>.*?)'
+    r'<!-- AOS:END -->',
+    re.DOTALL,
+)
+
+
+def _wrap(name: str, version: int, content: str) -> str:
+    """Wrap content in AOS managed markers."""
+    c = content.strip()
+    return f'<!-- AOS:MANAGED name="{name}" version="{version}" -->\n{c}\n<!-- AOS:END -->'
+
+
+def _find_block(text: str, name: str) -> re.Match | None:
+    """Find a named managed block in text."""
+    for m in BLOCK_RE.finditer(text):
+        if m.group("name") == name:
+            return m
+    return None
+
+
+def _check_sections(filepath: Path, sections: dict) -> bool:
+    """Check if all managed sections are present and current."""
+    if not filepath.exists():
+        return False
+    text = filepath.read_text()
+    for name, (version, _) in sections.items():
+        m = _find_block(text, name)
+        if m is None:
+            return False
+        if int(m.group("version")) < version:
+            return False
+    return True
+
+
+def _fix_sections(filepath: Path, sections: dict, header: str) -> CheckResult:
+    """Update managed sections in a file, preserving user content."""
+    check_name = filepath.name
+
+    if not filepath.exists():
+        # Fresh file — write header + all sections
+        parts = [header]
+        for name, (version, content) in sections.items():
+            parts.append(_wrap(name, version, content))
+        filepath.parent.mkdir(parents=True, exist_ok=True)
+        filepath.write_text("\n\n".join(parts) + "\n")
+        return CheckResult(
+            check_name, Status.FIXED,
+            f"Created {filepath} with {len(sections)} managed sections"
+        )
+
+    text = filepath.read_text()
+    updated = []
+
+    for name, (version, content) in sections.items():
+        block = _wrap(name, version, content)
+        m = _find_block(text, name)
+
+        if m is None:
+            # Section missing — append before any user content at the end
+            text = text.rstrip() + "\n\n" + block + "\n"
+            updated.append(f"added:{name}")
+        elif int(m.group("version")) < version:
+            # Section outdated — replace just this block
+            text = text[:m.start()] + block + text[m.end():]
+            updated.append(f"updated:{name}@v{version}")
+
+    if updated:
+        filepath.write_text(text)
+        return CheckResult(
+            check_name, Status.FIXED,
+            f"Updated {filepath.name}: {', '.join(updated)}"
+        )
+    return CheckResult(check_name, Status.OK, "ok")
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ~/CLAUDE.md — Root context file
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+ROOT_HEADER = "# AOS — Agentic Operating System\n\nThis Mac Mini runs AOS. The operating system lives at `~/aos/`."
+
+# Bump version when content changes — this triggers reconcile to update.
+ROOT_SECTIONS = {
+    "layout": (1, """\
+## Layout
+
+```
+~/
+├── aos/                 ← The operating system (framework, git-tracked)
+│   ├── core/            ← System code (agents, services, bin, work engine)
+│   ├── config/          ← System configuration
+│   ├── .claude/         ← Skills, commands, rules
+│   ├── templates/       ← Agent catalog + project scaffold
+│   └── specs/           ← Architecture docs
+├── .aos/                ← Instance data (never in git)
+│   ├── services/        ← Service deployments (.venv, runtime)
+│   ├── config/          ← User config overrides
+│   ├── work/            ← Tasks, goals, inbox
+│   ├── data/            ← Runtime data
+│   └── logs/            ← All logs
+├── vault/               ← Knowledge (Obsidian + QMD indexed)
+├── project/             ← Project workspaces
+└── CLAUDE.md            ← This file
+```"""),
+
+    "quick-reference": (1, """\
+## Quick Reference
+
+| What | Where |
+|------|-------|
+| Update system | `aos update` |
+| Self-test | `aos self-test` |
+| Work CLI | `python3 ~/aos/core/work/cli.py list` |
+| Secrets | `~/aos/core/bin/agent-secret get/set` |
+| Search vault | `~/.bun/bin/qmd query "<topic>" -n 5` |
+| Services | bridge (daemon), dashboard (:4096), listen (:7600) |"""),
+
+    "rules": (1, """\
+## Rules
+- Secrets in macOS Keychain only — never in files
+- Framework (`~/aos/`) is read-only at runtime
+- Instance data (`~/.aos/`) is machine-specific, never committed
+- Each project gets its own CLAUDE.md"""),
+}
+
+
+class RootClaudeMdCheck(ReconcileCheck):
+    name = "root_claude_md"
+    description = "~/CLAUDE.md managed sections are current"
+
+    target = Path.home() / "CLAUDE.md"
+
+    def check(self) -> bool:
+        return _check_sections(self.target, ROOT_SECTIONS)
+
+    def fix(self) -> CheckResult:
+        return _fix_sections(self.target, ROOT_SECTIONS, ROOT_HEADER)
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ~/.claude/CLAUDE.md — Global kernel (loaded every session)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+GLOBAL_HEADER = "# AOS — Agentic Operating System\n\nThis machine runs AOS. Every session operates within this context."
+
+GLOBAL_SECTIONS = {
+    "boundaries": (1, """\
+## Boundaries
+
+```
+~/aos/       SYSTEM (code, safe to git pull)
+~/.aos/      USER DATA (never in git)
+~/vault/     KNOWLEDGE (Obsidian, QMD-indexed)
+~/project/   PROJECTS (self-contained workspaces)
+```"""),
+
+    "agents": (1, """\
+## Agents
+
+| Agent | Role |
+|-------|------|
+| **Chief** | Orchestrator. Receives all requests. Delegates or acts directly. |
+| **Steward** | System health, self-correction, maintenance. |
+| **Advisor** | Analysis, knowledge curation, work planning, reviews. |
+
+Additional agents activated from catalog or created by user."""),
+
+    "skills": (1, """\
+## Skills
+
+Skills at `~/.claude/skills/`. Each has `SKILL.md` with trigger phrases.
+When a request matches, load and follow the skill's protocol."""),
+
+    "rules": (1, """\
+## Rules
+
+- Secrets: macOS Keychain only (`agent-secret get/set`). Never in files.
+- Network: localhost only. Tailscale for remote access.
+- Questions: one at a time, never batch.
+- Research first: check vault, config, and available data before asking.
+- Delegate: dispatch to specialist agents for domain work."""),
+
+    "quick-reference": (1, """\
+## Quick Reference
+
+- Operator profile: ~/.aos/config/operator.yaml
+- Config: ~/aos/config/
+- User data: ~/.aos/
+- Vault search: `qmd query "<topic>" -n 5`
+- Secrets: `~/aos/core/bin/agent-secret get/set`"""),
+}
+
+
+class GlobalClaudeMdCheck(ReconcileCheck):
+    name = "global_claude_md"
+    description = "~/.claude/CLAUDE.md managed sections are current"
+
+    target = Path.home() / ".claude" / "CLAUDE.md"
+
+    def check(self) -> bool:
+        return _check_sections(self.target, GLOBAL_SECTIONS)
+
+    def fix(self) -> CheckResult:
+        return _fix_sections(self.target, GLOBAL_SECTIONS, GLOBAL_HEADER)
