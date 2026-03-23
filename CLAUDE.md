@@ -1,86 +1,105 @@
 # AOS System — Developer Context
 
-This is the AOS system codebase. Read this when working on the OS itself.
-For the global kernel (loaded every session), see `~/.claude/CLAUDE.md`.
+This is the AOS codebase. A packageable agentic operating system.
+Clone onto a Mac Mini, run the installer, get an autonomous workstation.
 
-## What AOS Is
+## Two Copies — Know Which One You're In
 
-A packageable agentic operating system. Clone onto a Mac Mini, run the installer,
-get an autonomous workstation that manages work, runs agents, compounds knowledge,
-and improves itself over time.
+```
+~/aos/              RUNTIME — always on main, never edit directly
+~/project/aos/      DEV WORKSPACE — make changes here, push to ship
+```
 
-## Target Users
+- `~/aos/` auto-updates at 4am. Every user's machine runs this.
+- `~/project/aos/` is your working copy. Branch, edit, test here.
+- Auto-commit is disabled on both (`.no-auto-commit`).
 
-| User | Scenario |
-|------|----------|
-| Solo person | Teacher, chef, freelancer. One machine, one life to organize. |
-| Multi-project operator | 3 businesses, 7 projects. Needs visibility and movement. |
-| Full agentic operator | Autonomous agents running parts of businesses. Trust ramp. |
+## How to Ship Changes
 
-The architecture serves all three without overwhelming the simple user
-or limiting the power user.
+1. Make changes in `~/project/aos/` (on a branch or directly)
+2. Test: open a Claude Code session there, run scripts, verify
+3. Push to main — `git push origin HEAD:main` (or merge a PR)
+4. Every machine pulls at 4am via `check-update --apply`
+5. Update flow: `git pull → reconcile → migrations → sync → rebuild venvs → restart services`
+
+Update the CHANGELOG.md with every release:
+```
+## vX.Y.Z — YYYY-MM-DD
+
+Summary: One line describing the release.
+
+Added: feature description
+Changed: what changed
+Fixed: what was broken
+Removed: what was removed
+```
+Bump `VERSION` file. Users get release notes on Telegram after the 4am update.
+
+## Reconcile System (core/reconcile/)
+
+Runs on EVERY update — not once like migrations. Checks invariants and auto-repairs drift.
+
+```
+core/reconcile/
+├── runner.py          # Loads checks, runs them, logs results
+├── base.py            # ReconcileCheck: check() → bool, fix() → CheckResult
+└── checks/
+    ├── claude_md.py       # CLAUDE.md managed sections current
+    ├── mcp_location.py    # mcp.json in right place
+    ├── hooks.py           # settings.json hooks + permissions correct
+    ├── launchagents.py    # Plist Python paths exist
+    ├── symlinks.py        # Agent/skill symlinks correct
+    └── log_location.py    # Runtime data not in ~/aos/
+```
+
+**To fix a structural bug across all machines:** add a check to `checks/`, add to `ALL_CHECKS` in `__init__.py`. Push. Runs everywhere next morning.
+
+**CLAUDE.md managed sections:** AOS owns content inside `<!-- AOS:MANAGED -->` markers. User content outside markers is never touched. Bump version number to trigger update.
+
+## Migrations vs Reconcile vs Sync
+
+| Mechanism | Runs | Purpose |
+|-----------|------|---------|
+| **Migrations** (`core/migrations/`) | Once per version | Structural changes (new dirs, new files, schema) |
+| **Reconcile** (`core/reconcile/`) | Every update cycle | Fix drift, repair broken state, keep invariants |
+| **Sync** (`aos sync-skills/agents/mcp`) | Every update | Re-symlink skills/agents to framework |
 
 ## System Layout
 
 ```
 ~/aos/                       SYSTEM CODE (this repo)
-├── core/                      System code
+├── core/
 │   ├── services/              Bridge, dashboard, listen, memory
-│   ├── integrations/          WhatsApp, health, roborock, etc. (optional)
-│   ├── agents/                System agent source files (chief, steward, advisor)
-│   └── bin/                   Utilities (agent-secret, session-export, etc.)
-├── config/                    Machine-specific system config
-│   ├── state.yaml             Machine info, ports
-│   ├── projects.yaml          Project registry
-│   └── ...                    Grows as layers are built
-├── templates/                 Scaffolding
-│   ├── project/               New project template
-│   └── agents/                Agent catalog (engineer, developer, marketing, etc.)
-├── vendor/                    Third-party dependencies
-└── specs/                     Living architecture docs
+│   ├── agents/                chief.md, steward.md, advisor.md
+│   ├── work/                  Work engine + hooks (inject_context, session_close)
+│   ├── reconcile/             Invariant checks (runs every update)
+│   ├── migrations/            Numbered one-shot migrations
+│   └── bin/                   CLI tools, crons, utilities
+├── config/                    Shipped config (crons.yaml, etc.)
+├── templates/                 Agent catalog + project scaffold
+└── specs/                     Architecture docs
 
-~/.aos/                     USER DATA (never in this repo)
-├── work/                      Work system data (goals, tasks, inbox, reviews)
-├── services/                  Runtime state for services
-└── logs/                      All logs
+~/.aos/                      USER DATA (never in git)
+├── work/                      Tasks, goals, inbox
+├── services/                  Service venvs + runtime
+├── config/                    operator.yaml, onboarding.yaml
+└── logs/                      All logs including execution/
 
-~/vault/                       KNOWLEDGE (independent, Obsidian-native)
+~/vault/                       KNOWLEDGE (Obsidian, separate repo)
 ```
 
-## Agent Architecture
+## Key Rules
 
-Three tiers:
-1. **System agents** — ship with AOS, updated with the OS (chief, steward, advisor)
-2. **Catalog agents** — ship as templates, user activates (engineer, developer, etc.)
-3. **User agents** — user creates for their specific needs
-
-Source lives in `core/agents/`. Installed to `~/.claude/agents/` during setup.
-Catalog templates in `templates/agents/`. Copied on activation.
-
-## Development Rules
-
-- Keep global CLAUDE.md under 50 lines — it loads every session everywhere
-- Keep this file under 150 lines — detail goes in specs/
-- Skills for domain knowledge, rules for conditional policies
-- Hooks for deterministic actions only — no LLM judgment in hooks
-- Test agent changes by opening a fresh session and verifying context loads
+- Hooks must NEVER crash — always output valid JSON and exit 0
+- Runtime data goes in `~/.aos/`, never in `~/aos/`
+- Skills are symlinked from `~/aos/.claude/skills/` — edits in framework propagate
+- Settings.json harness files need explicit `allow` permissions (bypassPermissions doesn't cover them)
+- Test with both Homebrew Python and system Python 3.9 (some users only have 3.9)
 
 ## Key Specs
 
 | Spec | What |
 |------|------|
-| `specs/aos-v2-brief.md` | The original brief and research summary |
-| `specs/work-system-architecture.md` | Work system v0.2 data models and integration |
-| `specs/aos-vs-openclaw-and-integration.md` | 7-layer architecture, what's broken, what's right |
-
-## Build Plan
-
-Full system map: `specs/v2-system-map.md`
-Architecture decisions: `specs/v2-architecture-decisions.md`
-
-| Phase | What | Status |
-|-------|------|--------|
-| **A: Foundation** | Agent definitions, core skills, integration framework | Done |
-| **B: Substance** | Work engine, work skills/hooks, vault restructure, knowledge + execution | Done |
-| **C: Infrastructure** | install.sh, onboarding agent, port services | — |
-| **D: Polish** | Dashboard ops, bridge commands, catalog, trust, drift | — |
+| `specs/aos-v2-brief.md` | Original brief and research |
+| `specs/work-system-architecture.md` | Work system data models |
+| `specs/v2-system-map.md` | Full system map |
