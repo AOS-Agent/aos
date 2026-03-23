@@ -226,31 +226,64 @@ apply() {
         return 1
     fi
 
-    # Read release notes from CHANGELOG.md — flat format, no bullets
+    # Read release notes from CHANGELOG.md
     local release_notes
     release_notes=$(python3 -c "
 from pathlib import Path
 import re
+
 cl = Path('$AOS_DIR/CHANGELOG.md')
 if not cl.exists():
     print('System updated.')
-    exit()
+    raise SystemExit()
+
 content = cl.read_text()
-# Find the section for this version
-pattern = r'## $new_version.*?\n(.*?)(?=\n## v|\Z)'
+
+# Find the section for this version (match v0.3.0, not v0.3.0-beta)
+pattern = r'## ${new_version}\b.*?\n(.*?)(?=\n## v|\Z)'
 match = re.search(pattern, content, re.DOTALL)
-if match:
-    notes = match.group(1).strip()
-    # Take non-empty lines (flat format — each line is a change)
-    lines = [l.strip() for l in notes.split('\n') if l.strip() and not l.startswith('#')]
-    # Show first 6 for Telegram (keep it readable)
-    for l in lines[:6]:
-        # Strip leading 'Added/Changed/Fixed' prefix for cleaner display
-        print('• ' + l)
-    if len(lines) > 6:
-        print(f'... and {len(lines) - 6} more changes')
-else:
+if not match:
     print('System updated.')
+    raise SystemExit()
+
+notes = match.group(1).strip()
+lines = [l.strip() for l in notes.split('\n') if l.strip()]
+
+# Extract summary line
+summary = ''
+changes = {'Added': [], 'Changed': [], 'Fixed': [], 'Removed': []}
+other = []
+
+for line in lines:
+    if line.startswith('Summary:'):
+        summary = line.replace('Summary:', '').strip()
+    elif ':' in line and line.split(':')[0] in changes:
+        cat = line.split(':')[0]
+        rest = ':'.join(line.split(':')[1:]).strip()
+        # Strip leading dash/bullet
+        rest = rest.lstrip('- ')
+        changes[cat].append(rest)
+    elif not line.startswith('#'):
+        other.append(line)
+
+# Build clean message
+if summary:
+    print(summary)
+    print()
+
+# Show categorized changes with emoji prefixes
+icons = {'Added': '✦', 'Changed': '↻', 'Fixed': '✓', 'Removed': '✕'}
+for cat in ['Added', 'Changed', 'Fixed', 'Removed']:
+    items = changes[cat]
+    if not items:
+        continue
+    icon = icons[cat]
+    for item in items:
+        print(f'{icon} {item}')
+
+if other:
+    for line in other:
+        print(f'  {line}')
 " 2>/dev/null)
 
     # Update state
@@ -272,8 +305,15 @@ with open('$STATE_FILE', 'w') as f:
 
     log "Update complete: $new_version"
 
-    # Send clean release notification (not "aos updated to commit hash")
-    local note_text="AOS $new_version"$'\n'$'\n'"$release_notes"$'\n'$'\n'"Already applied. No action needed."
+    # Send release notification
+    local note_text
+    note_text="━━━━━━━━━━━━━━━━━━
+AOS $new_version
+━━━━━━━━━━━━━━━━━━
+
+$release_notes
+
+Already applied. No action needed."
     notify "$note_text"
 }
 
@@ -316,9 +356,7 @@ case "${1:-}" in
         ;;
     *)
         check
-        result=$?
-        if [[ $result -eq 2 ]]; then
-            notify "🔄 AOS update available — run 'aos update' to install"
-        fi
+        # No notification — auto-update at 4am handles it.
+        # Only log to state file for dashboard visibility.
         ;;
 esac
