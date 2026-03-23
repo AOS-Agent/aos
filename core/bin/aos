@@ -56,7 +56,7 @@ case "${1:-help}" in
         DEFAULT_SKILLS="recall work review step-by-step obsidian-cli extract telegram-admin bridge-ops marketing diagram session-analysis frontend-design architect skill-creator skill-scanner ramble"
 
         # Developer skills — opt-in via 'aos sync-skills --all' or onboarding
-        DEV_SKILLS="systematic-debugging verification-before-completion requesting-code-review receiving-code-review executing-plans writing-plans dispatching-parallel-agents writing-skills autonomous-execution"
+        DEV_SKILLS="systematic-debugging verification-before-completion requesting-code-review receiving-code-review executing-plans writing-plans dispatching-parallel-agents writing-skills autonomous-execution ship"
 
         # Deprecated — never install
         DEPRECATED="instagram youtube"
