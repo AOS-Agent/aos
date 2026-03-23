@@ -31,3 +31,7 @@ core/services/listen/jobs/
 # Worktrees
 .claude/worktrees/
 *.sqlite3
+
+# Runtime execution logs (belongs in ~/.aos/)
+execution_log/
+.no-auto-commit
