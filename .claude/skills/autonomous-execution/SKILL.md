@@ -101,7 +101,7 @@ After every task (success or failure), append to the execution log:
 
 ```bash
 # Log format (JSONL, one line per task)
-echo '{"timestamp":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","task":"<description>","approach":"<method>","success":<true/false>,"tokens_est":<number>,"fallbacks_tried":<count>}' >> ~/aos/execution_log/$(date +%Y-%m-%d).jsonl
+echo '{"timestamp":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","task":"<description>","approach":"<method>","success":<true/false>,"tokens_est":<number>,"fallbacks_tried":<count>}' >> ~/.aos/logs/execution/$(date +%Y-%m-%d).jsonl
 ```
 
 ## Step 5: Pattern Recognition
@@ -111,7 +111,7 @@ same approach?
 
 ```bash
 # Count similar tasks in recent logs
-grep -c "<task_keyword>" ~/aos/execution_log/*.jsonl 2>/dev/null
+grep -c "<task_keyword>" ~/.aos/logs/execution/*.jsonl 2>/dev/null
 ```
 
 If 3+ similar successful tasks exist with the same approach:

@@ -1,6 +1,6 @@
 """Execution logger — records task execution details for pattern compilation.
 
-Appends JSONL entries to ~/aos/execution_log/YYYY-MM-DD.jsonl.
+Appends JSONL entries to ~/.aos/logs/execution/YYYY-MM-DD.jsonl.
 The pattern compiler (bin/compile-patterns) scans these daily to find
 repeated tasks that can be compiled into deterministic scripts.
 """
@@ -12,7 +12,7 @@ from pathlib import Path
 
 logger = logging.getLogger("bridge.execution_log")
 
-EXECUTION_LOG_DIR = Path.home() / "aos" / "execution_log"
+EXECUTION_LOG_DIR = Path.home() / ".aos" / "logs" / "execution"
 
 
 def log_execution(
