@@ -380,6 +380,19 @@ class TelegramChannel:
         is_dm = (chat.id == self.allowed_chat_id and thread_id is None
                  and self.forum_group_id is None)
 
+        # Immediate feedback — show "thinking" bubble before Claude starts
+        thinking_msg_id = None
+        send_kwargs = {}
+        if thread_id:
+            send_kwargs["message_thread_id"] = thread_id
+        try:
+            thinking_msg = await chat.send_message(
+                "<i>Thinking...</i>", parse_mode="HTML", **send_kwargs
+            )
+            thinking_msg_id = thinking_msg.message_id
+        except Exception:
+            pass
+
         had_error = False
         final_text = ""
         result = None
@@ -392,6 +405,16 @@ class TelegramChannel:
                 cwd=cwd,
                 image_paths=image_paths,
             )
+
+            # Clean up thinking bubble — real content incoming
+            if thinking_msg_id:
+                try:
+                    await self.app.bot.delete_message(
+                        chat_id=chat.id, message_id=thinking_msg_id
+                    )
+                except Exception:
+                    pass
+                thinking_msg_id = None
 
             log_agent = agent_name or "claude"
             aid = log_activity(log_agent, "invoke", status="running",
@@ -444,6 +467,14 @@ class TelegramChannel:
                 await typing_task
             except asyncio.CancelledError:
                 pass
+            # Clean up thinking bubble if still showing
+            if thinking_msg_id:
+                try:
+                    await self.app.bot.delete_message(
+                        chat_id=chat.id, message_id=thinking_msg_id
+                    )
+                except Exception:
+                    pass
 
         # Interactive buttons
         await self._send_keyboard(chat, final_text, user_key, thread_id=thread_id)

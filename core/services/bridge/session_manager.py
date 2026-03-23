@@ -388,11 +388,22 @@ async def stream_claude(
         "stream-json",
         "--verbose",
         "--include-partial-messages",
+        "--permission-mode",
+        "bypassPermissions",
         "--max-turns",
         str(max_turns),
         "--max-budget-usd",
         str(max_budget_usd),
     ]
+
+    # Non-interactive context — tell Claude it cannot ask questions
+    cmd.extend([
+        "--append-system-prompt",
+        "You are running non-interactively via Telegram. You CANNOT ask the user "
+        "interactive questions — there is no stdin. Make autonomous decisions and "
+        "state your assumptions in the response. If you are unsure about something, "
+        "pick the most reasonable option and explain what you chose and why.",
+    ])
 
     # Session resumption (not for agent dispatches — they get fresh context)
     session_id = None
