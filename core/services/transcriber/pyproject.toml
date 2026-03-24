@@ -1,0 +1,19 @@
+[project]
+name = "aos-transcriber"
+version = "1.0.0"
+description = "Unified transcription service — mlx-whisper Large V3 Turbo, English/Arabic bilingual"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn>=0.32.0",
+    "mlx-whisper>=0.4.0",
+    "pyyaml>=6.0",
+    "setproctitle>=1.3.0",
+]
+
+[build-system]
+requires = ["setuptools>=75.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["main", "engine", "client"]

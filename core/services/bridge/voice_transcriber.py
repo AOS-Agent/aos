@@ -1,95 +1,39 @@
-"""Voice message transcription — auto-selects the best available backend.
+"""Voice message transcription — thin client to AOS Transcriber service.
 
-Priority:
-  1. mlx-whisper (Apple Silicon — fastest, uses Neural Engine)
-  2. faster-whisper (CPU fallback — works everywhere)
+All transcription runs through the shared transcriber at localhost:7601.
+Model: Whisper Large V3 Turbo (809M params, 99+ languages, native EN/AR).
 
-The backend is auto-detected on first use. No configuration needed.
+If the service is unreachable, falls back to direct mlx-whisper import.
 """
 
+import json
 import logging
-import platform
 import subprocess
 import tempfile
 from pathlib import Path
+from urllib.error import URLError
+from urllib.request import Request, urlopen
 
 logger = logging.getLogger(__name__)
 
-# Lazy-loaded model (only loaded on first use)
-_model = None
-_backend = None  # "mlx" or "faster"
-_mode = "fast"
+TRANSCRIBER_URL = "http://127.0.0.1:7601"
 
-_MODE_MAP = {
-    "fast": "base",
-    "accurate": "small",
-}
-VALID_MODES = tuple(_MODE_MAP.keys())
+# Mode maps to transcriber service modes
+_mode = "fast"
+VALID_MODES = ("fast", "accurate")
 
 
 def set_mode(mode: str):
-    """Switch transcription mode. Reloads model on next transcription."""
-    global _model, _mode
+    """Switch transcription mode."""
+    global _mode
     if mode not in VALID_MODES:
         raise ValueError(f"Unknown mode: {mode}. Use: {', '.join(VALID_MODES)}")
-    if mode != _mode:
-        _model = None
     _mode = mode
-    logger.info(f"Whisper mode set to: {mode} ({_MODE_MAP[mode]} model)")
+    logger.info(f"Transcription mode set to: {mode}")
 
 
 def get_mode() -> str:
     return _mode
-
-
-def _get_model():
-    """Lazy-load the best available whisper backend."""
-    global _model, _backend
-    if _model is not None:
-        return _model
-
-    model_name = _MODE_MAP[_mode]
-
-    # Try mlx-whisper first (Apple Silicon only)
-    if platform.machine() == "arm64":
-        # Check the dedicated mlx-whisper venv
-        mlx_python = Path.home() / ".aos" / "services" / "mlx-whisper" / ".venv" / "bin" / "python"
-        if mlx_python.exists():
-            try:
-                # Verify mlx_whisper is importable in that venv
-                result = subprocess.run(
-                    [str(mlx_python), "-c", "import mlx_whisper; print('ok')"],
-                    capture_output=True, text=True, timeout=10)
-                if result.returncode == 0:
-                    _backend = "mlx"
-                    logger.info(f"Using mlx-whisper ({model_name}) — Apple Silicon accelerated")
-                    # mlx-whisper is used via subprocess, not imported directly
-                    _model = "mlx"
-                    return _model
-            except Exception as e:
-                logger.debug(f"mlx-whisper check failed: {e}")
-
-        # Also try direct import (if installed in bridge venv)
-        try:
-            import mlx_whisper
-            _backend = "mlx"
-            _model = "mlx"
-            logger.info(f"Using mlx-whisper ({model_name}) — Apple Silicon accelerated")
-            return _model
-        except ImportError:
-            pass
-
-    # Fall back to faster-whisper
-    try:
-        from faster_whisper import WhisperModel
-        logger.info(f"Loading faster-whisper ({model_name})...")
-        _model = WhisperModel(model_name, device="cpu", compute_type="int8")
-        _backend = "faster"
-        logger.info(f"faster-whisper ({model_name}) loaded")
-        return _model
-    except ImportError:
-        logger.error("No whisper backend available. Install mlx-whisper or faster-whisper.")
-        raise ImportError("No whisper backend available")
 
 
 def _convert_ogg_to_wav(ogg_path: str, wav_path: str):
@@ -102,12 +46,71 @@ def _convert_ogg_to_wav(ogg_path: str, wav_path: str):
         raise RuntimeError(f"ffmpeg conversion failed: {result.stderr}")
 
 
+def _transcribe_via_service(wav_path: str) -> str:
+    """Call the shared transcriber service."""
+    payload = json.dumps({
+        "audio_path": wav_path,
+        "mode": _mode,
+        "language_hint": "auto",
+        "timestamps": False,
+    }).encode()
+
+    req = Request(
+        f"{TRANSCRIBER_URL}/transcribe",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
+    with urlopen(req, timeout=120) as resp:
+        result = json.loads(resp.read())
+
+    text = result.get("text", "").strip()
+    lang = result.get("language", "unknown")
+    source = result.get("source", "unknown")
+    logger.info(f"transcriber ({source}, {lang}): {text[:100]}")
+    return text
+
+
+def _transcribe_fallback(wav_path: str) -> str:
+    """Direct mlx-whisper fallback when service is down."""
+    mlx_python = Path.home() / ".aos" / "services" / "transcriber" / ".venv" / "bin" / "python"
+
+    if not mlx_python.exists():
+        logger.error("No transcriber venv found")
+        return "[transcription unavailable — transcriber service not running]"
+
+    script = (
+        'import mlx_whisper, json; '
+        f'r = mlx_whisper.transcribe("{wav_path}", '
+        'path_or_hf_repo="mlx-community/whisper-large-v3-turbo-mlx", '
+        'initial_prompt="\\u0628\\u0633\\u0645 \\u0627\\u0644\\u0644\\u0647 \\u0627\\u0644\\u0631\\u062d\\u0645\\u0646 \\u0627\\u0644\\u0631\\u062d\\u064a\\u0645. Hello, \\u0645\\u0631\\u062d\\u0628\\u0627."); '
+        'print(json.dumps({"text": r.get("text", ""), "language": r.get("language", "unknown")}))'
+    )
+
+    try:
+        result = subprocess.run(
+            [str(mlx_python), "-c", script],
+            capture_output=True, text=True, timeout=120)
+        if result.returncode == 0:
+            data = json.loads(result.stdout.strip())
+            text = data.get("text", "").strip()
+            lang = data.get("language", "unknown")
+            logger.info(f"mlx-whisper fallback ({lang}): {text[:100]}")
+            return text
+        else:
+            logger.error(f"mlx-whisper fallback failed: {result.stderr[:200]}")
+            return "[transcription failed]"
+    except Exception as e:
+        logger.error(f"mlx-whisper fallback error: {e}")
+        return "[transcription failed]"
+
+
 async def transcribe_voice(voice_file) -> str:
     """Download and transcribe a Telegram voice message.
 
-    Uses multilingual mode — no language is forced, so Whisper will
-    detect and transcribe whatever languages are spoken (including
-    mid-sentence code-switching between e.g. English and Arabic).
+    Uses the shared transcriber service (Whisper Large V3 Turbo).
+    Handles English, Arabic, and mid-sentence code-switching natively.
 
     Args:
         voice_file: telegram.File object from bot.get_file()
@@ -124,90 +127,14 @@ async def transcribe_voice(voice_file) -> str:
 
         _convert_ogg_to_wav(ogg_path, wav_path)
 
-        _get_model()  # ensure backend is detected
-
-        if _backend == "mlx":
-            text = _transcribe_mlx(wav_path)
-        else:
-            text = _transcribe_faster(wav_path)
-
-        return text
-
-
-def _transcribe_mlx(wav_path: str) -> str:
-    """Transcribe using mlx-whisper (Apple Silicon)."""
-    model_name = _MODE_MAP[_mode]
-    mlx_python = Path.home() / ".aos" / "services" / "mlx-whisper" / ".venv" / "bin" / "python"
-
-    # Use the mlx-whisper venv's python to run transcription
-    script = f"""
-import mlx_whisper, json
-result = mlx_whisper.transcribe("{wav_path}", path_or_hf_repo="mlx-community/whisper-{model_name}-mlx")
-print(json.dumps({{"text": result.get("text", ""), "language": result.get("language", "unknown")}}))
-"""
-    try:
-        result = subprocess.run(
-            [str(mlx_python), "-c", script],
-            capture_output=True, text=True, timeout=120)
-        if result.returncode == 0:
-            import json
-            data = json.loads(result.stdout.strip())
-            text = data.get("text", "").strip()
-            lang = data.get("language", "unknown")
-            logger.info(f"mlx-whisper ({model_name}, {lang}): {text[:100]}")
-            return text
-        else:
-            logger.error(f"mlx-whisper failed: {result.stderr[:200]}")
-            from bridge_events import bridge_event
-            bridge_event("mlx_whisper_failed", level="error",
-                         stderr=result.stderr[:200], model=model_name)
-            return _transcribe_faster(wav_path)
-    except Exception as e:
-        logger.error(f"mlx-whisper error: {e}")
-        from bridge_events import bridge_event
-        bridge_event("mlx_whisper_error", level="error",
-                     error=str(e), model=model_name)
-        return _transcribe_faster(wav_path)
-
-
-def _transcribe_faster(wav_path: str) -> str:
-    """Transcribe using faster-whisper (CPU fallback)."""
-    global _model, _backend
-    model_name = _MODE_MAP[_mode]
-
-    # Load faster-whisper if not already loaded
-    if _backend != "faster" or _model == "mlx":
+        # Try service first, fall back to direct
         try:
-            from faster_whisper import WhisperModel
-            _model = WhisperModel(model_name, device="cpu", compute_type="int8")
-            _backend = "faster"
-        except ImportError:
-            logger.error("No whisper backend available")
-            return "[transcription unavailable — no whisper backend installed]"
-
-    segments, info = _model.transcribe(
-        wav_path,
-        beam_size=5,
-        language=None,
-        multilingual=True,
-        without_timestamps=True,
-        condition_on_previous_text=True,
-        language_detection_segments=4,
-        initial_prompt="بسم الله الرحمن الرحيم. Hello, مرحبا.",
-    )
-    text = " ".join(segment.text.strip() for segment in segments)
-    lang = info.language
-    lang_prob = info.language_probability
-    logger.info(f"faster-whisper ({model_name}, {lang} {lang_prob:.0%}): {text[:100]}")
-
-    # Second pass for uncertain language
-    if lang == "en" and lang_prob < 0.80:
-        logger.info("Low English confidence — trying Arabic pass...")
-        segments_ar, info_ar = _model.transcribe(
-            wav_path, beam_size=5, language="ar",
-            without_timestamps=True, condition_on_previous_text=True)
-        text_ar = " ".join(seg.text.strip() for seg in segments_ar)
-        if text_ar and text_ar.strip():
-            text = text_ar
-
-    return text
+            return _transcribe_via_service(wav_path)
+        except (URLError, ConnectionError, OSError) as e:
+            logger.warning(f"Transcriber service unreachable: {e}")
+            try:
+                from bridge_events import bridge_event
+                bridge_event("transcriber_service_down", level="warning", error=str(e))
+            except ImportError:
+                pass
+            return _transcribe_fallback(wav_path)
