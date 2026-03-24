@@ -823,8 +823,13 @@ def cmd_json(args):
 
 
 def cmd_initiatives(args):
-    """List active initiatives from vault/knowledge/initiatives/."""
+    """List active initiatives from vault/knowledge/initiatives/.
+
+    Scans each initiative doc for phase completion by counting checked/unchecked
+    boxes under ### Phase N headers. Shows real progress, not just frontmatter.
+    """
     import glob as globmod
+    import re as _re
     init_dir = os.path.join(os.path.expanduser("~"), "vault", "knowledge", "initiatives")
     if not os.path.isdir(init_dir):
         print("No initiatives directory found.")
@@ -850,14 +855,12 @@ def cmd_initiatives(args):
     }
 
     show_all = "--all" in args
-    print(f"\n  {'All' if show_all else 'Active'} Initiatives")
-    print(f"  {'=' * 50}")
 
     count = 0
     for fpath in files:
         try:
             with open(fpath) as f:
-                raw = f.read(2000)
+                raw = f.read()
             fm_end = raw.find("---", 3)
             if fm_end == -1:
                 continue
@@ -867,38 +870,90 @@ def cmd_initiatives(args):
             status = fm.get("status", "unknown")
             if not show_all and status in ("done", "archived"):
                 continue
+
             emoji = status_emoji.get(status, "📋")
             title = fm.get("title", os.path.basename(fpath))
             appetite = fm.get("appetite", "—")
-            phase = fm.get("phase")
-            total = fm.get("total_phases")
             updated = fm.get("updated", "?")
 
-            line = f"  {emoji} {title} [{status}"
-            if phase and total:
-                line += f", phase {phase}/{total}"
-            line += f"] appetite: {appetite}"
-            line += f" (updated: {updated})"
+            # Parse phase progress from actual checkbox counts
+            body = raw[fm_end + 3:]
+            phases = []
+            # Match ### Phase N: Name or ### Phase 1: Foundation [wave: 1] — ✅ DONE
+            phase_blocks = _re.split(r'(?=^### Phase \d)', body, flags=_re.MULTILINE)
+            for block in phase_blocks:
+                header_match = _re.match(r'^### Phase (\d+)[:\s]+(.+?)(?:\n|$)', block)
+                if not header_match:
+                    continue
+                phase_num = header_match.group(1)
+                phase_title = header_match.group(2).strip()
+                # Clean up title — remove [wave: N] and status markers
+                phase_title = _re.sub(r'\[wave:.*?\]', '', phase_title).strip()
+                phase_title = _re.sub(r'—\s*$', '', phase_title).strip()
 
-            # Stale check
+                done_count = len(_re.findall(r'^\s*- \[x\]', block, _re.MULTILINE))
+                todo_count = len(_re.findall(r'^\s*- \[ \]', block, _re.MULTILINE))
+                total = done_count + todo_count
+                is_done = "✅ DONE" in header_match.group(0) or (total > 0 and done_count == total)
+                phases.append({
+                    "num": phase_num,
+                    "title": phase_title,
+                    "done": done_count,
+                    "total": total,
+                    "complete": is_done,
+                })
+
+            # Build output
+            phases_done = sum(1 for p in phases if p["complete"])
+            total_phases = len(phases) if phases else 0
+            total_tasks = sum(p["total"] for p in phases)
+            total_done = sum(p["done"] for p in phases)
+
+            if count == 0:
+                print(f"\n  {'All' if show_all else 'Active'} Initiatives")
+                print(f"  {'=' * 60}")
+
+            # Header line
+            pct = int(total_done / total_tasks * 100) if total_tasks else 0
+            progress_bar = _progress_bar(pct)
+            stale_warn = ""
             if status not in ("done", "archived") and updated and updated != "?":
                 try:
                     from datetime import date
                     last = date.fromisoformat(str(updated))
                     days_ago = (date.today() - last).days
                     if days_ago > 3:
-                        line += f" ⚠️ stale ({days_ago}d)"
+                        stale_warn = f" ⚠️ stale ({days_ago}d)"
                 except (ValueError, TypeError):
                     pass
 
-            print(line)
+            print(f"\n  {emoji} {title}")
+            print(f"    Status: {status} | Appetite: {appetite} | Updated: {updated}{stale_warn}")
+            if phases:
+                print(f"    Progress: {progress_bar} {pct}% ({total_done}/{total_tasks} tasks, {phases_done}/{total_phases} phases)")
+                for p in phases:
+                    if p["complete"]:
+                        mark = "✅"
+                    elif p["done"] > 0:
+                        mark = "🔶"
+                    else:
+                        mark = "⬜"
+                    p_pct = int(p["done"] / p["total"] * 100) if p["total"] else 0
+                    print(f"      {mark} Phase {p['num']}: {p['title']} ({p['done']}/{p['total']})")
+
             count += 1
         except Exception:
             continue
 
     if count == 0:
-        print("  No active initiatives.")
+        print("\n  No active initiatives.")
     print()
+
+
+def _progress_bar(pct):
+    """Render a 10-char progress bar."""
+    filled = int(pct / 10)
+    return "▓" * filled + "░" * (10 - filled)
 
 
 COMMANDS = {
