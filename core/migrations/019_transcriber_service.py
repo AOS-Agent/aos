@@ -3,7 +3,7 @@ Migration 019: Set up the unified transcriber service.
 
 Creates:
   - ~/.aos/services/transcriber/.venv with mlx-whisper + fastapi + uvicorn
-  - Downloads whisper-large-v3-turbo-mlx model to HuggingFace cache
+  - Downloads whisper-large-v3-turbo model to HuggingFace cache
 
 Cleans up:
   - Old ~/.aos/services/mlx-whisper/ standalone venv (if exists)
@@ -95,7 +95,7 @@ def up() -> bool:
     dl_result = subprocess.run(
         [str(python), "-c",
          "from huggingface_hub import snapshot_download; "
-         "snapshot_download('mlx-community/whisper-large-v3-turbo-mlx')"],
+         "snapshot_download('mlx-community/whisper-large-v3-turbo')"],
         capture_output=True, text=True, timeout=600)
     if dl_result.returncode == 0:
         print("       Model downloaded/verified")

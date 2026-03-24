@@ -1,6 +1,6 @@
 """Transcription engine — single model, shared across all AOS pipelines.
 
-Model: mlx-community/whisper-large-v3-turbo-mlx
+Model: mlx-community/whisper-large-v3-turbo
   - 809M params, ~1.5GB on disk
   - 13-50x real-time on Apple Silicon
   - 99+ languages, native English/Arabic code-switching
@@ -18,7 +18,7 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 # The one model. Loaded once, used everywhere.
-MODEL_REPO = "mlx-community/whisper-large-v3-turbo-mlx"
+MODEL_REPO = "mlx-community/whisper-large-v3-turbo"
 _engine = None
 
 
