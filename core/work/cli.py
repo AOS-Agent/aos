@@ -956,6 +956,134 @@ def _progress_bar(pct):
     return "▓" * filled + "░" * (10 - filled)
 
 
+def cmd_briefing(args):
+    """One-shot briefing: tasks, initiatives, inbox, schedule. For mid-session 'what's next'."""
+    import re as _re
+    from datetime import date
+
+    try:
+        import yaml as _yaml
+    except ImportError:
+        _yaml = None
+
+    # --- Tasks ---
+    tasks = engine.get_all_tasks()
+    active = [t for t in tasks if t.get("status") == "active"]
+    todo_high = [t for t in tasks if t.get("status") == "todo" and t.get("priority", 5) <= 2]
+    today_str = date.today().isoformat()
+    due = [t for t in tasks if t.get("due") and t.get("due") <= today_str and t.get("status") not in ("done", "cancelled")]
+    s = engine.summary()
+
+    print("=== Work Briefing ===\n")
+
+    # Active tasks
+    if active:
+        print("Active:")
+        for t in active:
+            proj = f" [{t['project']}]" if t.get("project") else ""
+            print(f"  {t['id']}: {t['title']}{proj}")
+
+    # High priority todos
+    if todo_high:
+        print("High priority:")
+        for t in todo_high[:5]:
+            proj = f" [{t['project']}]" if t.get("project") else ""
+            print(f"  {t['id']}: {t['title']}{proj}")
+
+    # Due/overdue
+    if due:
+        print("Due/overdue:")
+        for t in due:
+            print(f"  {t['id']}: {t['title']} (due {t['due']})")
+
+    # Inbox
+    inbox = engine.get_inbox()
+    if inbox:
+        print(f"\nInbox ({len(inbox)}):")
+        for item in inbox[:3]:
+            text = item.get("text", str(item)) if isinstance(item, dict) else str(item)
+            print(f"  - {text[:80]}")
+
+    # --- Initiatives ---
+    init_dir = os.path.join(os.path.expanduser("~"), "vault", "knowledge", "initiatives")
+    if os.path.isdir(init_dir) and _yaml:
+        import glob as _globmod
+        files = sorted(_globmod.glob(os.path.join(init_dir, "*.md")), key=os.path.getmtime, reverse=True)
+        inits = []
+        for fpath in files[:5]:
+            try:
+                with open(fpath) as f:
+                    raw = f.read(3000)
+                if not raw.startswith("---"):
+                    continue
+                fm_end = raw.find("---", 3)
+                if fm_end == -1:
+                    continue
+                fm = _yaml.safe_load(raw[3:fm_end])
+                if not fm or fm.get("status") in ("done", "archived"):
+                    continue
+                # Get next action from state digest
+                next_action = ""
+                ds = raw.find("## State Digest")
+                if ds != -1:
+                    block = raw[ds:ds + 500]
+                    na = _re.search(r'Next action:\s*(.+)', block)
+                    if na:
+                        next_action = na.group(1).strip()
+                inits.append({
+                    "title": fm.get("title", "?"),
+                    "status": fm.get("status", "?"),
+                    "next": next_action,
+                })
+            except Exception:
+                continue
+        if inits:
+            print(f"\nInitiatives ({len(inits)}):")
+            emoji = {"research": "🔬", "shaping": "🔲", "planning": "📐", "executing": "⚡", "review": "📝"}
+            for i in inits:
+                e = emoji.get(i["status"], "📋")
+                line = f"  {e} {i['title']} [{i['status']}]"
+                if i["next"]:
+                    line += f" — {i['next'][:80]}"
+                print(line)
+
+    # --- Schedule ---
+    if _yaml:
+        try:
+            op_file = os.path.join(os.path.expanduser("~"), ".aos", "config", "operator.yaml")
+            with open(op_file) as f:
+                op = _yaml.safe_load(f) or {}
+            blocks = op.get("schedule", {}).get("blocks", [])
+            day_name = date.today().strftime("%a").lower()
+            today_blocks = [b for b in blocks if day_name in b.get("days", [])]
+            if today_blocks:
+                print("\nSchedule today:")
+                for b in today_blocks:
+                    print(f"  {b['name']}: {b.get('start', '?')}–{b.get('end', '?')}")
+        except Exception:
+            pass
+
+    # --- Suggested focus ---
+    suggestions = []
+    # Handoff tasks first
+    handoff = [t for t in (active or todo_high) if t.get("handoff")]
+    if handoff:
+        t = handoff[0]
+        h = t["handoff"]
+        suggestions.append(f"Resume {t['id']}: {t['title']}" + (f" — {h.get('next_step', '')[:60]}" if h.get('next_step') else ""))
+    if due:
+        suggestions.append(f"Due: {due[0]['id']}: {due[0]['title']}")
+    if todo_high and not any(t in handoff for t in todo_high):
+        suggestions.append(f"{todo_high[0]['id']}: {todo_high[0]['title']}")
+
+    if suggestions:
+        print("\nSuggested focus:")
+        for idx, sug in enumerate(suggestions[:3], 1):
+            print(f"  {idx}. {sug}")
+
+    print(f"\nTotals: {s['total_tasks']} tasks | {s['projects']} projects | {s['goals']} goals | {s['threads']} threads | {s['inbox']} inbox")
+
+
 COMMANDS = {
     "add": cmd_add,
     "done": cmd_done,
@@ -982,6 +1110,7 @@ COMMANDS = {
     "migrate": cmd_migrate,
     "json": cmd_json,
     "initiatives": cmd_initiatives,
+    "briefing": cmd_briefing,
 }
 
 

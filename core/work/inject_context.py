@@ -196,13 +196,78 @@ def main():
     except Exception:
         pass  # never crash the hook
 
+    # --- Handoff context ---
+    handoff_tasks = [t for t in (project_active or active) if t.get("handoff")]
+    if handoff_tasks:
+        lines.append("**Handoff (pick up where last session left off):**")
+        for t in handoff_tasks[:3]:
+            h = t["handoff"]
+            lines.append(f"- {t['id']}: {t['title']}")
+            if h.get("next_step"):
+                lines.append(f"  Next: {h['next_step'][:150]}")
+            if h.get("blockers"):
+                lines.append(f"  Blockers: {', '.join(h['blockers'][:3])}")
+
+    # --- Inbox preview ---
+    try:
+        inbox_items = engine.get_inbox()
+        if inbox_items:
+            lines.append(f"**Inbox ({len(inbox_items)} items):**")
+            for item in inbox_items[:3]:
+                text = item.get("text", str(item)) if isinstance(item, dict) else str(item)
+                lines.append(f"- {text[:80]}")
+    except Exception:
+        pass
+
+    # --- Schedule awareness ---
+    try:
+        op_file = Path.home() / ".aos" / "config" / "operator.yaml"
+        if op_file.exists():
+            op = yaml.safe_load(op_file.read_text()) or {}
+            blocks = op.get("schedule", {}).get("blocks", [])
+            day_name = date.today().strftime("%a").lower()
+            today_blocks = [b for b in blocks if day_name in b.get("days", [])]
+            if today_blocks:
+                lines.append("**Schedule today:**")
+                for b in today_blocks:
+                    lines.append(f"- {b['name']}: {b.get('start', '?')}–{b.get('end', '?')}")
+    except Exception:
+        pass
+
+    # --- Suggested focus (the 10x piece — Chief never gathers, it reads) ---
+    suggestions = []
+    # 1. Handoff tasks = resume what was in progress
+    if handoff_tasks:
+        t = handoff_tasks[0]
+        suggestions.append(f"Resume {t['id']}: {t['title']}")
+    # 2. Due/overdue items
+    if due:
+        t = due[0]
+        suggestions.append(f"Due: {t['id']}: {t['title']}")
+    # 3. High-priority todo
+    if todo_high and not any(t in handoff_tasks for t in todo_high):
+        t = todo_high[0]
+        suggestions.append(f"{t['id']}: {t['title']}")
+    # 4. Stale initiatives
+    for init_title in initiative_ids:
+        # Already logged stale in initiative section above
+        pass
+    # 5. Initiative next action (from digest)
+    for init_title in initiative_ids:
+        # The digest is already in lines — Chief can read it
+        pass
+
+    if suggestions:
+        lines.append("**Suggested focus:**")
+        for i, s in enumerate(suggestions[:3], 1):
+            lines.append(f"  {i}. {s}")
+
     if not lines:
         lines.append("No active tasks or urgent items.")
 
     context = "\n".join(lines)
 
     # Write session context file for session_close.py to read
-    # Tracks which tasks and initiatives were "in scope" for this session
     task_ids_in_scope = [t["id"] for t in project_active + active]
     context_file = Path.home() / ".aos" / "work" / ".session-context.json"
     try:
@@ -219,19 +284,7 @@ def main():
     except Exception:
         pass  # Non-fatal
 
-    # Handoff context — inject for active tasks that have it
-    handoff_tasks = [t for t in (project_active or active) if t.get("handoff")]
-    if handoff_tasks:
-        lines.append("**Tasks with handoff context (pick up where last session left off):**")
-        for t in handoff_tasks[:3]:
-            h = t["handoff"]
-            lines.append(f"- {t['id']}: {t['title']}")
-            if h.get("next_step"):
-                lines.append(f"  Next step: {h['next_step'][:150]}")
-            if h.get("blockers"):
-                lines.append(f"  Blockers: {', '.join(h['blockers'][:3])}")
-
-    # Onboarding trigger — if onboarding hasn't been done, tell Chief to run it NOW
+    # Onboarding trigger
     onboarding_file = Path.home() / ".aos" / "config" / "onboarding.yaml"
     first_session_file = Path.home() / ".aos" / "config" / ".first-session-done"
     if not onboarding_file.exists():
@@ -239,14 +292,9 @@ def main():
     elif not first_session_file.exists():
         lines.insert(0, "**FIRST SESSION AFTER ONBOARDING**: Read the 'Post-Onboarding: First Real Session' section in your agent definition and follow it. Verify Telegram, run morning briefing, remind about daily practice, check their first task.")
 
-    # Behavioral guidance — this IS the always-on awareness layer
+    # Behavioral guidance
     guidance_lines = []
-    guidance_lines.append("IMPORTANT: If this session involves building, fixing, or setting up anything substantial:")
-    guidance_lines.append("1. At the START: `python3 ~/aos/core/work/cli.py start <task>` or create a new task if none matches")
-    guidance_lines.append("2. During work: create subtasks as you discover them: `python3 ~/aos/core/work/cli.py subtask <parent> \"title\"` (use --done for already-completed parts)")
-    guidance_lines.append("3. At the END: write a handoff: `python3 ~/aos/core/work/cli.py handoff <task> --state '...' --next '...'`")
-    guidance_lines.append("4. Mark tasks done when completed: `python3 ~/aos/core/work/cli.py done <task>`")
-    guidance_lines.append("")
+    guidance_lines.append("If this session involves substantial work: start a task, create subtasks as you go, write a handoff at the end, mark tasks done when complete.")
     if project_active:
         task_ids = ", ".join(t["id"] for t in project_active)
         guidance_lines.append(f"Active tasks in this project: {task_ids}")
