@@ -369,30 +369,15 @@ class TelegramChannel:
         """
         start = _time.time()
 
-        # Signal processing started
-        if reply_to:
-            await self._react(reply_to, "⚡")
-
-        # Typing keepalive
+        # Typing keepalive — the only feedback before response streams.
+        # No "Thinking..." bubble (ghost notification), no ⚡ reaction.
+        # The 👀 reaction from _ack_message + typing indicator is enough.
         stop_typing = asyncio.Event()
         typing_task = asyncio.create_task(self._typing_keepalive(chat, stop_typing))
 
         # Determine if this is a DM (for sendMessageDraft)
         is_dm = (chat.id == self.allowed_chat_id and thread_id is None
                  and self.forum_group_id is None)
-
-        # Immediate feedback — show "thinking" bubble before Claude starts
-        thinking_msg_id = None
-        send_kwargs = {}
-        if thread_id:
-            send_kwargs["message_thread_id"] = thread_id
-        try:
-            thinking_msg = await chat.send_message(
-                "<i>Thinking...</i>", parse_mode="HTML", **send_kwargs
-            )
-            thinking_msg_id = thinking_msg.message_id
-        except Exception:
-            pass
 
         had_error = False
         final_text = ""
@@ -406,16 +391,6 @@ class TelegramChannel:
                 cwd=cwd,
                 image_paths=image_paths,
             )
-
-            # Clean up thinking bubble — real content incoming
-            if thinking_msg_id:
-                try:
-                    await self.app.bot.delete_message(
-                        chat_id=chat.id, message_id=thinking_msg_id
-                    )
-                except Exception:
-                    pass
-                thinking_msg_id = None
 
             log_agent = agent_name or "claude"
             aid = log_activity(log_agent, "invoke", status="running",
@@ -468,14 +443,6 @@ class TelegramChannel:
                 await typing_task
             except asyncio.CancelledError:
                 pass
-            # Clean up thinking bubble if still showing
-            if thinking_msg_id:
-                try:
-                    await self.app.bot.delete_message(
-                        chat_id=chat.id, message_id=thinking_msg_id
-                    )
-                except Exception:
-                    pass
 
         # Interactive buttons
         await self._send_keyboard(chat, final_text, user_key, thread_id=thread_id)
@@ -501,7 +468,12 @@ class TelegramChannel:
 
         markup = build_option_keyboard(detected, session_id)
         try:
-            await chat.send_message("Select an option:", reply_markup=markup, **kwargs)
+            # Send buttons silently — no extra notification buzz.
+            # Uses a thin prompt instead of "Select an option:".
+            await chat.send_message(
+                "\u2193", reply_markup=markup,
+                disable_notification=True, **kwargs,
+            )
         except Exception as e:
             logger.debug(f"Option keyboard send failed: {e}")
 
@@ -665,46 +637,56 @@ class TelegramChannel:
         topic_cwd = topic_config.get("cwd")
         topic_agent = topic_config.get("agent")
 
-        # Acknowledge receipt immediately
-        await self._ack_message(update.message)
+        # Acknowledge receipt
+        await self._react(update.message, "🎙")
         log_activity("telegram", "voice_received", summary=f"voice {update.message.voice.duration}s")
 
-        # Show processing status
-        status_msg = await update.message.reply_text("🎤 Transcribing audio...")
-
         # Download and transcribe
+        reply_kwargs = {}
+        if thread_id:
+            reply_kwargs["message_thread_id"] = thread_id
+
         try:
             voice_file = await update.message.voice.get_file()
             text = await transcribe_voice(voice_file)
         except Exception as e:
             logger.error(f"Voice transcription failed: {e}")
-            await self._safe_delete(status_msg)
             await self._react(update.message, "💔")
-            await update.message.reply_text(f"Transcription failed: {e}")
+            await update.message.reply_text(f"Transcription failed: {e}", **reply_kwargs)
             bridge_event("voice_transcription_failed", level="error", error=str(e))
             return
 
-        await self._safe_delete(status_msg)
-
         if not text or not text.strip():
             await self._react(update.message, "💔")
-            await update.message.reply_text("(couldn't transcribe — empty audio)")
+            await update.message.reply_text("(couldn't transcribe — empty audio)", **reply_kwargs)
             return
 
-        # Send transcription back
-        mode_label = get_mode()
-        await update.message.reply_text(
-            f"\U0001f399 <b>Transcription</b> ({mode_label}):\n<i>{text}</i>",
-            parse_mode="HTML",
-        )
+        # Show transcription — italic reply to the voice message, no labels.
+        await self._react(update.message, "✅")
+        try:
+            await update.message.reply_text(
+                f"<i>{text}</i>",
+                parse_mode="HTML",
+                **reply_kwargs,
+            )
+        except Exception as e:
+            logger.warning(f"Transcript reply failed: {e}")
+            # Fallback: send as regular message
+            await update.message.chat.send_message(
+                f"<i>{text}</i>", parse_mode="HTML", **reply_kwargs,
+            )
+
+        # Prepend transcript as context for Claude (it sees what you said).
+        transcript_prefix = f"[Voice transcript: {text}]\n\n"
+        prompt = transcript_prefix + text
 
         # If topic has a dedicated agent, prepend dispatch
         if topic_agent and not text.lower().startswith(("ask ", "tell ", "@")):
-            text = f"ask {topic_agent} to {text}"
+            prompt = f"ask {topic_agent} to {text}"
 
-        # Stream Claude's response (live HTML streaming)
+        # Stream Claude's response
         response = await self._stream_response(
-            update.message.chat, update.message, text, user_key,
+            update.message.chat, update.message, prompt, user_key,
             cwd=topic_cwd, thread_id=thread_id,
         )
         log_activity("telegram", "voice_response_sent", summary=response[:100])

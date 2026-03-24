@@ -104,8 +104,8 @@ python3 ~/aos/core/work/cli.py json
 > Find the task by searching if they give a title instead of an ID. Run `cli.py done`.
 
 **"What should I work on?"**
-> If `operator.yaml → initiatives.enabled: true`: load the `forge` skill instead — it reads initiative state + work state together for a complete picture.
-> If initiatives not enabled: Run `cli.py list --status todo,active`. Consider priority, energy level, and due dates. Suggest the top 1-3.
+> If initiatives are active, Chief handles this natively — it reads the pre-computed briefing from injected context and routes. No skill load needed.
+> Otherwise: Run `cli.py list --status todo,active`. Consider priority, energy level, and due dates. Suggest the top 1-3.
 
 **Quick capture / "Remind me to..."**
 > Use `cli.py inbox` for things that need triage later.

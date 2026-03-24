@@ -172,6 +172,15 @@ INTENTS = {
         ],
         "handler": "handle_weekly_digest",
     },
+    "greeting": {
+        "patterns": [
+            "re:^(hey|hi|hello|hola|salam|asalamualaikum|assalamualaikum|salaam)$",
+            "re:^(hey|hi|hello|yo|sup) (there|chief|buddy)$",
+            "re:^good (morning|afternoon|evening|night)$",
+            "re:^(gm|gn)$",
+        ],
+        "handler": "handle_greeting",
+    },
 }
 
 
@@ -621,6 +630,26 @@ def handle_weekly_digest(text: str) -> str:
         return f"⚠️ Couldn't run digest: {e}"
 
 
+def handle_greeting(text: str) -> str:
+    """Respond to greetings instantly — no Claude needed."""
+    import random
+    from datetime import datetime
+
+    hour = datetime.now().hour
+    if hour < 12:
+        time_greeting = "Good morning"
+    elif hour < 17:
+        time_greeting = "Good afternoon"
+    else:
+        time_greeting = "Good evening"
+
+    text_lower = text.lower().strip()
+    if "salam" in text_lower or "asalam" in text_lower:
+        return f"Wa alaikum assalam. {time_greeting}. How can I help?"
+
+    return f"{time_greeting}. How can I help?"
+
+
 # ── Dispatcher ────────────────────────────────────────
 
 # Map handler names to functions
@@ -635,6 +664,7 @@ HANDLERS = {
     "handle_friction": handle_friction,
     "handle_sessions": handle_sessions,
     "handle_weekly_digest": handle_weekly_digest,
+    "handle_greeting": handle_greeting,
 }
 
 

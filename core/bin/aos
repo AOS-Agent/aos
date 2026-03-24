@@ -34,6 +34,12 @@ case "${1:-help}" in
         bash "$AOS_DIR/core/bin/check-update" --apply
         # Check if any reported issues were fixed in this update
         bash "$AOS_DIR/core/bin/check-fixed-issues" 2>/dev/null || true
+        # Run test suite if available (non-blocking — failures don't stop update)
+        if [ -d "$AOS_DIR/tests" ] && ls "$AOS_DIR/tests"/test_*.py >/dev/null 2>&1; then
+            echo ""
+            echo "  Running post-update verification..."
+            bash "$0" test 2>&1 | tail -5
+        fi
         ;;
 
     check-update)
@@ -318,6 +324,36 @@ except py_compile.PyCompileError as e:
         else
             echo "  ✗ Event bus missing (run: aos migrate)"
             ((errors++))
+        fi
+
+        # Check bridge service
+        if pgrep -f "aos-bridge" >/dev/null 2>&1; then
+            echo "  ✓ Bridge service running"
+        else
+            echo "  ✗ Bridge service not running"
+            ((errors++))
+        fi
+
+        # Check bridge topics config
+        if [ -f "$HOME/.aos/config/bridge-topics.yaml" ]; then
+            echo "  ✓ Bridge topics config exists"
+        else
+            echo "  ~ Bridge topics config missing (created on first use)"
+        fi
+
+        # Check initiative infrastructure
+        if [ -d "$HOME/vault/knowledge/initiatives" ]; then
+            init_count=$(ls "$HOME/vault/knowledge/initiatives/"*.md 2>/dev/null | wc -l | tr -d ' ')
+            echo "  ✓ Initiative directory exists ($init_count docs)"
+        else
+            echo "  ~ Initiative directory missing (run: aos migrate)"
+        fi
+
+        # Check version tracking
+        if [ -f "$HOME/.aos/config/.last-seen-version" ]; then
+            echo "  ✓ Version tracking active ($(cat "$HOME/.aos/config/.last-seen-version"))"
+        else
+            echo "  ~ Version tracking not initialized"
         fi
 
         echo ""
@@ -794,6 +830,38 @@ sys.exit(0 if errors == 0 else 1)
 "
         ;;
 
+    test)
+        # Run the full verification test suite
+        echo "=== AOS Test Suite ==="
+        echo ""
+        TEST_DIR="$AOS_DIR/tests"
+        if [ ! -d "$TEST_DIR" ]; then
+            echo "  ✗ No test directory found at $TEST_DIR"
+            exit 1
+        fi
+
+        test_errors=0
+        for test_file in "$TEST_DIR"/test_*.py; do
+            [ -f "$test_file" ] || continue
+            name=$(basename "$test_file" .py)
+            echo "Running: $name"
+            echo "─────────────────────────────────────────"
+            if python3 "$test_file"; then
+                echo ""
+            else
+                ((test_errors++))
+                echo ""
+            fi
+        done
+
+        if [ "$test_errors" -eq 0 ]; then
+            echo "  ✓ All test suites passed"
+        else
+            echo "  ✗ $test_errors suite(s) had failures"
+            exit 1
+        fi
+        ;;
+
     help|--help|-h)
         echo "AOS — Agentic Operating System"
         echo ""
@@ -805,6 +873,7 @@ sys.exit(0 if errors == 0 else 1)
         echo "  check-update    Check if updates are available"
         echo "  status          Show migration version + pending"
         echo "  self-test       Validate system health"
+        echo "  test            Run full verification test suite"
         echo "  doctor          Check migration state vs actual filesystem"
         echo "  deploy          Deploy service venvs (all or: aos deploy bridge)"
         echo "  reconcile       Run invariant checks and auto-fix drift"

@@ -44,7 +44,7 @@ logger = logging.getLogger("transcriber")
 
 class TranscribeRequest(BaseModel):
     audio_path: str = Field(description="Absolute path to audio file")
-    mode: str = Field(default="accurate", pattern="^(fast|accurate)$")
+    mode: str = Field(default="accurate", pattern="^(fast|accurate|bilingual)$")
     language_hint: str = Field(default="auto", description="ISO 639-1 code or 'auto'")
     timestamps: bool = Field(default=True)
 

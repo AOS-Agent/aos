@@ -262,7 +262,7 @@ def _locked_json_write(path: Path, data: dict):
         raise
 
 
-SESSION_MAX_AGE = 24 * 3600  # 24 hours
+SESSION_MAX_AGE = 30 * 60  # 30 min inactivity → fresh session (was 24h, caused bloated context)
 
 
 def get_session_id(user_key: str) -> str | None:

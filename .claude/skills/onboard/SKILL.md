@@ -426,31 +426,32 @@ the system pulls updates automatically."
 detects it and restarts everything. You can see all of this on your dashboard
 under 'Automations'."
 
-### The Morning Practice
+### The Daily Loop
 
-"Every morning, your Telegram will send you a personalized prompt. It's not a
-notification — it's an invitation to talk."
+"Every morning, your Telegram sends you a briefing. Not a generic 'good morning' —
+a real situation report."
 
-"You send a voice note back. 60 seconds about what's on your mind. The system
-transcribes it, extracts tasks and ideas, and sends them back for approval."
+"It's called BLUF — Bottom Line Up Front. Five sections: what's urgent, what's
+important, what needs thinking, who needs attention, and what ran overnight.
+You scan it in 20 seconds and know exactly where you stand."
 
-"One tap — tasks created, ideas saved to your vault. That's the daily practice."
-
-"The more you do it, the smarter the system gets. Sessions compound. Patterns
-emerge. Repeated work gets automated. It starts tomorrow morning."
+"It lands in a dedicated forum topic in Telegram — separate from your DM with the
+bot. System messages go to the forum. Your conversations with agents stay in DM.
+Two spaces, clean separation."
 
 AskUserQuestion:
-- question: "What time should your morning prompt arrive?"
+- question: "What time should your morning briefing arrive?"
 - options: ["7:00 AM", "7:30 AM", "8:00 AM", "8:30 AM", "9:00 AM"]
 
 Write the selected time to `operator.yaml` → `daily_loop.morning_briefing`.
 
-"The other end of the day — do you want an evening check-in? It's a short
-prompt asking what you accomplished, what's still open, and how you're feeling.
-It becomes your evening daily note."
+"The other end of the day — the evening wrap. It celebrates what you got done,
+shows what's still open, and asks three questions: anything to remember, anything
+to work on overnight, anything on your mind. Your reply becomes a daily note
+in your vault."
 
 AskUserQuestion:
-- question: "Want an evening check-in via Telegram?"
+- question: "Want an evening wrap via Telegram?"
 - options: ["Yes", "No"]
 
 If yes:
@@ -461,8 +462,32 @@ AskUserQuestion:
 
 Write to `operator.yaml` → `daily_loop.evening_checkin`.
 
-The bridge reads this and activates the evening check-in at their chosen time.
+The bridge reads this and activates the evening wrap at their chosen time.
 If they said no, leave `evening_checkin` unset — the bridge won't send anything.
+
+### Quick Commands
+
+"One more thing about Telegram — you don't have to wait for agents to respond
+for common actions. Quick commands run in under half a second."
+
+"Type 'add task: write the proposal' and the task gets created instantly.
+'mark aos#33 done' closes it. 'what's on my plate' lists your active work.
+'search vault for bridge design' finds it. No AI inference needed — it's
+pattern matching, so it's fast."
+
+"14 commands built in. The bridge handles them directly. When it's not a quick
+command, it routes to the right agent."
+
+### The Morning Practice
+
+"But the real power isn't commands — it's voice. Every morning, send a voice
+note. 60 seconds about what's on your mind."
+
+"The system transcribes it, extracts tasks and ideas, and sends them back for
+approval. One tap — tasks created, ideas saved to your vault."
+
+"The more you do it, the smarter the system gets. Sessions compound. Patterns
+emerge. Repeated work gets automated. It starts tomorrow morning."
 
 ### Trust
 
@@ -730,19 +755,71 @@ python3 ~/aos/core/work/cli.py add "{their task}" --project {relevant_project}
 "Done. Your first task is tracked. You can check on it anytime — just say `/work list`
 or open the dashboard."
 
+### Bigger Than Tasks — Initiatives
+
+"Tasks are the small moves. But you probably have bigger things — projects that
+span weeks, goals that take months. Those are initiatives."
+
+"An initiative is a document in your vault that tracks a larger effort through
+five phases: research, shaping, planning, executing, review. Tasks link back
+to their parent initiative with `source_ref`."
+
+"Your agents scan active initiatives at the start of every session. If one goes
+stale — untouched for 3 days — you get a Telegram nudge. The system doesn't
+let important things slip."
+
+If they described something big during Phase 1 (ramble), offer to create an
+initiative for it:
+
+"That {thing they mentioned} sounds like an initiative — bigger than a task.
+Want me to set it up as one?"
+
+AskUserQuestion:
+- question: "Create an initiative for {thing}?"
+- options: ["Yes", "Not yet — just the task for now"]
+
+If yes:
+```bash
+# Create the initiative document
+cat > ~/vault/knowledge/initiatives/{slug}.md << 'INITEOF'
+---
+title: "{title}"
+status: research
+created: "{today}"
+updated: "{today}"
+tags: [{relevant_tags}]
+---
+
+# {title}
+
+## Context
+{Brief context from their ramble}
+
+## Current Phase: Research
+- [ ] Define scope
+- [ ] Identify key questions
+INITEOF
+```
+
+"Created. You'll see it in your morning briefings and session context from now on."
+
 ### The Tomorrow
 
 "Here's what tomorrow morning looks like:
 
-Open VS Code, type `cld`, and say `/gm`. That's your morning briefing — I'll show you
-what's active, what happened overnight, and what needs attention.
+Your phone buzzes. A BLUF briefing in Telegram — urgent items first, then what's
+important, what to think about, and what ran overnight. You scan it in 20 seconds.
 
-Or grab your phone, open Telegram, and just talk. The ramble you did today? You can
-do that every morning. It becomes your daily note — your vault gets smarter, your
-agents get more context, and the system learns your patterns.
+Open VS Code, type `cld`, and say `/gm` for the same briefing in terminal. Or just
+talk — the ramble you did today? You can do that every morning. It becomes your
+daily note.
+
+Quick commands from Telegram for fast actions. Voice notes for thinking out loud.
+Agent sessions for deep work. The evening wrap to close out the day.
 
 Every session gets exported. Every pattern gets analyzed. Repeated tasks get automated.
-The system compounds — it gets better the more you use it."
+Initiatives track the big picture. The system compounds — it gets better the more
+you use it."
 
 ### Sahib's Exit
 

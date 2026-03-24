@@ -47,10 +47,17 @@ def _convert_ogg_to_wav(ogg_path: str, wav_path: str):
 
 
 def _transcribe_via_service(wav_path: str) -> str:
-    """Call the shared transcriber service."""
+    """Call the shared transcriber service.
+
+    Uses bilingual mode by default — dual-pass EN+AR merge for voice
+    messages where the operator switches languages mid-sentence.
+    """
+    # Voice messages use bilingual mode (dual-pass EN+AR) unless
+    # operator explicitly set a different mode via /whisper
+    effective_mode = "bilingual" if _mode == "fast" else _mode
     payload = json.dumps({
         "audio_path": wav_path,
-        "mode": _mode,
+        "mode": effective_mode,
         "language_hint": "auto",
         "timestamps": False,
     }).encode()

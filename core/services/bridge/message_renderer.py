@@ -132,9 +132,8 @@ async def render_stream(
     current_msg_id = None
     draft_id = random.randint(1, 2**31) if is_dm else None
     last_update_time = 0.0
-    tool_status_msg_id = None
     session_result = None
-    showed_session_indicator = False
+    status_msg_id = None  # For rate-limit / retry info (edited in-place, not deleted)
     send_kwargs = {}
     if thread_id:
         send_kwargs["message_thread_id"] = thread_id
@@ -172,16 +171,21 @@ async def render_stream(
             await _edit_safe(bot, chat_id, current_msg_id, html)
             last_update_time = now
 
-    async def _show_tool_status(text: str):
-        """Show/update tool use status line."""
-        nonlocal tool_status_msg_id
+    async def _show_wait_status(text: str):
+        """Show rate-limit or retry info as a single message (edited in-place).
+
+        Unlike the old tool status: this message is NOT deleted. It gets
+        edited to the final response when text starts flowing. One message,
+        zero ghost notifications.
+        """
+        nonlocal status_msg_id
         html = f"<i>{text}</i>"
-        if tool_status_msg_id:
+        if status_msg_id:
             try:
                 await bot.edit_message_text(
                     text=html,
                     chat_id=chat_id,
-                    message_id=tool_status_msg_id,
+                    message_id=status_msg_id,
                     parse_mode="HTML",
                 )
             except Exception:
@@ -189,32 +193,23 @@ async def render_stream(
         else:
             msg_id = await _send_safe(bot, chat_id, html, **send_kwargs)
             if msg_id:
-                tool_status_msg_id = msg_id
-
-    async def _cleanup_tool_status():
-        """Delete the tool status message."""
-        nonlocal tool_status_msg_id
-        if tool_status_msg_id:
-            try:
-                await bot.delete_message(
-                    chat_id=chat_id, message_id=tool_status_msg_id
-                )
-            except Exception:
-                pass
-            tool_status_msg_id = None
+                status_msg_id = msg_id
 
     # Process events
+    # Bridge v2: No tool status messages (ghost notifications).
+    # ToolStart/ToolResult are silently logged. Only rate limits and retries
+    # show user-visible feedback — as an editable message, not a deletable one.
     async for event in events:
         if isinstance(event, SessionInit):
-            if is_resumed and not showed_session_indicator:
-                await _show_tool_status("↩️ Resuming conversation...")
-                showed_session_indicator = True
+            # Session resume is silent — no separate indicator message.
+            # The response will arrive normally.
             continue
 
         if isinstance(event, TextDelta):
-            # Clean up tool status when text starts flowing
-            if tool_status_msg_id:
-                await _cleanup_tool_status()
+            # If a wait-status message exists, reuse it as the response message
+            if status_msg_id and not current_msg_id:
+                current_msg_id = status_msg_id
+                status_msg_id = None
 
             accumulated_text += event.text
 
@@ -234,32 +229,37 @@ async def render_stream(
                     await _update_edit(accumulated_text)
 
         elif isinstance(event, ToolStart):
-            await _show_tool_status(event.input_preview)
+            # Silent — just log it. No user-visible message.
+            logger.debug(f"Tool start: {event.input_preview[:80]}")
 
         elif isinstance(event, ToolResult):
             if event.is_error:
-                await _show_tool_status(f"Tool error: {event.preview[:100]}")
+                logger.warning(f"Tool error: {event.preview[:100]}")
 
         elif isinstance(event, TextComplete):
             # Full text from an assistant turn — use as authoritative
             accumulated_text = event.text
 
         elif isinstance(event, RateLimit):
+            # Only show rate limit to user if NO response text has arrived yet.
+            # If Claude already answered, the rate limit is a system concern —
+            # the user got what they wanted. Log it, don't spam them.
             wait_s = max(0, event.resets_at - int(time.time()))
-            if wait_s > 0:
+            if wait_s > 0 and not accumulated_text:
                 wait_min = (wait_s + 59) // 60
-                await _show_tool_status(
-                    f"⏳ Rate limited (~{wait_min} min). "
-                    f"Quick commands still work — try \"tasks\" or \"add task: X\""
+                await _show_wait_status(
+                    f"\u23f3 I'm at capacity. Back in ~{wait_min} min. "
+                    f"Quick commands still work \u2014 try \"tasks\" or \"add task: X\""
                 )
             bridge_event("rate_limit", level="warn",
                          status=event.status, resets_at=event.resets_at, wait_s=wait_s)
 
         elif isinstance(event, ApiRetry):
-            await _show_tool_status(
-                f"API retry ({event.attempt}/{event.max_retries}), "
-                f"waiting {event.delay_ms}ms..."
-            )
+            # Only show retry status if no response yet.
+            if not accumulated_text:
+                await _show_wait_status(
+                    f"\u23f3 Retrying ({event.attempt}/{event.max_retries})..."
+                )
             bridge_event("api_retry", level="warn",
                          attempt=event.attempt, delay_ms=event.delay_ms)
 
@@ -267,9 +267,6 @@ async def render_stream(
             session_result = event
             if event.is_error and not accumulated_text:
                 accumulated_text = event.text or "An error occurred."
-
-    # Clean up tool status
-    await _cleanup_tool_status()
 
     # Final delivery
     if not accumulated_text:
@@ -283,6 +280,10 @@ async def render_stream(
         for chunk in chunks:
             await _send_safe(bot, chat_id, chunk, **send_kwargs)
     else:
+        # If we have a status message but no current_msg_id, reuse it
+        if status_msg_id and not current_msg_id:
+            current_msg_id = status_msg_id
+
         # Final edit for the first chunk
         if current_msg_id and chunks:
             await _edit_safe(bot, chat_id, current_msg_id, chunks[0])
