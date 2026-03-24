@@ -104,7 +104,8 @@ python3 ~/aos/core/work/cli.py json
 > Find the task by searching if they give a title instead of an ID. Run `cli.py done`.
 
 **"What should I work on?"**
-> Run `cli.py list --status todo,active`. Consider priority, energy level (if known from daily note), and due dates. Suggest the top 1-3.
+> If `operator.yaml → initiatives.enabled: true`: load the `forge` skill instead — it reads initiative state + work state together for a complete picture.
+> If initiatives not enabled: Run `cli.py list --status todo,active`. Consider priority, energy level, and due dates. Suggest the top 1-3.
 
 **Quick capture / "Remind me to..."**
 > Use `cli.py inbox` for things that need triage later.
@@ -122,6 +123,33 @@ python3 ~/aos/core/work/cli.py json
 
 Work file: `~/.aos/work/work.yaml`
 Schema: `~/aos/core/work/schema.yaml`
+
+## Initiative Integration
+
+When `operator.yaml → initiatives.enabled: true`:
+
+### Source Reference Display
+When showing task details (`work show`), if the task has a `source_ref` field, display it:
+```bash
+python3 ~/aos/core/work/cli.py show {id}
+```
+The CLI already handles this — `source_ref` is shown as "Initiative: {path}".
+
+### Initiative Command
+```bash
+python3 ~/aos/core/work/cli.py initiatives       # Show active initiatives with phase progress
+python3 ~/aos/core/work/cli.py initiatives --all  # Include done/archived
+```
+
+### Task-Initiative Checkbox Sync
+When completing a task that has `source_ref` pointing to an initiative:
+1. Complete the task: `python3 ~/aos/core/work/cli.py done {id}`
+2. Read the initiative doc at the source_ref path
+3. Find the matching checkbox (by task title or ID reference)
+4. Check it: `- [ ]` → `- [x]`
+5. Update the initiative's `updated:` date
+
+This keeps the initiative document's progress tracking in sync with the work system.
 
 ## Rules
 

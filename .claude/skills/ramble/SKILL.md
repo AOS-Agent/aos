@@ -5,7 +5,8 @@ description: >
   and organizes what they say into tasks, ideas, thoughts, and vault notes. Keeps the
   session open for as long as they want to talk. Trigger on: /ramble, "let me ramble",
   "I'm going to ramble", "just going to talk", "let me think out loud", "brain dump",
-  "what's on my mind", or any indication they want to speak freely and have it organized.
+  "what's on my mind", "new initiative", "track this as an initiative",
+  or any indication they want to speak freely and have it organized.
   Also called by bridge after voice note transcription.
 ---
 
@@ -78,6 +79,13 @@ Read the full transcript. Identify:
 5. **Schedule signals** — mentions of upcoming events, deadlines, time pressure
    - Look for: "by Friday", "this week", "before the meeting",
      dates and time references
+
+6. **Initiative signals** — mentions that suggest multi-session, multi-component work
+   - Look for: multi-session language ("over the next few weeks", "this is a big one"),
+     multiple components mentioned ("frontend and backend and API"),
+     research needed ("we'd need to figure out..."),
+     outcome framing ("I want to be able to...")
+   - When detected: suggest tracking as an initiative (opt-in, not auto-route)
 
 ### Step 2: Cross-Reference
 
@@ -162,6 +170,24 @@ For deep-dive notes, create separate vault entries:
 ```bash
 # ~/vault/ideas/{slug}.md with frontmatter
 ```
+
+If initiative signals were detected:
+- Present: "This sounds like initiative-level work — it spans multiple sessions and has several components. Want me to create an initiative for it?"
+- If yes: Create initiative doc at `vault/knowledge/initiatives/{slug}.md` with status: research
+  ```yaml
+  ---
+  title: "{title from ramble}"
+  status: research
+  appetite: null
+  created: {today}
+  updated: {today}
+  sources: []
+  tags: [{inferred tags}]
+  ---
+  ```
+- If no: proceed as normal task/idea
+
+**Key rule**: Initiative creation is ALWAYS opt-in. Never auto-create initiatives. Always ask first.
 
 ### Step 6: Confirm
 

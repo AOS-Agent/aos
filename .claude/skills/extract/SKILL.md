@@ -124,6 +124,36 @@ If tech signals are found:
 
 Skip for non-tech content entirely. Be honest — not everything is worth pursuing.
 
+### Step 6: Initiative Source Linking (research/capture only)
+
+Only run this for **research and capture** intents when `operator.yaml → initiatives.enabled: true`.
+
+After saving to vault, check if the extracted content matches an active initiative in research phase:
+
+```bash
+# Check active initiatives
+python3 ~/aos/core/work/cli.py initiatives 2>/dev/null
+```
+
+For each active initiative in research/shaping status:
+- Compare the extracted content's topics/tags against the initiative's tags
+- If there's a clear match, offer to link:
+  "This content relates to your '{initiative_title}' initiative (currently in {status}). Link it as a research source?"
+
+If operator approves:
+1. Add the vault note path to the initiative's `sources:` frontmatter list
+2. Update the initiative's `updated:` date
+
+```python
+# Example: update initiative frontmatter
+# Read initiative doc
+# Parse frontmatter
+# Append to sources list
+# Write back with atomic replacement
+```
+
+This is opt-in — always ask before linking. If no initiatives match, skip silently.
+
 ## CLI Flags Reference
 
 | Flag | Effect |
