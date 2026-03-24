@@ -1,6 +1,51 @@
+---
+name: telegram-admin
+description: "Skill: Telegram Admin — manage Telegram bots, groups, and forum topics via Bot API and desktop app. Trigger on: create bot, create group, create forum topic, manage telegram, bot commands, or telegram admin tasks."
+---
+
 # Skill: Telegram Admin
 
-Comprehensive reference for managing Telegram bots, groups, and forum topics via both the Bot API and the desktop app (via Steer).
+Comprehensive reference for managing Telegram bots, groups, and forum topics via the Bot API, Chrome MCP (Telegram Web), and the desktop app (via Steer).
+
+## Desktop Interaction — Chrome MCP (preferred)
+
+Use `mcp__claude-in-chrome` tools for Telegram Web interactions. More reliable than Steer for most tasks.
+
+### Setup
+1. `mcp__claude-in-chrome__tabs_context_mcp` — check existing tabs
+2. `mcp__claude-in-chrome__tabs_create_mcp` — open `https://web.telegram.org/`
+3. `mcp__claude-in-chrome__read_page` — read current state
+
+### Common Workflows via Chrome MCP
+
+**Navigate to a chat/group:**
+1. `mcp__claude-in-chrome__find` — locate the chat in the sidebar
+2. `mcp__claude-in-chrome__computer` — click to open it
+
+**Interact with BotFather:**
+1. Navigate to BotFather chat in Telegram Web
+2. `mcp__claude-in-chrome__form_input` — type commands like `/newbot`
+3. `mcp__claude-in-chrome__read_page` — read BotFather's response
+4. Continue the conversation flow (name, username, etc.)
+
+**Create/manage groups:**
+1. Use the hamburger menu → "New Group" flow
+2. `mcp__claude-in-chrome__computer` for clicks, `form_input` for text
+3. `mcp__claude-in-chrome__read_page` to verify state at each step
+
+**Take screenshots for verification:**
+1. `mcp__claude-in-chrome__computer` with action `screenshot` to capture state
+
+### When to use Chrome MCP vs Steer vs Bot API
+
+| Task | Best tool | Why |
+|------|-----------|-----|
+| Create/configure bots | Chrome MCP (BotFather in Telegram Web) | Visual, reliable |
+| Send messages programmatically | Bot API (curl) | Direct, scriptable |
+| Create groups, manage topics | Bot API if possible, Chrome MCP for UI-only tasks | API is faster |
+| Read chat history, verify state | Chrome MCP | Visual verification |
+| Upload profile photos | Chrome MCP or Steer | Requires GUI |
+| Bulk operations | Bot API | Scriptable, no rate limit on reads |
 
 ## Bot API Methods — Forum Topics
 
@@ -37,9 +82,10 @@ Icon colors (limited to 6): `0x6FB9F0`, `0xFFD67E`, `0xCB86DB`, `0x8EEE98`, `0xF
 | `setMyName` | Change display name |
 | `setMyProfilePhoto` | Upload profile photo |
 
-## BotFather Commands (via Steer)
+## BotFather Commands (via Steer — fallback)
 
-These require interacting with @BotFather in the Telegram desktop app:
+These require interacting with @BotFather in the Telegram desktop app.
+**Prefer Chrome MCP (Telegram Web) above** — Steer is a fallback for when the desktop app is needed.
 
 | Command | What it does |
 |---------|-------------|
@@ -54,7 +100,7 @@ These require interacting with @BotFather in the Telegram desktop app:
 | `/deletebot` | Delete a bot |
 | `/token` | Generate new token |
 
-## Creating a Bot via Steer
+## Creating a Bot via Steer (fallback — prefer Chrome MCP above)
 
 ```
 1. steer apps launch "Telegram"
@@ -67,7 +113,7 @@ These require interacting with @BotFather in the Telegram desktop app:
 8. Store: bin/agent-secret set NEW_BOT_TOKEN <token>
 ```
 
-## Creating a Group with Forums (via Steer)
+## Creating a Group with Forums (via Steer — fallback)
 
 ```
 1. Open Telegram → click compose (pencil icon top-right)

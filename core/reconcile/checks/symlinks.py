@@ -82,10 +82,23 @@ class SkillSymlinkCheck(ReconcileCheck):
     # Core skills that must always be symlinked.
     # User-created skills (copies) are left alone.
     CORE_SKILLS = [
-        "recall", "work", "review", "step-by-step", "obsidian-cli",
-        "extract", "telegram-admin", "bridge-ops", "marketing",
-        "diagram", "session-analysis", "frontend-design", "architect",
-        "skill-creator", "skill-scanner", "ramble",
+        # Knowledge & retrieval
+        "recall", "obsidian-cli", "extract",
+        # Work management
+        "work", "review", "session-analysis",
+        # Initiative pipeline
+        "forge", "shape", "plan", "gate", "deliberate",
+        # Execution
+        "step-by-step", "executing-plans", "dispatching-parallel-agents",
+        "autonomous-execution", "verification-before-completion",
+        # Development
+        "frontend-design", "writing-plans", "writing-skills",
+        "requesting-code-review", "receiving-code-review",
+        "systematic-debugging", "skill-creator", "skill-scanner",
+        "architect", "ship",
+        # Operations
+        "telegram-admin", "bridge-ops", "marketing",
+        "ramble", "diagram", "onboard", "whats-new",
     ]
 
     def check(self) -> bool:

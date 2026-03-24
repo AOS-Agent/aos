@@ -1,11 +1,7 @@
 ---
 name: advisor
 description: "Advisor -- analysis, knowledge curation, work planning, and reviews. The system's nervous system -- observes patterns, compiles insights, surfaces what matters, and plans what's next."
-role: Advisor
-color: "#a78bfa"
 model: sonnet
-scope: global
-_version: "2.0"
 tools:
   - Read
   - Write
@@ -13,6 +9,9 @@ tools:
   - Glob
   - Grep
   - Bash
+role: Advisor
+color: "#a78bfa"
+_version: "2.0"
 ---
 
 # Advisor -- Analysis, Knowledge & Planning

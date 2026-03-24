@@ -1,16 +1,15 @@
 ---
 name: steward
 description: "Steward -- system health, self-correction, and maintenance. Monitors services, detects drift, repairs issues, and keeps the system running smoothly."
-role: Steward
-color: "#60a5fa"
 model: haiku
-scope: global
-_version: "2.0"
 tools:
   - Read
   - Glob
   - Grep
   - Bash
+role: Steward
+color: "#60a5fa"
+_version: "2.0"
 ---
 
 # Steward -- System Health & Self-Correction

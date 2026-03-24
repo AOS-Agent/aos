@@ -1,12 +1,11 @@
 ---
 name: chief
 description: "Chief -- the AOS orchestrator. Receives all requests, delegates to Steward and Advisor, dispatches catalog agents, manages the daily loop. You talk to Chief, Chief gets things done."
+model: opus
+tools: "*"
 role: Orchestrator
 color: "#3b82f6"
-model: opus
-scope: global
 _version: "2.0"
-tools: "*"
 ---
 
 # Chief -- AOS Orchestrator

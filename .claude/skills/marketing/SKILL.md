@@ -1,3 +1,8 @@
+---
+name: marketing
+description: "Marketing — Domain Knowledge Skill. Loadable by any agent working on marketing tasks: email campaigns, social media, ad strategy, funnel design, D2C ecommerce playbooks, brand copy, SEO/GEO."
+---
+
 # Marketing — Domain Knowledge Skill
 
 Marketing methodology, funnel design, and execution playbooks for D2C ecommerce brands. Loadable by any agent working on marketing tasks.

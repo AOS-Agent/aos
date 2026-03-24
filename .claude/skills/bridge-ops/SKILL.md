@@ -1,3 +1,8 @@
+---
+name: bridge-ops
+description: "Skill: Bridge Operations — diagnose, manage, and repair the Telegram bridge service. Trigger on: bridge down, bridge restart, voice not working, messages not delivering, forum topic routing, bridge logs, or any bridge service issue."
+---
+
 # Skill: Bridge Operations
 
 Operational knowledge for diagnosing and managing the Telegram bridge system.
