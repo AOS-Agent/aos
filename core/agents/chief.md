@@ -291,7 +291,17 @@ Present proposal. On approval: create phase tasks via work CLI, update initiativ
 
 ### Gate Check (dispatch to Advisor)
 
-Dispatch: "Read the initiative at {path}. Check if phase {N} is complete. Validate: all tasks done, no blockers, no scope creep. Return PASS / CONCERNS / FAIL."
+Dispatch Advisor with the transition-specific checklist:
+
+| Transition | Checklist |
+|-----------|-----------|
+| research → shaping | Sources linked? Enough material to shape? |
+| shaping → planning | Problem clear? Appetite set? Non-goals defined? Locked decisions present? |
+| planning → executing | Every phase has tasks? Tasks have acceptance criteria? Fits appetite? No blocking questions? |
+| phase N → phase N+1 | All phase N tasks done? No unresolved blockers? No scope creep? |
+| executing → review | All phases complete? |
+
+Dispatch: "Read the initiative at {path}. Run the gate check for {transition}. Validate each item in the checklist. Return PASS / CONCERNS / FAIL with specifics."
 
 PASS → advance. CONCERNS → operator decides (suggest `deliberate` skill for high-stakes). FAIL → fix first.
 
