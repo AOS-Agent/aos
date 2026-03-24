@@ -22,6 +22,16 @@ import urllib.request
 from datetime import datetime
 from pathlib import Path
 
+try:
+    import yaml as _yaml
+except ImportError:
+    _yaml = None
+
+try:
+    import glob as _glob
+except ImportError:
+    _glob = None
+
 LOG_DIR = Path.home() / ".aos" / "logs"
 LOG_FILE = LOG_DIR / "sessions.jsonl"
 DASHBOARD_URL = "http://127.0.0.1:4096"
@@ -133,11 +143,12 @@ def main():
     # Check for a session-context file that the inject_context hook may have written
     context_file = Path.home() / ".aos" / "work" / ".session-context.json"
     explicit_task_ids = []
+    session_ctx = {}
     if context_file.exists():
         try:
-            ctx = json.loads(context_file.read_text())
-            if ctx.get("session_id") == session_id:
-                explicit_task_ids = ctx.get("task_ids", [])
+            session_ctx = json.loads(context_file.read_text())
+            if session_ctx.get("session_id") == session_id:
+                explicit_task_ids = session_ctx.get("task_ids", [])
             context_file.unlink(missing_ok=True)
         except Exception:
             pass
@@ -165,6 +176,49 @@ def main():
 
     if is_project_dir:
         engine.get_or_create_thread_for_cwd(cwd, session_id)
+
+    # --- Step 2b: Update initiative documents ---
+    # initiative_ids were stored in session context by inject_context.py
+    initiative_ids = session_ctx.get("initiative_ids", []) if session_ctx else []
+
+    if _glob and initiative_ids:
+        try:
+            init_dir = os.path.join(str(Path.home()), "vault", "knowledge", "initiatives")
+            today = datetime.now().strftime("%Y-%m-%d")
+            for fpath in _glob.glob(os.path.join(init_dir, "*.md")):
+                try:
+                    with open(fpath) as f:
+                        content = f.read()
+                    fm_end = content.find("---", 3)
+                    if fm_end == -1:
+                        continue
+                    fm_text = content[3:fm_end]
+                    # Check if this initiative's title matches
+                    title_match = False
+                    for line in fm_text.split("\n"):
+                        if line.startswith("title:"):
+                            title_val = line.split(":", 1)[1].strip().strip('"').strip("'")
+                            if title_val in initiative_ids:
+                                title_match = True
+                            break
+                    if not title_match:
+                        continue
+                    # Surgical replacement: update only the 'updated:' line
+                    if re.search(r'^updated:', fm_text, re.MULTILINE):
+                        new_fm = re.sub(r'^updated:.*$', f'updated: {today}', fm_text, flags=re.MULTILINE)
+                    else:
+                        # No updated field — append it before the closing ---
+                        new_fm = fm_text.rstrip("\n") + f"\nupdated: {today}\n"
+                    new_content = "---" + new_fm + "---" + content[fm_end + 3:]
+                    # Atomic write
+                    tmp_path = fpath + ".tmp"
+                    with open(tmp_path, "w") as f:
+                        f.write(new_content)
+                    os.replace(tmp_path, fpath)
+                except Exception:
+                    pass  # never crash session_close for initiative updates
+        except Exception:
+            pass  # never crash
 
     # --- Step 3: Detect untracked work ---
     scope = _estimate_session_scope(transcript)

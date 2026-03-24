@@ -168,6 +168,8 @@ def cmd_show(args):
     print(f"  {'=' * 50}")
     print(f"  Status:   {tree.get('status', '?')}")
     print(f"  Priority: P{tree.get('priority', 3)}")
+    if tree.get("source_ref"):
+        print(f"  Initiative: {tree['source_ref']}")
     if tree.get("project"):
         print(f"  Project:  {tree['project']}")
     if tree.get("created"):
@@ -820,6 +822,85 @@ def cmd_json(args):
     print(json.dumps(data, indent=2, default=str))
 
 
+def cmd_initiatives(args):
+    """List active initiatives from vault/knowledge/initiatives/."""
+    import glob as globmod
+    init_dir = os.path.join(os.path.expanduser("~"), "vault", "knowledge", "initiatives")
+    if not os.path.isdir(init_dir):
+        print("No initiatives directory found.")
+        return
+
+    try:
+        import yaml as _yaml
+    except ImportError:
+        print("yaml not available")
+        return
+
+    files = sorted(
+        globmod.glob(os.path.join(init_dir, "*.md")),
+        key=os.path.getmtime, reverse=True
+    )
+    if not files:
+        print("No initiatives found.")
+        return
+
+    status_emoji = {
+        "research": "🔬", "shaping": "🔲", "planning": "📐",
+        "executing": "⚡", "review": "📝", "done": "✅", "archived": "📦"
+    }
+
+    show_all = "--all" in args
+    print(f"\n  {'All' if show_all else 'Active'} Initiatives")
+    print(f"  {'=' * 50}")
+
+    count = 0
+    for fpath in files:
+        try:
+            with open(fpath) as f:
+                raw = f.read(2000)
+            fm_end = raw.find("---", 3)
+            if fm_end == -1:
+                continue
+            fm = _yaml.safe_load(raw[3:fm_end])
+            if not fm:
+                continue
+            status = fm.get("status", "unknown")
+            if not show_all and status in ("done", "archived"):
+                continue
+            emoji = status_emoji.get(status, "📋")
+            title = fm.get("title", os.path.basename(fpath))
+            appetite = fm.get("appetite", "—")
+            phase = fm.get("phase")
+            total = fm.get("total_phases")
+            updated = fm.get("updated", "?")
+
+            line = f"  {emoji} {title} [{status}"
+            if phase and total:
+                line += f", phase {phase}/{total}"
+            line += f"] appetite: {appetite}"
+            line += f" (updated: {updated})"
+
+            # Stale check
+            if status not in ("done", "archived") and updated and updated != "?":
+                try:
+                    from datetime import date
+                    last = date.fromisoformat(str(updated))
+                    days_ago = (date.today() - last).days
+                    if days_ago > 3:
+                        line += f" ⚠️ stale ({days_ago}d)"
+                except (ValueError, TypeError):
+                    pass
+
+            print(line)
+            count += 1
+        except Exception:
+            continue
+
+    if count == 0:
+        print("  No active initiatives.")
+    print()
+
+
 COMMANDS = {
     "add": cmd_add,
     "done": cmd_done,
@@ -845,6 +926,7 @@ COMMANDS = {
     "dispatch": cmd_dispatch,
     "migrate": cmd_migrate,
     "json": cmd_json,
+    "initiatives": cmd_initiatives,
 }
 
 

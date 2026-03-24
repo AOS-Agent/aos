@@ -80,6 +80,12 @@ jobs:
     at: "08:00"
     timeout: 60
 
+  stale-initiatives:
+    command: python3 ~/aos/core/bin/stale-initiatives
+    at: "09:00"
+    timeout: 60
+    # Scans initiative docs for staleness (>3 days untouched), sends Telegram nudge
+
   nightly-pipeline:
     command: bash ~/aos/core/bin/nightly-pipeline
     at: "23:00"

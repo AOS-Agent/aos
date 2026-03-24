@@ -1,0 +1,122 @@
+#!/usr/bin/env python3
+"""Stale initiative detector — cron job.
+
+Scans vault/knowledge/initiatives/*.md for initiatives that are active
+but haven't been updated in N days (default: 3). Sends a Telegram nudge
+via the shared notify helper.
+
+Designed to run daily at 09:00 via AOS cron system.
+"""
+
+import glob
+import os
+import sys
+from datetime import date, timedelta
+from pathlib import Path
+
+# Add core to path for lib imports
+sys.path.insert(0, str(Path.home() / "aos" / "core"))
+
+INITIATIVE_DIR = os.path.join(str(Path.home()), "vault", "knowledge", "initiatives")
+DEFAULT_STALE_DAYS = 3
+
+
+def _get_stale_threshold() -> int:
+    """Read stale threshold from operator.yaml, default to 3 days."""
+    try:
+        import yaml
+        op_file = Path.home() / ".aos" / "config" / "operator.yaml"
+        if op_file.exists():
+            data = yaml.safe_load(op_file.read_text())
+            return data.get("initiatives", {}).get("stale_threshold_days", DEFAULT_STALE_DAYS)
+    except Exception:
+        pass
+    return DEFAULT_STALE_DAYS
+
+
+def scan_stale() -> list[dict]:
+    """Return list of stale initiatives with metadata."""
+    if not os.path.isdir(INITIATIVE_DIR):
+        return []
+
+    threshold = _get_stale_threshold()
+    cutoff = date.today() - timedelta(days=threshold)
+    stale = []
+
+    for fpath in glob.glob(os.path.join(INITIATIVE_DIR, "*.md")):
+        try:
+            with open(fpath) as f:
+                raw = f.read(1500)
+            if not raw.startswith("---"):
+                continue
+            fm_end = raw.find("---", 3)
+            if fm_end == -1:
+                continue
+
+            # Parse frontmatter manually (avoid yaml import overhead)
+            fm_text = raw[3:fm_end]
+            meta = {}
+            for line in fm_text.strip().split("\n"):
+                if ":" in line and not line.startswith(" ") and not line.startswith("-"):
+                    key, val = line.split(":", 1)
+                    meta[key.strip()] = val.strip().strip('"').strip("'")
+
+            status = meta.get("status", "")
+            if status in ("done", "archived", ""):
+                continue
+
+            updated_str = meta.get("updated", "")
+            if not updated_str:
+                continue
+
+            try:
+                updated = date.fromisoformat(updated_str)
+            except ValueError:
+                continue
+
+            if updated < cutoff:
+                days_stale = (date.today() - updated).days
+                stale.append({
+                    "title": meta.get("title", os.path.basename(fpath)),
+                    "status": status,
+                    "updated": updated_str,
+                    "days_stale": days_stale,
+                    "path": fpath,
+                })
+        except Exception:
+            continue
+
+    return stale
+
+
+def main():
+    stale = scan_stale()
+
+    if not stale:
+        return
+
+    # Build notification
+    lines = ["<b>Stale Initiatives</b>\n"]
+    for init in stale:
+        emoji = {"research": "\U0001f52c", "shaping": "\U0001f532", "planning": "\U0001f4d0",
+                 "executing": "\u26a1"}.get(init["status"], "\U0001f4cb")
+        lines.append(
+            f"{emoji} {init['title']} [{init['status']}] "
+            f"\u2014 {init['days_stale']} days untouched"
+        )
+    lines.append("\nPick one up or archive it?")
+
+    message = "\n".join(lines)
+
+    # Send via shared notify helper
+    try:
+        from lib.notify import send_telegram
+        send_telegram(message, parse_mode="HTML")
+    except Exception as e:
+        print(f"Failed to send notification: {e}", file=sys.stderr)
+        # Also print to stdout for cron logging
+        print(message)
+
+
+if __name__ == "__main__":
+    main()

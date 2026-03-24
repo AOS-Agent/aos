@@ -4,6 +4,8 @@ from .hooks import HooksPathCheck
 from .launchagents import LaunchAgentPythonCheck
 from .symlinks import AgentSymlinkCheck, SkillSymlinkCheck
 from .log_location import LogLocationCheck
+from .google_workspace import GoogleWorkspaceCheck
+from .initiatives import InitiativeDirectoriesCheck, BridgeTopicsCheck
 
 # Add new checks here — they run in this order on every update cycle.
 ALL_CHECKS = [
@@ -21,7 +23,14 @@ ALL_CHECKS = [
     # Services — LaunchAgent plists reference existing Python
     LaunchAgentPythonCheck,
 
+    # Integrations — MCP servers for external services
+    GoogleWorkspaceCheck,
+
     # Content — CLAUDE.md managed sections are current
     RootClaudeMdCheck,
     GlobalClaudeMdCheck,
+
+    # Initiative pipeline + Bridge v2 infrastructure
+    InitiativeDirectoriesCheck,
+    BridgeTopicsCheck,
 ]

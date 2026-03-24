@@ -357,7 +357,7 @@ def get_activity(limit: int = 30) -> list:
 def add_task(title: str, priority: int = 3, project: str = None,
              status: str = "todo", tags: list = None, source: str = "manual",
              due: str = None, energy: str = None, context: str = None,
-             parent: str = None) -> dict:
+             parent: str = None, source_ref: str = None) -> dict:
     """Add a new task with project-scoped ID."""
     data = _load()
 
@@ -398,6 +398,8 @@ def add_task(title: str, priority: int = 3, project: str = None,
         task["context"] = context
     if parent:
         task["parent"] = parent
+    if source_ref:
+        task["source_ref"] = source_ref
     data["tasks"].append(task)
     _save(data)
     if parent:

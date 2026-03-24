@@ -46,6 +46,7 @@ except ImportError:
 
 try:
     import urllib.request
+    import glob as globmod
     from datetime import date
 except Exception:
     _safe_exit(_check_onboarding() or "")
@@ -155,23 +156,66 @@ def main():
         except Exception:
             pass
 
+    # --- Initiative Context ---
+    # Scan active initiatives and inject state digests
+    initiative_ids = []
+    try:
+        init_dir = os.path.join(str(Path.home()), "vault", "knowledge", "initiatives")
+        if os.path.isdir(init_dir):
+            init_files = sorted(
+                globmod.glob(os.path.join(init_dir, "*.md")),
+                key=os.path.getmtime, reverse=True
+            )
+            for fpath in init_files[:5]:  # cap at 5 most recent
+                try:
+                    with open(fpath) as f:
+                        raw = f.read(3000)  # frontmatter + state digest
+                    if not raw.startswith("---"):
+                        continue
+                    fm_end = raw.find("---", 3)
+                    if fm_end == -1:
+                        continue
+                    fm = yaml.safe_load(raw[3:fm_end])
+                    if not fm or fm.get("status") not in ("research", "shaping", "planning", "executing"):
+                        continue
+                    title = fm.get("title", os.path.basename(fpath))
+                    initiative_ids.append(title)
+                    # Extract state digest (between ```\n and \n```)
+                    digest = f"Status: {fm['status']}"
+                    digest_start = raw.find("## State Digest")
+                    if digest_start != -1:
+                        block = raw[digest_start:digest_start + 500]
+                        code_start = block.find("```\n")
+                        code_end = block.find("\n```", code_start + 4) if code_start != -1 else -1
+                        if code_start != -1 and code_end != -1:
+                            digest = block[code_start + 4:code_end].strip()
+                    lines.append(f"\n**Initiative: {title}**")
+                    lines.append(digest)
+                except Exception:
+                    pass  # skip malformed files, never crash
+    except Exception:
+        pass  # never crash the hook
+
     if not lines:
         lines.append("No active tasks or urgent items.")
 
     context = "\n".join(lines)
 
     # Write session context file for session_close.py to read
-    # Tracks which tasks were "in scope" for this session
+    # Tracks which tasks and initiatives were "in scope" for this session
     task_ids_in_scope = [t["id"] for t in project_active + active]
     context_file = Path.home() / ".aos" / "work" / ".session-context.json"
     try:
         context_file.parent.mkdir(parents=True, exist_ok=True)
-        context_file.write_text(json.dumps({
+        session_ctx = {
             "session_id": session_id,
             "task_ids": task_ids_in_scope,
             "cwd": cwd,
             "thread_id": current_thread["id"] if current_thread else None,
-        }))
+        }
+        if initiative_ids:
+            session_ctx["initiative_ids"] = initiative_ids
+        context_file.write_text(json.dumps(session_ctx))
     except Exception:
         pass  # Non-fatal
 
