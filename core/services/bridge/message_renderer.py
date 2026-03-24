@@ -247,7 +247,11 @@ async def render_stream(
         elif isinstance(event, RateLimit):
             wait_s = max(0, event.resets_at - int(time.time()))
             if wait_s > 0:
-                await _show_tool_status(f"⏳ Rate limited — resuming in ~{wait_s}s")
+                wait_min = (wait_s + 59) // 60
+                await _show_tool_status(
+                    f"⏳ Rate limited (~{wait_min} min). "
+                    f"Quick commands still work — try \"tasks\" or \"add task: X\""
+                )
             bridge_event("rate_limit", level="warn",
                          status=event.status, resets_at=event.resets_at, wait_s=wait_s)
 

@@ -39,6 +39,7 @@ from evening_checkin import (
 )
 from execution_logger import log_execution
 from bridge_events import bridge_event
+from intent_classifier import dispatch as classify_intent
 
 logger = logging.getLogger(__name__)
 
@@ -569,6 +570,22 @@ class TelegramChannel:
         topic_agent = topic_config.get("agent")
         text = update.message.text
 
+        # ── Quick command intercept (Bridge v2) ──────────────────────
+        # Pattern-matched intents bypass Claude entirely for <500ms response.
+        # Only in DM or general topics — project topics go to their agent.
+        if not topic_agent:
+            try:
+                quick_reply = classify_intent(text)
+                if quick_reply:
+                    log_activity("telegram", "quick_command", summary=text[:100])
+                    await update.message.reply_text(
+                        quick_reply, parse_mode="HTML",
+                        message_thread_id=thread_id,
+                    )
+                    return
+            except Exception as e:
+                logger.warning(f"Quick command failed, falling through to Claude: {e}")
+
         # If topic has a dedicated agent, prepend dispatch
         if topic_agent and not text.lower().startswith(("ask ", "tell ", "@")):
             text = f"ask {topic_agent} to {text}"
@@ -963,10 +980,16 @@ class TelegramChannel:
         """Trigger QMD re-index in background (non-blocking)."""
         if self.QMD_BIN.exists():
             try:
+                qmd_env = {**os.environ, "PATH": f"{self.QMD_BIN.parent}:{os.environ.get('PATH', '')}"}
                 subprocess.Popen(
                     [str(self.QMD_BIN), "update"],
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                    env={**os.environ, "PATH": f"{self.QMD_BIN.parent}:{os.environ.get('PATH', '')}"},
+                    env=qmd_env,
+                )
+                subprocess.Popen(
+                    [str(self.QMD_BIN), "embed"],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    env=qmd_env,
                 )
             except Exception:
                 pass
@@ -1028,7 +1051,7 @@ class TelegramChannel:
         await update.message.chat.send_action("typing")
         try:
             result = subprocess.run(
-                [str(self.QMD_BIN), "search", query, "-n", "5"],
+                [str(self.QMD_BIN), "query", query, "-n", "5"],
                 capture_output=True, text=True, timeout=30,
                 env={**os.environ, "PATH": f"{self.QMD_BIN.parent}:{os.environ.get('PATH', '')}"},
             )

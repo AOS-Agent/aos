@@ -1,10 +1,16 @@
-"""Daily briefing — proactive morning scan delivered via Telegram.
+"""Daily briefing — BLUF morning scan delivered via Telegram.
 
-Runs once per day at a configured hour. Scans tasks, goals, system health,
-and memory for staleness, then sends a formatted briefing to the operator.
+Bridge v2 format: Bottom Line Up Front. Scannable in 10 seconds.
+No system metrics, no trust scores, no session counts. Delta only.
+
+Runs once per day at a configured hour. Scans tasks, initiatives,
+schedule, and overnight work, then sends a classified briefing.
 """
 
+import glob
 import logging
+import os
+import re
 import threading
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -16,6 +22,15 @@ import yaml
 logger = logging.getLogger(__name__)
 
 WORKSPACE = Path.home() / "aos"
+VAULT = Path.home() / "vault"
+INITIATIVES_DIR = VAULT / "knowledge" / "initiatives"
+OPERATOR_CONFIG = Path.home() / ".aos" / "config" / "operator.yaml"
+
+# Max items per BLUF section (Cowan 2001 cognitive load)
+MAX_ITEMS = 4
+
+
+# ── Config helpers ─────────────────────────────────────────────────────
 
 
 def _get_config() -> tuple[str, int, int]:
@@ -23,9 +38,8 @@ def _get_config() -> tuple[str, int, int]:
     goals_path = WORKSPACE / "config" / "goals.yaml"
     if goals_path.exists():
         data = yaml.safe_load(goals_path.read_text())
-        wh = data.get("work_hours", {})
+        wh = data.get("work_hours", {}) if data else {}
         tz = wh.get("timezone", "America/Toronto")
-        # Default: 8:00 AM
         return tz, 8, 0
     return "America/Toronto", 8, 0
 
@@ -36,289 +50,446 @@ def _load_yaml(path: Path) -> dict:
     return {}
 
 
-def _build_briefing() -> str:
-    """Build the daily briefing content."""
+# ── Initiative scanner ─────────────────────────────────────────────────
+
+
+def _scan_initiatives() -> list[dict]:
+    """Scan vault/knowledge/initiatives/*.md for active initiatives.
+
+    Parses YAML frontmatter using find() (not index()) for safety.
+    Returns list of dicts with: title, status, phase, total_phases,
+    updated, stale (bool).
+    """
+    results = []
+    if not INITIATIVES_DIR.exists():
+        return results
+
     tz_name, _, _ = _get_config()
     tz = ZoneInfo(tz_name)
     now = datetime.now(tz)
 
-    lines = []
-    lines.append(f"<b>Daily Briefing — {now.strftime('%A, %B %d')}</b>\n")
+    # Read stale threshold from operator config
+    op = _load_yaml(OPERATOR_CONFIG)
+    stale_days = 3
+    init_cfg = op.get("initiatives", {})
+    if isinstance(init_cfg, dict):
+        stale_days = init_cfg.get("stale_threshold_days", 3)
 
-    # ── Goals ────────────────────────────────────────────
-    goals = _load_yaml(WORKSPACE / "config" / "goals.yaml")
-    objectives = goals.get("quarterly_objectives", [])
-    if objectives:
-        lines.append("<b>Goals</b>")
-        for obj in objectives:
-            name = obj.get("name", "Unnamed")
-            krs = obj.get("key_results", [])
-            done_count = sum(1 for kr in krs if "[DONE]" in str(kr))
-            lines.append(f"  • {name} ({done_count}/{len(krs)} key results done)")
-        lines.append("")
+    for md_path in sorted(INITIATIVES_DIR.glob("*.md")):
+        try:
+            content = md_path.read_text()
+            if not content.startswith("---"):
+                continue
 
-    # ── Tasks (from vault) ─────────────────────────────────
-    try:
-        from vault_tasks import get_tasks_by_status, get_active_tasks
-        focus = get_tasks_by_status("focus")
-        in_progress = get_tasks_by_status("in-progress")
-        todo = get_tasks_by_status("todo")
-        waiting = get_tasks_by_status("waiting")
-        backlog = get_tasks_by_status("backlog")
+            # Find the closing --- of frontmatter
+            end = content.find("---", 3)
+            if end == -1:
+                continue
 
-        if focus:
-            lines.append(f"<b>Focus ({len(focus)})</b>")
-            for t in focus:
-                domain = t.get("domain", "")
-                lines.append(f"  🎯 {t['title']}" + (f" <i>({domain})</i>" if domain else ""))
-            lines.append("")
-        if in_progress:
-            lines.append(f"<b>In Progress ({len(in_progress)})</b>")
-            for t in in_progress:
-                domain = t.get("domain", "")
-                lines.append(f"  🔄 {t['title']}" + (f" <i>({domain})</i>" if domain else ""))
-            lines.append("")
-        if todo:
-            lines.append(f"<b>Todo ({len(todo)})</b>")
-            for t in todo[:5]:
-                domain = t.get("domain", "")
-                lines.append(f"  ⬜ {t['title']}" + (f" <i>({domain})</i>" if domain else ""))
-            if len(todo) > 5:
-                lines.append(f"  ... and {len(todo) - 5} more")
-            lines.append("")
-        if waiting:
-            lines.append(f"<b>Waiting ({len(waiting)})</b>")
-            for t in waiting:
-                who = t.get("waiting_on", "?")
-                lines.append(f"  ⏳ {t['title']} — on {who}")
-            lines.append("")
-        if backlog:
-            lines.append(f"<b>Backlog</b>: {len(backlog)} items")
-            lines.append("")
-        if not any([focus, in_progress, todo, waiting, backlog]):
-            lines.append("<b>Tasks</b>")
-            lines.append("  No active tasks.")
-            lines.append("")
-    except Exception as e:
-        logger.error(f"Failed to load vault tasks: {e}")
-        lines.append("<b>Tasks</b>")
-        lines.append("  Could not load vault tasks.")
-        lines.append("")
+            frontmatter = content[3:end]
+            meta = yaml.safe_load(frontmatter)
+            if not isinstance(meta, dict):
+                continue
 
-    # ── Stale items ──────────────────────────────────────
-    stale = []
+            status = meta.get("status", "")
+            # Skip done/archived
+            if status in ("done", "archived"):
+                continue
 
-    # Check for overdue vault tasks
-    try:
-        for t in get_active_tasks():
-            due = t.get("due")
-            if due:
+            title = meta.get("title", md_path.stem)
+            phase = meta.get("phase")
+            total_phases = meta.get("total_phases")
+            updated_raw = meta.get("updated")
+
+            # Determine staleness
+            stale = False
+            updated_str = ""
+            if updated_raw:
                 try:
-                    due_date = datetime.strptime(str(due), "%Y-%m-%d").replace(tzinfo=tz)
-                    if due_date < now:
-                        days_late = (now - due_date).days
-                        stale.append(f"{t['title']} (overdue by {days_late} days)")
+                    if isinstance(updated_raw, str):
+                        updated_date = datetime.strptime(updated_raw, "%Y-%m-%d").replace(tzinfo=tz)
+                    else:
+                        # date object from YAML
+                        updated_date = datetime.combine(updated_raw, datetime.min.time()).replace(tzinfo=tz)
+                    days_since = (now - updated_date).days
+                    stale = days_since > stale_days
+                    updated_str = updated_raw if isinstance(updated_raw, str) else str(updated_raw)
                 except (ValueError, TypeError):
-                    pass
+                    updated_str = str(updated_raw)
+
+            results.append({
+                "title": title,
+                "status": status,
+                "phase": phase,
+                "total_phases": total_phases,
+                "updated": updated_str,
+                "stale": stale,
+                "file": md_path.name,
+            })
+        except Exception as e:
+            logger.debug(f"Failed to parse initiative {md_path.name}: {e}")
+
+    return results
+
+
+# ── BLUF briefing builder ─────────────────────────────────────────────
+
+
+def _build_briefing() -> str:
+    """Build the BLUF daily briefing.
+
+    Sections: URGENT, IMPORTANT, THINK ABOUT, PEOPLE, OVERNIGHT.
+    No system metrics, no trust scores — delta only.
+    """
+    tz_name, _, _ = _get_config()
+    tz = ZoneInfo(tz_name)
+    now = datetime.now(tz)
+
+    urgent = []      # Things needing action TODAY
+    important = []   # Things to move forward this week
+    think = []       # Open threads, unresolved decisions
+    people = []      # Follow-ups, waiting, meetings
+    overnight = []   # Work done overnight
+
+    # ── Load tasks from work engine ──────────────────────────────────
+    work_tasks = []
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "engine", str(Path.home() / "aos" / "core" / "work" / "engine.py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        work_tasks = mod.get_all_tasks()
+    except Exception as e:
+        logger.debug(f"Work engine unavailable: {e}")
+
+    # Also try vault tasks as fallback
+    vault_tasks_list = []
+    try:
+        from vault_tasks import get_all_tasks as get_vault_tasks, get_active_tasks
+        vault_tasks_list = get_vault_tasks()
     except Exception:
         pass
 
-    # Check memory for recently saved items
-    memory_dir = Path.home() / ".claude" / "projects" / f"-{str(WORKSPACE).replace('/', '-')}" / "memory"
-    if memory_dir.exists():
-        memory_files = list(memory_dir.glob("*.md"))
-        memory_count = len([f for f in memory_files if f.name != "MEMORY.md"])
-        lines.append(f"<b>Memory</b>")
-        lines.append(f"  {memory_count} memories stored")
-        lines.append("")
-
-    if stale:
-        lines.append("<b>Needs Attention</b>")
-        for item in stale:
-            lines.append(f"  ⚠ {item}")
-        lines.append("")
-
-    # ── Vault: Yesterday + Trends ──────────────────────────
-    vault = Path.home() / "vault"
-    yesterday = (now - timedelta(days=1)).strftime("%Y-%m-%d")
-    yesterday_note = vault / "daily" / f"{yesterday}.md"
-
-    if yesterday_note.exists():
-        yd_content = yesterday_note.read_text()
-        # Extract frontmatter values
-        import re as _re
-        energy_m = _re.search(r'^energy:\s*(\d)', yd_content, _re.MULTILINE)
-        sleep_m = _re.search(r'^sleep:\s*(\d)', yd_content, _re.MULTILINE)
-        yd_energy = energy_m.group(1) if energy_m else "—"
-        yd_sleep = sleep_m.group(1) if sleep_m else "—"
-
-        # Extract accomplishment from Evening Reflection
-        accomplishment = ""
-        if "**Accomplished**:" in yd_content:
-            acc_m = _re.search(r'\*\*Accomplished\*\*:\s*(.+)', yd_content)
-            if acc_m:
-                accomplishment = acc_m.group(1).strip()
-
-        lines.append("<b>Yesterday</b>")
-        lines.append(f"  Energy: {yd_energy}/5 | Sleep: {yd_sleep}/5")
-        if accomplishment:
-            lines.append(f"  Did: {accomplishment[:80]}")
-        lines.append("")
-
-    # 3-day trends
-    trend_energies = []
-    trend_sleeps = []
-    for d in range(1, 4):
-        day_str = (now - timedelta(days=d)).strftime("%Y-%m-%d")
-        day_note = vault / "daily" / f"{day_str}.md"
-        if day_note.exists():
-            dc = day_note.read_text()
-            import re as _re
-            em = _re.search(r'^energy:\s*(\d)', dc, _re.MULTILINE)
-            sm = _re.search(r'^sleep:\s*(\d)', dc, _re.MULTILINE)
-            if em:
-                trend_energies.append(int(em.group(1)))
-            if sm:
-                trend_sleeps.append(int(sm.group(1)))
-
-    if trend_energies or trend_sleeps:
-        lines.append("<b>Trends (3-day)</b>")
-        if trend_energies:
-            avg_e = sum(trend_energies) / len(trend_energies)
-            lines.append(f"  Energy: {avg_e:.1f} avg")
-        if trend_sleeps:
-            avg_s = sum(trend_sleeps) / len(trend_sleeps)
-            lines.append(f"  Sleep: {avg_s:.1f} avg")
-        lines.append("")
-
-    # Recent sessions
-    sessions_dir = vault / "sessions"
-    if sessions_dir.exists():
-        yesterday_sessions = sorted(sessions_dir.glob(f"{yesterday}-*.md"))
-        if yesterday_sessions:
-            lines.append(f"<b>Yesterday's Sessions ({len(yesterday_sessions)})</b>")
-            for sf in yesterday_sessions[:3]:
-                sc = sf.read_text()
-                proj_m = _re.search(r'^project:\s*(.+)', sc, _re.MULTILINE)
-                proj = proj_m.group(1).strip() if proj_m else "unknown"
-                lines.append(f"  • {sf.stem} ({proj})")
-            if len(yesterday_sessions) > 3:
-                lines.append(f"  ... and {len(yesterday_sessions) - 3} more")
-            lines.append("")
-
-    # Create today's daily note if missing
+    # ── URGENT: overdue tasks, stale initiatives, P1 active ──────────
     today_str = now.strftime("%Y-%m-%d")
-    today_note = vault / "daily" / f"{today_str}.md"
-    if not today_note.exists():
-        template = vault / "templates" / "daily.md"
-        if template.exists():
-            content = template.read_text()
-            content = content.replace("{{date}}", today_str)
-            content = content.replace("{{day}}", now.strftime("%A"))
-            today_note.parent.mkdir(parents=True, exist_ok=True)
-            today_note.write_text(content)
-            logger.info(f"Created daily note: {today_note}")
 
-    # ── Agent Trust ──────────────────────────────────────
-    trust_path = Path.home() / ".aos" / "config" / "trust.yaml"
-    trust_log_dir = Path.home() / ".aos" / "logs" / "trust"
-    if trust_path.exists():
-        try:
-            trust_data = yaml.safe_load(trust_path.read_text()) or {}
-            trust_agents = trust_data.get("agents", {})
-            graduation_config = trust_data.get("graduation", {})
+    # Overdue tasks (work engine)
+    for t in work_tasks:
+        if t.get("status") in ("done", "archived"):
+            continue
+        due = t.get("due")
+        if due:
+            try:
+                due_str = str(due).split("T")[0]
+                if due_str < today_str:
+                    days_late = (now.date() - datetime.strptime(due_str, "%Y-%m-%d").date()).days
+                    urgent.append(f"<b>{t['title']}</b> — overdue by {days_late}d")
+            except (ValueError, TypeError):
+                pass
 
-            # Count recent trust actions (last 7 days)
-            recent_actions = 0
-            recent_reverts = 0
-            agent_scores = {}
-            for d in range(7):
-                day_str = (now - timedelta(days=d)).strftime("%Y-%m-%d")
-                log_file = trust_log_dir / f"{day_str}.jsonl"
-                if log_file.exists():
-                    import json as _json
-                    for line in log_file.read_text().splitlines():
-                        if not line.strip():
-                            continue
-                        try:
-                            entry = _json.loads(line)
-                            recent_actions += 1
-                            if entry.get("result") == "reverted":
-                                recent_reverts += 1
-                            ag = entry.get("agent", "")
-                            agent_scores[ag] = agent_scores.get(ag, 0) + entry.get("weight", 0)
-                        except _json.JSONDecodeError:
-                            pass
+    # Overdue vault tasks
+    for t in vault_tasks_list:
+        if t.get("status") in ("done",):
+            continue
+        due = t.get("due")
+        if due:
+            try:
+                due_str = str(due).split("T")[0]
+                if due_str < today_str:
+                    days_late = (now.date() - datetime.strptime(due_str, "%Y-%m-%d").date()).days
+                    title = t.get("title", "Untitled")
+                    # Avoid duplicate if already in work engine
+                    if not any(title in u for u in urgent):
+                        urgent.append(f"<b>{title}</b> — overdue by {days_late}d")
+            except (ValueError, TypeError):
+                pass
 
-            # Check for graduation candidates
-            grad_candidates = []
-            for ag_name, ag_info in trust_agents.items():
-                caps = ag_info.get("capabilities", {})
-                for cap, cap_level in caps.items():
-                    if cap_level >= 3:
+    # Stale initiatives → URGENT
+    initiatives = _scan_initiatives()
+    for init in initiatives:
+        if init["stale"]:
+            phase_info = ""
+            if init.get("phase") and init.get("total_phases"):
+                phase_info = f" (phase {init['phase']}/{init['total_phases']})"
+            urgent.append(f"<b>{init['title']}</b> — stale, last updated {init['updated']}{phase_info}")
+
+    # P1 active tasks
+    for t in work_tasks:
+        if t.get("priority") == 1 and t.get("status") in ("active", "todo", "in-progress", "focus"):
+            if not t.get("parent"):  # Skip subtasks
+                title = t.get("title", "Untitled")
+                if not any(title in u for u in urgent):
+                    urgent.append(f"<b>{title}</b> — P1 active")
+
+    # ── IMPORTANT: active initiatives, high-pri tasks, due this week ─
+    # Active initiatives with phase info
+    for init in initiatives:
+        if not init["stale"] and init["status"] in ("executing", "planning"):
+            phase_info = ""
+            if init.get("phase") and init.get("total_phases"):
+                phase_info = f" — phase {init['phase']}/{init['total_phases']}"
+            important.append(f"<b>{init['title']}</b> [{init['status']}]{phase_info}")
+
+    # High priority todo tasks (P2)
+    for t in work_tasks:
+        if t.get("status") in ("active", "todo", "focus", "in-progress") and not t.get("parent"):
+            if t.get("priority") == 2:
+                important.append(f"{t['title']} — P2")
+
+    # Tasks due this week
+    week_end = now + timedelta(days=(6 - now.weekday()))  # End of this week (Sunday)
+    for t in work_tasks:
+        if t.get("status") in ("done", "archived"):
+            continue
+        due = t.get("due")
+        if due:
+            try:
+                due_str = str(due).split("T")[0]
+                due_date = datetime.strptime(due_str, "%Y-%m-%d").date()
+                if due_date >= now.date() and due_date <= week_end.date():
+                    title = t.get("title", "Untitled")
+                    if not any(title in item for item in important) and not any(title in item for item in urgent):
+                        important.append(f"{title} — due {due_str}")
+            except (ValueError, TypeError):
+                pass
+
+    # ── THINK ABOUT: research/shaping initiatives, inbox, open threads ─
+    # Initiatives in research/shaping
+    for init in initiatives:
+        if not init["stale"] and init["status"] in ("research", "shaping"):
+            think.append(f"<b>{init['title']}</b> [{init['status']}] — needs input")
+
+    # Inbox items awaiting triage
+    try:
+        if work_tasks:
+            # Already loaded the engine above
+            data = mod._load()
+            inbox_items = data.get("inbox", [])
+            if len(inbox_items) > 3:
+                think.append(f"{len(inbox_items)} inbox items awaiting triage")
+            elif inbox_items:
+                for item in inbox_items[:MAX_ITEMS]:
+                    text = item.get("text", item) if isinstance(item, dict) else str(item)
+                    think.append(f"Inbox: {str(text)[:60]}")
+    except Exception:
+        pass
+
+    # Open threads with no recent activity
+    try:
+        if work_tasks:
+            data = mod._load()
+            threads = data.get("threads", [])
+            for th in threads:
+                if th.get("status", "open") == "open":
+                    title = th.get("title", "Unnamed thread")
+                    think.append(f"Open thread: {title}")
+    except Exception:
+        pass
+
+    # ── PEOPLE: waiting tasks, schedule blocks ───────────────────────
+    # Waiting tasks
+    for t in work_tasks:
+        if t.get("status") == "waiting":
+            who = t.get("waiting_on", "someone")
+            people.append(f"Waiting on <b>{who}</b>: {t.get('title', 'Untitled')}")
+
+    # Also vault waiting tasks
+    for t in vault_tasks_list:
+        if t.get("status") == "waiting":
+            who = t.get("waiting_on", "someone")
+            title = t.get("title", "Untitled")
+            if not any(title in p for p in people):
+                people.append(f"Waiting on <b>{who}</b>: {title}")
+
+    # Schedule blocks from operator.yaml
+    op = _load_yaml(OPERATOR_CONFIG)
+    schedule = op.get("schedule", {})
+    blocks = schedule.get("blocks", [])
+    day_abbrev = now.strftime("%a").lower()  # mon, tue, etc.
+    for block in blocks:
+        days = block.get("days", [])
+        if day_abbrev in days:
+            name = block.get("name", "Block")
+            start = block.get("start", "")
+            end = block.get("end", "")
+            people.append(f"<b>{name}</b> today {start}–{end}")
+
+    # ── OVERNIGHT: tasks completed late night / early morning ────────
+    yesterday = now - timedelta(days=1)
+    cutoff_evening = yesterday.replace(hour=22, minute=0, second=0, microsecond=0)
+    cutoff_morning = now.replace(hour=6, minute=0, second=0, microsecond=0)
+
+    for t in work_tasks:
+        if t.get("status") == "done":
+            completed = t.get("completed")
+            if completed:
+                try:
+                    if isinstance(completed, str):
+                        # Try ISO format first
+                        comp_dt = datetime.fromisoformat(completed.replace("Z", "+00:00"))
+                        if comp_dt.tzinfo is None:
+                            comp_dt = comp_dt.replace(tzinfo=tz)
+                        else:
+                            comp_dt = comp_dt.astimezone(tz)
+                    else:
                         continue
-                    score = agent_scores.get(ag_name, 0)
-                    if cap_level == 1:
-                        threshold = graduation_config.get("1_to_2", {}).get("min_weighted_score", 30)
-                        if score > 0:
-                            pct = min(100, int(score / threshold * 100))
-                            if pct >= 60:
-                                grad_candidates.append(f"{ag_name}/{cap}: {pct}% to L{cap_level + 1}")
+                    if cutoff_evening <= comp_dt <= cutoff_morning:
+                        overnight.append(f"Completed: <b>{t.get('title', 'Untitled')}</b>")
+                except (ValueError, TypeError):
+                    pass
 
-            if recent_actions > 0 or grad_candidates:
-                lines.append("<b>Agent Trust</b>")
-                if recent_actions > 0:
-                    lines.append(f"  {recent_actions} actions this week, {recent_reverts} reverts")
-                    top_agents = sorted(agent_scores.items(), key=lambda x: x[1], reverse=True)[:3]
-                    for ag, sc in top_agents:
-                        lines.append(f"  {ag}: {sc:+.1f} score")
-                if grad_candidates:
-                    for gc in grad_candidates:
-                        lines.append(f"  📈 {gc}")
-                lines.append("")
-        except Exception as e:
-            logger.debug(f"Trust digest failed: {e}")
+    # ── Format the BLUF ──────────────────────────────────────────────
+    lines = []
 
-    # ── System health ────────────────────────────────────
-    import shutil
-    usage = shutil.disk_usage("/")
-    disk_pct = round(usage.used / usage.total * 100, 1)
+    # Header
+    lines.append(f"\u2600\ufe0f <b>{now.strftime('%A')}, {now.strftime('%B %d')}</b>\n")
 
-    services = []
-    # Bridge (we're running)
-    services.append("Bridge: up")
-
-    # Dashboard
-    try:
-        r = httpx.get("http://localhost:4096/api/health", timeout=3)
-        services.append(f"Dashboard: {'up' if r.status_code == 200 else 'DOWN'}")
-    except Exception:
-        services.append("Dashboard: DOWN")
-
-    # Listen
-    try:
-        r = httpx.get("http://localhost:7600/jobs", timeout=3)
-        services.append(f"Listen: {'up' if r.status_code == 200 else 'DOWN'}")
-    except Exception:
-        services.append("Listen: DOWN")
-
-    lines.append("<b>System</b>")
-    lines.append(f"  Disk: {disk_pct}%")
-    for svc in services:
-        lines.append(f"  {svc}")
+    # URGENT
+    lines.append("\U0001f534 <b>URGENT</b>")
+    if urgent:
+        for item in urgent[:MAX_ITEMS]:
+            lines.append(f"  \u2022 {item}")
+    else:
+        lines.append("  Nothing urgent today.")
     lines.append("")
 
-    # ── Agent traces (from Phoenix) ───────────────────────
-    try:
-        import sys
-        sys.path.insert(0, str(WORKSPACE / "apps" / "phoenix"))
-        from agent_health import get_daily_stats, format_for_briefing
-        stats = get_daily_stats(hours=24)
-        lines.append(format_for_briefing(stats))
-    except Exception as e:
-        logger.debug(f"Phoenix stats unavailable: {e}")
+    # IMPORTANT
+    lines.append("\U0001f7e1 <b>IMPORTANT</b>")
+    if important:
+        for item in important[:MAX_ITEMS]:
+            lines.append(f"  \u2022 {item}")
+    else:
+        lines.append("  Nothing flagged this week.")
+    lines.append("")
+
+    # THINK ABOUT
+    lines.append("\U0001f4ad <b>THINK ABOUT</b>")
+    if think:
+        for item in think[:MAX_ITEMS]:
+            lines.append(f"  \u2022 {item}")
+    else:
+        lines.append("  No open threads.")
+    lines.append("")
+
+    # PEOPLE
+    lines.append("\U0001f465 <b>PEOPLE</b>")
+    if people:
+        for item in people[:MAX_ITEMS]:
+            lines.append(f"  \u2022 {item}")
+    else:
+        lines.append("  No people items today.")
+    lines.append("")
+
+    # OVERNIGHT (only if applicable)
+    if overnight:
+        lines.append("\U0001f319 <b>OVERNIGHT</b>")
+        for item in overnight[:MAX_ITEMS]:
+            lines.append(f"  \u2022 {item}")
+        lines.append("")
+
+    # ── Create today's daily note if missing ─────────────────────────
+    today_date_str = now.strftime("%Y-%m-%d")
+    today_note = VAULT / "daily" / f"{today_date_str}.md"
+    if not today_note.exists():
+        template = VAULT / "templates" / "daily.md"
+        if template.exists():
+            try:
+                content = template.read_text()
+                content = content.replace("{{date}}", today_date_str)
+                content = content.replace("{{day}}", now.strftime("%A"))
+                today_note.parent.mkdir(parents=True, exist_ok=True)
+                today_note.write_text(content)
+                logger.info(f"Created daily note: {today_note}")
+            except Exception as e:
+                logger.debug(f"Failed to create daily note: {e}")
 
     return "\n".join(lines)
+
+
+# ── Send helpers ───────────────────────────────────────────────────────
+
+
+def _split_for_telegram(text: str, limit: int = 4096) -> list[str]:
+    """Split text at paragraph/newline boundaries for Telegram's limit.
+
+    Imports the canonical splitter from core/lib/notify.py when possible,
+    falls back to a local implementation.
+    """
+    if len(text) <= limit:
+        return [text]
+
+    try:
+        import sys
+        sys.path.insert(0, str(Path.home() / "aos" / "core" / "lib"))
+        from notify import _split_message
+        return _split_message(text, limit)
+    except Exception:
+        pass
+
+    # Fallback: split at double newlines, then single newlines
+    chunks = []
+    remaining = text
+    while remaining:
+        if len(remaining) <= limit:
+            chunks.append(remaining)
+            break
+        cut = remaining.rfind("\n\n", 0, limit)
+        if cut == -1 or cut < limit // 2:
+            cut = remaining.rfind("\n", 0, limit)
+        if cut == -1 or cut < limit // 2:
+            cut = limit
+        chunks.append(remaining[:cut].rstrip())
+        remaining = remaining[cut:].lstrip()
+    return chunks
+
+
+def _get_daily_thread_id(bot_token: str, forum_group_id: int) -> int | None:
+    """Get the daily topic thread_id from topic_manager."""
+    try:
+        import sys
+        sys.path.insert(0, str(Path.home() / "aos" / "core" / "services" / "bridge"))
+        from topic_manager import TopicManager
+        tm = TopicManager(bot_token, forum_group_id)
+        return tm.get_topic_thread_id("daily")
+    except Exception as e:
+        logger.debug(f"Could not get daily thread_id: {e}")
+        return None
+
+
+def _send_briefing(bot_token: str, chat_id: int, thread_id: int | None = None):
+    """Build and send the BLUF daily briefing via Telegram.
+
+    Supports message splitting for >4096 char briefings and
+    optional thread_id for the daily forum topic.
+    """
+    try:
+        text = _build_briefing()
+        chunks = _split_for_telegram(text)
+
+        for chunk in chunks:
+            if not chunk.strip():
+                continue
+            payload = {
+                "chat_id": chat_id,
+                "text": chunk,
+                "parse_mode": "HTML",
+            }
+            if thread_id:
+                payload["message_thread_id"] = thread_id
+
+            httpx.post(
+                f"https://api.telegram.org/bot{bot_token}/sendMessage",
+                json=payload,
+                timeout=10,
+            )
+
+        logger.info("Daily briefing sent (BLUF format)")
+    except Exception as e:
+        logger.error(f"Daily briefing failed: {e}")
+
+
+# ── Morning prompt (KEPT AS-IS) ───────────────────────────────────────
 
 
 def _build_morning_prompt() -> str:
@@ -380,31 +551,28 @@ def _build_morning_prompt() -> str:
 
     # Select prompt based on context
     if is_friday:
-        # Gratitude / reflection
         prompts = [
             f"Asalamualaikum {op_name}. Jumuah mubarak.\n\n"
-            f"Before the day — what are you grateful for this week? And what's one thing "
+            f"Before the day \u2014 what are you grateful for this week? And what's one thing "
             f"you want to carry into next week?\n\n"
             f"Send a voice note. I'll capture it.",
 
             f"{op_name}, it's Friday. The week is almost wrapped.\n\n"
             f"What worked this week? What didn't? What would you do differently?\n\n"
-            f"Just talk — I'll sort it out.",
+            f"Just talk \u2014 I'll sort it out.",
         ]
     elif is_monday or gap_days > 3:
-        # Fresh start
         prompts = [
             f"Asalamualaikum {op_name}. New week.\n\n"
             f"What are the 2-3 things that matter most this week? "
-            f"Don't overthink it — just talk for a minute.\n\n"
+            f"Don't overthink it \u2014 just talk for a minute.\n\n"
             f"Send me a voice note.",
 
             f"Asalamualaikum {op_name}. It's been {gap_days} days since we last talked.\n\n"
             f"What happened? What changed? What needs your attention today?\n\n"
-            f"Voice note — just ramble. I'll organize it.",
+            f"Voice note \u2014 just ramble. I'll organize it.",
         ]
     elif done_yesterday >= 2:
-        # Momentum
         prompts = [
             f"Asalamualaikum {op_name}. You finished {done_yesterday} tasks yesterday. "
             f"That's momentum.\n\n"
@@ -412,42 +580,39 @@ def _build_morning_prompt() -> str:
             f"make today count?\n\n"
             f"Send a voice note.",
 
-            f"{op_name} — productive day yesterday. {done_yesterday} things done.\n\n"
-            f"What's the priority today? Talk to me — I'll turn it into tasks.",
+            f"{op_name} \u2014 productive day yesterday. {done_yesterday} things done.\n\n"
+            f"What's the priority today? Talk to me \u2014 I'll turn it into tasks.",
         ]
     elif active_count > 3:
-        # Lots going on — help prioritize
         prompts = [
             f"Asalamualaikum {op_name}. You've got {active_count} things in motion"
-            + (f" — '{top_task}' is the most recent" if top_task else "") + ".\n\n"
-            f"What's actually important today? Not everything — just the real priorities.\n\n"
+            + (f" \u2014 '{top_task}' is the most recent" if top_task else "") + ".\n\n"
+            f"What's actually important today? Not everything \u2014 just the real priorities.\n\n"
             f"Voice note. 60 seconds. Go.",
 
-            f"{op_name}, there's a lot on your plate — {active_count} active items.\n\n"
+            f"{op_name}, there's a lot on your plate \u2014 {active_count} active items.\n\n"
             f"What would make today feel like progress? What can wait?\n\n"
             f"Send a voice note and I'll help you sort it.",
         ]
     elif active_count == 0:
-        # Nothing active — open space
         prompts = [
             f"Asalamualaikum {op_name}. Your plate is clear right now.\n\n"
             f"What do you want this machine working on? What's been in the back "
             f"of your mind that you haven't started yet?\n\n"
-            f"Send a voice note — even 30 seconds is enough.",
+            f"Send a voice note \u2014 even 30 seconds is enough.",
 
             f"{op_name}, nothing active right now. That's either peaceful or "
             f"something is being avoided.\n\n"
             f"What should we be working on? Talk to me.",
         ]
     else:
-        # Normal day
         prompts = [
             f"Asalamualaikum {op_name}. What's on your mind this morning?\n\n"
             + (f"'{top_task}' is still active" + (f" in {top_project}" if top_project else "") + ". " if top_task else "")
             + f"Where do you want to push today?\n\n"
-            f"Send a voice note — I'll turn it into tasks and notes.",
+            f"Send a voice note \u2014 I'll turn it into tasks and notes.",
 
-            f"Morning {op_name}. Before the day takes over — "
+            f"Morning {op_name}. Before the day takes over \u2014 "
             f"what matters most right now?\n\n"
             f"Not the urgent stuff. The important stuff.\n\n"
             f"Voice note. I'm listening.",
@@ -457,13 +622,17 @@ def _build_morning_prompt() -> str:
     return random.choice(prompts)
 
 
-def _send_morning_prompt(bot_token: str, chat_id: int):
+def _send_morning_prompt(bot_token: str, chat_id: int, thread_id: int | None = None):
     """Send the personalized morning prompt inviting a voice note."""
     try:
         text = _build_morning_prompt()
+        payload = {"chat_id": chat_id, "text": text}
+        if thread_id:
+            payload["message_thread_id"] = thread_id
+
         httpx.post(
             f"https://api.telegram.org/bot{bot_token}/sendMessage",
-            json={"chat_id": chat_id, "text": text},
+            json=payload,
             timeout=10,
         )
         logger.info("Morning prompt sent")
@@ -471,22 +640,7 @@ def _send_morning_prompt(bot_token: str, chat_id: int):
         logger.error(f"Morning prompt failed: {e}")
 
 
-def _send_briefing(bot_token: str, chat_id: int):
-    """Build and send the daily briefing via Telegram."""
-    try:
-        text = _build_briefing()
-        httpx.post(
-            f"https://api.telegram.org/bot{bot_token}/sendMessage",
-            json={
-                "chat_id": chat_id,
-                "text": text,
-                "parse_mode": "HTML",
-            },
-            timeout=10,
-        )
-        logger.info("Daily briefing sent")
-    except Exception as e:
-        logger.error(f"Daily briefing failed: {e}")
+# ── Learning drip (KEPT AS-IS) ────────────────────────────────────────
 
 
 def _send_learning_drip(bot_token: str, chat_id: int, time_slot: str):
@@ -498,7 +652,7 @@ def _send_learning_drip(bot_token: str, chat_id: int, time_slot: str):
     try:
         onboarding_file = Path.home() / ".aos" / "config" / "onboarding.yaml"
         if not onboarding_file.exists():
-            return  # Not onboarded yet
+            return
 
         onboarding = yaml.safe_load(onboarding_file.read_text()) or {}
         completed_str = onboarding.get("completed", "")
@@ -510,16 +664,14 @@ def _send_learning_drip(bot_token: str, chat_id: int, time_slot: str):
         day_number = (today - completed_date).days + 1
 
         if day_number > 7:
-            return  # Past the drip period
+            return
 
-        # Check if already sent this drip today
         drip_state_file = WORKSPACE / "data" / "bridge" / "drip_state.txt"
         drip_state_file.parent.mkdir(parents=True, exist_ok=True)
         drip_key = f"{today}:{time_slot}"
         if drip_state_file.exists() and drip_key in drip_state_file.read_text():
-            return  # Already sent
+            return
 
-        # Load the drip config
         drip_config = WORKSPACE / "config" / "learning-drip.yaml"
         if not drip_config.exists():
             return
@@ -538,7 +690,6 @@ def _send_learning_drip(bot_token: str, chat_id: int, time_slot: str):
                 )
                 logger.info(f"Learning drip sent: day {day_number}, {time_slot}")
 
-        # Mark as sent
         with open(drip_state_file, "a") as f:
             f.write(drip_key + "\n")
 
@@ -546,14 +697,28 @@ def _send_learning_drip(bot_token: str, chat_id: int, time_slot: str):
         logger.debug(f"Learning drip error: {e}")
 
 
-def start_daily_briefing(bot_token: str, chat_id: int, hour: int = 8, minute: int = 0):
+# ── Scheduling loop ───────────────────────────────────────────────────
+
+
+def start_daily_briefing(bot_token: str, chat_id: int, hour: int = 8,
+                         minute: int = 0, thread_id: int | None = None):
     """Start the daily briefing as a daemon thread.
 
     Checks every 5 minutes if it's time to send. Sends once per day at the
     configured hour (default 8:00 AM in the operator's timezone).
+
+    Args:
+        bot_token: Telegram bot token
+        chat_id: Telegram chat ID (DM or forum group)
+        hour: Hour to send (24h format)
+        minute: Minute to send
+        thread_id: Forum topic thread_id for the daily topic (optional).
+                   If None, tries to resolve via topic_manager.
     """
 
     def _loop():
+        nonlocal thread_id
+
         # Persist last_sent_date to survive restarts
         state_file = WORKSPACE / "data" / "bridge" / "briefing_state.txt"
         state_file.parent.mkdir(parents=True, exist_ok=True)
@@ -568,6 +733,15 @@ def start_daily_briefing(bot_token: str, chat_id: int, hour: int = 8, minute: in
         except Exception:
             pass
 
+        # Try to resolve daily thread_id if not provided
+        if thread_id is None:
+            try:
+                thread_id_resolved = _get_daily_thread_id(bot_token, chat_id)
+                if thread_id_resolved:
+                    thread_id = thread_id_resolved
+            except Exception:
+                pass
+
         while True:
             try:
                 tz_name, _, _ = _get_config()
@@ -575,24 +749,23 @@ def start_daily_briefing(bot_token: str, chat_id: int, hour: int = 8, minute: in
                 now = datetime.now(tz)
 
                 # Morning prompt: send at the configured hour
-                # Briefing: send 15 minutes later (gives them time to send a voice note)
                 prompt_sent = state_file.with_suffix(".prompt").exists() and \
                     state_file.with_suffix(".prompt").read_text().strip() == str(now.date())
 
                 if (now.hour == hour and now.minute >= minute and
                         last_sent_date != now.date() and not prompt_sent):
-                    _send_morning_prompt(bot_token, chat_id)
+                    _send_morning_prompt(bot_token, chat_id, thread_id)
                     _send_learning_drip(bot_token, chat_id, "morning")
                     state_file.with_suffix(".prompt").write_text(str(now.date()))
 
-                # Send briefing 15 min after prompt (or at hour+1 if prompt was missed)
+                # Send briefing 15 min after prompt
                 briefing_minute = minute + 15
                 briefing_hour = hour + (1 if briefing_minute >= 60 else 0)
                 briefing_minute = briefing_minute % 60
                 if (now.hour >= briefing_hour and
                     (now.hour == briefing_hour and now.minute >= briefing_minute or now.hour > briefing_hour) and
                         last_sent_date != now.date()):
-                    _send_briefing(bot_token, chat_id)
+                    _send_briefing(bot_token, chat_id, thread_id)
                     last_sent_date = now.date()
                     state_file.write_text(str(last_sent_date))
 

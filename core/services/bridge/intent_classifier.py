@@ -3,6 +3,13 @@
 Runs before Claude dispatch. If a message matches a known intent with high
 confidence, the bridge handles it directly (fast, zero tokens).
 If no match, returns None and the message goes to Claude as normal.
+
+Bridge v2 quick commands spec:
+- "add task: X" / "add task X"  → work add "X"      → "Added: X"
+- "done: X" / "mark X done"    → work done "X"      → "Done: X (N remaining)"
+- "tasks" / "what's on my plate"→ work list           → formatted task list
+- "search vault for X"          → qmd query "X"       → top 3-5 results
+- Everything else → Claude. If ambiguous, goes to Claude.
 """
 
 import logging
@@ -15,6 +22,7 @@ import httpx
 logger = logging.getLogger(__name__)
 
 AOS_DIR = Path.home() / "aos"
+QMD_BIN = Path.home() / ".bun" / "bin" / "qmd"
 
 # ── Intent Definitions ────────────────────────────────
 # Each intent: list of patterns, handler function name
@@ -44,20 +52,30 @@ INTENTS = {
     },
     "add_task": {
         "patterns": [
-            "re:^add task .+",
-            "re:^new task .+",
-            "re:^create task .+",
-            "re:^add .{3,}",
+            "re:^add task:? .+",
+            "re:^new task:? .+",
+            "re:^create task:? .+",
+            "re:^task:? .{3,}",
         ],
         "handler": "handle_add_task",
     },
     "done_task": {
         "patterns": [
+            # Project-scoped IDs: aos#3, chief#1, t#5
+            "re:mark \\w+#\\d+(\\.\\d+)? done",
+            "re:done:? \\w+#\\d+(\\.\\d+)?",
+            "re:complete \\w+#\\d+(\\.\\d+)?",
+            "re:finish \\w+#\\d+(\\.\\d+)?",
+            "re:\\w+#\\d+(\\.\\d+)? done",
+            # Legacy unscoped IDs: t1, t2
             "re:mark t\\d+ done",
-            "re:done t\\d+",
+            "re:done:? t\\d+",
             "re:complete t\\d+",
             "re:finish t\\d+",
             "re:t\\d+ done",
+            # Fuzzy title match: done: "fix the login page"
+            're:^done:? ".+"',
+            "re:^mark .+ done$",
         ],
         "handler": "handle_done_task",
     },
@@ -66,11 +84,15 @@ INTENTS = {
             "re:^inbox .+",
             "re:^capture .+",
             "re:^jot down .+",
+            "re:^note:? .+",
+            "re:^remember .+",
         ],
         "handler": "handle_inbox",
     },
     "list_tasks": {
         "patterns": [
+            "tasks",
+            "my tasks",
             "what are my tasks",
             "show my tasks",
             "show tasks",
@@ -85,6 +107,16 @@ INTENTS = {
             "re:what('s| is) (left|todo|to do|remaining)",
         ],
         "handler": "handle_list_tasks",
+    },
+    "vault_search": {
+        "patterns": [
+            "re:^search vault (for )?(.+)",
+            "re:^search:? .+",
+            "re:^find in vault .+",
+            "re:^vault search .+",
+            "re:^recall .+",
+        ],
+        "handler": "handle_vault_search",
     },
     "goals_progress": {
         "patterns": [
@@ -275,8 +307,9 @@ def handle_add_task(text: str) -> str:
     """Add a task to the v2 work engine."""
     text_lower = text.lower().strip()
 
-    # Strip trigger phrases to get the title
-    for prefix in ("create task ", "new task ", "add task ", "add "):
+    # Strip trigger phrases to get the title (colon-separated or space-separated)
+    for prefix in ("create task: ", "create task ", "new task: ", "new task ",
+                    "add task: ", "add task ", "task: ", "task "):
         if text_lower.startswith(prefix):
             title = text[len(prefix):].strip()
             break
@@ -284,7 +317,7 @@ def handle_add_task(text: str) -> str:
         title = text.strip()
 
     if not title:
-        return "Please provide a task title. Example: add task Fix the login page"
+        return "Please provide a task title. Example: add task: Fix the login page"
 
     try:
         result = subprocess.run(
@@ -302,12 +335,33 @@ def handle_add_task(text: str) -> str:
 
 def handle_done_task(text: str) -> str:
     """Mark a task done in the v2 work engine."""
-    # Extract task ID (t1, t2, etc.)
-    match = re.search(r"\bt(\d+)\b", text.lower())
-    if not match:
-        return "Please specify a task ID. Example: done t2"
+    text_lower = text.lower().strip()
 
-    task_id = f"t{match.group(1)}"
+    # Try project-scoped IDs first: aos#3, chief#1.2, t#5
+    match = re.search(r"\b(\w+#\d+(?:\.\d+)?)\b", text_lower)
+    if match:
+        task_id = match.group(1)
+    else:
+        # Legacy unscoped IDs: t1, t2
+        match = re.search(r"\bt(\d+)\b", text_lower)
+        if match:
+            task_id = f"t{match.group(1)}"
+        else:
+            # Fuzzy title match: done: "fix the login page" or mark fix the login done
+            # Strip known prefixes to extract the title
+            for prefix in ("done: ", "done ", "complete ", "finish ", "mark "):
+                if text_lower.startswith(prefix):
+                    title = text[len(prefix):].strip()
+                    # Remove trailing "done" if present (from "mark X done")
+                    title = re.sub(r'\s+done$', '', title).strip().strip('"')
+                    break
+            else:
+                title = None
+
+            if title:
+                task_id = title  # work CLI handles fuzzy resolution
+            else:
+                return 'Specify a task. Examples: done aos#3, done t2, done: "fix login"'
 
     try:
         result = subprocess.run(
@@ -316,7 +370,18 @@ def handle_done_task(text: str) -> str:
         )
         if result.returncode == 0:
             output = result.stdout.strip()
-            return f"Done: {output}"
+            # Get remaining task count
+            count_result = subprocess.run(
+                ["/opt/homebrew/bin/python3", str(AOS_DIR / "core" / "work" / "cli.py"), "json"],
+                capture_output=True, text=True, timeout=10,
+            )
+            remaining = "?"
+            if count_result.returncode == 0:
+                import json as _json
+                data = _json.loads(count_result.stdout)
+                tasks = data.get("tasks", [])
+                remaining = len([t for t in tasks if t.get("status") in ("active", "todo")])
+            return f"✅ {output} ({remaining} tasks remaining)"
         else:
             err = result.stdout.strip() or result.stderr.strip()
             return f"Could not complete task: {err[:200]}"
@@ -328,7 +393,7 @@ def handle_inbox(text: str) -> str:
     """Capture text to the v2 work inbox."""
     text_lower = text.lower().strip()
 
-    for prefix in ("jot down ", "capture ", "inbox "):
+    for prefix in ("remember ", "note: ", "note ", "jot down ", "capture ", "inbox "):
         if text_lower.startswith(prefix):
             content = text[len(prefix):].strip()
             break
@@ -350,6 +415,68 @@ def handle_inbox(text: str) -> str:
             return f"Could not capture: {result.stderr[:200]}"
     except Exception as e:
         return f"Error capturing: {e}"
+
+
+def handle_vault_search(text: str) -> str:
+    """Search the vault via QMD and return top results."""
+    text_lower = text.lower().strip()
+
+    # Extract search query from various patterns
+    for prefix in ("search vault for ", "search vault ", "find in vault ",
+                    "vault search ", "search: ", "search ", "recall "):
+        if text_lower.startswith(prefix):
+            query = text[len(prefix):].strip().strip('"')
+            break
+    else:
+        query = text.strip()
+
+    if not query:
+        return "What should I search for? Example: search vault for bridge architecture"
+
+    if not QMD_BIN.exists():
+        return "⚠️ QMD not installed. Search unavailable."
+
+    try:
+        qmd_env = {
+            **__import__("os").environ,
+            "PATH": f"{QMD_BIN.parent}:{__import__('os').environ.get('PATH', '')}",
+        }
+        # Use fast BM25 keyword search for quick commands (no model loading)
+        # Full hybrid search (query) loads 3 models and can take 30s+ on cold start
+        result = subprocess.run(
+            [str(QMD_BIN), "search", query, "-n", "5"],
+            capture_output=True, text=True, timeout=10,
+            env=qmd_env,
+        )
+        if result.returncode != 0:
+            return f"⚠️ Search failed: {result.stderr[:200]}"
+
+        output = result.stdout.strip()
+        if not output:
+            return f"No results for \"{query}\""
+
+        # Parse QMD output into a clean Telegram-friendly format
+        lines = ["<b>🔍 Vault Search</b>"]
+        lines.append(f"Query: <i>{query}</i>\n")
+
+        # QMD outputs results with paths and scores — format them
+        for line in output.split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+            # QMD format: score path — snippet
+            # Just pass through — it's already human-readable
+            lines.append(f"  • {line[:200]}")
+
+        if len(lines) <= 2:
+            return f"No results for \"{query}\""
+
+        return "\n".join(lines)
+
+    except subprocess.TimeoutExpired:
+        return "⚠️ Search timed out. Try a simpler query."
+    except Exception as e:
+        return f"⚠️ Search error: {e}"
 
 
 def handle_goals(text: str) -> str:
@@ -503,6 +630,7 @@ HANDLERS = {
     "handle_add_task": handle_add_task,
     "handle_done_task": handle_done_task,
     "handle_inbox": handle_inbox,
+    "handle_vault_search": handle_vault_search,
     "handle_goals": handle_goals,
     "handle_friction": handle_friction,
     "handle_sessions": handle_sessions,
