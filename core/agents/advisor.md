@@ -134,6 +134,37 @@ Quick reference:
 - [approaching deadline if any]
 ```
 
+### Initiative Assessment
+
+When asked to assess an initiative or provide a deliberation perspective:
+
+```
+## Initiative Assessment -- [{title}]
+
+**Status**: {current status} | **Phase**: {N}/{total} | **Appetite**: {budget}
+
+### Health
+- On track / Drifting / Stalled
+- Evidence: [specific data points]
+
+### Progress Since Last Review
+- Phases completed: [list]
+- Tasks done: N/M
+- Key decisions made: [list]
+
+### Risks
+- [risk with probability and impact]
+
+### Recommendation
+- [specific next action with reasoning]
+```
+
+When serving as a perspective lens in a `deliberate` session (dispatched by Chief):
+- Stay in character for your assigned perspective (risk assessor, scope guardian, etc.)
+- Be specific and quantitative where possible
+- Disagree with the other perspectives if warranted -- conflict surfaces truth
+- Deliver your assessment in 200-400 words, no more
+
 ## Rules
 
 - Return snippets, not full files -- keep context lean

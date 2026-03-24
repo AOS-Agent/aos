@@ -30,12 +30,33 @@ This gives you the operator's name, schedule, communication preferences, and tru
 Check if `~/.aos/config/onboarding.yaml` exists.
 
 - **Missing**: This is a fresh install. Load the `onboard` skill and run the onboarding flow directly. Do NOT dispatch a subagent -- onboarding runs in the main session so the operator gets native UI prompts and structured choices.
-- **Present**: Normal session. Read it to know what integrations were activated and the operator's agent name.
+- **Present**: Normal session. Read it to know what integrations were activated and the operator's agent name. Then check for updates (see "Post-Update: What's New" below).
 
 To run onboarding:
 1. Read `~/.claude/skills/onboard/SKILL.md`
 2. Follow its protocol exactly -- it handles the full flow
 3. The skill writes `~/.aos/config/onboarding.yaml` on completion
+
+### Post-Update: What's New
+
+After confirming onboarding is complete, check if the system was updated since the last session:
+
+```bash
+current=$(cat ~/aos/VERSION 2>/dev/null)
+last_seen=$(cat ~/.aos/config/.last-seen-version 2>/dev/null)
+```
+
+- **`.last-seen-version` missing**: First session ever with version tracking. Write current version and skip the walkthrough (onboarding already covers features):
+  ```bash
+  cat ~/aos/VERSION > ~/.aos/config/.last-seen-version
+  ```
+- **Versions match**: No update. Continue normally.
+- **Versions differ**: The system updated. Load the `whats-new` skill and walk the operator through what changed:
+  1. Read `~/.claude/skills/whats-new/SKILL.md`
+  2. Follow its protocol -- it parses the CHANGELOG, presents changes conversationally, and offers to configure new features
+  3. The skill writes the new version to `.last-seen-version` when done
+
+This check runs BEFORE the normal session starts, so the operator knows about changes before they encounter them.
 
 ### Post-Onboarding: First Real Session
 
@@ -77,6 +98,18 @@ this is the operator's first real session after onboarding. Be proactive:
    ```
 
 After this, every future session is normal — context injection from hooks handles it.
+
+### Initiative-Aware Sessions
+
+When `operator.yaml → initiatives.enabled: true` and active initiatives exist:
+
+At the start of normal sessions, the `inject_context` hook surfaces initiative state digests.
+If the operator's request matches an active initiative or they ask "what's next" / "what should I work on",
+load the `forge` skill — it reads initiative + work + schedule state and routes to the right action.
+
+Skills in the AOS Initiative Pipeline: `forge` (routing), `shape` (scoping), `plan` (decomposition),
+`gate` (readiness checks), `deliberate` (multi-perspective decisions). These chain automatically —
+forge routes to shape, shape to plan, plan to gate, gate to execution or deliberation.
 
 ## System Agents
 
@@ -122,6 +155,27 @@ Not everything needs delegation. Use this:
 **Dispatch to catalog agent**:
 - Domain-specific work: code (developer), infra (engineer), messaging (technician)
 - Only if the agent is installed -- check `~/.claude/agents/` first
+
+## Initiative Detection
+
+Gate: only active when `operator.yaml → initiatives.enabled: true`. If absent, skip entirely.
+
+Before processing any request, check:
+
+1. **Does this match an active initiative?**
+   Run `python3 ~/aos/core/work/cli.py initiatives` at session start.
+   If a request relates to an active initiative → load its state digest, resume from current status.
+
+2. **Is this initiative-level work?**
+   Signals: multi-session scope, multiple components, research phase needed, outcome framing.
+   If detected → load `forge` skill. Forge handles routing, anti-skip enforcement, and initiative creation offers.
+
+3. **Is the operator researching a topic matching an active initiative?**
+   If research activity aligns with an initiative in `research` status → note the connection, offer to link findings to the initiative's sources.
+
+When no initiatives exist or initiatives are disabled, the Decision Heuristic above applies as-is.
+
+**The `/next` command**: Load the `forge` skill. It reads all initiative states + work tasks + operator schedule and presents the routing summary.
 
 ## How to Dispatch
 
@@ -199,6 +253,15 @@ When a request matches a skill trigger:
 - **Use Agent Teams** when tasks can be parallelized.
 - **Respect operator schedule** -- check `operator.yaml` for blocked times.
 
+## Context Budget
+
+Stay lean. These rules prevent context rot across long sessions:
+
+1. **State digests, not full docs.** Never load a full initiative document into context unless actively working on it. The state digest (15 lines) is injected at session start by `inject_context.py`. Use that.
+2. **Curate agent context.** When dispatching to agents, give them only what they need: relevant initiative sections + task details. Not full session history, not other initiatives.
+3. **Fresh subagents for complex work.** For multi-task phases, dispatch fresh subagents per task. They start clean — no inherited context baggage.
+4. **Monitor your own usage.** Above 60% context: wrap up the current task, summarize progress, suggest continuing in a fresh session. Better to hand off cleanly than degrade.
+
 ## Data Access
 
 - **Operator profile**: ~/.aos/config/operator.yaml
@@ -216,6 +279,35 @@ When a request matches a skill trigger:
 - **Evening**: Summarize day, prepare tomorrow's context
 
 Check `operator.yaml` for timing of morning/evening triggers.
+
+## Phase Management
+
+When `initiatives.enabled: true` and active initiatives exist:
+
+**At session start:**
+- `inject_context.py` injects state digests for active initiatives (max 5)
+- Present briefly: "{title} is in {status}. Next: {action}."
+- If stale (>3 days): "Want to pick this up, or should we archive it?"
+- If phase just completed: "Phase {N} done. Ready for Phase {N+1}?"
+
+**At phase boundaries:**
+1. Load the `gate` skill for readiness check
+2. Present results: PASS / CONCERNS / FAIL
+3. On PASS: proceed to next phase
+4. On CONCERNS: present to operator, they decide. Suggest `deliberate` skill for high-stakes calls.
+5. On FAIL: do not proceed. List what must be fixed first.
+
+**At session end:**
+If the session touched an initiative:
+1. `session_close.py` automatically updates the initiative's `updated:` date
+2. Completed tasks with `source_ref` should have their initiative checkboxes updated
+3. Append to the initiative's Progress section: `- {date}: {one-line summary}`
+
+**Deviation rules during execution:**
+- Scope additions → always ask the operator, regardless of trust level
+- Architecture changes → always ask + suggest deliberation
+- Task taking 2x estimated time → pause and report
+- 3 failed attempts on same task → stop, document the issue, move on
 
 ## Trust
 

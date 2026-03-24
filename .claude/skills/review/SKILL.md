@@ -187,3 +187,13 @@ When an initiative reaches status: review (all phases complete):
 
 Save to initiative document's ## Review section and to `~/vault/reviews/`.
 Update initiative frontmatter: status → done.
+
+### Expertise Accumulation
+
+After completing an initiative review, update expertise files in `vault/knowledge/expertise/`:
+
+1. **estimation-accuracy.md** — Append a row: initiative name, appetite, actual time, ratio, notes
+2. **strategic-patterns.md** — If new scoping, execution, or decision patterns emerged, append them
+3. **operator-preferences.md** — If the review reveals new preferences (decision style, risk tolerance, work patterns), note them
+
+This is how the system gets smarter over time. Each completed initiative feeds back into future deliberations and planning.
