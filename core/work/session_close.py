@@ -40,6 +40,21 @@ DASHBOARD_URL = "http://127.0.0.1:4096"
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 
+def _notify_dashboard(event: dict) -> None:
+    """POST event to dashboard SSE stream. Best-effort."""
+    try:
+        data = json.dumps(event).encode()
+        req = urllib.request.Request(
+            f"{DASHBOARD_URL}/api/work/notify",
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        urllib.request.urlopen(req, timeout=1)
+    except Exception:
+        pass
+
+
 def _estimate_session_scope(transcript: str) -> dict:
     """Analyze transcript to estimate what happened.
 
@@ -215,6 +230,16 @@ def main():
                     with open(tmp_path, "w") as f:
                         f.write(new_content)
                     os.replace(tmp_path, fpath)
+                    # Notify dashboard SSE
+                    try:
+                        _notify_dashboard({
+                            "action": "initiative_update",
+                            "title": title_val,
+                            "detail": f"Session touched this initiative",
+                            "ts": datetime.now().isoformat(),
+                        })
+                    except Exception:
+                        pass
                 except Exception:
                     pass  # never crash session_close for initiative updates
         except Exception:

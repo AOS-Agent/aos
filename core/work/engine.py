@@ -340,6 +340,21 @@ def _notify_dashboard(event: dict) -> None:
         pass  # Dashboard may not be running
 
 
+def notify_initiative_event(action: str, title: str, **kwargs) -> None:
+    """Send an initiative event to the dashboard SSE stream. Best-effort.
+
+    Actions: initiative_created, initiative_update, phase_completed,
+             initiative_completed, gate_check
+    """
+    event = {
+        "action": action,
+        "title": title,
+        "ts": datetime.now().isoformat(),
+    }
+    event.update(kwargs)
+    _notify_dashboard(event)
+
+
 def get_activity(limit: int = 30) -> list:
     """Get recent work activity events."""
     if not ACTIVITY_FILE.exists():

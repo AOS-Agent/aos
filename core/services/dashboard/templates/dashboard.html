@@ -508,6 +508,11 @@ sse.addEventListener('work', (e) => {
         subtask_added: {cls: 'work-subtask', icon: 'git-branch', color: '#9065B0'},
         handoff_written: {cls: 'work-handoff', icon: 'arrow-right-circle', color: '#9065B0'},
         task_cancelled: {cls: 'work-cancelled', icon: 'x-circle', color: '#D44C47'},
+        initiative_update: {cls: 'work-started', icon: 'compass', color: '#337EA9'},
+        phase_completed: {cls: 'work-completed', icon: 'flag', color: '#448361'},
+        initiative_completed: {cls: 'work-completed', icon: 'award', color: '#448361'},
+        initiative_created: {cls: 'work-created', icon: 'compass', color: '#9065B0'},
+        gate_check: {cls: 'work-subtask', icon: 'shield', color: '#9065B0'},
     };
     const info = iconMap[ev.action] || {cls: 'system', icon: 'circle', color: 'var(--text-secondary)'};
     const time = (ev.ts || new Date().toISOString()).slice(11, 16);
