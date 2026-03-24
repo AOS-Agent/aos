@@ -7,8 +7,8 @@ Model: mlx-community/whisper-large-v3-turbo
   - No language forcing needed — auto-detects and handles bilingual
 
 Modes:
-  - fast: greedy decoding, no beam search (~2x faster)
-  - accurate: beam_size=5, condition_on_previous_text (~20% better on long audio)
+  - fast: single greedy pass (best_of=1), fastest
+  - accurate: sample 5 candidates, pick best (best_of=5), better on long/multilingual audio
 """
 
 import logging
@@ -142,11 +142,13 @@ def transcribe(
     }
 
     # Mode selection
+    # mlx-whisper uses greedy decoding only (beam search not implemented).
+    # "accurate" mode uses best_of=5 (sample multiple times, pick best).
+    # "fast" mode uses best_of=1 (single greedy pass).
     if mode == "fast":
-        kwargs["beam_size"] = 1
         kwargs["best_of"] = 1
     else:
-        kwargs["beam_size"] = 5
+        kwargs["best_of"] = 5
 
     # Language hint
     if language_hint != "auto":
