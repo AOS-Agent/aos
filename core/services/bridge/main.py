@@ -309,6 +309,9 @@ def main():
     op_config = _load_operator_config()
     daily_loop = op_config.get("daily_loop", {})
 
+    # ── Load forum topic routes (needed before briefing/checkin setup) ────────
+    forum_group_id, topic_routes = _load_routes()
+
     # ── Start heartbeat ──────────────────────────────────────────────────────
     from heartbeat import start_heartbeat
     start_heartbeat(bot_token, chat_id, interval_minutes=30)
@@ -349,9 +352,6 @@ def main():
         logger.info("Slack channel started")
     else:
         logger.info("Slack not configured (set SLACK_BOT_TOKEN, SLACK_APP_TOKEN, SLACK_ALLOWED_USER_ID to enable)")
-
-    # Load forum topic routes from config/projects.yaml
-    forum_group_id, topic_routes = _load_routes()
 
     # Telegram channel (main thread, blocking)
     from telegram_channel import TelegramChannel
