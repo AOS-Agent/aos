@@ -17,7 +17,7 @@ mcpServers:
   - chitchats
   - paypal
   - wave-accounting
-  - mcp-gsuite
+  - google-workspace
 permissionMode: default
 maxTurns: 25
 ---

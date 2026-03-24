@@ -213,14 +213,15 @@ catalog:
 
   google_suite:
     name: Google Workspace
-    tier: 3
+    tier: 2
     category: productivity
-    status: available
-    description: Gmail, Docs, Sheets, Drive via mcp-gsuite.
+    status: active
+    description: Gmail, Calendar, Docs, Sheets, Slides, Drive, Forms, Tasks, Contacts, Chat, Apps Script via workspace-mcp.
     access: mcp
-    provides: [email, docs, sheets, drive]
-    requires: [OAuth credentials]
-    setup_hint: "Configure mcp-gsuite in vendor/"
+    mcp_server: google-workspace
+    provides: [email, calendar, docs, sheets, slides, drive, forms, tasks, contacts, chat, apps_script]
+    requires: [OAuth credentials in Keychain]
+    setup_hint: "Credentials in Keychain (GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET, GOOGLE_PRIMARY_EMAIL). Wrapper at core/bin/google-workspace-mcp."
 
   clickup:
     name: ClickUp

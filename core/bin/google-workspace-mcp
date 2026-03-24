@@ -1,0 +1,21 @@
+#!/bin/bash
+# google-workspace-mcp — AOS wrapper for workspace-mcp
+# Pulls OAuth credentials from macOS Keychain, launches workspace-mcp.
+# Configured as MCP server in ~/.claude/settings.json
+#
+# Usage: google-workspace-mcp [extra args...]
+# Accounts: Primary is GOOGLE_PRIMARY_EMAIL from Keychain.
+#           Additional accounts authenticate via start_google_auth tool.
+
+set -euo pipefail
+
+AGENT_SECRET="$HOME/aos/core/bin/agent-secret"
+
+export GOOGLE_OAUTH_CLIENT_ID=$("$AGENT_SECRET" get GOOGLE_OAUTH_CLIENT_ID 2>/dev/null)
+export GOOGLE_OAUTH_CLIENT_SECRET=$("$AGENT_SECRET" get GOOGLE_OAUTH_CLIENT_SECRET 2>/dev/null)
+export USER_GOOGLE_EMAIL=$("$AGENT_SECRET" get GOOGLE_PRIMARY_EMAIL 2>/dev/null)
+
+# Prevent oauthlib from rejecting localhost without HTTPS
+export OAUTHLIB_INSECURE_TRANSPORT=1
+
+exec workspace-mcp --tool-tier complete --single-user "$@"
