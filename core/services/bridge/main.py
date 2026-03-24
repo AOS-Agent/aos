@@ -318,7 +318,9 @@ def main():
     from daily_briefing import start_daily_briefing
     briefing_time = daily_loop.get("morning_briefing", "08:00")
     br_hour, br_minute = _parse_time(str(briefing_time), default_hour=8, default_minute=0)
-    start_daily_briefing(bot_token, chat_id, hour=br_hour, minute=br_minute)
+    # Route to forum daily topic if available, fall back to DM
+    start_daily_briefing(bot_token, chat_id, hour=br_hour, minute=br_minute,
+                         forum_group_id=forum_group_id)
     logger.info(f"Daily briefing scheduled at {br_hour:02d}:{br_minute:02d}")
 
     # ── Evening check-in (from operator.yaml, skipped if not configured) ─────
@@ -326,7 +328,9 @@ def main():
     if evening_time:
         ev_hour, ev_minute = _parse_time(str(evening_time), default_hour=21, default_minute=0)
         from evening_checkin import start_evening_checkin
-        start_evening_checkin(bot_token, chat_id, hour=ev_hour, minute=ev_minute)
+        # Route to forum daily topic if available, fall back to DM
+        start_evening_checkin(bot_token, chat_id, hour=ev_hour, minute=ev_minute,
+                              forum_group_id=forum_group_id)
         logger.info(f"Evening check-in scheduled at {ev_hour:02d}:{ev_minute:02d}")
 
     # ── Temp file cleanup (hourly) ───────────────────────────────────────────

@@ -701,7 +701,8 @@ def _send_learning_drip(bot_token: str, chat_id: int, time_slot: str):
 
 
 def start_daily_briefing(bot_token: str, chat_id: int, hour: int = 8,
-                         minute: int = 0, thread_id: int | None = None):
+                         minute: int = 0, thread_id: int | None = None,
+                         forum_group_id: int | None = None):
     """Start the daily briefing as a daemon thread.
 
     Checks every 5 minutes if it's time to send. Sends once per day at the
@@ -709,11 +710,14 @@ def start_daily_briefing(bot_token: str, chat_id: int, hour: int = 8,
 
     Args:
         bot_token: Telegram bot token
-        chat_id: Telegram chat ID (DM or forum group)
+        chat_id: Telegram chat ID (DM fallback)
         hour: Hour to send (24h format)
         minute: Minute to send
         thread_id: Forum topic thread_id for the daily topic (optional).
                    If None, tries to resolve via topic_manager.
+        forum_group_id: Telegram forum group ID. If provided with a valid
+                        daily topic thread_id, briefings route to the forum
+                        instead of the DM.
     """
 
     def _loop():
@@ -734,9 +738,9 @@ def start_daily_briefing(bot_token: str, chat_id: int, hour: int = 8,
             pass
 
         # Try to resolve daily thread_id if not provided
-        if thread_id is None:
+        if thread_id is None and forum_group_id:
             try:
-                thread_id_resolved = _get_daily_thread_id(bot_token, chat_id)
+                thread_id_resolved = _get_daily_thread_id(bot_token, forum_group_id)
                 if thread_id_resolved:
                     thread_id = thread_id_resolved
             except Exception:
@@ -752,9 +756,12 @@ def start_daily_briefing(bot_token: str, chat_id: int, hour: int = 8,
                 prompt_sent = state_file.with_suffix(".prompt").exists() and \
                     state_file.with_suffix(".prompt").read_text().strip() == str(now.date())
 
+                # Use forum group for topic-routed messages, DM for fallback
+                target_chat = forum_group_id if (thread_id and forum_group_id) else chat_id
+
                 if (now.hour == hour and now.minute >= minute and
                         last_sent_date != now.date() and not prompt_sent):
-                    _send_morning_prompt(bot_token, chat_id, thread_id)
+                    _send_morning_prompt(bot_token, target_chat, thread_id)
                     _send_learning_drip(bot_token, chat_id, "morning")
                     state_file.with_suffix(".prompt").write_text(str(now.date()))
 
@@ -765,7 +772,7 @@ def start_daily_briefing(bot_token: str, chat_id: int, hour: int = 8,
                 if (now.hour >= briefing_hour and
                     (now.hour == briefing_hour and now.minute >= briefing_minute or now.hour > briefing_hour) and
                         last_sent_date != now.date()):
-                    _send_briefing(bot_token, chat_id, thread_id)
+                    _send_briefing(bot_token, target_chat, thread_id)
                     last_sent_date = now.date()
                     state_file.write_text(str(last_sent_date))
 

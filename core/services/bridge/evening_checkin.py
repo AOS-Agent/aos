@@ -424,11 +424,19 @@ def _save_checkin_to_daily(response_text: str):
 
 # ── Scheduler ────────────────────────────────────────────────────────────────
 
-def start_evening_checkin(bot_token: str, chat_id: int, hour: int = 21, minute: int = 0):
+def start_evening_checkin(bot_token: str, chat_id: int, hour: int = 21, minute: int = 0,
+                          forum_group_id: int | None = None):
     """Start a background thread that sends the evening wrap at the specified time.
 
     Looks up the daily forum topic thread_id from bridge-topics.yaml so the
-    message lands in the right topic.
+    message lands in the right topic. Falls back to DM if no topic exists.
+
+    Args:
+        bot_token: Telegram bot token
+        chat_id: Telegram DM chat ID (fallback)
+        hour: Hour to send (24h format)
+        minute: Minute to send
+        forum_group_id: Telegram forum group ID for topic routing
     """
 
     def _loop():
@@ -443,7 +451,9 @@ def start_evening_checkin(bot_token: str, chat_id: int, hour: int = 21, minute: 
             # Look up the daily topic thread_id each time (it may be created later)
             thread_id = _get_daily_thread_id()
 
-            _send_evening_wrap(bot_token, chat_id, thread_id=thread_id)
+            # Route to forum group if thread exists, otherwise DM
+            target_chat = forum_group_id if (thread_id and forum_group_id) else chat_id
+            _send_evening_wrap(bot_token, target_chat, thread_id=thread_id)
 
             # Sleep to avoid double-fire
             time.sleep(120)
