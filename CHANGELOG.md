@@ -3,6 +3,30 @@
 All notable changes. Sent as Telegram release notes after each 4am update.
 Each version: short summary line + categorized changes.
 
+## v0.4.0 — 2026-03-24
+
+Summary: Initiative pipeline foundation, Bridge v2 mobile command center, Google Workspace integration.
+
+Added: initiative pipeline Phase 1 — idea-to-execution system with vault-backed initiative documents
+Added: initiative scanning in session hooks — auto-discovers active initiatives at session start
+Added: `work initiatives` CLI command — list and manage initiative lifecycle
+Added: `source_ref` linking — tasks trace back to their parent initiative
+Added: stale-initiative cron (09:00 daily) — Telegram nudge when initiatives go untouched for 3+ days
+Added: shared notify helper (`core/lib/notify.py`) — stdlib-only Telegram notifications from hooks
+Added: Bridge v2 BLUF morning briefing — scannable 5-section format (URGENT/IMPORTANT/THINK ABOUT/PEOPLE/OVERNIGHT)
+Added: Bridge v2 conversational evening wrap — celebrates done work, surfaces open items
+Added: quick command shortcuts — sub-500ms responses bypassing Claude for common actions (add task, mark done, search vault)
+Added: cross-session decision store (`shared_context.py`) — atomic writes, 30-day TTL
+Added: progressive forum topic management — topics created on first use, not upfront
+Added: bridge structured event logging (`bridge_events.py`)
+Added: Google Workspace MCP integration — Calendar, Gmail, Drive, Docs, Sheets via workspace-mcp
+Added: reconcile checks for initiative directories and bridge topics config
+Added: migrations 017 (bridge topics) + 018 (initiative infrastructure)
+Changed: daily briefing rewritten — delta-only BLUF format replacing old metrics dump
+Changed: evening checkin rewritten — conversational wrap replacing form-style checklist
+Changed: session_close uses surgical regex for frontmatter updates (not yaml.dump)
+Changed: intent classifier expanded with 14 quick command intents
+
 ## v0.3.0 — 2026-03-23
 
 Summary: Dev/runtime split, automatic drift repair, cleaner updates.
