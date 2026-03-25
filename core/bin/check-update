@@ -250,41 +250,25 @@ if not match:
 notes = match.group(1).strip()
 lines = [l.strip() for l in notes.split('\n') if l.strip()]
 
-# Extract summary line
+# Simple format: summary line + bullet points
 summary = ''
-changes = {'Added': [], 'Changed': [], 'Fixed': [], 'Removed': []}
-other = []
+bullets = []
 
 for line in lines:
     if line.startswith('Summary:'):
         summary = line.replace('Summary:', '').strip()
-    elif ':' in line and line.split(':')[0] in changes:
-        cat = line.split(':')[0]
-        rest = ':'.join(line.split(':')[1:]).strip()
-        # Strip leading dash/bullet
-        rest = rest.lstrip('- ')
-        changes[cat].append(rest)
-    elif not line.startswith('#'):
-        other.append(line)
+    elif line.startswith('- '):
+        bullets.append(line[2:])
+    elif line.startswith('* '):
+        bullets.append(line[2:])
 
-# Build clean message
 if summary:
     print(summary)
     print()
 
-# Show categorized changes with emoji prefixes
-icons = {'Added': '✦', 'Changed': '↻', 'Fixed': '✓', 'Removed': '✕'}
-for cat in ['Added', 'Changed', 'Fixed', 'Removed']:
-    items = changes[cat]
-    if not items:
-        continue
-    icon = icons[cat]
-    for item in items:
-        print(f'{icon} {item}')
+for b in bullets:
+    print(f'• {b}')
 
-if other:
-    for line in other:
-        print(f'  {line}')
 " 2>/dev/null)
 
     # Update state
