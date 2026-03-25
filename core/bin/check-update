@@ -250,24 +250,61 @@ if not match:
 notes = match.group(1).strip()
 lines = [l.strip() for l in notes.split('\n') if l.strip()]
 
-# Simple format: summary line + bullet points
+# Parse structured changelog: Summary + sections (Added/Changed/Fixed/Removed)
 summary = ''
-bullets = []
+sections = {}
+current_section = None
 
 for line in lines:
     if line.startswith('Summary:'):
         summary = line.replace('Summary:', '').strip()
-    elif line.startswith('- '):
-        bullets.append(line[2:])
-    elif line.startswith('* '):
-        bullets.append(line[2:])
+    elif line.startswith('### '):
+        current_section = line.replace('### ', '').strip()
+        sections[current_section] = []
+    elif line.startswith('- ') and current_section:
+        item = line[2:].strip()
+        # Shorten long items: keep the part after the em-dash (the user-facing description)
+        if ' — ' in item:
+            name, desc = item.split(' — ', 1)
+            # Use description (user-facing) not the technical name
+            short = desc[0].upper() + desc[1:] if desc else name
+            # Trim to ~80 chars for Telegram readability
+            if len(short) > 80:
+                short = short[:77] + '...'
+        else:
+            short = item[:80] + '...' if len(item) > 80 else item
+        sections.setdefault(current_section, []).append(short)
 
+# Build conversational Telegram message
+# Focus on what's NEW (Added section) — that's what users care about
 if summary:
     print(summary)
     print()
 
-for b in bullets:
-    print(f'• {b}')
+added = sections.get('Added', [])
+changed = sections.get('Changed', [])
+fixed = sections.get('Fixed', [])
+
+if added:
+    print('What\\'s new:')
+    for item in added[:5]:
+        print(f'  → {item}')
+    if len(added) > 5:
+        print(f'  + {len(added) - 5} more')
+    print()
+
+if changed:
+    print('Improved:')
+    for item in changed[:3]:
+        print(f'  ↻ {item}')
+    print()
+
+if fixed:
+    count = len(fixed)
+    if count == 1:
+        print(f'Fixed: {fixed[0]}')
+    else:
+        print(f'{count} bug fixes')
 
 " 2>/dev/null)
 
