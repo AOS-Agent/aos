@@ -52,40 +52,33 @@ case "${1:-help}" in
         ;;
 
     sync-skills)
-        # Sync skills by tier. Default skills are always installed.
-        # Developer skills only if --all flag or user has opted in.
+        # Sync ALL skills from framework to user space via symlinks.
+        # Auto-discovers skills — no hardcoded lists to maintain.
+        # Deprecated skills are explicitly excluded; everything else is installed.
         SOURCE="$AOS_DIR/.claude/skills"
         TARGET="$HOME/.claude/skills"
         mkdir -p "$TARGET"
 
-        # Default skills — installed for everyone
-        DEFAULT_SKILLS="recall work review step-by-step obsidian-cli extract telegram-admin bridge-ops marketing diagram session-analysis frontend-design architect skill-creator skill-scanner ramble"
-
-        # Developer skills — opt-in via 'aos sync-skills --all' or onboarding
-        DEV_SKILLS="systematic-debugging verification-before-completion requesting-code-review receiving-code-review executing-plans writing-plans dispatching-parallel-agents writing-skills autonomous-execution ship"
-
-        # Deprecated — never install
+        # Deprecated — never install (remove if found)
         DEPRECATED="instagram youtube"
 
-        # Determine which set to install
-        skills_to_sync="$DEFAULT_SKILLS"
-        if [ "${2:-}" = "--all" ]; then
-            skills_to_sync="$DEFAULT_SKILLS $DEV_SKILLS"
-            echo "  Installing all skills (default + developer)"
-        elif [ -f "$HOME/.aos/config/developer-mode" ]; then
-            skills_to_sync="$DEFAULT_SKILLS $DEV_SKILLS"
-            echo "  Developer mode — installing all skills"
-        fi
-
         synced=0
-        for name in $skills_to_sync; do
-            src="$SOURCE/$name/"
-            link="$TARGET/$name"
+        for src in "$SOURCE"/*/; do
             [ -d "$src" ] || continue
+            name=$(basename "$src")
+
+            # Skip deprecated
+            skip=false
+            for dep in $DEPRECATED; do
+                [ "$name" = "$dep" ] && skip=true && break
+            done
+            $skip && continue
+
+            link="$TARGET/$name"
             if [ -L "$link" ] && [ "$(readlink "$link")" = "$src" ]; then
                 continue  # already correct
             fi
-            # Remove stale link or back up existing
+            # Remove stale link or back up existing non-symlink
             if [ -e "$link" ] || [ -L "$link" ]; then
                 if [ -L "$link" ]; then
                     rm "$link"
@@ -114,6 +107,42 @@ case "${1:-help}" in
             echo "  ✓ All skills in sync"
         else
             echo "  ✓ Synced $synced skill(s)"
+        fi
+        ;;
+
+    sync-rules)
+        # Sync rules from framework to user space via symlinks.
+        # Rules in ~/.claude/rules/ load globally in every session.
+        SOURCE="$AOS_DIR/.claude/rules"
+        TARGET="$HOME/.claude/rules"
+        mkdir -p "$TARGET"
+
+        synced=0
+        for src in "$SOURCE"/*.md; do
+            [ -f "$src" ] || continue
+            name=$(basename "$src")
+            link="$TARGET/$name"
+            if [ -L "$link" ] && [ "$(readlink "$link")" = "$src" ]; then
+                continue
+            fi
+            if [ -e "$link" ] || [ -L "$link" ]; then
+                if [ -L "$link" ]; then
+                    rm "$link"
+                elif [ ! -e "$TARGET/${name}.pre-aos" ]; then
+                    mv "$link" "$TARGET/${name}.pre-aos"
+                else
+                    rm -f "$link"
+                fi
+            fi
+            ln -s "$src" "$link"
+            echo "  ✓ Linked $name"
+            ((synced++))
+        done
+
+        if [ "$synced" -eq 0 ]; then
+            echo "  ✓ All rules in sync"
+        else
+            echo "  ✓ Synced $synced rule(s)"
         fi
         ;;
 
@@ -715,9 +744,10 @@ p.write_text(json.dumps(s, indent=2) + '\n')
         bash "$AOS_DIR/install.sh" 2>/dev/null | grep -E "patched|repaired|OK|CHANGED" || true
 
         # Sync agents and skills
-        echo "  Syncing agents, skills, MCP..."
+        echo "  Syncing agents, skills, rules, MCP..."
         bash "$0" sync-agents 2>/dev/null
         bash "$0" sync-skills 2>/dev/null
+        bash "$0" sync-rules 2>/dev/null
         bash "$0" sync-mcp 2>/dev/null
 
         # Reload all LaunchAgents
@@ -877,8 +907,9 @@ sys.exit(0 if errors == 0 else 1)
         echo "  doctor          Check migration state vs actual filesystem"
         echo "  deploy          Deploy service venvs (all or: aos deploy bridge)"
         echo "  reconcile       Run invariant checks and auto-fix drift"
-        echo "  sync-skills     Re-sync skill symlinks (--all for developer)"
+        echo "  sync-skills     Re-sync skill symlinks (auto-discovers all)"
         echo "  sync-agents     Re-sync agent symlinks"
+        echo "  sync-rules      Re-sync rule symlinks"
         echo "  sync-mcp        Register AOS MCP servers with Claude Code"
         echo "  activate        Activate a catalog agent (aos activate engineer)"
         echo "  deactivate      Deactivate a catalog agent"

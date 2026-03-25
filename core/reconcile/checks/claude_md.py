@@ -105,49 +105,11 @@ def _fix_sections(filepath: Path, sections: dict, header: str) -> CheckResult:
 
 ROOT_HEADER = "# AOS — Agentic Operating System\n\nThis Mac Mini runs AOS. The operating system lives at `~/aos/`."
 
-# Bump version when content changes — this triggers reconcile to update.
-ROOT_SECTIONS = {
-    "layout": (1, """\
-## Layout
-
-```
-~/
-├── aos/                 ← The operating system (framework, git-tracked)
-│   ├── core/            ← System code (agents, services, bin, work engine)
-│   ├── config/          ← System configuration
-│   ├── .claude/         ← Skills, commands, rules
-│   ├── templates/       ← Agent catalog + project scaffold
-│   └── specs/           ← Architecture docs
-├── .aos/                ← Instance data (never in git)
-│   ├── services/        ← Service deployments (.venv, runtime)
-│   ├── config/          ← User config overrides
-│   ├── work/            ← Tasks, goals, inbox
-│   ├── data/            ← Runtime data
-│   └── logs/            ← All logs
-├── vault/               ← Knowledge (Obsidian + QMD indexed)
-├── project/             ← Project workspaces
-└── CLAUDE.md            ← This file
-```"""),
-
-    "quick-reference": (1, """\
-## Quick Reference
-
-| What | Where |
-|------|-------|
-| Update system | `aos update` |
-| Self-test | `aos self-test` |
-| Work CLI | `python3 ~/aos/core/work/cli.py list` |
-| Secrets | `~/aos/core/bin/agent-secret get/set` |
-| Search vault | `~/.bun/bin/qmd query "<topic>" -n 5` |
-| Services | bridge (daemon), dashboard (:4096), listen (:7600) |"""),
-
-    "rules": (1, """\
-## Rules
-- Secrets in macOS Keychain only — never in files
-- Framework (`~/aos/`) is read-only at runtime
-- Instance data (`~/.aos/`) is machine-specific, never committed
-- Each project gets its own CLAUDE.md"""),
-}
+# ~/CLAUDE.md is user-managed — no managed sections.
+# Content is maintained directly. Storage layout, quick reference, and rules
+# are already in the file without AOS:MANAGED markers.
+# The reconcile check still ensures the file exists with a valid header.
+ROOT_SECTIONS = {}
 
 
 class RootClaudeMdCheck(ReconcileCheck):

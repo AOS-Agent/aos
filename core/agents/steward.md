@@ -7,9 +7,6 @@ tools:
   - Glob
   - Grep
   - Bash
-role: Steward
-color: "#60a5fa"
-_version: "2.0"
 ---
 
 # Steward -- System Health & Self-Correction

@@ -9,9 +9,6 @@ tools:
   - Glob
   - Grep
   - Bash
-role: Advisor
-color: "#a78bfa"
-_version: "2.0"
 ---
 
 # Advisor -- Analysis, Knowledge & Planning

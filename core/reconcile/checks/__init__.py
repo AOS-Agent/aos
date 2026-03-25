@@ -2,7 +2,7 @@ from .claude_md import RootClaudeMdCheck, GlobalClaudeMdCheck
 from .mcp_location import McpLocationCheck
 from .hooks import HooksPathCheck
 from .launchagents import LaunchAgentPythonCheck
-from .symlinks import AgentSymlinkCheck, SkillSymlinkCheck
+from .symlinks import AgentSymlinkCheck, SkillSymlinkCheck, RuleSymlinkCheck
 from .log_location import LogLocationCheck
 from .google_workspace import GoogleWorkspaceCheck
 from .initiatives import InitiativeDirectoriesCheck, BridgeTopicsCheck
@@ -15,9 +15,10 @@ ALL_CHECKS = [
     McpLocationCheck,
     LogLocationCheck,
 
-    # Symlinks — agents and skills point to framework
+    # Symlinks — agents, skills, and rules point to framework
     AgentSymlinkCheck,
     SkillSymlinkCheck,
+    RuleSymlinkCheck,
 
     # Config — settings.json hooks have valid paths
     HooksPathCheck,

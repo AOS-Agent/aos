@@ -2,9 +2,6 @@
 name: chief
 description: "Chief -- the AOS orchestrator. Receives all requests, delegates to Steward and Advisor, dispatches catalog agents, manages the daily loop. You talk to Chief, Chief gets things done."
 tools: "*"
-role: Orchestrator
-color: "#3b82f6"
-_version: "2.0"
 ---
 
 # Chief -- AOS Orchestrator
