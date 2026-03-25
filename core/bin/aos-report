@@ -126,10 +126,33 @@ def scrub(text: str) -> str:
     home = str(Path.home())
     username = Path.home().name
 
+    # Paths and username
     text = text.replace(home, "~")
     text = re.sub(r'\b' + re.escape(username) + r'\b', '<user>', text)
+
+    # Email addresses
     text = re.sub(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', '<email>', text)
+
+    # Phone numbers (10+ digits with optional separators)
+    text = re.sub(r'[\+]?[\d\s\-\(\)]{10,}', '<phone>', text)
+
+    # IP addresses (except localhost)
+    text = re.sub(
+        r'\b(?!127\.0\.0\.1)(?!0\.0\.0\.0)\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b',
+        '<ip>', text
+    )
+
+    # Telegram bot tokens
     text = re.sub(r'\d{8,}:[A-Za-z0-9_-]{30,}', '<token>', text)
+
+    # Long mixed-case strings that look like API keys (skip git SHAs)
+    def _redact_if_secret(m):
+        val = m.group(0)
+        if re.fullmatch(r'[0-9a-f]+', val) or re.fullmatch(r'[0-9A-F]+', val):
+            return val  # hex only = likely git SHA
+        return '<redacted>'
+    text = re.sub(r'\b[A-Za-z0-9]{40,}\b', _redact_if_secret, text)
+
     return text
 
 
@@ -258,10 +281,33 @@ def log_report(title: str, labels: list, issue_url: str | None, action: str):
 
 # ── Main ───────────────────────────────────────────────────────────────────
 
+def list_queued():
+    """Show locally queued reports that haven't been filed to GitHub."""
+    if not REPORT_LOG.exists():
+        print(json.dumps({"queued": [], "count": 0}))
+        return
+
+    queued = []
+    for line in REPORT_LOG.read_text().splitlines():
+        if not line.strip():
+            continue
+        try:
+            entry = json.loads(line)
+            if entry.get("action") == "queued":
+                queued.append(entry)
+        except json.JSONDecodeError:
+            continue
+
+    print(json.dumps({"queued": queued, "count": len(queued)}, indent=2))
+
+
 def main():
     if len(sys.argv) > 1 and sys.argv[1] == "--context":
-        # Just dump context
         print(json.dumps(collect_context(), indent=2))
+        return
+
+    if len(sys.argv) > 1 and sys.argv[1] == "--queued":
+        list_queued()
         return
 
     # Read structured input from stdin
@@ -283,8 +329,11 @@ def main():
         print(json.dumps({"error": "title is required"}))
         sys.exit(1)
 
-    # Collect context
-    ctx = collect_context()
+    # Collect context (never let this crash the report)
+    try:
+        ctx = collect_context()
+    except Exception:
+        ctx = {"timestamp": datetime.now(timezone.utc).isoformat(), "operator": "unknown"}
     operator = ctx.get("operator", "unknown")
 
     # Build the issue body
@@ -360,4 +409,9 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        # Never crash silently — always return parseable JSON
+        print(json.dumps({"action": "error", "error": str(e)}))
+        sys.exit(1)
