@@ -1,0 +1,363 @@
+#!/usr/bin/env python3
+"""
+AOS Report — file issues to GitHub with full context and notify developer.
+
+Called by Chief's report skill during conversations. NOT interactive.
+Takes structured JSON on stdin, files to GitHub, sends Telegram.
+
+Usage:
+    echo '{"title":"...","body":"...","labels":["bug"]}' | python3 aos-report
+    python3 aos-report --context   # just dump system context as JSON (for skill to use)
+
+Input JSON fields:
+    title:          Issue title (required)
+    body:           Issue body in markdown (required)
+    labels:         List of labels (default: ["bug"])
+    proposed_fix:   Code diff or description of fix (optional)
+    severity:       low/medium/high/critical (optional)
+    source_file:    File where the bug lives (optional)
+    duplicate_of:   Issue number if this is a dupe — will comment instead (optional)
+"""
+
+import json
+import os
+import re
+import socket
+import subprocess
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+AOS_DIR = Path.home() / "aos"
+USER_DIR = Path.home() / ".aos"
+REPORT_LOG = USER_DIR / "logs" / "reports.jsonl"
+
+
+# ── System context ────────────────────────────────────────────────────────
+
+def collect_context() -> dict:
+    """Collect machine and system context for the report."""
+    ctx = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "hostname": socket.gethostname(),
+    }
+
+    # AOS version
+    version_file = AOS_DIR / "VERSION"
+    if version_file.exists():
+        ctx["aos_version"] = version_file.read_text().strip()
+
+    # Machine ID
+    mid_file = USER_DIR / ".machine-id"
+    if mid_file.exists():
+        ctx["machine_id"] = mid_file.read_text().strip()
+
+    # Operator name (first name only — not PII, it's their chosen display name)
+    try:
+        import yaml
+        op = yaml.safe_load((USER_DIR / "config/operator.yaml").read_text()) or {}
+        ctx["operator"] = op.get("name", "unknown")
+    except Exception:
+        ctx["operator"] = "unknown"
+
+    # macOS + arch
+    import platform
+    ctx["macos"] = platform.mac_ver()[0]
+    ctx["arch"] = platform.machine()
+    ctx["python"] = platform.python_version()
+
+    # Service status
+    try:
+        result = subprocess.run(
+            ["launchctl", "list"], capture_output=True, text=True, timeout=5
+        )
+        services = {}
+        for line in result.stdout.splitlines():
+            if "com.aos." in line:
+                parts = line.split("\t")
+                if len(parts) >= 3:
+                    name = parts[2].replace("com.aos.", "")
+                    pid = parts[0].strip()
+                    status = parts[1].strip()
+                    services[name] = {
+                        "running": pid != "-",
+                        "exit_code": int(status) if status != "-" else None,
+                    }
+        ctx["services"] = services
+    except Exception:
+        pass
+
+    # Recent errors from key logs (last 20 lines with error/fail/traceback)
+    errors = {}
+    log_dir = USER_DIR / "logs"
+    for log_name in ["bridge.log", "bridge.err.log", "dashboard.log", "crons/scheduler.log"]:
+        log_path = log_dir / log_name
+        if log_path.exists():
+            try:
+                lines = log_path.read_text().splitlines()[-100:]
+                err_lines = [
+                    l for l in lines
+                    if any(w in l.lower() for w in ["error", "fail", "traceback", "exception"])
+                ]
+                if err_lines:
+                    errors[log_name] = err_lines[-5:]
+            except Exception:
+                pass
+    if errors:
+        ctx["recent_errors"] = errors
+
+    # Git state
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(AOS_DIR), "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, timeout=5
+        )
+        ctx["git_commit"] = result.stdout.strip()
+    except Exception:
+        pass
+
+    return ctx
+
+
+# ── PII scrubbing ─────────────────────────────────────────────────────────
+
+def scrub(text: str) -> str:
+    """Remove PII from text before sending to GitHub."""
+    home = str(Path.home())
+    username = Path.home().name
+
+    text = text.replace(home, "~")
+    text = re.sub(r'\b' + re.escape(username) + r'\b', '<user>', text)
+    text = re.sub(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', '<email>', text)
+    text = re.sub(r'\d{8,}:[A-Za-z0-9_-]{30,}', '<token>', text)
+    return text
+
+
+# ── GitHub ─────────────────────────────────────────────────────────────────
+
+def search_existing_issues(title: str) -> list[dict]:
+    """Search for existing issues that might be duplicates."""
+    try:
+        # Extract key terms from title
+        words = re.sub(r'[^\w\s]', '', title.lower()).split()
+        # Filter out common words
+        stop = {'the', 'a', 'an', 'is', 'in', 'on', 'at', 'to', 'for', 'of', 'and', 'or', 'bug', 'fix', 'issue'}
+        terms = [w for w in words if w not in stop and len(w) > 2][:4]
+        query = ' '.join(terms)
+
+        result = subprocess.run(
+            ["gh", "issue", "list", "--search", query, "--json", "number,title,url,state", "--limit", "5"],
+            capture_output=True, text=True, timeout=15, cwd=str(AOS_DIR),
+        )
+        if result.returncode == 0:
+            return json.loads(result.stdout)
+    except Exception:
+        pass
+    return []
+
+
+def file_issue(title: str, body: str, labels: list[str]) -> dict | None:
+    """Create a GitHub Issue. Returns {number, url} or None."""
+    cmd = [
+        "gh", "issue", "create",
+        "--title", title,
+        "--body", body,
+    ]
+    for label in labels:
+        cmd.extend(["--label", label])
+
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=30, cwd=str(AOS_DIR),
+        )
+        if result.returncode == 0:
+            url = result.stdout.strip()
+            # Extract issue number from URL
+            match = re.search(r'/issues/(\d+)', url)
+            number = int(match.group(1)) if match else None
+            return {"number": number, "url": url}
+    except Exception:
+        pass
+    return None
+
+
+def comment_on_issue(number: int, body: str) -> bool:
+    """Add a comment to an existing issue."""
+    try:
+        result = subprocess.run(
+            ["gh", "issue", "comment", str(number), "--body", body],
+            capture_output=True, text=True, timeout=15, cwd=str(AOS_DIR),
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
+# ── Telegram ───────────────────────────────────────────────────────────────
+
+def notify_developer(title: str, severity: str, operator: str,
+                     proposed_fix: bool, issue_url: str):
+    """Send Telegram notification to the developer."""
+    icons = {"critical": "🔴", "high": "🟠", "medium": "🐛", "low": "💡"}
+    icon = icons.get(severity, "🐛")
+
+    fix_note = "\nProposed fix included ✓" if proposed_fix else ""
+
+    msg = f"""{icon} <b>Report from {operator}'s machine</b>
+
+{title}{fix_note}
+
+{issue_url}"""
+
+    # Use the notify helper
+    sys.path.insert(0, str(AOS_DIR / "core" / "lib"))
+    try:
+        from notify import send_telegram
+        send_telegram(msg, parse_mode="HTML")
+    except Exception:
+        # Fallback: direct curl
+        try:
+            token = subprocess.run(
+                [str(AOS_DIR / "core/bin/agent-secret"), "get", "TELEGRAM_BOT_TOKEN"],
+                capture_output=True, text=True, timeout=5
+            ).stdout.strip()
+            chat_id = subprocess.run(
+                [str(AOS_DIR / "core/bin/agent-secret"), "get", "TELEGRAM_CHAT_ID"],
+                capture_output=True, text=True, timeout=5
+            ).stdout.strip()
+            if token and chat_id:
+                import urllib.request
+                data = json.dumps({
+                    "chat_id": chat_id, "text": msg, "parse_mode": "HTML"
+                }).encode()
+                req = urllib.request.Request(
+                    f"https://api.telegram.org/bot{token}/sendMessage",
+                    data=data,
+                    headers={"Content-Type": "application/json"},
+                )
+                urllib.request.urlopen(req, timeout=10)
+        except Exception:
+            pass
+
+
+# ── Log ────────────────────────────────────────────────────────────────────
+
+def log_report(title: str, labels: list, issue_url: str | None, action: str):
+    """Append to local report log."""
+    REPORT_LOG.parent.mkdir(parents=True, exist_ok=True)
+    entry = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "title": title,
+        "labels": labels,
+        "issue_url": issue_url,
+        "action": action,
+    }
+    with open(REPORT_LOG, "a") as f:
+        f.write(json.dumps(entry) + "\n")
+
+
+# ── Main ───────────────────────────────────────────────────────────────────
+
+def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "--context":
+        # Just dump context
+        print(json.dumps(collect_context(), indent=2))
+        return
+
+    # Read structured input from stdin
+    try:
+        data = json.loads(sys.stdin.read())
+    except (json.JSONDecodeError, Exception) as e:
+        print(json.dumps({"error": f"Invalid JSON input: {e}"}))
+        sys.exit(1)
+
+    title = data.get("title", "").strip()
+    body = data.get("body", "").strip()
+    labels = data.get("labels", ["bug"])
+    severity = data.get("severity", "medium")
+    proposed_fix = data.get("proposed_fix", "")
+    source_file = data.get("source_file", "")
+    duplicate_of = data.get("duplicate_of")
+
+    if not title:
+        print(json.dumps({"error": "title is required"}))
+        sys.exit(1)
+
+    # Collect context
+    ctx = collect_context()
+    operator = ctx.get("operator", "unknown")
+
+    # Build the issue body
+    sections = [scrub(body)]
+
+    if proposed_fix:
+        sections.append(f"\n## Proposed Fix\n\n{scrub(proposed_fix)}")
+    if source_file:
+        sections.append(f"\n**Source file:** `{source_file}`")
+
+    sections.append(f"""
+## System Context
+
+| Field | Value |
+|-------|-------|
+| AOS Version | {ctx.get('aos_version', '?')} |
+| Commit | {ctx.get('git_commit', '?')} |
+| macOS | {ctx.get('macos', '?')} ({ctx.get('arch', '?')}) |
+| Python | {ctx.get('python', '?')} |
+| Machine | {ctx.get('machine_id', ctx.get('hostname', '?'))} |
+| Reported by | {operator} |
+| Severity | {severity} |""")
+
+    # Service status
+    services = ctx.get("services", {})
+    if services:
+        svc_lines = []
+        for name, info in services.items():
+            status = "✓" if info.get("running") else f"✗ (exit {info.get('exit_code', '?')})"
+            svc_lines.append(f"| {name} | {status} |")
+        sections.append(f"""
+### Services
+
+| Service | Status |
+|---------|--------|
+{chr(10).join(svc_lines)}""")
+
+    # Recent errors
+    errors = ctx.get("recent_errors", {})
+    if errors:
+        sections.append("\n### Recent Errors\n")
+        for log_name, lines in errors.items():
+            sections.append(f"**{log_name}:**")
+            sections.append("```")
+            sections.append("\n".join(scrub(l) for l in lines))
+            sections.append("```")
+
+    sections.append("\n---\n*Filed by AOS report system*")
+
+    full_body = "\n".join(sections)
+
+    # Handle duplicates
+    if duplicate_of:
+        ok = comment_on_issue(duplicate_of, f"**Additional report from {operator}:**\n\n{full_body}")
+        action = f"commented on #{duplicate_of}"
+        issue_url = f"https://github.com/hishamalhadi/aos/issues/{duplicate_of}"
+        log_report(title, labels, issue_url, action)
+        print(json.dumps({"action": action, "issue_url": issue_url}))
+        notify_developer(title, severity, operator, bool(proposed_fix), issue_url)
+        return
+
+    # File new issue
+    result = file_issue(title, full_body, labels)
+    if result:
+        issue_url = result["url"]
+        log_report(title, labels, issue_url, "created")
+        notify_developer(title, severity, operator, bool(proposed_fix), issue_url)
+        print(json.dumps({"action": "created", "issue_url": issue_url, "number": result["number"]}))
+    else:
+        # Queue locally if GitHub fails
+        log_report(title, labels, None, "queued")
+        print(json.dumps({"action": "queued", "error": "GitHub filing failed — saved locally"}))
+
+
+if __name__ == "__main__":
+    main()
