@@ -3,6 +3,25 @@
 All notable changes. Sent as Telegram release notes after each 4am update.
 Each version: short summary line + categorized changes.
 
+## v0.5.0 — 2026-03-25
+
+Summary: Dev/shipping workflow, report system, reconcile improvements.
+
+Added: /ship skill — push dev workspace changes to main with safety checks and summary
+Added: /report skill — investigate, diagnose, and file AOS issues with proposed fixes
+Added: report script (core/bin/aos-report) — files to GitHub Issues with full system context + Telegram notification
+Added: reconcile system — 8+ invariant checks auto-repair drift on every update cycle
+Added: CLAUDE.md managed sections — AOS updates its content without touching user customizations
+Added: `aos reconcile` command — run invariant checks manually
+Changed: dev/runtime split — ~/aos/ is always main (runtime), ~/project/aos/ for development
+Changed: execution logs write to ~/.aos/ instead of the system repo
+Changed: no more hourly "update available" spam — just release notes after 4am update
+Changed: SessionStart hook can never crash — always outputs valid JSON and exits 0
+Changed: settings.json permissions use blanket tool-level allows (Bash, Read, Edit, Write)
+Fixed: mcp.json wrong location auto-detected and merged to ~/.claude/mcp.json
+Fixed: auto-commit disabled on ~/aos/ — runtime data no longer pollutes git history
+Fixed: PII scrubbing expanded (IPs, phone numbers, API keys)
+
 ## v0.4.0 — 2026-03-24
 
 Summary: Initiative pipeline foundation, Bridge v2 mobile command center, Google Workspace integration.
