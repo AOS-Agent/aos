@@ -130,10 +130,12 @@ Before executing each part, present a brief explaining what you'll do and why.
   Part Name                                    🟢 S
   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-  ✅ Done  →  ● Current  →  ○ Upcoming  →  ○ Upcoming
+  ✅ Done  →  🔶 Current  →  ⬜ Upcoming  →  ⬜ Upcoming
 ```
 
 Size dots: `🟢 S` · `🟡 M` · `🔴 L`
+
+These markers match the initiative pipeline: `✅` complete, `🔶` in progress, `⬜` not started.
 
 **Readiness signal** (right after header):
 - `⚡ Ready` -- approach is clear, no unknowns, can execute immediately
@@ -196,7 +198,7 @@ After approval, do the work. Key rules:
 
 6. **Transition.** After completing a part, show the progress trail, then present next part's MAP:
    ```
-   ✅ Health Endpoints  →  ● Watchdog Script  →  ○ Alerting  →  ○ Dashboard
+   ✅ Health Endpoints  →  🔶 Watchdog Script  →  ⬜ Alerting  →  ⬜ Dashboard
    ```
 
 ## Phase 4: POLISH
@@ -223,7 +225,7 @@ Verify that the *original request* was actually achieved -- not just that tasks 
   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
 
-Skipped parts show as: `⏭️ Part Name`
+Skipped parts show as: `⏭ Part Name`
 
 **Goal check**: Does the completed work deliver what was originally requested?
 
@@ -235,12 +237,71 @@ Skipped parts show as: `⏭️ Part Name`
 
 **Dependencies Created**: Anything downstream that needs updating
 
+## Plan Tracking
+
+Step-by-step creates a persistent plan file so work survives across sessions and is visible outside the conversation.
+
+### At SCOPE (after operator approves parts)
+
+Create a plan file at `~/.aos/work/plans/{date}-{slug}.md`:
+
+```markdown
+---
+title: "{Task Name}"
+status: in-progress
+created: {date}
+initiative: {slug or null}
+phase: {N or null}
+parts: {count}
+---
+
+# {Task Name}
+
+## Parts
+- [ ] Part 1: {name} (S)
+- [ ] Part 2: {name} (M)
+- [ ] Part 3: {name} (L)
+
+## Progress
+- {date}: Plan created — {N} parts scoped
+```
+
+If the work belongs to a project, also create a parent task in the work system:
+```bash
+python3 ~/aos/core/work/cli.py add "{Task Name}" --project {project}
+```
+
+### At EXECUTE (after each part completes)
+
+1. Check off the part in the plan file: `- [ ]` → `- [x]`
+2. Append to the Progress section: `- {date}: Part N complete — {one-line summary}`
+3. If a work system task was created, mark subtask done
+
+### At POLISH
+
+1. Update plan file: `status: done`
+2. Append final summary to Progress
+3. If work system task exists, mark it done
+
+### Initiative Integration
+
+Check your injected context for active initiatives. If the current work relates to one:
+
+1. **At SCOPE**: Note which initiative/phase this belongs to in the plan file header (`initiative:` and `phase:` fields)
+2. **At EXECUTE**: After each part, also update the initiative doc's matching checkbox
+3. **At POLISH**: Append to the initiative's Progress section: `- {date}: {task name} — {N} parts completed`
+
+This connects micro-level execution to macro-level initiative tracking automatically.
+
 ## Resumability
 
-If a session ends mid-flow, the operator can say "resume step by step" and you should:
-1. Read context to figure out which parts are done
-2. Confirm: "Looks like Parts 1-3 are done. Picking up at Part 4 -- [Name]. Sound right?"
-3. Continue from there
+If a session ends mid-flow, the operator can say "resume step by step" or "continue" and you should:
+1. Check `~/.aos/work/plans/` for recent plan files with `status: in-progress`
+2. Read the plan file — unchecked boxes show what's remaining
+3. Confirm: "Looks like Parts 1-3 are done. Picking up at Part 4 -- [Name]. Sound right?"
+4. Continue from there
+
+The plan file IS the resume state. No context needed from the previous session.
 
 ## When NOT to use this skill
 
@@ -255,8 +316,10 @@ The operator is always in control. If they say "skip the ceremony, just execute"
 After completing a step-by-step flow, append a one-line entry to `~/.aos/logs/step-by-step.jsonl`:
 
 ```json
-{"date":"2026-03-21","task":"Redis setup","parts":4,"mode":"as-we-go","domain":"infrastructure","skipped":0,"splits":1}
+{"date":"2026-03-25","task":"Auth system","parts":4,"mode":"as-we-go","domain":"code","skipped":0,"splits":1,"initiative":"nuchay-app","phase":1}
 ```
+
+The `initiative` and `phase` fields are included when the work is initiative-linked, omitted otherwise.
 
 ## Bundled Resources
 

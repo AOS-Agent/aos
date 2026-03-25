@@ -280,11 +280,15 @@ One question at a time. Do NOT create tasks or code during shaping.
 
 Lock each answer in the initiative doc under Locked Decisions. After all 6: status → planning.
 
-### Planning (dispatch to Advisor)
+### Planning
 
-Dispatch: "Read the initiative at {path}. Propose phases with tasks (30min-3hr each). Map dependencies. Assign wave numbers for parallelism. Return the structure."
+Two options depending on complexity:
 
-Present proposal. On approval: create phase tasks via work CLI, update initiative doc, status → executing.
+**Simple initiatives (3 or fewer phases):** Decompose directly using step-by-step SCOPE logic — propose phases with tasks, present for approval, create in work system.
+
+**Complex initiatives:** Dispatch Advisor: "Read the initiative at {path}. Propose phases with tasks (30min-3hr each). Map dependencies. Assign wave numbers for parallelism. Return the structure."
+
+On approval: create phase tasks via work CLI, update initiative doc, status → executing. Step-by-step handles execution of each phase — it creates a plan file, tracks parts, and syncs progress back to the initiative doc.
 
 ### Gate Check (dispatch to Advisor)
 
