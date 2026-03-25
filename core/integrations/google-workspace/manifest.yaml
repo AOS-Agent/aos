@@ -133,8 +133,8 @@ setup:
         agent-secret set GOOGLE_OAUTH_CLIENT_ID <id>
         agent-secret set GOOGLE_OAUTH_CLIENT_SECRET <secret>
         agent-secret set GOOGLE_PRIMARY_EMAIL <email>
-    - description: Add MCP server to settings.json
+    - description: Register MCP server at user scope
       type: command
-      command: "python3 -c \"import json; p='$HOME/.claude/settings.json'; s=json.load(open(p)); s.setdefault('mcpServers',{})['google-workspace']={'command':'$HOME/aos/core/bin/google-workspace-mcp','args':[],'env':{}}; json.dump(s,open(p,'w'),indent=2)\""
+      command: "claude mcp add --scope user --transport stdio google-workspace $HOME/aos/core/bin/google-workspace-mcp"
     - description: Verify
       type: health_check

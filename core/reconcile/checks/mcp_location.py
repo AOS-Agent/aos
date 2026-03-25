@@ -4,8 +4,14 @@ Invariant: mcp.json lives at ~/.claude/mcp.json (where Claude Code reads it).
 Historical issue: early installs put it in ~/aos/config/mcp.json or
 ~/.aos/config/mcp.json. Claude Code never reads those locations.
 
-Also checks for duplicate servers: if a server is already defined in
-settings.json mcpServers, don't duplicate it in mcp.json.
+MCP server registration architecture:
+  - User-scope servers → ~/.claude.json (via `claude mcp add --scope user`)
+  - Project-scope servers → .mcp.json in project root
+  - ~/.claude/mcp.json acts as a project-level config for sessions in ~/.claude/
+  - settings.json mcpServers is for approval policies, NOT server definitions
+
+Note: deduplication between mcp.json and settings.json is legacy.
+Settings.json mcpServers is no longer used for server definitions.
 """
 
 import json
