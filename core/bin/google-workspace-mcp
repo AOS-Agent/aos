@@ -1,21 +1,35 @@
 #!/bin/bash
 # google-workspace-mcp — AOS wrapper for workspace-mcp
 # Pulls OAuth credentials from macOS Keychain, launches workspace-mcp.
-# Configured as MCP server in ~/.claude/settings.json
+# Configured as MCP server in Claude Code.
+#
+# Multi-user mode: each tool call specifies user_google_email.
+# Agents consult ~/.aos/config/accounts.yaml via account-resolve
+# to pick the right email for the current context.
 #
 # Usage: google-workspace-mcp [extra args...]
-# Accounts: Primary is GOOGLE_PRIMARY_EMAIL from Keychain.
-#           Additional accounts authenticate via start_google_auth tool.
+#
+# Accounts setup:
+#   1. Primary authenticates on first use (auto-prompted)
+#   2. Additional accounts: use start_google_auth tool
+#   3. Registry: ~/.aos/config/accounts.yaml lists all accounts
+#
+# Auth flow: workspace-mcp stores OAuth tokens per-email in
+# ~/.google_workspace_mcp/credentials/. Tokens refresh automatically.
 
 set -euo pipefail
 
 AGENT_SECRET="$HOME/aos/core/bin/agent-secret"
 
+# OAuth app credentials (shared across all accounts)
 export GOOGLE_OAUTH_CLIENT_ID=$("$AGENT_SECRET" get GOOGLE_OAUTH_CLIENT_ID 2>/dev/null)
 export GOOGLE_OAUTH_CLIENT_SECRET=$("$AGENT_SECRET" get GOOGLE_OAUTH_CLIENT_SECRET 2>/dev/null)
+
+# Default email — used when no user_google_email is specified in a tool call
 export USER_GOOGLE_EMAIL=$("$AGENT_SECRET" get GOOGLE_PRIMARY_EMAIL 2>/dev/null)
 
 # Prevent oauthlib from rejecting localhost without HTTPS
 export OAUTHLIB_INSECURE_TRANSPORT=1
 
-exec "$HOME/.local/bin/workspace-mcp" --tool-tier complete --single-user "$@"
+# Multi-user mode: per-email credential isolation
+exec "$HOME/.local/bin/workspace-mcp" --tool-tier complete "$@"
