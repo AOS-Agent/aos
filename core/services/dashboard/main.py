@@ -358,8 +358,7 @@ async def dashboard(request: Request):
     # Task count for sidebar badge
     active_task_count = sum(1 for t in tasks if t.get("status") in ("active", "todo"))
 
-    return templates.TemplateResponse("dashboard.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "dashboard.html", {
         "active_page": "dashboard",
         "task_count": active_task_count if active_task_count else None,
         "health": health,
@@ -646,8 +645,7 @@ async def work_page(request: Request):
     except Exception:
         pass
 
-    return templates.TemplateResponse("work.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "work.html", {
         "active_page": "work",
         "task_count": active_count if active_count else None,
         "projects": list(project_map.values()),
@@ -670,8 +668,7 @@ async def agents_page(request: Request):
     for a in agents:
         if a.get("scope") == "project" and a.get("project"):
             project_groups.setdefault(a["project"], []).append(a)
-    return templates.TemplateResponse("agents.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "agents.html", {
         "active_page": "agents",
         "global_agents": global_agents,
         "project_groups": project_groups,
@@ -936,8 +933,7 @@ async def history_page(request: Request, channel: str = None, q: str = None):
     with _db() as conn:
         session_count = conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
         conv_count = conn.execute("SELECT COUNT(*) FROM conversations").fetchone()[0]
-    return templates.TemplateResponse("history.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "history.html", {
         "active_page": "history",
         "items": items,
         "session_count": session_count,
@@ -990,8 +986,7 @@ async def session_detail_page(request: Request, session_id: str):
     if not s:
         return HTMLResponse("<h1>Session not found</h1>", status_code=404)
     activity = get_session_activity(session_id, limit=200)
-    return templates.TemplateResponse("session_detail.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "session_detail.html", {
         "active_page": "history",
         "session": s,
         "activity": activity,
@@ -1331,8 +1326,7 @@ async def api_crons():
 
 @app.get("/crons", response_class=HTMLResponse)
 async def crons_page(request: Request):
-    return templates.TemplateResponse("crons.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "crons.html", {
         "active_page": "crons",
     })
 
@@ -1403,8 +1397,7 @@ def _tail_merged(paths: list[Path], n: int = 300) -> list[str]:
 
 @app.get("/docs", response_class=HTMLResponse)
 async def docs_page(request: Request):
-    return templates.TemplateResponse("docs.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "docs.html", {
         "active_page": "docs",
     })
 
@@ -1414,8 +1407,7 @@ async def logs_page(request: Request):
     available = {}
     for name, paths in LOG_SOURCES.items():
         available[name] = any(p.exists() for p in paths)
-    return templates.TemplateResponse("logs.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "logs.html", {
         "active_page": "logs",
         "log_sources": available,
     })

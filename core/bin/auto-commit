@@ -1,6 +1,7 @@
 #!/bin/bash
 # Auto-commit — saves work to git so nothing is ever lost.
-# Commits ~/aos/ (system) and ~/vault/ (knowledge).
+# Commits ~/vault/ (knowledge) and project repos.
+# NEVER commits ~/aos/ — that's the system repo, managed via git pull.
 # Never stages sensitive files.
 #
 # Usage: auto-commit [cron|clear|end|bridge]
@@ -102,18 +103,17 @@ commit_repo() {
 }
 
 # ── Repos to auto-commit ──────────────────────────────────────────────────
+# NEVER include ~/aos/ here — it's the system repo, updated via git pull.
+# Only commit user data repos: vault, projects.
 
-commit_repo "$HOME/aos" "aos"
 commit_repo "$HOME/vault" "vault"
 
-# Also commit any registered project repos (if they exist and have changes)
-if [ -f "$HOME/aos/config/state.yaml" ]; then
-    # Quick grep for project paths — no YAML parser needed
-    for proj_dir in "$HOME/nuchay" "$HOME/chief-ios-app"; do
-        if [ -d "$proj_dir/.git" ]; then
-            proj_name=$(basename "$proj_dir")
-            commit_repo "$proj_dir" "$proj_name"
-        fi
+# Auto-discover project repos — any git repo under ~/project/
+if [ -d "$HOME/project" ]; then
+    for proj_dir in "$HOME/project"/*/; do
+        [ -d "$proj_dir/.git" ] || continue
+        proj_name=$(basename "$proj_dir")
+        commit_repo "$proj_dir" "$proj_name"
     done
 fi
 
