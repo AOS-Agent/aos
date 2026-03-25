@@ -1,0 +1,140 @@
+# Google Workspace Integration Manifest
+
+name: Google Workspace
+version: "1.0"
+category: productivity
+
+description: >
+  Full Google Workspace access via workspace-mcp (MCP server).
+  Gmail, Drive, Calendar, Docs, Sheets, Slides, Forms, Tasks,
+  Contacts, Chat, Apps Script, Google Search. OAuth credentials
+  stored in macOS Keychain, wrapper at core/bin/google-workspace-mcp.
+
+# What this integration provides to the system
+provides:
+  email:
+    type: bidirectional
+    description: Gmail — read, send, search, labels, drafts
+  drive:
+    type: read_write
+    description: Google Drive — list, search, read, create, upload, share
+  calendar:
+    type: read_write
+    description: Google Calendar — list, create, update, delete events
+  docs:
+    type: read_write
+    description: Google Docs — read, create, edit documents
+  sheets:
+    type: read_write
+    description: Google Sheets — read, create, edit spreadsheets, cell-level ops
+  slides:
+    type: read_write
+    description: Google Slides — read, create, edit presentations
+  forms:
+    type: read_write
+    description: Google Forms — create, read responses
+  tasks:
+    type: read_write
+    description: Google Tasks — list, create, complete tasks
+  contacts:
+    type: read_write
+    description: Google Contacts — search, read, create, update
+  chat:
+    type: bidirectional
+    description: Google Chat — send, read messages
+  apps_script:
+    type: execute
+    description: Google Apps Script — run scripts, manage projects
+  search:
+    type: query
+    description: Google Search — web search via API
+
+# What this integration needs to function
+requires:
+  secrets:
+    - key: GOOGLE_OAUTH_CLIENT_ID
+      store: keychain
+      description: Google OAuth client ID
+    - key: GOOGLE_OAUTH_CLIENT_SECRET
+      store: keychain
+      description: Google OAuth client secret
+    - key: GOOGLE_PRIMARY_EMAIL
+      store: keychain
+      description: Primary Google account email
+  services:
+    - name: workspace-mcp
+      type: mcp
+      binary: ~/.local/bin/workspace-mcp
+      wrapper: core/bin/google-workspace-mcp
+      description: MCP server wrapping workspace-mcp with Keychain credentials
+  config: []
+
+# How to verify this integration is working
+health:
+  checks:
+    - name: binary_installed
+      command: "test -x ~/.local/bin/workspace-mcp && echo installed"
+      expect: installed
+    - name: wrapper_exists
+      command: "test -x ~/aos/core/bin/google-workspace-mcp && echo exists"
+      expect: exists
+    - name: credentials_stored
+      command: "~/aos/core/bin/agent-secret get GOOGLE_OAUTH_CLIENT_ID >/dev/null 2>&1 && echo ok"
+      expect: ok
+    - name: mcp_in_settings
+      command: "python3 -c \"import json; s=json.load(open('$HOME/.claude/settings.json')); print('ok' if 'google-workspace' in s.get('mcpServers',{}) else 'missing')\""
+      expect: ok
+
+# Capability chain entries this integration adds.
+# Each key maps to an app name in capabilities.yaml.
+# At session start, these methods are merged into the base capability map.
+# Zero-cost MCP methods get inserted before costlier fallbacks.
+capabilities:
+  Gmail:
+    method: google-workspace-mcp
+    cost: zero
+    notes: "MCP server — full Gmail: read, send, search, labels, drafts."
+  Calendar:
+    method: google-workspace-mcp
+    cost: zero
+    notes: "MCP server — Google Calendar CRUD. List, create, update, delete events."
+  "Google Drive":
+    method: google-workspace-mcp
+    cost: zero
+    notes: "MCP server — list, search, read, create, upload, share files."
+  "Google Docs":
+    method: google-workspace-mcp
+    cost: zero
+    notes: "MCP server — read, create, edit Google Docs."
+  "Google Sheets":
+    method: google-workspace-mcp
+    cost: zero
+    notes: "MCP server — read, create, edit spreadsheets, cell-level ops."
+  Contacts:
+    method: google-workspace-mcp
+    cost: zero
+    notes: "MCP server — Google Contacts: search, read, create, update."
+
+# Layers this integration touches
+layers:
+  - integrations   # This manifest
+  - services       # MCP server process
+
+# Setup steps
+setup:
+  steps:
+    - description: Install workspace-mcp
+      type: command
+      command: "uv tool install workspace-mcp"
+    - description: Store OAuth credentials
+      type: interactive
+      instruction: >
+        Store Google OAuth credentials in Keychain:
+        agent-secret set GOOGLE_OAUTH_CLIENT_ID <id>
+        agent-secret set GOOGLE_OAUTH_CLIENT_SECRET <secret>
+        agent-secret set GOOGLE_PRIMARY_EMAIL <email>
+    - description: Add MCP server to settings.json
+      type: command
+      command: "python3 -c \"import json; p='$HOME/.claude/settings.json'; s=json.load(open(p)); s.setdefault('mcpServers',{})['google-workspace']={'command':'$HOME/aos/core/bin/google-workspace-mcp','args':[],'env':{}}; json.dump(s,open(p,'w'),indent=2)\""
+    - description: Verify
+      type: health_check

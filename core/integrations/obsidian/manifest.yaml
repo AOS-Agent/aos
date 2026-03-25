@@ -57,6 +57,14 @@ health:
       command: "find ~/vault -name '*.md' -maxdepth 3 | head -1 | xargs -I{} echo has_notes"
       expect: has_notes
 
+# Capability chain entries this integration adds.
+capabilities:
+  Obsidian:
+    method: cli
+    command: "obsidian <command>"
+    cost: zero
+    notes: "Full vault ops: read, write, search, tasks, tags, backlinks, properties."
+
 # Layers this integration touches
 layers:
   - knowledge      # Primary knowledge store

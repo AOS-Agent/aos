@@ -37,9 +37,10 @@ apps:
   Calendar:
     type: native
     approaches:
+      # google-workspace-mcp(zero) merged from integration manifest at runtime
       - method: applescript
         cost: low
-        notes: "Full calendar CRUD via AppleScript"
+        notes: "Apple Calendar CRUD via AppleScript — works offline, syncs to iCloud/Google"
       - method: steer
         command: 'steer see --app Calendar --json'
         cost: medium
@@ -48,12 +49,29 @@ apps:
         target: "calendar.google.com"
         cost: high
 
+  Gmail:
+    type: service
+    approaches:
+      # google-workspace-mcp(zero) merged from integration manifest at runtime
+      - method: applescript
+        target: "Mail"
+        cost: low
+        notes: "Apple Mail app — works if Gmail account is configured in Mail.app"
+      - method: chrome
+        target: "gmail.com"
+        cost: medium
+        notes: "Chrome MCP on Gmail web — full functionality"
+      - method: steer
+        command: 'steer see --app Mail --json'
+        cost: medium
+        notes: "Mail.app GUI — native, good accessibility"
+
   Mail:
     type: native
     approaches:
       - method: applescript
         cost: low
-        notes: "Read, compose, search via AppleScript"
+        notes: "Read, compose, search via AppleScript — all accounts in Mail.app"
       - method: steer
         cost: medium
         notes: "Native app — good accessibility tree"
@@ -177,6 +195,52 @@ apps:
       - method: steer-ocr
         cost: high
 
+  "Google Drive":
+    type: service
+    approaches:
+      # google-workspace-mcp(zero) merged from integration manifest at runtime
+      - method: chrome
+        target: "drive.google.com"
+        cost: medium
+        notes: "Chrome MCP on Drive web UI"
+
+  "Google Docs":
+    type: service
+    approaches:
+      # google-workspace-mcp(zero) merged from integration manifest at runtime
+      - method: chrome
+        target: "docs.google.com"
+        cost: medium
+
+  "Google Sheets":
+    type: service
+    approaches:
+      # google-workspace-mcp(zero) merged from integration manifest at runtime
+      - method: chrome
+        target: "sheets.google.com"
+        cost: medium
+
+  Messages:
+    type: native
+    approaches:
+      - method: applescript
+        cost: low
+        notes: "Read and send iMessages via AppleScript. Full conversation access."
+      - method: steer
+        command: 'steer see --app Messages --json'
+        cost: medium
+        notes: "Native app — good accessibility tree"
+
+  Contacts:
+    type: native
+    approaches:
+      # google-workspace-mcp(zero) merged from integration manifest at runtime
+      - method: applescript
+        cost: low
+        notes: "Apple Contacts app — all synced accounts"
+      - method: steer
+        cost: medium
+
   Discord:
     type: electron
     approaches:
@@ -192,11 +256,15 @@ apps:
   WhatsApp:
     type: electron
     approaches:
+      # whatsmeow-api(zero) merged from integration manifest at runtime
       - method: chrome
         target: "web.whatsapp.com"
         cost: medium
+        notes: "Chrome MCP on WhatsApp Web — full chat interaction"
       - method: steer-ocr
+        command: 'steer see --app WhatsApp --ocr --json'
         cost: high
+        notes: "WhatsApp desktop — Electron, needs OCR"
 
 # Interaction types (not app-specific)
 interactions:

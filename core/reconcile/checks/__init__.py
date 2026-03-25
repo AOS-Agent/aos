@@ -7,6 +7,7 @@ from .log_location import LogLocationCheck
 from .google_workspace import GoogleWorkspaceCheck
 from .initiatives import InitiativeDirectoriesCheck, BridgeTopicsCheck
 from .transcriber import TranscriberServiceCheck
+from .disk_smart import DiskSmartCheck
 
 # Add new checks here — they run in this order on every update cycle.
 ALL_CHECKS = [
@@ -37,4 +38,7 @@ ALL_CHECKS = [
     # Initiative pipeline + Bridge v2 infrastructure
     InitiativeDirectoriesCheck,
     BridgeTopicsCheck,
+
+    # Hardware — disk SMART health monitoring
+    DiskSmartCheck,
 ]

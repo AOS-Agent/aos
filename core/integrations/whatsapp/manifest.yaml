@@ -47,6 +47,17 @@ health:
       command: "curl -sf -X POST http://127.0.0.1:7601/send -H 'Content-Type: application/json' -d '{\"to\":\"status@broadcast\",\"text\":\"health-check\"}' || echo fail"
       expect: non-empty
 
+# Capability chain entries this integration adds.
+# Merged into capabilities.yaml at session start — cost-sorted insertion.
+# When this integration is active, WhatsApp gets a zero-cost API method
+# prepended before chrome and steer-ocr fallbacks.
+capabilities:
+  WhatsApp:
+    method: whatsmeow-api
+    endpoint: "http://127.0.0.1:7601"
+    cost: zero
+    notes: "Go bridge — /send, /messages?days=1, /chats, /health. JSON: {to, text}."
+
 # Layers this integration touches
 layers:
   - interface      # WhatsApp is a messaging interface

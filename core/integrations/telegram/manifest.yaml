@@ -52,6 +52,13 @@ health:
       command: "find ~/.aos/services/bridge/ -name 'heartbeat.json' -mmin -5"
       expect: non-empty
 
+# Capability chain entries this integration adds.
+capabilities:
+  Telegram:
+    method: api
+    cost: zero
+    notes: "Telegram Bot API via bridge service. Send/receive messages, slash commands."
+
 # Layers this integration touches
 layers:
   - interface    # Telegram is a user interface

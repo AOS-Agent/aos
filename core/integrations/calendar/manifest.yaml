@@ -44,6 +44,13 @@ health:
       command: "icalBuddy -n -li 1 eventsToday 2>/dev/null && echo ok || echo fail"
       expect: ok
 
+# Capability chain entries this integration adds.
+capabilities:
+  Calendar:
+    method: applescript
+    cost: low
+    notes: "Apple Calendar CRUD via AppleScript — works offline, syncs to iCloud/Google."
+
 # Layers this integration touches
 layers:
   - integrations   # This manifest

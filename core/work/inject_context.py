@@ -196,6 +196,130 @@ def main():
     except Exception:
         pass  # never crash the hook
 
+    # --- System Capabilities ---
+    # Inject capability map so Chief knows execution methods and fallback chains.
+    # This prevents "I can't do X" when 3 other methods exist.
+    #
+    # Two sources, merged:
+    #   1. capabilities.yaml — curated base map (Apple native apps, generic interactions)
+    #   2. integration manifests — each declares what methods it adds to which apps
+    # Result: when someone adds a new integration with a capabilities: section,
+    # it auto-appears in every session's context. No manual editing of capabilities.yaml.
+    try:
+        cap_file = Path.home() / "aos" / "config" / "capabilities.yaml"
+        if cap_file.exists():
+            capabilities = yaml.safe_load(cap_file.read_text()) or {}
+
+            # --- Merge capabilities from integration manifests ---
+            cost_order = ["zero", "low", "medium", "high", "very-high"]
+            integrations_dir = Path.home() / "aos" / "core" / "integrations"
+            if integrations_dir.is_dir():
+                for manifest_path in sorted(integrations_dir.glob("*/manifest.yaml")):
+                    try:
+                        manifest = yaml.safe_load(manifest_path.read_text()) or {}
+                        for app_name, cap_data in manifest.get("capabilities", {}).items():
+                            apps = capabilities.setdefault("apps", {})
+                            if app_name not in apps:
+                                # New app from manifest — create entry
+                                apps[app_name] = {
+                                    "type": "service",
+                                    "approaches": [cap_data]
+                                }
+                            else:
+                                # Existing app — insert method at correct cost position
+                                existing = apps[app_name]
+                                existing_methods = [
+                                    a.get("method") for a in existing.get("approaches", [])
+                                ]
+                                if cap_data.get("method") not in existing_methods:
+                                    cap_cost_idx = cost_order.index(
+                                        cap_data.get("cost", "medium")
+                                    ) if cap_data.get("cost") in cost_order else 3
+                                    # Find insertion point: after methods with equal or lower cost
+                                    insert_idx = 0
+                                    for i, a in enumerate(existing.get("approaches", [])):
+                                        a_cost = cost_order.index(
+                                            a.get("cost", "medium")
+                                        ) if a.get("cost") in cost_order else 3
+                                        if a_cost <= cap_cost_idx:
+                                            insert_idx = i + 1
+                                        else:
+                                            break
+                                    existing.setdefault("approaches", []).insert(
+                                        insert_idx, cap_data
+                                    )
+                    except Exception:
+                        pass  # Skip malformed manifests, never crash
+
+            # --- Auto-detect MCP servers not in any chain ---
+            try:
+                settings_file = Path.home() / ".claude" / "settings.json"
+                if settings_file.exists():
+                    settings = json.loads(settings_file.read_text())
+                    mcp_servers = set(settings.get("mcpServers", {}).keys())
+                    # Collect all methods already referenced
+                    known_refs = set()
+                    for app_data in capabilities.get("apps", {}).values():
+                        for a in app_data.get("approaches", []):
+                            known_refs.add(a.get("method", ""))
+                    # Flag unmapped MCP servers
+                    unmapped = []
+                    for srv in sorted(mcp_servers):
+                        # Check if any method references this server name
+                        if not any(srv in ref for ref in known_refs):
+                            unmapped.append(srv)
+                    if unmapped:
+                        apps = capabilities.setdefault("apps", {})
+                        for srv in unmapped:
+                            if srv not in apps:
+                                apps[srv] = {
+                                    "type": "mcp",
+                                    "approaches": [{
+                                        "method": f"{srv}-mcp",
+                                        "cost": "zero",
+                                        "notes": f"MCP server '{srv}' — auto-detected from settings.json"
+                                    }]
+                                }
+            except Exception:
+                pass  # Non-fatal
+
+            # --- Format output ---
+            cap_lines = []
+
+            # App-specific chains
+            for app_name, app_data in capabilities.get("apps", {}).items():
+                approaches = app_data.get("approaches", [])
+                chain = " → ".join(
+                    f"{a.get('method')}({a.get('cost', '?')})"
+                    for a in approaches
+                )
+                cap_lines.append(f"- **{app_name}**: {chain}")
+
+            # Interaction-type chains
+            for itype, idata in capabilities.get("interactions", {}).items():
+                approaches = idata.get("approaches", [])
+                chain = " → ".join(
+                    f"{a.get('method')}({a.get('cost', '?')})"
+                    for a in approaches
+                )
+                cap_lines.append(f"- **{itype}**: {chain}")
+
+            # Default fallback for unknown targets
+            default = capabilities.get("_default", {})
+            if default:
+                default_chain = " → ".join(
+                    f"{a.get('method')}({a.get('cost', '?')})"
+                    for a in default.get("approaches", [])
+                )
+                cap_lines.append(f"- **_default**: {default_chain}")
+
+            if cap_lines:
+                lines.append("\n**System Capabilities (fallback chains):**")
+                lines.extend(cap_lines)
+                lines.append("Cheapest method first. If it fails, try next in chain. Never stop at first failure.")
+    except Exception:
+        pass  # Non-fatal — never crash the hook
+
     # --- Handoff context ---
     handoff_tasks = [t for t in (project_active or active) if t.get("handoff")]
     if handoff_tasks:
