@@ -70,6 +70,7 @@ def cmd_add(args):
     energy = None
     status = "todo"
     source_ref = None
+    notes = None
 
     i = 0
     while i < len(args):
@@ -97,6 +98,11 @@ def cmd_add(args):
         elif args[i] == "--source-ref" and i + 1 < len(args):
             source_ref = args[i + 1]
             i += 2
+        elif args[i] == "--notes" and i + 1 < len(args):
+            notes = args[i + 1]
+            i += 2
+        elif args[i].startswith("--"):
+            i += 1  # Skip unknown flags instead of capturing as title
         else:
             title_parts.append(args[i])
             i += 1
@@ -106,9 +112,22 @@ def cmd_add(args):
         print("Error: title is required")
         sys.exit(1)
 
+    # Auto-split: if title > 80 chars, split at first — or . into title + notes
+    if len(title) > 80 and not notes:
+        for sep in [" — ", " - ", ". "]:
+            idx = title.find(sep)
+            if 0 < idx <= 80:
+                notes = title[idx + len(sep):]
+                title = title[:idx]
+                break
+        else:
+            # No separator found — hard truncate at 80, rest to notes
+            notes = title[80:]
+            title = title[:80].rstrip()
+
     task = engine.add_task(title, priority=priority, project=project,
                            tags=tags, due=due, energy=energy, status=status,
-                           source_ref=source_ref)
+                           source_ref=source_ref, notes=notes)
     proj_info = f" [{task.get('project', '')}]" if task.get("project") else ""
     print(f"Created {task['id']}: {task['title']}{proj_info}")
 
@@ -185,6 +204,8 @@ def cmd_show(args):
         print(f"  Done:     {tree['completed']}")
     if tree.get("due"):
         print(f"  Due:      {tree['due']}")
+    if tree.get("notes"):
+        print(f"  Notes:    {tree['notes']}")
     if tree.get("sessions"):
         print(f"  Sessions: {len(tree['sessions'])}")
 
@@ -509,18 +530,163 @@ def cmd_inbox(args):
 
 
 def cmd_projects(args):
+    # Subcommand: project create
+    if args and args[0] == "create":
+        return _cmd_project_create(args[1:])
+
     projects = engine.get_all_projects()
     if not projects:
         print("No projects.")
         return
     all_tasks = engine.get_all_tasks()
-    for p in projects:
+
+    # Separate initiative-linked and regular projects
+    regular = [p for p in projects if not p.get("initiative")]
+    initiative_linked = [p for p in projects if p.get("initiative")]
+
+    for p in regular:
         status = p.get("status", "?")
         goal = f" -> {p['goal']}" if p.get("goal") else ""
         progress = query.project_progress(p["id"], all_tasks)
         pct = f" ({progress['pct']}%)" if progress['total'] > 0 else ""
         counts = f" [{progress['done']}/{progress['total']}]"
         print(f"  {p['id']:12s}  {status:10s}  {p['title']}{goal}{counts}{pct}")
+
+    if initiative_linked:
+        if regular:
+            print()
+        print("  Initiatives:")
+        for p in initiative_linked:
+            progress = query.project_progress(p["id"], all_tasks)
+            pct = f" ({progress['pct']}%)" if progress['total'] > 0 else ""
+            counts = f" [{progress['done']}/{progress['total']}]"
+            appetite = f"  [{p['appetite']}]" if p.get("appetite") else ""
+            # Read initiative status from doc if available
+            init_status = _read_initiative_status(p["initiative"])
+            status_str = f"  ({init_status})" if init_status else ""
+            print(f"  {p['id']:12s}  {p['title']}{counts}{pct}{appetite}{status_str}")
+
+
+def _read_initiative_status(slug: str) -> str | None:
+    """Read initiative status from its vault document."""
+    init_path = os.path.join(os.path.expanduser("~"), "vault", "knowledge", "initiatives", f"{slug}.md")
+    if not os.path.exists(init_path):
+        return None
+    try:
+        import yaml as _yaml
+        with open(init_path) as f:
+            raw = f.read()
+        fm_end = raw.find("---", 3)
+        if fm_end == -1:
+            return None
+        fm = _yaml.safe_load(raw[3:fm_end])
+        if not fm:
+            return None
+        status = fm.get("status", "unknown")
+        phase = fm.get("phase")
+        total = fm.get("total_phases")
+        if phase and total:
+            return f"{status}, phase {phase}/{total}"
+        return status
+    except Exception:
+        return None
+
+
+def _cmd_project_create(args):
+    """Create a new project, optionally linked to an initiative."""
+    if not args:
+        print("Usage: projects create <title> [--id ID] [--short-id PREFIX] [--initiative SLUG] [--appetite TIME] [--goal GOAL_ID] [--done-when TEXT]")
+        sys.exit(1)
+
+    title_parts = []
+    project_id = None
+    short_id = None
+    initiative = None
+    appetite = None
+    goal = None
+    done_when = None
+
+    i = 0
+    while i < len(args):
+        if args[i] == "--id" and i + 1 < len(args):
+            project_id = args[i + 1]
+            i += 2
+        elif args[i] == "--short-id" and i + 1 < len(args):
+            short_id = args[i + 1]
+            i += 2
+        elif args[i] == "--initiative" and i + 1 < len(args):
+            initiative = args[i + 1]
+            i += 2
+        elif args[i] == "--appetite" and i + 1 < len(args):
+            appetite = args[i + 1]
+            i += 2
+        elif args[i] == "--goal" and i + 1 < len(args):
+            goal = args[i + 1]
+            i += 2
+        elif args[i] == "--done-when" and i + 1 < len(args):
+            done_when = args[i + 1]
+            i += 2
+        else:
+            title_parts.append(args[i])
+            i += 1
+
+    title = " ".join(title_parts)
+    if not title:
+        print("Error: project title required")
+        sys.exit(1)
+
+    # If initiative slug given, use it as project_id and short_id defaults
+    if initiative and not project_id:
+        project_id = initiative
+    if initiative and not short_id:
+        # Derive short prefix: unified-comms -> uc, contact-resolution -> cr
+        parts = initiative.split("-")
+        short_id = "".join(p[0] for p in parts if p)
+
+    # If initiative provided, read done_when and appetite from initiative doc if not overridden
+    if initiative:
+        init_path = os.path.join(os.path.expanduser("~"), "vault", "knowledge", "initiatives", f"{initiative}.md")
+        if os.path.exists(init_path):
+            try:
+                import yaml as _yaml
+                with open(init_path) as f:
+                    raw = f.read()
+                fm_end = raw.find("---", 3)
+                if fm_end != -1:
+                    fm = _yaml.safe_load(raw[3:fm_end])
+                    if fm:
+                        if not appetite:
+                            appetite = fm.get("appetite")
+                        if not done_when:
+                            # Extract definition of done from body
+                            dod_match = raw.find("## Definition of Done")
+                            if dod_match != -1:
+                                dod_end = raw.find("\n## ", dod_match + 1)
+                                dod_text = raw[dod_match + len("## Definition of Done"):dod_end].strip() if dod_end != -1 else raw[dod_match + len("## Definition of Done"):].strip()
+                                # Take first line as summary
+                                first_line = dod_text.split("\n")[0].strip("- ")
+                                if first_line:
+                                    done_when = first_line
+            except Exception:
+                pass
+
+    try:
+        project = engine.add_project(
+            title=title,
+            goal=goal,
+            done_when=done_when,
+            appetite=str(appetite) if appetite else None,
+            short_id=short_id,
+            initiative=initiative,
+            project_id=project_id,
+        )
+        init_info = f" (initiative: {initiative})" if initiative else ""
+        print(f"Created project '{project['id']}': {title}{init_info}")
+        if short_id:
+            print(f"  Task prefix: {short_id}# (e.g., {short_id}#1)")
+    except ValueError as e:
+        print(f"Error: {e}")
+        sys.exit(1)
 
 
 def cmd_goals(args):
@@ -1108,6 +1274,39 @@ def cmd_briefing(args):
     print(f"\nTotals: {s['total_tasks']} tasks | {s['projects']} projects | {s['goals']} goals | {s['threads']} threads | {s['inbox']} inbox")
 
 
+def cmd_move(args):
+    """Move tasks to a different project, re-IDing them."""
+    if len(args) < 3 or "--to" not in args:
+        print("Usage: move <task_id> [task_id ...] --to <project_id>")
+        print("  Moves tasks and their subtasks to the target project with new IDs.")
+        print("  Example: move aos#36 aos#37 --to unified-comms")
+        sys.exit(1)
+
+    to_idx = args.index("--to")
+    task_ids = args[:to_idx]
+    target_project = args[to_idx + 1] if to_idx + 1 < len(args) else None
+
+    if not task_ids or not target_project:
+        print("Error: need at least one task ID and --to <project>")
+        sys.exit(1)
+
+    # Verify target project exists
+    projects = engine.get_all_projects()
+    if not any(p["id"] == target_project for p in projects):
+        print(f"Error: project '{target_project}' not found")
+        print(f"  Available: {', '.join(p['id'] for p in projects)}")
+        sys.exit(1)
+
+    moved = engine.move_tasks_to_project(task_ids, target_project)
+    if not moved:
+        print("No tasks found to move.")
+        return
+
+    print(f"Moved {len(moved)} task(s) to project '{target_project}':")
+    for m in moved:
+        print(f"  {m['old_id']} -> {m['new_id']}")
+
+
 COMMANDS = {
     "add": cmd_add,
     "done": cmd_done,
@@ -1135,6 +1334,7 @@ COMMANDS = {
     "json": cmd_json,
     "initiatives": cmd_initiatives,
     "briefing": cmd_briefing,
+    "move": cmd_move,
 }
 
 

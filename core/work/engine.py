@@ -434,7 +434,8 @@ def get_activity(limit: int = 30) -> list:
 def add_task(title: str, priority: int = 3, project: str = None,
              status: str = "todo", tags: list = None, source: str = "manual",
              due: str = None, energy: str = None, context: str = None,
-             parent: str = None, source_ref: str = None) -> dict:
+             parent: str = None, source_ref: str = None,
+             notes: str = None) -> dict:
     """Add a new task with project-scoped ID."""
     data = _load()
 
@@ -477,6 +478,8 @@ def add_task(title: str, priority: int = 3, project: str = None,
         task["parent"] = parent
     if source_ref:
         task["source_ref"] = source_ref
+    if notes:
+        task["notes"] = notes
     data["tasks"].append(task)
     _save(data)
     if parent:
@@ -750,10 +753,31 @@ def build_handoff_prompt(task_id: str) -> str | None:
 # ── Project CRUD ──────────────────────────────────────
 
 def add_project(title: str, goal: str = None, done_when: str = None,
-                appetite: str = None, short_id: str = None) -> dict:
+                appetite: str = None, short_id: str = None,
+                initiative: str = None, project_id: str = None) -> dict:
+    """Create a new project.
+
+    Args:
+        title: Project title
+        goal: Goal ID to link to
+        done_when: Definition of done
+        appetite: Time budget (e.g., '6-hours', '2-weeks')
+        short_id: Custom prefix for task IDs (e.g., 'uc' for unified-comms)
+        initiative: Initiative slug — links to vault/knowledge/initiatives/{slug}.md
+        project_id: Custom project ID (defaults to auto-generated p1, p2, etc.)
+    """
     data = _load()
+
+    # Use custom project_id or auto-generate
+    pid = project_id if project_id else _next_id(data["projects"], "p")
+
+    # Prevent duplicate project IDs
+    for p in data["projects"]:
+        if p["id"] == pid:
+            raise ValueError(f"Project '{pid}' already exists")
+
     project = {
-        "id": _next_id(data["projects"], "p"),
+        "id": pid,
         "title": title,
         "status": "active",
         "started": _today(),
@@ -766,6 +790,8 @@ def add_project(title: str, goal: str = None, done_when: str = None,
         project["appetite"] = appetite
     if short_id:
         project["short_id"] = short_id
+    if initiative:
+        project["initiative"] = initiative
     data["projects"].append(project)
     _save(data)
     return project
@@ -799,6 +825,66 @@ def delete_project(project_id: str) -> bool:
         _save(data)
         return True
     return False
+
+
+def move_tasks_to_project(task_ids: list[str], target_project: str) -> list[dict]:
+    """Move tasks (and their subtasks) to a new project, re-IDing them.
+
+    Returns list of dicts with old_id and new_id for each moved task.
+    """
+    data = _load()
+    prefix = _project_prefix(target_project)
+    moved = []
+
+    # Build map of tasks to move (including subtasks)
+    ids_to_move = set()
+    for tid in task_ids:
+        ids_to_move.add(tid)
+        # Find subtasks
+        for t in data["tasks"]:
+            if t["id"].startswith(tid + "."):
+                ids_to_move.add(t["id"])
+
+    # Sort: parents first, then subtasks
+    sorted_ids = sorted(ids_to_move, key=lambda x: (x.count("."), x))
+
+    # Map old parent IDs to new parent IDs for subtask re-parenting
+    id_map = {}
+
+    for old_id in sorted_ids:
+        task = None
+        for t in data["tasks"]:
+            if t["id"] == old_id:
+                task = t
+                break
+        if not task:
+            continue
+
+        is_subtask = "." in old_id
+
+        if is_subtask:
+            # Find the parent's new ID
+            old_parent = old_id.rsplit(".", 1)[0]
+            new_parent = id_map.get(old_parent, old_parent)
+            new_id = _next_subtask_id(data["tasks"] + [{"id": m["new_id"]} for m in moved], new_parent)
+        else:
+            new_id = _next_scoped_id(
+                data["tasks"] + [{"id": m["new_id"]} for m in moved],
+                prefix
+            )
+
+        id_map[old_id] = new_id
+        task["id"] = new_id
+        task["project"] = target_project
+
+        # Remove old initiative tags, keep others
+        if task.get("tags"):
+            task["tags"] = [t for t in task["tags"] if not t.startswith("initiative:")]
+
+        moved.append({"old_id": old_id, "new_id": new_id})
+
+    _save(data)
+    return moved
 
 
 # ── Goal CRUD ─────────────────────────────────────────

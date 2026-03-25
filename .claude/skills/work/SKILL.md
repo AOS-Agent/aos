@@ -151,6 +151,23 @@ When completing a task that has `source_ref` pointing to an initiative:
 
 This keeps the initiative document's progress tracking in sync with the work system.
 
+## Task Quality
+
+**Titles are short and actionable.** Verb + object, 5-10 words max. Detail goes in `--notes`.
+
+Good: `"Build auth API endpoints"`
+Bad: `"Build the auth API endpoints for the Nuchay app including register, login, logout, and token refresh with JWT validation"`
+
+```bash
+# Title only
+python3 ~/aos/core/work/cli.py add "Build auth API endpoints" --project nuchay
+
+# Title + notes for detail
+python3 ~/aos/core/work/cli.py add "Build auth API endpoints" --project nuchay --notes "register, login, logout, token refresh with JWT"
+```
+
+The CLI auto-splits titles > 80 characters: first clause becomes the title, rest becomes notes. Unknown flags are silently skipped (never captured as title text).
+
 ## Rules
 
 - Don't edit work.yaml directly -- always use the CLI (preserves format, handles IDs)
