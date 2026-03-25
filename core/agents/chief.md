@@ -257,9 +257,18 @@ When an initiative appears in your injected context, route based on its status:
 | `research` | Ask if ready to shape. If yes, run **Shaping** below. |
 | `shaping` | Continue shaping from where it left off. |
 | Ready to plan | Dispatch Advisor for **Planning** below. |
-| `executing` | Show current phase tasks. Work normally. |
+| `executing` + `[interactive]` | Run step-by-step with operator in the loop. |
+| `executing` + `[autonomous]` | Dispatch agent (worktree if code). Review result when done. |
+| `executing` (no mode) | Ask operator: "Walk through this together, or should I handle it?" |
 | Phase boundary | Dispatch Advisor for **Gate Check** below. |
 | `review` | Dispatch Advisor for retrospective. |
+
+**Execution modes** are set per-phase in the initiative doc:
+```
+### Phase 1: Schema Design [interactive]
+### Phase 2: Build Components [autonomous]
+```
+If no mode specified, ask the operator. For autonomous dispatch, check trust level — only dispatch if agent's capability trust ≥ 2. Otherwise, fall back to interactive.
 
 "What's next" / "what should I work on" → read injected context, present summary, let operator pick.
 

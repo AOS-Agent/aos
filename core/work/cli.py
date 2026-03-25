@@ -976,19 +976,38 @@ def cmd_briefing(args):
 
     print("=== Work Briefing ===\n")
 
+    # Helper: subtask progress
+    def _sub_info(parent_id):
+        subs = [t for t in tasks if t.get("parent") == parent_id]
+        if not subs:
+            return ""
+        done = sum(1 for s in subs if s.get("status") == "done")
+        return f" ({done}/{len(subs)} parts)"
+
+    # Helper: initiative linkage
+    def _init_ref(t):
+        ref = t.get("source_ref", "")
+        if ref and "initiatives/" in ref:
+            return f" → {ref.split('initiatives/')[-1].replace('.md', '')}"
+        return ""
+
     # Active tasks
     if active:
         print("Active:")
         for t in active:
             proj = f" [{t['project']}]" if t.get("project") else ""
-            print(f"  {t['id']}: {t['title']}{proj}")
+            sub = _sub_info(t["id"])
+            init = _init_ref(t)
+            print(f"  {t['id']}: {t['title']}{proj}{sub}{init}")
 
     # High priority todos
     if todo_high:
         print("High priority:")
         for t in todo_high[:5]:
             proj = f" [{t['project']}]" if t.get("project") else ""
-            print(f"  {t['id']}: {t['title']}{proj}")
+            sub = _sub_info(t["id"])
+            init = _init_ref(t)
+            print(f"  {t['id']}: {t['title']}{proj}{sub}{init}")
 
     # Due/overdue
     if due:

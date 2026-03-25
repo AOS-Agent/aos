@@ -237,71 +237,76 @@ Skipped parts show as: `⏭ Part Name`
 
 **Dependencies Created**: Anything downstream that needs updating
 
-## Plan Tracking
+## Work System Integration
 
-Step-by-step creates a persistent plan file so work survives across sessions and is visible outside the conversation.
+Step-by-step tracks all work through the work system. No separate plan files — the work system IS the tracking, the resume state, and the source of truth.
 
 ### At SCOPE (after operator approves parts)
 
-Create a plan file at `~/.aos/work/plans/{date}-{slug}.md`:
+Create a parent task and subtasks:
 
-```markdown
----
-title: "{Task Name}"
-status: in-progress
-created: {date}
-initiative: {slug or null}
-phase: {N or null}
-parts: {count}
----
+```bash
+# Create parent task for the whole step-by-step flow
+python3 ~/aos/core/work/cli.py add "{Task Name}" --project {project}
+# Note the returned ID (e.g., aos#15)
 
-# {Task Name}
-
-## Parts
-- [ ] Part 1: {name} (S)
-- [ ] Part 2: {name} (M)
-- [ ] Part 3: {name} (L)
-
-## Progress
-- {date}: Plan created — {N} parts scoped
+# Create subtasks — one per part
+python3 ~/aos/core/work/cli.py subtask aos#15 "Part 1: {name}"
+python3 ~/aos/core/work/cli.py subtask aos#15 "Part 2: {name}"
+python3 ~/aos/core/work/cli.py subtask aos#15 "Part 3: {name}"
 ```
 
-If the work belongs to a project, also create a parent task in the work system:
+If this work belongs to an initiative phase, add `source_ref` when creating the parent:
 ```bash
-python3 ~/aos/core/work/cli.py add "{Task Name}" --project {project}
+python3 ~/aos/core/work/cli.py add "{Task Name}" --project {project} --source-ref "vault/knowledge/initiatives/{slug}.md"
+```
+
+Show the created structure to the operator:
+```
+  Scope: {Task Name}                              [aos#15]
+
+  ⬜ 1. {Part 1} (S)                              [aos#15.1]
+  ⬜ 2. {Part 2} (M)                              [aos#15.2]
+  ⬜ 3. {Part 3} (L)                              [aos#15.3]
 ```
 
 ### At EXECUTE (after each part completes)
 
-1. Check off the part in the plan file: `- [ ]` → `- [x]`
-2. Append to the Progress section: `- {date}: Part N complete — {one-line summary}`
-3. If a work system task was created, mark subtask done
+Mark the subtask done. This is mandatory — run this command after verifying the part's acceptance criteria:
+
+```bash
+python3 ~/aos/core/work/cli.py done aos#15.1
+```
+
+The engine handles everything downstream:
+- Subtask marked done
+- When ALL subtasks done → parent auto-completes (cascade)
+- If parent has `source_ref` → initiative checkbox auto-updates
+- Dashboard gets a live event
+
+You do NOT need to manually update initiative docs, plan files, or dashboards. The engine does it.
 
 ### At POLISH
 
-1. Update plan file: `status: done`
-2. Append final summary to Progress
-3. If work system task exists, mark it done
+Verify the parent task cascaded:
+```bash
+python3 ~/aos/core/work/cli.py show aos#15
+```
 
-### Initiative Integration
-
-Check your injected context for active initiatives. If the current work relates to one:
-
-1. **At SCOPE**: Note which initiative/phase this belongs to in the plan file header (`initiative:` and `phase:` fields)
-2. **At EXECUTE**: After each part, also update the initiative doc's matching checkbox
-3. **At POLISH**: Append to the initiative's Progress section: `- {date}: {task name} — {N} parts completed`
-
-This connects micro-level execution to macro-level initiative tracking automatically.
+If it shows `status: done` with `auto_completed: true`, everything synced. If not, mark it done manually:
+```bash
+python3 ~/aos/core/work/cli.py done aos#15
+```
 
 ## Resumability
 
-If a session ends mid-flow, the operator can say "resume step by step" or "continue" and you should:
-1. Check `~/.aos/work/plans/` for recent plan files with `status: in-progress`
-2. Read the plan file — unchecked boxes show what's remaining
-3. Confirm: "Looks like Parts 1-3 are done. Picking up at Part 4 -- [Name]. Sound right?"
-4. Continue from there
+If a session ends mid-flow, the operator can say "resume" or "continue" and you should:
+1. Read your injected context — active tasks with subtask status are already there
+2. Or run `python3 ~/aos/core/work/cli.py show {parent-id}` to see which subtasks are done
+3. Confirm: "Parts 1-3 are done. Picking up at Part 4 — {name}. Sound right?"
+4. Continue from MAP for the next uncompleted part
 
-The plan file IS the resume state. No context needed from the previous session.
+The work system IS the resume state. No files to read, no context to recover.
 
 ## When NOT to use this skill
 

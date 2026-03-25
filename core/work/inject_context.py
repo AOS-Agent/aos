@@ -117,13 +117,29 @@ def main():
                 last_note = last_note[:200] + "..."
             lines.append(f"  Last note: {last_note}")
 
+    # Helper: subtask progress for a task
+    def _subtask_info(parent_task, all_tasks):
+        subs = [t for t in all_tasks if t.get("parent") == parent_task["id"]]
+        if not subs:
+            return ""
+        done = sum(1 for s in subs if s.get("status") == "done")
+        return f" ({done}/{len(subs)} parts done)"
+
+    # Helper: initiative linkage
+    def _initiative_info(t):
+        ref = t.get("source_ref", "")
+        if not ref or "initiatives/" not in ref:
+            return ""
+        slug = ref.split("initiatives/")[-1].replace(".md", "")
+        return f" → initiative:{slug}"
+
     # Project-specific active tasks first (most relevant)
     if project_active:
         lines.append(f"**Active in this project:**")
         for t in project_active:
-            sessions = len(t.get("sessions", []))
-            session_info = f" ({sessions} sessions)" if sessions > 0 else ""
-            lines.append(f"- {t['id']}: {t['title']}{session_info}")
+            sub = _subtask_info(t, tasks)
+            init = _initiative_info(t)
+            lines.append(f"- {t['id']}: {t['title']}{sub}{init}")
 
     # All active tasks
     other_active = [t for t in active if t not in project_active]
@@ -131,7 +147,9 @@ def main():
         lines.append("**Active (other projects):**")
         for t in other_active:
             proj = f" [{t['project']}]" if t.get("project") else ""
-            lines.append(f"- {t['id']}: {t['title']}{proj}")
+            sub = _subtask_info(t, tasks)
+            init = _initiative_info(t)
+            lines.append(f"- {t['id']}: {t['title']}{proj}{sub}{init}")
 
     if due:
         lines.append("**Due today/overdue:**")
@@ -179,7 +197,8 @@ def main():
                     if not fm or fm.get("status") not in ("research", "shaping", "planning", "executing"):
                         continue
                     title = fm.get("title", os.path.basename(fpath))
-                    initiative_ids.append(title)
+                    slug = fm.get("slug", "")
+                    initiative_ids.append({"title": title, "slug": slug, "status": fm["status"]})
                     # Extract state digest (between ```\n and \n```)
                     digest = f"Status: {fm['status']}"
                     digest_start = raw.find("## State Digest")
@@ -189,8 +208,34 @@ def main():
                         code_end = block.find("\n```", code_start + 4) if code_start != -1 else -1
                         if code_start != -1 and code_end != -1:
                             digest = block[code_start + 4:code_end].strip()
+                    # Check blocked_by — if dependency is done, flag as unblocked
+                    blocked_by = fm.get("blocked_by")
+                    blocked_note = ""
+                    if blocked_by:
+                        # Check if the blocking initiative is done
+                        blocker_done = False
+                        for other in init_files:
+                            try:
+                                with open(other) as bf:
+                                    braw = bf.read(500)
+                                if not braw.startswith("---"):
+                                    continue
+                                bfm_end = braw.find("---", 3)
+                                if bfm_end == -1:
+                                    continue
+                                bfm = yaml.safe_load(braw[3:bfm_end])
+                                if bfm and bfm.get("slug") == blocked_by:
+                                    if bfm.get("status") in ("done", "review"):
+                                        blocker_done = True
+                                    break
+                            except Exception:
+                                pass
+                        if blocker_done:
+                            blocked_note = f" 🔓 UNBLOCKED — {blocked_by} is complete. Ready to resume."
+                        else:
+                            blocked_note = f" ⏳ Blocked by: {blocked_by}"
                     lines.append(f"\n**Initiative: {title}**")
-                    lines.append(digest)
+                    lines.append(digest + blocked_note)
                 except Exception:
                     pass  # skip malformed files, never crash
     except Exception:

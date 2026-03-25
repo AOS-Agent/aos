@@ -340,6 +340,68 @@ def _notify_dashboard(event: dict) -> None:
         pass  # Dashboard may not be running
 
 
+def _sync_initiative_checkbox(task: dict) -> None:
+    """If task has source_ref to an initiative doc, check off matching checkbox.
+
+    Best-effort: never crashes, never blocks. This is the SINGLE sync point —
+    any code path that completes a task gets initiative sync for free.
+    """
+    source_ref = task.get("source_ref")
+    if not source_ref:
+        return
+    try:
+        import re as _re
+        doc_path = Path.home() / source_ref.lstrip("~/")
+        if not doc_path.exists():
+            # Try as relative to home
+            doc_path = Path.home() / source_ref
+        if not doc_path.exists():
+            return
+
+        content = doc_path.read_text()
+        title = task.get("title", "")
+        task_id = task.get("id", "")
+
+        # Match checkbox by task ID reference (e.g., "→ aos#15") or title substring
+        updated = False
+        lines = content.split("\n")
+        for i, line in enumerate(lines):
+            if not _re.match(r'\s*- \[ \]', line):
+                continue
+            # Match by task ID (most reliable)
+            if task_id and task_id in line:
+                lines[i] = line.replace("- [ ]", "- [x]", 1)
+                updated = True
+                break
+            # Match by title (fuzzy — first 40 chars)
+            if title and title[:40].lower() in line.lower():
+                lines[i] = line.replace("- [ ]", "- [x]", 1)
+                updated = True
+                break
+
+        if updated:
+            # Also update the 'updated:' date in frontmatter
+            today = datetime.now().strftime("%Y-%m-%d")
+            new_content = "\n".join(lines)
+            new_content = _re.sub(
+                r'^updated:.*$', f'updated: {today}',
+                new_content, count=1, flags=_re.MULTILINE
+            )
+            # Atomic write
+            tmp = str(doc_path) + ".tmp"
+            Path(tmp).write_text(new_content)
+            os.replace(tmp, str(doc_path))
+
+            notify_initiative_event(
+                "initiative_update",
+                title=title,
+                detail=f"Checkbox synced: {task_id}",
+                task_id=task_id,
+            )
+    except Exception:
+        pass  # Best-effort — never crash the work engine
+
+
 def notify_initiative_event(action: str, title: str, **kwargs) -> None:
     """Send an initiative event to the dashboard SSE stream. Best-effort.
 
@@ -450,7 +512,8 @@ def add_subtask(parent_id: str, title: str, priority: int = None,
 
 
 def complete_task(task_id: str) -> dict | None:
-    """Mark a task as done. Auto-cascades parent if all siblings done."""
+    """Mark a task as done. Auto-cascades parent if all siblings done.
+    If task has source_ref pointing to an initiative, updates the checkbox."""
     data = _load()
     task = None
     for t in data["tasks"]:
@@ -470,6 +533,23 @@ def complete_task(task_id: str) -> dict | None:
 
     _save(data)
     _log_activity("task_completed", task["id"], task.get("title"), task.get("project"))
+
+    # Sync initiative checkbox (best-effort, never crashes)
+    _sync_initiative_checkbox(task)
+
+    # Check if a phase just completed (parent auto-cascaded)
+    if parent_id:
+        parent = next((t for t in data["tasks"] if t["id"] == parent_id), None)
+        if parent and parent.get("auto_completed"):
+            notify_initiative_event(
+                "phase_completed",
+                parent.get("title", parent_id),
+                task_id=parent_id,
+                project=parent.get("project"),
+            )
+            # Also sync the parent's checkbox if it has source_ref
+            _sync_initiative_checkbox(parent)
+
     return task
 
 

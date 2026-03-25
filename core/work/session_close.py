@@ -224,7 +224,25 @@ def main():
                     else:
                         # No updated field — append it before the closing ---
                         new_fm = fm_text.rstrip("\n") + f"\nupdated: {today}\n"
-                    new_content = "---" + new_fm + "---" + content[fm_end + 3:]
+                    body = content[fm_end + 3:]
+
+                    # Append to Progress section — just the date + session marker
+                    # The real detail comes from task completions logged by engine.py
+                    progress_entry = f"\n- {today}: Session — work performed"
+                    progress_marker = "## Progress"
+                    if progress_marker in body:
+                        # Find the end of the Progress section (next ## or end of file)
+                        prog_idx = body.index(progress_marker)
+                        after_header = body[prog_idx + len(progress_marker):]
+                        # Find next section or end
+                        next_section = after_header.find("\n## ")
+                        if next_section != -1:
+                            insert_at = prog_idx + len(progress_marker) + next_section
+                            body = body[:insert_at] + progress_entry + body[insert_at:]
+                        else:
+                            body = body.rstrip("\n") + progress_entry + "\n"
+
+                    new_content = "---" + new_fm + "---" + body
                     # Atomic write
                     tmp_path = fpath + ".tmp"
                     with open(tmp_path, "w") as f:
@@ -235,7 +253,7 @@ def main():
                         _notify_dashboard({
                             "action": "initiative_update",
                             "title": title_val,
-                            "detail": f"Session touched this initiative",
+                            "detail": scope_hint or "Session touched this initiative",
                             "ts": datetime.now().isoformat(),
                         })
                     except Exception:
