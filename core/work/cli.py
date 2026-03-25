@@ -69,6 +69,7 @@ def cmd_add(args):
     due = None
     energy = None
     status = "todo"
+    source_ref = None
 
     i = 0
     while i < len(args):
@@ -93,6 +94,9 @@ def cmd_add(args):
         elif args[i] == "--status" and i + 1 < len(args):
             status = args[i + 1]
             i += 2
+        elif args[i] == "--source-ref" and i + 1 < len(args):
+            source_ref = args[i + 1]
+            i += 2
         else:
             title_parts.append(args[i])
             i += 1
@@ -103,7 +107,8 @@ def cmd_add(args):
         sys.exit(1)
 
     task = engine.add_task(title, priority=priority, project=project,
-                           tags=tags, due=due, energy=energy, status=status)
+                           tags=tags, due=due, energy=energy, status=status,
+                           source_ref=source_ref)
     proj_info = f" [{task.get('project', '')}]" if task.get("project") else ""
     print(f"Created {task['id']}: {task['title']}{proj_info}")
 

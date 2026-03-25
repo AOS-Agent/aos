@@ -253,7 +253,7 @@ def main():
                         _notify_dashboard({
                             "action": "initiative_update",
                             "title": title_val,
-                            "detail": scope_hint or "Session touched this initiative",
+                            "detail": "Session touched this initiative",
                             "ts": datetime.now().isoformat(),
                         })
                     except Exception:
