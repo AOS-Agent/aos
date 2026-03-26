@@ -461,6 +461,7 @@ class TelegramChannel:
                 is_dm=is_dm,
                 is_resumed=is_resumed,
                 initial_msg_id=thinking_msg_id,
+                user_query=message,
             )
 
             duration_ms = int((_time.time() - start) * 1000)

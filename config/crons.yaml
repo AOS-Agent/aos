@@ -127,15 +127,20 @@ jobs:
 
   # ── Tier 4: Intelligence ────────────────────────────────────────────────────
 
-  comms-graduation:
-    command: python3 ~/aos/core/comms/graduation/runner.py
-    at: "06:00"
-    timeout: 120
+  comms-extract:
+    command: python3 ~/aos/core/comms/extract/lifecycle.py
+    at: "05:00"
+    timeout: 300
 
   comms-patterns:
     command: python3 ~/aos/core/comms/patterns/compute.py
     at: "05:30"
     timeout: 180
+
+  comms-graduation:
+    command: python3 ~/aos/core/comms/graduation/runner.py
+    at: "06:00"
+    timeout: 120
 
   # ── Planned (scripts not yet built) ─────────────────────────────────────────
   # These entries are placeholders. Scripts will be created when their

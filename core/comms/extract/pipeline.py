@@ -28,9 +28,12 @@ sys.path.insert(0, str(_PEOPLE_SERVICE))
 
 import db as people_db
 
-# Adapter access
+# Adapter access — need both runtime and dev paths for imports
 _AOS_ROOT = Path.home() / "aos"
-sys.path.insert(0, str(_AOS_ROOT))
+_AOS_DEV = Path.home() / "project" / "aos"
+for _p in [str(_AOS_ROOT), str(_AOS_DEV)]:
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 log = logging.getLogger(__name__)
 
@@ -380,21 +383,37 @@ def run_extraction(days: int = 365, channels: list[str] | None = None, dry_run: 
     conn = people_db.connect()
     resolver = ResolverCache(conn)
 
-    # Load adapters
+    # Load adapters — registry for live services, plus local history adapters
+    adapters = []
     try:
         from core.comms.registry import load_adapters
         adapters = load_adapters()
     except ImportError:
-        # Fallback: load individually
-        adapters = []
+        pass
+
+    # Fallback / additional: load adapters that aren't in the registry
+    # Add the AOS root to sys.path so core.comms.* imports work
+    _aos_root = str(Path.home() / "aos")
+    _aos_dev = str(Path.home() / "project" / "aos")
+    for p in [_aos_root, _aos_dev]:
+        if p not in sys.path:
+            sys.path.insert(0, p)
+
+    _loaded_names = {a.name for a in adapters}
+    _extra_adapters = [
+        ("core.comms.channels.imessage", "iMessageAdapter"),
+        ("core.comms.channels.whatsapp", "WhatsAppAdapter"),
+        ("core.comms.channels.whatsapp_local", "WhatsAppLocalAdapter"),
+        ("core.comms.channels.telegram", "TelegramAdapter"),
+    ]
+    for mod_path, cls_name in _extra_adapters:
         try:
-            from core.comms.channels.imessage import iMessageAdapter
-            adapters.append(iMessageAdapter())
-        except Exception:
-            pass
-        try:
-            from core.comms.channels.whatsapp import WhatsAppAdapter
-            adapters.append(WhatsAppAdapter())
+            import importlib
+            mod = importlib.import_module(mod_path)
+            adapter = getattr(mod, cls_name)()
+            if adapter.name not in _loaded_names:
+                adapters.append(adapter)
+                _loaded_names.add(adapter.name)
         except Exception:
             pass
 
