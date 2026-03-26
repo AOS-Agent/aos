@@ -2084,6 +2084,163 @@ async def channels_page(request: Request):
     })
 
 
+@app.get("/trust", response_class=HTMLResponse)
+async def trust_page(request: Request):
+    """Trust map dashboard page."""
+    active_count = 0
+    try:
+        tasks = _load_tasks()
+        active_count = sum(1 for t in tasks if t.get("status") in ("active", "todo"))
+    except Exception:
+        pass
+    return templates.TemplateResponse(request, "trust.html", {
+        "active_page": "trust",
+        "task_count": active_count if active_count else None,
+    })
+
+
+# ── Trust Observability APIs ─────────────────────────────────────────
+
+_PEOPLE_DB = Path.home() / "vault" / "people" / "people.db"
+_TRUST_YAML = Path.home() / ".aos" / "config" / "trust.yaml"
+_GRADUATION_LOG = Path.home() / ".aos" / "logs" / "comms-graduation.log"
+_PROPOSALS_FILE = Path.home() / ".aos" / "work" / "comms" / "graduation_proposals.json"
+_AUTONOMOUS_LOG = Path.home() / ".aos" / "work" / "comms" / "autonomous_log.jsonl"
+
+
+def _trust_db():
+    """Get a read-only People DB connection for trust queries."""
+    if not _PEOPLE_DB.exists():
+        return None
+    conn = sqlite3.connect(str(_PEOPLE_DB))
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def _load_trust():
+    try:
+        return yaml.safe_load(_TRUST_YAML.read_text()) or {}
+    except Exception:
+        return {}
+
+
+@app.get("/api/comms/trust-map")
+async def api_trust_map():
+    """Trust map — all people with their comms trust levels + stats."""
+    conn = _trust_db()
+    if not conn:
+        return {"people": [], "summary": {}}
+
+    trust_config = _load_trust()
+    per_person = trust_config.get("comms", {}).get("per_person", {})
+
+    rows = conn.execute("""
+        SELECT p.id, p.canonical_name, p.importance,
+               rs.msg_count_30d, rs.trajectory, rs.days_since_contact,
+               rs.interaction_count_90d, rs.outbound_30d, rs.inbound_30d
+        FROM people p
+        LEFT JOIN relationship_state rs ON rs.person_id = p.id
+        WHERE p.is_archived = 0 AND p.importance <= 3
+        ORDER BY p.importance, rs.msg_count_30d DESC
+    """).fetchall()
+
+    people = []
+    level_counts = {0: 0, 1: 0, 2: 0, 3: 0}
+
+    for r in rows:
+        pid = r["id"]
+        entry = per_person.get(pid, {})
+        level = entry.get("level", 0) if isinstance(entry, dict) else 0
+        level_counts[level] = level_counts.get(level, 0) + 1
+
+        # Get acceptance rate from surface_feedback
+        fb = conn.execute(
+            "SELECT COUNT(*) as total, "
+            "SUM(CASE WHEN operator_action IN ('accepted','edited') THEN 1 ELSE 0 END) as positive "
+            "FROM surface_feedback WHERE person_id = ?",
+            (pid,),
+        ).fetchone()
+        total_fb = fb["total"] if fb else 0
+        acceptance_rate = (fb["positive"] / total_fb) if total_fb > 0 else None
+
+        people.append({
+            "person_id": pid,
+            "name": r["canonical_name"],
+            "importance": r["importance"],
+            "level": level,
+            "msg_count_30d": r["msg_count_30d"] or 0,
+            "trajectory": r["trajectory"],
+            "days_since_contact": r["days_since_contact"],
+            "interaction_count_90d": r["interaction_count_90d"] or 0,
+            "acceptance_rate": acceptance_rate,
+        })
+
+    conn.close()
+    return {"people": people, "summary": level_counts}
+
+
+@app.get("/api/comms/graduation-history")
+async def api_graduation_history():
+    """Graduation events from audit log, reverse chronological."""
+    if not _GRADUATION_LOG.exists():
+        return []
+    events = []
+    try:
+        for line in _GRADUATION_LOG.read_text().strip().split("\n"):
+            if line:
+                events.append(json.loads(line))
+    except Exception:
+        return []
+    events.reverse()
+    return events[:50]
+
+
+@app.get("/api/comms/graduation-proposals")
+async def api_graduation_proposals():
+    """Pending graduation proposals."""
+    if not _PROPOSALS_FILE.exists():
+        return []
+    try:
+        proposals = json.loads(_PROPOSALS_FILE.read_text())
+        # Resolve names
+        conn = _trust_db()
+        if conn:
+            for p in proposals:
+                row = conn.execute(
+                    "SELECT canonical_name FROM people WHERE id = ?",
+                    (p.get("person_id", ""),),
+                ).fetchone()
+                if row:
+                    p["name"] = row["canonical_name"]
+            conn.close()
+        return proposals
+    except Exception:
+        return []
+
+
+@app.get("/api/comms/autonomous-log")
+async def api_autonomous_log():
+    """Recent autonomous actions."""
+    if not _AUTONOMOUS_LOG.exists():
+        return []
+    actions = []
+    try:
+        for line in _AUTONOMOUS_LOG.read_text().strip().split("\n"):
+            if line:
+                actions.append(json.loads(line))
+    except Exception:
+        return []
+    actions.reverse()
+    return actions[:50]
+
+
+@app.get("/api/comms/thresholds")
+async def api_thresholds():
+    """Current graduation thresholds."""
+    config = _load_trust()
+    return config.get("comms", {}).get("thresholds", {})
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=4096)

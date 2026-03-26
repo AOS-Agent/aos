@@ -143,44 +143,114 @@ If 3+ similar successful tasks exist with the same approach:
 
 ## Steer Quick Reference
 
-For desktop app interaction, Steer is your primary tool:
+For desktop app interaction, Steer is your primary tool. **Invisible-first by default** —
+clicks use AXPress (no cursor warp), hotkeys go to the target PID (no global events).
+The operator is NOT interrupted.
 
 ```bash
 STEER=~/aos/vendor/mac-mini-agent-tools/apps/steer/.build/arm64-apple-macosx/release/steer
 
-# See what's on screen (native apps)
+# See what's on screen (works for native + Electron apps automatically)
 $STEER see --app "App Name" --json
+# Electron apps auto-detected → OCR merged with AX tree → O1,O2,O3 elements
 
-# See what's on screen (Electron apps — use OCR)
-$STEER ocr --app "App Name" --store --json
+# Click by element ID (invisible-first: uses AXPress, no cursor movement)
+$STEER click --on B3 --app "App Name" --json
+# If AXPress fails, falls back to CGEvent with warning on stderr
 
-# Click by element ID (from see/ocr output)
-$STEER click --on B3 --snapshot <id> --json
+# Click with forced visible mode (only when invisible doesn't work)
+$STEER click --on B3 --visible --json
 
-# Click by coordinates
-$STEER click --x 500 --y 300 --json
+# Type text into a field (invisible-first: uses AXSetValue)
+$STEER type "hello world" --into T1 --app "App Name"
 
-# Type text
-$STEER type "hello world"
+# Keyboard shortcuts (targeted to app PID, not global)
+$STEER hotkey cmd+s --app "App Name"
+$STEER hotkey cmd+shift+p --app Obsidian
 
-# Keyboard shortcuts
-$STEER hotkey cmd+s
-$STEER hotkey cmd+shift+p
+# Wait for element to appear (OCR-aware, polls until found)
+$STEER wait --for "Submit" --app "App Name" --timeout 5 --json
 
-# List apps / activate
-$STEER apps --json
-$STEER apps activate "App Name"
+# Inspect what AX actions an element supports (debug)
+$STEER click --on B3 --inspect --app "App Name"
 
-# Window management
-$STEER window --app "App Name" move --x 0 --y 0
+# Cleanup after a session
+$STEER cleanup --opened "Obsidian,TextEdit" --clear-old --json
 ```
 
-**Rule: ONE steer command per step.** The screen changes after every action.
-Run one command, check the result, then decide the next action.
+### The Observe-Act-Verify Loop
 
-**For Electron apps** (VS Code, Obsidian, Slack, Notion):
-- Accessibility tree will be empty — always use `--ocr` or `steer ocr`
-- Prefer APIs/URIs/CLI when available (check capabilities.yaml)
+**NEVER chain steer commands.** After EVERY action, observe:
+
+```bash
+$STEER see --app Safari --json          # 1. OBSERVE: understand current state
+$STEER click --on B3 --app Safari       # 2. ACT: one action
+$STEER see --app Safari --json          # 3. VERIFY: did it work?
+# If not → adjust and retry. If yes → next action.
+```
+
+### Wait, Don't Sleep
+
+**NEVER use `sleep` between steer commands.** Use `steer wait`:
+
+```bash
+# BAD:
+$STEER click --on "Search"
+sleep 1
+$STEER type "query"
+
+# GOOD:
+$STEER click --on "Search" --app Safari
+$STEER wait --for "search" --app Safari --timeout 5
+$STEER type "query" --into "search" --app Safari
+```
+
+### Electron Apps (VS Code, Obsidian, Slack, Notion)
+
+Steer auto-detects Electron apps and merges OCR text with AX elements.
+Just use `steer see` — no special flags needed:
+
+```bash
+$STEER see --app "Obsidian" --json
+# Returns: O1 "daily", O2 "2026-03-22", O3 "knowledge", etc.
+# Click by OCR element ID:
+$STEER click --on O2 --app Obsidian
+```
+
+### Job Tracking
+
+For multi-step automation, track progress so the bridge can report back:
+
+```bash
+JOB=~/aos/core/steer/job.py
+
+# At task start:
+JOB_ID=$(python3 $JOB create "Find today's notes" | python3 -c "import json,sys; print(json.loads(sys.stdin.read())['job_id'])")
+python3 $JOB start $JOB_ID
+
+# After each meaningful step:
+python3 $JOB update $JOB_ID "Opened Obsidian, found 5 notes"
+python3 $JOB app $JOB_ID Obsidian    # track apps opened for cleanup
+
+# On completion:
+python3 $JOB summary $JOB_ID "Found and organized 5 daily notes"
+python3 $JOB done $JOB_ID
+
+# On failure:
+python3 $JOB fail $JOB_ID "Obsidian window not found"
+```
+
+### Cleanup Protocol
+
+**ALWAYS clean up at the end of a task:**
+
+```bash
+# Close apps you opened (from job tracking)
+$STEER cleanup --opened "Obsidian,TextEdit" --clear-old --json
+
+# The --clear-old flag removes screenshots older than 1 hour
+# The --opened flag quits the listed apps
+```
 
 ## Chrome MCP Quick Reference
 

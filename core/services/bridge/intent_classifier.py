@@ -197,6 +197,14 @@ INTENTS = {
     },
     # greeting intent removed — greetings go through Claude for natural
     # personality response instead of canned text.
+    "trust_check": {
+        "patterns": [
+            "re:^/trust\\b",
+            "re:^trust level .+",
+            "re:^what('s| is) .+ trust level",
+        ],
+        "handler": "handle_trust",
+    },
 }
 
 
@@ -799,6 +807,145 @@ def handle_greeting(text: str) -> str:
     return f"{time_greeting}. How can I help?"
 
 
+def handle_trust(text: str) -> str:
+    """Handle /trust commands — show or set comms trust levels.
+
+    /trust           → summary of Level 1+ people
+    /trust Ahmed     → show Ahmed's trust level + stats
+    /trust_set Ahmed 2 → override Ahmed's level to 2
+    """
+    import sqlite3
+    import sys
+    import yaml
+    from pathlib import Path
+
+    people_db_path = Path.home() / "vault" / "people" / "people.db"
+    trust_path = Path.home() / ".aos" / "config" / "trust.yaml"
+
+    try:
+        trust_config = yaml.safe_load(trust_path.read_text()) or {}
+    except Exception:
+        trust_config = {}
+
+    per_person = trust_config.get("comms", {}).get("per_person", {})
+
+    parts = text.strip().split(maxsplit=2)
+    command = parts[0].lower() if parts else "/trust"
+
+    # /trust_set <name> <level>
+    if command == "/trust_set" and len(parts) >= 3:
+        name_query = parts[1]
+        try:
+            new_level = int(parts[2])
+        except ValueError:
+            return "Usage: /trust_set <name> <level 0-3>"
+        if new_level not in (0, 1, 2, 3):
+            return "Level must be 0-3"
+
+        conn = sqlite3.connect(str(people_db_path))
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT id, canonical_name FROM people WHERE canonical_name LIKE ? COLLATE NOCASE LIMIT 1",
+            (f"%{name_query}%",),
+        ).fetchone()
+        conn.close()
+
+        if not row:
+            return f"No person found matching '{name_query}'"
+
+        pid = row["id"]
+        name = row["canonical_name"]
+        old_entry = per_person.get(pid, {})
+        old_level = old_entry.get("level", 0) if isinstance(old_entry, dict) else 0
+
+        # Update
+        import time
+        comms = trust_config.setdefault("comms", {})
+        pp = comms.setdefault("per_person", {})
+        pp[pid] = {"level": new_level, "updated_at": time.time()}
+        with open(trust_path, "w") as f:
+            yaml.dump(trust_config, f, default_flow_style=False, allow_unicode=True)
+
+        return f"✅ {name}: Level {old_level} → Level {new_level}"
+
+    # /trust <name> — show one person
+    if len(parts) >= 2 and command == "/trust":
+        name_query = " ".join(parts[1:])
+        conn = sqlite3.connect(str(people_db_path))
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT id, canonical_name, importance FROM people "
+            "WHERE canonical_name LIKE ? COLLATE NOCASE LIMIT 1",
+            (f"%{name_query}%",),
+        ).fetchone()
+
+        if not row:
+            conn.close()
+            return f"No person found matching '{name_query}'"
+
+        pid = row["id"]
+        name = row["canonical_name"]
+        entry = per_person.get(pid, {})
+        level = entry.get("level", 0) if isinstance(entry, dict) else 0
+        level_names = {0: "OBSERVE", 1: "SURFACE", 2: "DRAFT", 3: "ACT"}
+
+        # Get stats
+        rs = conn.execute(
+            "SELECT msg_count_30d, trajectory, interaction_count_90d "
+            "FROM relationship_state WHERE person_id = ?", (pid,)
+        ).fetchone()
+
+        fb = conn.execute(
+            "SELECT COUNT(*) as total, "
+            "SUM(CASE WHEN operator_action IN ('accepted','edited') THEN 1 ELSE 0 END) as pos "
+            "FROM surface_feedback WHERE person_id = ?", (pid,)
+        ).fetchone()
+
+        conn.close()
+
+        lines = [f"<b>{name}</b>"]
+        lines.append(f"Trust: Level {level} ({level_names.get(level, '?')})")
+        lines.append(f"Importance: {row['importance']}")
+        if rs:
+            lines.append(f"Messages (30d): {rs['msg_count_30d'] or 0}")
+            lines.append(f"Interactions (90d): {rs['interaction_count_90d'] or 0}")
+            lines.append(f"Trajectory: {rs['trajectory'] or 'unknown'}")
+        if fb and fb["total"] > 0:
+            rate = (fb["pos"] / fb["total"]) * 100
+            lines.append(f"Acceptance rate: {rate:.0f}% ({fb['total']} actions)")
+
+        return "\n".join(lines)
+
+    # /trust — summary
+    conn = sqlite3.connect(str(people_db_path))
+    conn.row_factory = sqlite3.Row
+
+    lines = ["<b>Trust Levels</b>"]
+    for level in (3, 2, 1):
+        level_names = {1: "SURFACE", 2: "DRAFT", 3: "ACT"}
+        people_at_level = []
+        for pid, entry in per_person.items():
+            plevel = entry.get("level", 0) if isinstance(entry, dict) else 0
+            if plevel == level:
+                row = conn.execute(
+                    "SELECT canonical_name FROM people WHERE id = ?", (pid,)
+                ).fetchone()
+                if row:
+                    people_at_level.append(row["canonical_name"])
+        if people_at_level:
+            lines.append(f"\nLevel {level} ({level_names[level]}):")
+            for name in people_at_level:
+                lines.append(f"  • {name}")
+
+    conn.close()
+
+    if len(lines) == 1:
+        lines.append("\nNo one above Level 0 yet.")
+        lines.append("Run the graduation evaluator to check for promotions.")
+
+    return "\n".join(lines)
+
+
 # ── Dispatcher ────────────────────────────────────────
 
 # Map handler names to functions
@@ -816,6 +963,7 @@ HANDLERS = {
     "handle_messages": handle_messages,
     "handle_reply": handle_reply,
     "handle_greeting": handle_greeting,
+    "handle_trust": handle_trust,
 }
 
 

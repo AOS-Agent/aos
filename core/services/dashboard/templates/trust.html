@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% block title %}Trust Map{% endblock %}
+{% block styles %}
+.trust-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 1rem; margin-top: 1rem; }
+.trust-card { background: var(--card-bg, #1a1a2e); border: 1px solid var(--border, #2a2a4a); border-radius: 8px; padding: 1rem; }
+.trust-card.level-3 { border-left: 3px solid #22c55e; }
+.trust-card.level-2 { border-left: 3px solid #3b82f6; }
+.trust-card.level-1 { border-left: 3px solid #f59e0b; }
+.trust-card.level-0 { border-left: 3px solid #6b7280; }
+.trust-name { font-weight: 600; font-size: 0.95rem; }
+.trust-level { font-size: 0.8rem; color: var(--text-muted, #888); margin-top: 0.25rem; }
+.trust-stats { display: flex; gap: 1rem; margin-top: 0.5rem; font-size: 0.8rem; color: var(--text-muted, #888); }
+.trust-stat { display: flex; flex-direction: column; align-items: center; }
+.trust-stat-value { font-weight: 600; color: var(--text, #e0e0e0); }
+.level-badge { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 4px; font-size: 0.75rem; font-weight: 600; }
+.level-badge.l0 { background: #374151; color: #9ca3af; }
+.level-badge.l1 { background: #422006; color: #fbbf24; }
+.level-badge.l2 { background: #1e3a5f; color: #60a5fa; }
+.level-badge.l3 { background: #14532d; color: #4ade80; }
+.summary-bar { display: flex; gap: 1.5rem; margin-bottom: 1rem; padding: 1rem; background: var(--card-bg, #1a1a2e); border-radius: 8px; border: 1px solid var(--border, #2a2a4a); }
+.summary-item { text-align: center; }
+.summary-number { font-size: 1.5rem; font-weight: 700; }
+.summary-label { font-size: 0.75rem; color: var(--text-muted, #888); }
+.section-title { font-size: 1.1rem; font-weight: 600; margin: 1.5rem 0 0.5rem; }
+.event-list { font-size: 0.85rem; }
+.event-row { padding: 0.5rem 0; border-bottom: 1px solid var(--border, #2a2a4a); display: flex; justify-content: space-between; }
+.event-action { color: var(--text-muted, #888); }
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1><i data-lucide="shield-check"></i> Trust Map</h1>
+    <p class="page-subtitle">Communications trust levels — who the system can help with</p>
+</div>
+
+<div id="trust-content">Loading...</div>
+
+<script>
+async function loadTrust() {
+    const [mapRes, histRes, proposalRes] = await Promise.all([
+        fetch('/api/comms/trust-map'),
+        fetch('/api/comms/graduation-history'),
+        fetch('/api/comms/graduation-proposals'),
+    ]);
+    const map = await mapRes.json();
+    const history = await histRes.json();
+    const proposals = await proposalRes.json();
+
+    let html = '';
+
+    // Summary bar
+    const s = map.summary || {};
+    html += `<div class="summary-bar">
+        <div class="summary-item"><div class="summary-number">${s[3]||0}</div><div class="summary-label">ACT (L3)</div></div>
+        <div class="summary-item"><div class="summary-number">${s[2]||0}</div><div class="summary-label">DRAFT (L2)</div></div>
+        <div class="summary-item"><div class="summary-number">${s[1]||0}</div><div class="summary-label">SURFACE (L1)</div></div>
+        <div class="summary-item"><div class="summary-number">${s[0]||0}</div><div class="summary-label">OBSERVE (L0)</div></div>
+    </div>`;
+
+    // Proposals
+    if (proposals.length > 0) {
+        html += `<div class="section-title">Pending Promotions</div><div class="trust-grid">`;
+        proposals.forEach(p => {
+            html += `<div class="trust-card level-${p.to_level}">
+                <div class="trust-name">${p.name || p.person_id}</div>
+                <div class="trust-level">Level ${p.from_level} → ${p.to_level}</div>
+                <div class="trust-stats"><span>${p.reason || ''}</span></div>
+            </div>`;
+        });
+        html += '</div>';
+    }
+
+    // People by level (3, 2, 1 only — L0 is too many)
+    const levelNames = {3: 'ACT', 2: 'DRAFT', 1: 'SURFACE'};
+    [3, 2, 1].forEach(level => {
+        const people = (map.people || []).filter(p => p.level === level);
+        if (people.length === 0) return;
+        html += `<div class="section-title">Level ${level} — ${levelNames[level]} (${people.length})</div><div class="trust-grid">`;
+        people.forEach(p => {
+            const rate = p.acceptance_rate != null ? `${Math.round(p.acceptance_rate*100)}%` : '—';
+            const traj = p.trajectory || '—';
+            html += `<div class="trust-card level-${level}">
+                <div class="trust-name">${p.name} <span class="level-badge l${level}">L${level}</span></div>
+                <div class="trust-stats">
+                    <div class="trust-stat"><div class="trust-stat-value">${p.msg_count_30d}</div><div>msgs/30d</div></div>
+                    <div class="trust-stat"><div class="trust-stat-value">${rate}</div><div>accept</div></div>
+                    <div class="trust-stat"><div class="trust-stat-value">${traj}</div><div>trajectory</div></div>
+                </div>
+            </div>`;
+        });
+        html += '</div>';
+    });
+
+    // Graduation history
+    if (history.length > 0) {
+        html += `<div class="section-title">Recent Graduation Events</div><div class="event-list">`;
+        history.slice(0, 10).forEach(e => {
+            const date = new Date(e.ts * 1000).toLocaleDateString();
+            const arrow = e.to_level > e.from_level ? '⬆️' : '⬇️';
+            html += `<div class="event-row">
+                <span>${arrow} <b>${e.name || e.person_id}</b> Level ${e.from_level} → ${e.to_level}</span>
+                <span class="event-action">${date} — ${e.reason || ''}</span>
+            </div>`;
+        });
+        html += '</div>';
+    }
+
+    document.getElementById('trust-content').innerHTML = html;
+}
+loadTrust();
+</script>
+{% endblock %}
