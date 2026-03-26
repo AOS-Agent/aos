@@ -241,6 +241,43 @@ def main():
     except Exception:
         pass  # never crash the hook
 
+    # --- Unanswered Messages ---
+    try:
+        triage_file = Path.home() / ".aos" / "work" / "triage-state.json"
+        if triage_file.exists():
+            triage_state = json.loads(triage_file.read_text())
+            unanswered_entries = list(triage_state.get("unanswered", {}).values())
+            if unanswered_entries:
+                # Sort oldest first
+                unanswered_entries.sort(key=lambda e: e.get("received_at", ""))
+                lines.append("**Unanswered messages:**")
+                for entry in unanswered_entries[:3]:
+                    name = entry.get("person_name", "Unknown")
+                    channel = entry.get("channel", "?")
+                    preview = entry.get("text_preview", "")
+                    # Compute relative time
+                    ago = "recently"
+                    try:
+                        from datetime import datetime as _dt
+                        ts = entry.get("received_at", "")
+                        if ts:
+                            msg_dt = _dt.fromisoformat(ts.replace("Z", "+00:00"))
+                            now_dt = _dt.now(msg_dt.tzinfo) if msg_dt.tzinfo else _dt.now()
+                            delta_s = int((now_dt - msg_dt).total_seconds())
+                            if delta_s < 60:
+                                ago = "just now"
+                            elif delta_s < 3600:
+                                ago = f"{delta_s // 60}m ago"
+                            elif delta_s < 86400:
+                                ago = f"{delta_s // 3600}h ago"
+                            else:
+                                ago = f"{delta_s // 86400}d ago"
+                    except Exception:
+                        pass
+                    lines.append(f"- {name} ({channel}, {ago}): {preview[:60]}")
+    except Exception:
+        pass  # Never crash the hook
+
     # --- System Capabilities ---
     # Inject capability map so Chief knows execution methods and fallback chains.
     # This prevents "I can't do X" when 3 other methods exist.

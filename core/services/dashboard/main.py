@@ -561,6 +561,51 @@ async def api_delete_inbox(inbox_id: str):
     return {"ok": ok}
 
 
+@app.get("/api/messages/unanswered")
+async def api_messages_unanswered():
+    """Return unanswered messages from triage state."""
+    triage_file = Path.home() / ".aos" / "work" / "triage-state.json"
+    try:
+        if triage_file.exists():
+            state = json.loads(triage_file.read_text())
+            unanswered = state.get("unanswered", {})
+            # Add relative time to each entry
+            now = datetime.now()
+            entries = []
+            for key, entry in unanswered.items():
+                entry_copy = dict(entry)
+                entry_copy["key"] = key
+                try:
+                    ts = entry.get("received_at", "")
+                    if ts:
+                        msg_dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                        if msg_dt.tzinfo:
+                            from zoneinfo import ZoneInfo
+                            now_aware = datetime.now(msg_dt.tzinfo)
+                            delta = int((now_aware - msg_dt).total_seconds())
+                        else:
+                            delta = int((now - msg_dt).total_seconds())
+                        if delta < 60:
+                            entry_copy["time_ago"] = "just now"
+                        elif delta < 3600:
+                            entry_copy["time_ago"] = f"{delta // 60}m ago"
+                        elif delta < 86400:
+                            entry_copy["time_ago"] = f"{delta // 3600}h ago"
+                        else:
+                            entry_copy["time_ago"] = f"{delta // 86400}d ago"
+                    else:
+                        entry_copy["time_ago"] = "recently"
+                except Exception:
+                    entry_copy["time_ago"] = "recently"
+                entries.append(entry_copy)
+            # Sort oldest first
+            entries.sort(key=lambda e: e.get("received_at", ""))
+            return {"unanswered": entries, "count": len(entries)}
+        return {"unanswered": [], "count": 0}
+    except Exception as e:
+        return {"unanswered": [], "count": 0, "error": str(e)}
+
+
 @app.get("/api/detected-projects")
 async def api_detected_projects():
     """Auto-detect projects from session patterns and directories."""

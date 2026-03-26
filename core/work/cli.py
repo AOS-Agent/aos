@@ -252,6 +252,7 @@ def cmd_list(args):
     priority = None
     sort_by = "priority"
     show_all = False
+    json_output = False
 
     i = 0
     while i < len(args):
@@ -269,6 +270,9 @@ def cmd_list(args):
             i += 2
         elif args[i] == "--all":
             show_all = True
+            i += 1
+        elif args[i] == "--json":
+            json_output = True
             i += 1
         else:
             i += 1
@@ -293,6 +297,18 @@ def cmd_list(args):
     # Build trees (subtasks nested under parents)
     trees = query.build_task_trees(tasks)
     trees = query.sort_tasks(trees, by=sort_by)
+
+    if json_output:
+        import json as _json
+        # Strip internal fields, flatten for consumers
+        def _clean(t):
+            out = {k: v for k, v in t.items() if not k.startswith("_") and k != "subtasks"}
+            subs = t.get("subtasks", [])
+            if subs:
+                out["subtasks"] = [_clean(s) for s in subs]
+            return out
+        print(_json.dumps([_clean(t) for t in trees], default=str))
+        return
 
     if not trees:
         print("No tasks found.")
@@ -1193,6 +1209,43 @@ def cmd_briefing(args):
         for item in inbox[:3]:
             text = item.get("text", str(item)) if isinstance(item, dict) else str(item)
             print(f"  - {text[:80]}")
+
+    # --- Unanswered messages ---
+    try:
+        import json as _json
+        triage_file = os.path.join(os.path.expanduser("~"), ".aos", "work", "triage-state.json")
+        if os.path.exists(triage_file):
+            with open(triage_file) as f:
+                triage_state = _json.loads(f.read())
+            unanswered = triage_state.get("unanswered", {})
+            if unanswered:
+                from datetime import datetime as _dt
+                entries = sorted(unanswered.values(), key=lambda e: e.get("received_at", ""))
+                print(f"\nUnanswered messages ({len(entries)}):")
+                for entry in entries[:3]:
+                    name = entry.get("person_name", "Unknown")
+                    channel = entry.get("channel", "?")
+                    preview = entry.get("text_preview", "")
+                    ago = "recently"
+                    try:
+                        ts = entry.get("received_at", "")
+                        if ts:
+                            msg_dt = _dt.fromisoformat(ts.replace("Z", "+00:00"))
+                            now_dt = _dt.now(msg_dt.tzinfo) if msg_dt.tzinfo else _dt.now()
+                            delta_s = int((now_dt - msg_dt).total_seconds())
+                            if delta_s < 60:
+                                ago = "just now"
+                            elif delta_s < 3600:
+                                ago = f"{delta_s // 60}m ago"
+                            elif delta_s < 86400:
+                                ago = f"{delta_s // 3600}h ago"
+                            else:
+                                ago = f"{delta_s // 86400}d ago"
+                    except Exception:
+                        pass
+                    print(f"  💬 {name} ({channel}, {ago}): {preview[:60]}")
+    except Exception:
+        pass
 
     # --- Initiatives ---
     init_dir = os.path.join(os.path.expanduser("~"), "vault", "knowledge", "initiatives")

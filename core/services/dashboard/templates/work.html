@@ -315,6 +315,13 @@
 .inbox-item:last-child { border-bottom: none; }
 .inbox-dot { width: 4px; height: 4px; border-radius: 50%; background: var(--tag-orange); flex-shrink: 0; }
 
+.msg-item { padding: 6px 0; border-bottom: 1px solid var(--border-light); }
+.msg-item:last-child { border-bottom: none; }
+.msg-sender { font-size: 13px; color: var(--text); display: flex; align-items: center; gap: 6px; }
+.msg-preview { font-size: 12px; color: var(--text-tertiary); margin-top: 2px; padding-left: 22px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.msg-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--tag-blue); flex-shrink: 0; }
+.msg-time { font-size: 11px; color: var(--text-faint); margin-left: auto; }
+
 .detected-hint { font-size: 12px; color: var(--text-faint); margin-bottom: 8px; }
 
 /* ── Handoff tooltip ───────────────────────────── */
@@ -589,6 +596,12 @@
         </div>
         {% endif %}
 
+        <!-- Unanswered Messages (loaded from triage API) -->
+        <div class="panel" id="messages-panel" style="display:none;">
+            <div class="panel-title">Messages <span class="tag tag-blue" id="messages-count"></span></div>
+            <div id="messages-list"></div>
+        </div>
+
         {% if inbox %}
         <div class="panel">
             <div class="panel-title">Inbox <span class="tag tag-orange">{{ inbox|length }}</span></div>
@@ -795,6 +808,33 @@ function showAddProject() {
 
 // Hide done on initial load
 document.querySelectorAll('.hidden-done').forEach(el => { el.style.display = 'none'; });
+
+// ── Load unanswered messages ─────────────────────
+async function loadMessages() {
+    try {
+        const res = await fetch('/api/messages/unanswered');
+        const data = await res.json();
+        const panel = document.getElementById('messages-panel');
+        const list = document.getElementById('messages-list');
+        const count = document.getElementById('messages-count');
+        if (data.count > 0) {
+            panel.style.display = '';
+            count.textContent = data.count;
+            list.innerHTML = data.unanswered.map(m => `
+                <div class="msg-item">
+                    <div class="msg-sender">
+                        <div class="msg-dot"></div>
+                        <span>${m.person_name || 'Unknown'}</span>
+                        <span class="tag tag-gray" style="font-size:10px;">${m.channel || '?'}</span>
+                        <span class="msg-time">${m.time_ago || ''}</span>
+                    </div>
+                    ${m.text_preview ? `<div class="msg-preview">${m.text_preview.substring(0, 80)}</div>` : ''}
+                </div>
+            `).join('');
+        }
+    } catch(e) { /* silent */ }
+}
+loadMessages();
 
 // SSE — auto-reload on work events (from CLI or other tabs)
 const sse = new EventSource('/api/stream');

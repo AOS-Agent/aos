@@ -41,8 +41,8 @@ INTENTS = {
             "system status",
             "service status",
             "health check",
-            "re:is the (dashboard|bridge|listen|phoenix|whatsapp)\\s*(running|up|working|broken|down)",
-            "re:check (the )?(dashboard|bridge|listen|phoenix|whatsapp|services|system)",
+            "re:is the (dashboard|bridge|listen|transcriber|whatsapp)\\s*(running|up|working|broken|down)",
+            "re:check (the )?(dashboard|bridge|listen|transcriber|whatsapp|services|system)",
             "re:is .+ (broken|down|dead|crashed)",
             "anything down",
             "anything broken",
@@ -172,6 +172,19 @@ INTENTS = {
         ],
         "handler": "handle_weekly_digest",
     },
+    "messages": {
+        "patterns": [
+            "re:^/messages?$",
+            "re:^/msg$",
+            "messages",
+            "unanswered messages",
+            "who messaged me",
+            "any messages",
+            "any new messages",
+            "unread messages",
+        ],
+        "handler": "handle_messages",
+    },
     "greeting": {
         "patterns": [
             "re:^(hey|hi|hello|hola|salam|asalamualaikum|assalamualaikum|salaam)$",
@@ -196,8 +209,10 @@ def classify(text: str) -> tuple[str | None, str | None]:
         return None, None
 
     # Skip messages that start with / — those are explicit commands
+    # Exception: /messages, /msg are handled as quick commands
     if text.startswith("/"):
-        return None, None
+        if not re.match(r"^/(messages?|msg)$", text.lower().strip()):
+            return None, None
 
     # Skip messages that look like code or file paths
     if any(c in text for c in ["{", "}", "def ", "class ", "import "]):
@@ -228,7 +243,7 @@ def handle_health_check(text: str) -> str:
     services = [
         ("Dashboard", "http://127.0.0.1:4096/api/health"),
         ("Listen", "http://127.0.0.1:7600/health"),
-        ("Phoenix", "http://127.0.0.1:6006"),
+        ("Transcriber", "http://127.0.0.1:7601/health"),
         ("WhatsApp", "http://127.0.0.1:7601/health"),
     ]
 
@@ -630,6 +645,59 @@ def handle_weekly_digest(text: str) -> str:
         return f"⚠️ Couldn't run digest: {e}"
 
 
+def handle_messages(text: str) -> str:
+    """Show unanswered messages from triage state."""
+    import json
+    from datetime import datetime
+
+    triage_file = Path.home() / ".aos" / "work" / "triage-state.json"
+    if not triage_file.exists():
+        return "No message tracking data yet."
+
+    try:
+        state = json.loads(triage_file.read_text())
+    except Exception:
+        return "⚠️ Could not read triage state."
+
+    unanswered = state.get("unanswered", {})
+    if not unanswered:
+        return "✅ No unanswered messages. You're all caught up."
+
+    def _time_ago(iso_ts: str) -> str:
+        try:
+            dt = datetime.fromisoformat(iso_ts.replace("Z", "+00:00"))
+            now = datetime.now(dt.tzinfo) if dt.tzinfo else datetime.now()
+            seconds = int((now - dt).total_seconds())
+            if seconds < 60:
+                return "just now"
+            if seconds < 3600:
+                return f"{seconds // 60}m ago"
+            if seconds < 86400:
+                return f"{seconds // 3600}h ago"
+            days = seconds // 86400
+            if days < 7:
+                return f"{days}d ago"
+            return f"{days // 7}w ago"
+        except Exception:
+            return "recently"
+
+    entries = sorted(unanswered.values(), key=lambda e: e.get("received_at", ""))
+
+    lines = ["<b>Unanswered Messages</b>\n"]
+    for entry in entries:
+        name = entry.get("person_name", "Unknown")
+        channel = entry.get("channel", "?")
+        ago = _time_ago(entry.get("received_at", ""))
+        preview = entry.get("text_preview", "")
+        lines.append(f"💬 {name} ({channel}) — {ago}")
+        if preview:
+            lines.append(f"  {preview[:80]}")
+        lines.append("")
+
+    lines.append(f"Reply in app or from here: /reply {{name}} {{message}}")
+    return "\n".join(lines)
+
+
 def handle_greeting(text: str) -> str:
     """Respond to greetings instantly — no Claude needed."""
     import random
@@ -664,6 +732,7 @@ HANDLERS = {
     "handle_friction": handle_friction,
     "handle_sessions": handle_sessions,
     "handle_weekly_digest": handle_weekly_digest,
+    "handle_messages": handle_messages,
     "handle_greeting": handle_greeting,
 }
 

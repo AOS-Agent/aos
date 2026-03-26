@@ -8,6 +8,7 @@ schedule, and overnight work, then sends a classified briefing.
 """
 
 import glob
+import json
 import logging
 import os
 import re
@@ -48,6 +49,51 @@ def _load_yaml(path: Path) -> dict:
     if path.exists():
         return yaml.safe_load(path.read_text()) or {}
     return {}
+
+
+# ── Triage helpers ─────────────────────────────────────────────────────
+
+TRIAGE_FILE = Path.home() / ".aos" / "work" / "triage-state.json"
+
+
+def _load_triage_unanswered() -> list[dict]:
+    """Load unanswered messages from triage state, sorted oldest first."""
+    try:
+        if TRIAGE_FILE.exists():
+            state = json.loads(TRIAGE_FILE.read_text())
+            entries = list(state.get("unanswered", {}).values())
+            # Sort by received_at ascending (oldest first)
+            entries.sort(key=lambda e: e.get("received_at", ""))
+            return entries
+    except Exception:
+        pass
+    return []
+
+
+def _time_ago(iso_ts: str) -> str:
+    """Convert ISO timestamp to relative time string like '2h ago', '3d ago'."""
+    try:
+        dt = datetime.fromisoformat(iso_ts.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=ZoneInfo("UTC"))
+        now = datetime.now(dt.tzinfo)
+        delta = now - dt
+        seconds = int(delta.total_seconds())
+        if seconds < 60:
+            return "just now"
+        minutes = seconds // 60
+        if minutes < 60:
+            return f"{minutes}m ago"
+        hours = minutes // 60
+        if hours < 24:
+            return f"{hours}h ago"
+        days = hours // 24
+        if days < 7:
+            return f"{days}d ago"
+        weeks = days // 7
+        return f"{weeks}w ago"
+    except Exception:
+        return "recently"
 
 
 # ── Initiative scanner ─────────────────────────────────────────────────
@@ -163,13 +209,7 @@ def _build_briefing() -> str:
     except Exception as e:
         logger.debug(f"Work engine unavailable: {e}")
 
-    # Also try vault tasks as fallback
-    vault_tasks_list = []
-    try:
-        from vault_tasks import get_all_tasks as get_vault_tasks, get_active_tasks
-        vault_tasks_list = get_vault_tasks()
-    except Exception:
-        pass
+    # vault_tasks fallback removed — work engine is the single source of truth
 
     # ── URGENT: overdue tasks, stale initiatives, P1 active ──────────
     today_str = now.strftime("%Y-%m-%d")
@@ -188,22 +228,7 @@ def _build_briefing() -> str:
             except (ValueError, TypeError):
                 pass
 
-    # Overdue vault tasks
-    for t in vault_tasks_list:
-        if t.get("status") in ("done",):
-            continue
-        due = t.get("due")
-        if due:
-            try:
-                due_str = str(due).split("T")[0]
-                if due_str < today_str:
-                    days_late = (now.date() - datetime.strptime(due_str, "%Y-%m-%d").date()).days
-                    title = t.get("title", "Untitled")
-                    # Avoid duplicate if already in work engine
-                    if not any(title in u for u in urgent):
-                        urgent.append(f"<b>{title}</b> — overdue by {days_late}d")
-            except (ValueError, TypeError):
-                pass
+    # vault_tasks overdue check removed — work engine handles all tasks
 
     # Stale initiatives → URGENT
     initiatives = _scan_initiatives()
@@ -294,13 +319,7 @@ def _build_briefing() -> str:
             who = t.get("waiting_on", "someone")
             people.append(f"Waiting on <b>{who}</b>: {t.get('title', 'Untitled')}")
 
-    # Also vault waiting tasks
-    for t in vault_tasks_list:
-        if t.get("status") == "waiting":
-            who = t.get("waiting_on", "someone")
-            title = t.get("title", "Untitled")
-            if not any(title in p for p in people):
-                people.append(f"Waiting on <b>{who}</b>: {title}")
+    # vault_tasks waiting check removed — work engine handles all tasks
 
     # Schedule blocks from operator.yaml
     op = _load_yaml(OPERATOR_CONFIG)
@@ -380,6 +399,20 @@ def _build_briefing() -> str:
     else:
         lines.append("  No people items today.")
     lines.append("")
+
+    # MESSAGES (only if unanswered)
+    unanswered = _load_triage_unanswered()
+    if unanswered:
+        lines.append("\U0001f4ac <b>MESSAGES</b>")
+        for entry in unanswered[:5]:
+            name = entry.get("person_name", "Unknown")
+            channel = entry.get("channel", "?")
+            ago = _time_ago(entry.get("received_at", ""))
+            preview = entry.get("text_preview", "")
+            lines.append(f"  \U0001f4ac {name} ({channel}) — {ago}")
+            if preview:
+                lines.append(f"    {preview[:80]}")
+        lines.append("")
 
     # OVERNIGHT (only if applicable)
     if overnight:
