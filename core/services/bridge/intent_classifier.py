@@ -185,6 +185,16 @@ INTENTS = {
         ],
         "handler": "handle_messages",
     },
+    "reply": {
+        "patterns": [
+            "re:^/reply .+",
+            "re:^reply to .+",
+            "re:^tell .+ that .+",
+            "re:^message .+ (saying|that) .+",
+            "re:^send .+ a message .+",
+        ],
+        "handler": "handle_reply",
+    },
     "greeting": {
         "patterns": [
             "re:^(hey|hi|hello|hola|salam|asalamualaikum|assalamualaikum|salaam)$",
@@ -698,6 +708,84 @@ def handle_messages(text: str) -> str:
     return "\n".join(lines)
 
 
+def handle_reply(text: str) -> str:
+    """Send a message to a contact via the comms bus.
+
+    Formats:
+        /reply Ahmed On my way
+        tell mom I'll be late
+        message Faisal saying the shipment is ready
+    """
+    import re as _re
+
+    # Parse: /reply {name} {message}
+    match = _re.match(r'^/reply\s+(\S+)\s+(.+)$', text, _re.IGNORECASE)
+    if not match:
+        # Try: tell {name} that {message}
+        match = _re.match(r'^(?:tell|message|send)\s+(.+?)\s+(?:that|saying|a message)\s+(.+)$', text, _re.IGNORECASE)
+    if not match:
+        return "Usage: /reply {name} {message}\nExample: /reply Ahmed On my way"
+
+    name = match.group(1).strip()
+    message = match.group(2).strip()
+
+    if not name or not message:
+        return "Usage: /reply {name} {message}"
+
+    # Resolve contact
+    import sys
+    people_service = str(Path.home() / ".aos" / "services" / "people")
+    if people_service not in sys.path:
+        sys.path.insert(0, people_service)
+
+    try:
+        import resolver
+        result = resolver.resolve_contact(name)
+    except Exception as e:
+        return f"⚠️ Could not resolve contact '{name}': {e}"
+
+    if not result or not result.get("resolved"):
+        candidates = result.get("candidates", []) if result else []
+        if candidates:
+            names = ", ".join(c.get("name", "?") for c in candidates[:5])
+            return f"⚠️ '{name}' is ambiguous. Did you mean: {names}?"
+        return f"⚠️ Could not find '{name}' in contacts."
+
+    contact = result["contact"]
+    person_name = contact.get("name", name)
+    channel = result.get("channel", "unknown")
+
+    # Get the right identifier for the channel
+    if channel == "whatsapp":
+        recipient = contact.get("wa_jid") or (contact.get("phones", [None])[0] if contact.get("phones") else None)
+    elif channel == "imessage":
+        recipient = (contact.get("phones", [None])[0] if contact.get("phones") else None) or (contact.get("emails", [None])[0] if contact.get("emails") else None)
+    else:
+        recipient = contact.get("phones", [None])[0] if contact.get("phones") else None
+
+    if not recipient:
+        return f"⚠️ No phone/email found for {person_name} on {channel}."
+
+    # Send via comms bus
+    try:
+        aos_root = str(Path.home() / "aos")
+        if aos_root not in sys.path:
+            sys.path.insert(0, aos_root)
+        from core.comms.bus import MessageBus
+        from core.comms.registry import load_adapters
+
+        adapters = load_adapters()
+        bus = MessageBus(adapters)
+        success = bus.send(recipient=recipient, text=message, channel=channel)
+    except Exception as e:
+        return f"⚠️ Send failed: {e}"
+
+    if success:
+        return f"✅ Sent to {person_name} via {channel}:\n\n\"{message}\""
+    else:
+        return f"⚠️ Failed to send to {person_name} via {channel}. Check the bridge."
+
+
 def handle_greeting(text: str) -> str:
     """Respond to greetings instantly — no Claude needed."""
     import random
@@ -733,6 +821,7 @@ HANDLERS = {
     "handle_sessions": handle_sessions,
     "handle_weekly_digest": handle_weekly_digest,
     "handle_messages": handle_messages,
+    "handle_reply": handle_reply,
     "handle_greeting": handle_greeting,
 }
 
