@@ -158,7 +158,31 @@ matches what they just shipped:
 cd ~/aos && git pull origin main --ff-only
 ```
 
-### Step 5: Confirm
+### Step 5: Close Resolved Issues
+
+After pushing, check for open GitHub issues that were resolved by the shipped changes:
+
+```bash
+cd ~/project/aos
+gh issue list --state open
+```
+
+For each open issue:
+1. Read the issue title and body
+2. Check if the shipped diff includes changes that fix it (match file paths, keywords, commit messages)
+3. If resolved, close it with a comment referencing the commit:
+   ```bash
+   gh issue close <number> --comment "Shipped in <short hash>. <one-line summary of what fixed it>."
+   ```
+4. If not resolved, leave it open
+
+Report what was closed:
+```
+Issues closed: #4, #7, #8 (resolved by this ship)
+Issues still open: #12 (unrelated)
+```
+
+### Step 6: Confirm
 
 ```
 ━━━━━━━━━━━━━━━━━━
@@ -167,6 +191,7 @@ Shipped ✓
 
 Pushed to main: <short hash>
 Local runtime synced: ~/aos/ is up to date
+Issues closed: N resolved
 Next auto-update: 4am — all machines will receive this
 ```
 
