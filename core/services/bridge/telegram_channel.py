@@ -43,6 +43,141 @@ from intent_classifier import dispatch as classify_intent
 
 logger = logging.getLogger(__name__)
 
+# ── STEER dispatch ──────────────────────────────────────
+# Keywords that suggest a task needs GUI/desktop automation
+_STEER_KEYWORDS = [
+    "open ", "launch ", "use steer", "use computer",
+    "click ", "navigate to ", "find in obsidian",
+    "in obsidian", "in finder", "in mail", "in calendar",
+    "in safari", "in chrome", "in telegram app",
+    "on the desktop", "on my screen", "screenshot",
+    "graph view", "open the app", "switch to ",
+]
+
+def _is_steer_task(text: str) -> bool:
+    """Detect if a message requires GUI automation (STEER dispatch)."""
+    lower = text.lower().strip()
+    # Explicit trigger
+    if lower.startswith("/steer ") or lower.startswith("steer:"):
+        return True
+    # Keyword matching
+    return any(kw in lower for kw in _STEER_KEYWORDS)
+
+async def _dispatch_steer_and_report(chat, message, text: str, thread_id=None):
+    """Dispatch a STEER job via tmux and report results back to Telegram."""
+    try:
+        dispatch_script = Path.home() / "aos" / "core" / "steer" / "dispatch.py"
+        # Create and dispatch the job
+        result = subprocess.run(
+            ["python3", str(dispatch_script), "run", text],
+            capture_output=True, text=True, timeout=15,
+        )
+        if result.returncode != 0:
+            await message.reply_text(
+                f"❌ Failed to dispatch STEER job: {result.stderr[:200]}",
+                message_thread_id=thread_id,
+            )
+            return ""
+
+        job_data = json.loads(result.stdout)
+        job_id = job_data["job_id"]
+
+        # Acknowledge dispatch
+        send_kwargs = {}
+        if thread_id:
+            send_kwargs["message_thread_id"] = thread_id
+        status_msg = await chat.send_message(
+            f"🔄 Working on it...\n<code>job: {job_id}</code>",
+            parse_mode="HTML", **send_kwargs,
+        )
+
+        # Poll for completion (async, non-blocking)
+        poll_script = str(dispatch_script)
+        max_wait = 300  # 5 minutes
+        poll_interval = 5
+        elapsed = 0
+
+        while elapsed < max_wait:
+            await asyncio.sleep(poll_interval)
+            elapsed += poll_interval
+
+            poll_result = subprocess.run(
+                ["python3", poll_script, "poll", job_id],
+                capture_output=True, text=True, timeout=10,
+            )
+            if poll_result.returncode != 0:
+                continue
+
+            job_status = json.loads(poll_result.stdout)
+            status = job_status.get("status", "unknown")
+
+            if status == "completed":
+                summary = job_status.get("summary", "Task completed (no summary).")
+                apps = job_status.get("apps_opened", [])
+                updates = job_status.get("updates", [])
+
+                response_text = f"✅ <b>Done</b>\n\n{summary}"
+                if apps:
+                    response_text += f"\n\n<i>Apps used: {', '.join(apps)}</i>"
+
+                try:
+                    await status_msg.edit_text(response_text, parse_mode="HTML")
+                except Exception:
+                    await chat.send_message(response_text, parse_mode="HTML", **send_kwargs)
+
+                # Cleanup
+                subprocess.run(
+                    ["python3", poll_script, "cleanup", job_id],
+                    capture_output=True, text=True,
+                )
+                log_activity("telegram", "steer_job_completed", summary=summary[:100])
+                return summary
+
+            elif status == "failed":
+                error = job_status.get("error", "Unknown error")
+                try:
+                    await status_msg.edit_text(f"❌ <b>Failed</b>\n\n{error}", parse_mode="HTML")
+                except Exception:
+                    await chat.send_message(f"❌ Failed: {error}", **send_kwargs)
+
+                subprocess.run(
+                    ["python3", poll_script, "cleanup", job_id],
+                    capture_output=True, text=True,
+                )
+                log_activity("telegram", "steer_job_failed", summary=error[:100])
+                return f"Failed: {error}"
+
+            # Still running — update progress if there are new updates
+            updates = job_status.get("updates", [])
+            if updates and elapsed % 15 == 0:  # Update every 15s
+                latest = updates[-1] if updates else ""
+                try:
+                    await status_msg.edit_text(
+                        f"🔄 Working...\n<code>{latest[:100]}</code>",
+                        parse_mode="HTML",
+                    )
+                except Exception:
+                    pass
+
+        # Timeout
+        try:
+            await status_msg.edit_text(
+                f"⏰ Job timed out after {max_wait}s.\n<code>job: {job_id}</code>",
+                parse_mode="HTML",
+            )
+        except Exception:
+            pass
+        subprocess.run(["python3", poll_script, "cleanup", job_id], capture_output=True, text=True)
+        return "Job timed out"
+
+    except Exception as e:
+        logger.error(f"STEER dispatch error: {e}")
+        await message.reply_text(
+            f"❌ STEER dispatch error: {str(e)[:200]}",
+            message_thread_id=thread_id,
+        )
+        return f"Error: {e}"
+
 # In-flight message persistence — survives bridge restarts
 # Stored in runtime dir (~/.aos/), NOT in the git-tracked code tree
 _RUNTIME_DIR = Path.home() / ".aos" / "services" / "bridge"
@@ -696,13 +831,22 @@ class TelegramChannel:
                 message=update.message.text,
             )
 
-            logger.info(f"Claude dispatch: {user_key} → {'resume' if get_session_id(user_key) else 'new'}")
+            # ── STEER dispatch: detect GUI automation tasks ──
+            if _is_steer_task(text):
+                logger.info(f"STEER dispatch: {user_key} → {text[:60]}")
+                log_activity("telegram", "steer_dispatch", summary=text[:100])
+                response = await _dispatch_steer_and_report(
+                    update.message.chat, update.message, text,
+                    thread_id=thread_id,
+                )
+            else:
+                logger.info(f"Claude dispatch: {user_key} → {'resume' if get_session_id(user_key) else 'new'}")
 
-            response = await self._stream_response(
-                update.message.chat, update.message, text, user_key,
-                cwd=topic_cwd,
-                thread_id=thread_id,
-            )
+                response = await self._stream_response(
+                    update.message.chat, update.message, text, user_key,
+                    cwd=topic_cwd,
+                    thread_id=thread_id,
+                )
 
             _clear_inflight()
 
