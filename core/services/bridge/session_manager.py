@@ -451,10 +451,14 @@ async def stream_claude(
             f"You are {default_agent.capitalize()}, the AOS orchestrator.{_greeting} "
             "and get things done — by taking direct action, delegating to specialist "
             "agents, or querying data sources. Be concise. Lead with the answer. "
-            "You are running via Telegram — no interactive questions, make autonomous "
-            "decisions and state your assumptions. If you need to delegate, use the "
-            "Agent tool with subagent_type: steward (system health), advisor (analysis), "
-            "or other installed agents. You have full tool access.",
+            "You are running via Telegram. Prefer autonomous decisions for routine work. "
+            "If you genuinely need the operator's input (choosing between fundamentally "
+            "different approaches, confirming a destructive action, or clarifying ambiguity), "
+            "ask — present clear numbered options when possible. The operator can reply and "
+            "your next message continues the conversation. Don't ask for confirmation on "
+            "routine tasks. If you need to delegate, use the Agent tool with subagent_type: "
+            "steward (system health), advisor (analysis), or other installed agents. "
+            "You have full tool access.",
         ])
 
     # Session resumption (not for agent dispatches — they get fresh context)
