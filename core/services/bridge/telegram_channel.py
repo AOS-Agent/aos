@@ -403,9 +403,8 @@ class TelegramChannel:
                                thread_id: int = None) -> str:
         """Send message to Claude and stream response to Telegram.
 
-        Uses session_manager for Claude interaction and message_renderer
-        for Telegram delivery. Supports sendMessageDraft for DMs and
-        editMessageText for groups/topics.
+        Single-message flow: sends "Thinking..." with stop button immediately,
+        then edits it progressively with tool status and streaming text.
         """
         start = _time.time()
 
@@ -644,13 +643,12 @@ class TelegramChannel:
         topic_agent = topic_config.get("agent")
         text = update.message.text
 
-        # ── Quick command intercept (Bridge v2) ──────────────────────
-        # Pattern-matched intents bypass Claude entirely for <500ms response.
-        # Only in DM or general topics — project topics go to their agent.
+        # ── Quick command intercept ──────────────────────
         if not topic_agent:
             try:
                 quick_reply = classify_intent(text)
                 if quick_reply:
+                    logger.info(f"Quick command: {text[:60]}")
                     log_activity("telegram", "quick_command", summary=text[:100])
                     await update.message.reply_text(
                         quick_reply, parse_mode="HTML",
@@ -666,6 +664,7 @@ class TelegramChannel:
 
         # Acknowledge receipt immediately (before lock — user sees 👀 right away)
         await self._ack_message(update.message)
+        logger.info(f"Message: {text[:80]} [{user_key}]")
         log_activity("telegram", "message_received", summary=text[:100])
 
         # Per-conversation lock — only one Claude process at a time
@@ -681,7 +680,6 @@ class TelegramChannel:
                 pass
 
         async with lock:
-            # Persist in-flight message so it survives a bridge restart
             _save_inflight(
                 chat_id=update.message.chat_id,
                 text=text,
@@ -690,7 +688,6 @@ class TelegramChannel:
                 cwd=topic_cwd,
             )
 
-            # Log conversation start
             _conv_start = _time.monotonic()
             _topic_name = topic_agent or (f"topic:{thread_id}" if thread_id else "dm")
             _conv_id = log_conversation(
@@ -698,18 +695,18 @@ class TelegramChannel:
                 message=update.message.text,
             )
 
-            # Stream response (typing keepalive + live progress + formatted delivery)
+            logger.info(f"Claude dispatch: {user_key} → {'resume' if get_session_id(user_key) else 'new'}")
+
             response = await self._stream_response(
                 update.message.chat, update.message, text, user_key,
                 cwd=topic_cwd,
                 thread_id=thread_id,
             )
 
-            # Clear in-flight marker — response delivered successfully
             _clear_inflight()
 
-            # Log conversation completion
             _conv_duration = int((_time.monotonic() - _conv_start) * 1000)
+            logger.info(f"Response: {_conv_duration}ms, {len(response)} chars [{user_key}]")
             update_conversation(_conv_id, response=response[:10000], duration_ms=_conv_duration)
             log_activity("telegram", "response_sent", summary=response[:100])
 

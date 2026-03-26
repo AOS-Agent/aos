@@ -28,7 +28,7 @@ logger = logging.getLogger("bridge.renderer")
 # Telegram limits
 MAX_MESSAGE_LENGTH = 4096
 EDIT_THROTTLE_SECONDS = 1.5  # min time between editMessageText calls
-DRAFT_THROTTLE_SECONDS = 0.3  # min time between sendMessageDraft calls
+
 MIN_CHARS_TO_SHOW = 30  # wait for this much text before first send
 
 
@@ -227,19 +227,16 @@ async def render_stream(
     html = _safe_html(accumulated_text)
     chunks = _split_message(html)
 
-    if is_dm:
+    if msg_id and chunks:
+        # Final edit: remove stop button, deliver complete response
+        _no_markup = InlineKeyboardMarkup([])
+        await _edit_safe(bot, chat_id, msg_id, chunks[0],
+                         reply_markup=_no_markup)
+        # Additional chunks as new messages (response > 4096 chars)
+        for chunk in chunks[1:]:
+            await _send_safe(bot, chat_id, chunk, **send_kwargs)
+    elif chunks:
         for chunk in chunks:
             await _send_safe(bot, chat_id, chunk, **send_kwargs)
-    else:
-        if msg_id and chunks:
-            # Final edit: remove stop button
-            _no_markup = InlineKeyboardMarkup([])
-            await _edit_safe(bot, chat_id, msg_id, chunks[0],
-                             reply_markup=_no_markup)
-            for chunk in chunks[1:]:
-                await _send_safe(bot, chat_id, chunk, **send_kwargs)
-        elif chunks:
-            for chunk in chunks:
-                await _send_safe(bot, chat_id, chunk, **send_kwargs)
 
     return accumulated_text, session_result
