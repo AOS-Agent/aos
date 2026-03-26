@@ -493,11 +493,8 @@ function escapeHtml(text) {
     return d.innerHTML;
 }
 
-// SSE — live updates
-const sse = new EventSource('/api/stream');
-
-sse.addEventListener('work', (e) => {
-    const ev = JSON.parse(e.data);
+// Live updates via shared AOS dispatcher (no page reloads)
+AOS.on('work', (ev) => {
     const feed = document.getElementById('activity-feed');
     if (!feed) return;
 
@@ -542,8 +539,7 @@ sse.addEventListener('work', (e) => {
     lucide.createIcons();
 });
 
-sse.addEventListener('activity', (e) => {
-    const item = JSON.parse(e.data);
+AOS.on('activity', (item) => {
     if (item.agent === 'ops' && item.action === 'heartbeat') return;
     const feed = document.getElementById('activity-feed');
     if (!feed || feed.querySelector(`[data-id="${item.id}"]`)) return;
@@ -578,16 +574,14 @@ sse.addEventListener('activity', (e) => {
     lucide.createIcons();
 });
 
-sse.addEventListener('health', (e) => {
-    const h = JSON.parse(e.data);
+AOS.on('health', (h) => {
     const d = document.querySelector('#stat-disk-value');
     const r = document.querySelector('#stat-ram-value');
     if (d) { d.textContent = 'Disk ' + h.disk_pct + '%'; d.style.color = h.disk_pct > 85 ? '#D44C47' : ''; }
     if (r) { r.textContent = 'RAM ' + h.ram_pct + '%'; }
 });
 
-sse.addEventListener('services', (e) => {
-    const svcs = JSON.parse(e.data);
+AOS.on('services', (svcs) => {
     const on = Object.values(svcs).filter(s=>s.status==='online').length;
     const dot = document.querySelector('#health-dot');
     const txt = document.querySelector('#health-text');
@@ -596,7 +590,4 @@ sse.addEventListener('services', (e) => {
         else { const off = Object.entries(svcs).filter(([,s])=>s.status!=='online').map(([n])=>n[0].toUpperCase()+n.slice(1)); dot.style.background='#D44C47'; txt.textContent=off.join(', ')+' offline'; }
     }
 });
-
-// Auto-refresh every 2 minutes
-setTimeout(() => location.reload(), 120000);
 {% endblock %}

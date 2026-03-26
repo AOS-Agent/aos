@@ -194,7 +194,23 @@
                 var res = await fetch('/api/agents', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) });
                 var data = await res.json();
                 if (data.error) { status.textContent = data.error; status.className = 'form-status error'; }
-                else { status.textContent = 'Agent "' + data.name + '" created.'; status.className = 'form-status success'; setTimeout(function() { location.reload(); }, 1000); }
+                else {
+                    status.textContent = 'Agent "' + data.name + '" created.'; status.className = 'form-status success';
+                    // Append new agent card to the grid
+                    var color = data.color || '#777';
+                    var initial = (data.name || '?')[0].toUpperCase();
+                    var scope = data.scope || 'global';
+                    var cardHtml = '<div class="card agent-card" onclick="showDetail(\'' + data.name + '\')">' +
+                        '<div class="agent-top"><div class="agent-avatar" style="background:' + color + ';">' + initial + '</div>' +
+                        '<div class="agent-name">' + data.name + '</div></div>' +
+                        '<div class="agent-role">' + (data.role || '') + '</div>' +
+                        '<div class="agent-meta"><span class="tag tag-gray">L0</span>' +
+                        '<span class="tag tag-' + (scope === 'global' ? 'blue' : 'green') + '">' + scope + '</span>' +
+                        '<span class="agent-stat">' + (data.model || 'sonnet') + '</span></div></div>';
+                    var grid = document.querySelector('.agents-grid');
+                    if (grid) { var t = document.createElement('template'); t.innerHTML = cardHtml.trim(); grid.appendChild(t.content.firstChild); lucide.createIcons(); }
+                    toggleCreate();
+                }
             } catch (e) { status.textContent = 'Network error.'; status.className = 'form-status error'; }
         }
 

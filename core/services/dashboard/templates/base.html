@@ -103,7 +103,6 @@
             document.body.classList.toggle('sidebar-collapsed');
             const collapsed = document.body.classList.contains('sidebar-collapsed');
             localStorage.setItem('aos-sidebar-collapsed', collapsed ? '1' : '');
-            // Flip the chevron icon
             const btn = document.getElementById('collapse-btn');
             if (btn) {
                 const icon = btn.querySelector('i');
@@ -118,6 +117,59 @@
             const icon = document.querySelector('#collapse-btn i');
             if (icon) icon.setAttribute('data-lucide', 'chevrons-right');
         }
+
+        // ── AOS Live Dispatcher ──────────────────────────────
+        // Shared SSE connection with reconnect + event dispatch.
+        // Pages register handlers: AOS.on('work', data => { ... })
+        window.AOS = (function() {
+            const handlers = {};
+            let sse = null;
+            let retryDelay = 1000;
+            const maxRetry = 30000;
+            const dot = document.getElementById('status-dot');
+            const txt = document.getElementById('status-text');
+
+            function setStatus(connected) {
+                if (dot) dot.style.background = connected ? '#448361' : '#D44C47';
+                if (txt) txt.textContent = connected ? 'Connected' : 'Reconnecting…';
+            }
+
+            function connect() {
+                if (sse) { try { sse.close(); } catch(e) {} }
+                sse = new EventSource('/api/stream');
+
+                sse.onopen = () => { retryDelay = 1000; setStatus(true); };
+                sse.onerror = () => {
+                    setStatus(false);
+                    sse.close();
+                    setTimeout(connect, retryDelay);
+                    retryDelay = Math.min(retryDelay * 2, maxRetry);
+                };
+
+                // Route all named events to registered handlers
+                ['work', 'activity', 'health', 'services'].forEach(evt => {
+                    sse.addEventListener(evt, (e) => {
+                        try {
+                            const data = JSON.parse(e.data);
+                            (handlers[evt] || []).forEach(fn => fn(data));
+                        } catch(err) { console.warn('AOS SSE parse error:', evt, err); }
+                    });
+                });
+            }
+
+            connect();
+
+            return {
+                on(event, fn) {
+                    if (!handlers[event]) handlers[event] = [];
+                    handlers[event].push(fn);
+                },
+                off(event, fn) {
+                    if (!handlers[event]) return;
+                    handlers[event] = handlers[event].filter(f => f !== fn);
+                }
+            };
+        })();
 
         {% block scripts %}{% endblock %}
     </script>

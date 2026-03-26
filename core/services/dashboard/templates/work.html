@@ -757,15 +757,35 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
-// ── Task CRUD ───────────────────────────────────
+// ── Task CRUD (no page reloads) ──────────────────
 async function toggleTask(id, currentStatus) {
     const newStatus = currentStatus === 'done' ? 'todo' : currentStatus === 'active' ? 'done' : 'active';
+
+    // Optimistic UI: update checkbox immediately
+    document.querySelectorAll(`[data-id="${id}"]`).forEach(el => {
+        const check = el.querySelector('.task-check');
+        if (check) { check.className = 'task-check ' + newStatus; check.setAttribute('onclick', `toggleTask('${id}','${newStatus}')`); }
+        if (newStatus === 'done') {
+            el.classList.add('done');
+            const title = el.querySelector('.task-title');
+            if (title) title.style.cssText = 'color:var(--text-faint);text-decoration:line-through;';
+            if (!showDone && el.classList.contains('hidden-done')) el.style.display = 'none';
+        } else {
+            el.classList.remove('done');
+            const title = el.querySelector('.task-title');
+            if (title) title.style.cssText = '';
+            el.style.display = '';
+        }
+        el.dataset.status = newStatus;
+    });
+
     await fetch('/api/tasks/' + encodeURIComponent(id), {
         method: 'PATCH',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({status: newStatus})
     });
-    location.reload();
+    // SSE will broadcast to other tabs; refresh stats locally
+    refreshSummary();
 }
 
 function showAddTask() {
@@ -783,17 +803,45 @@ async function submitTask() {
     if (!title) return;
     const priority = parseInt(document.getElementById('add-task-priority').value);
     const project = document.getElementById('add-task-project').value || undefined;
-    await fetch('/api/tasks', {
+    const res = await fetch('/api/tasks', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({title, priority, project})
     });
-    location.reload();
+    const task = await res.json();
+    if (task && task.id) {
+        // Append new task to list view
+        const priClass = 'p' + (task.priority || 3);
+        const html = `<li class="task-item" data-id="${task.id}" data-status="todo">
+            <div class="task-priority ${priClass}"></div>
+            <div class="task-check todo" onclick="toggleTask('${escapeHtml(task.id)}','todo')"></div>
+            <span class="task-title">${escapeHtml(task.title)}</span>
+            <span class="task-id">${escapeHtml(task.id)}</span>
+        </li>`;
+        // Add to the matching project section, or unassigned
+        const projectId = task.project || '';
+        const section = projectId
+            ? document.querySelector(`.project-section[data-project="${projectId}"] .task-list`)
+            : document.querySelector('.project-section:last-of-type .task-list');
+        if (section) {
+            const t = document.createElement('template');
+            t.innerHTML = html.trim();
+            section.appendChild(t.content.firstChild);
+            lucide.createIcons();
+        }
+        hideAddTask();
+        refreshSummary();
+    }
 }
 
 async function deleteInbox(id) {
     await fetch('/api/inbox/' + id, {method: 'DELETE'});
-    location.reload();
+    // Remove from DOM
+    const btn = document.querySelector(`[onclick="deleteInbox('${id}')"]`);
+    if (btn) {
+        const item = btn.closest('.inbox-item');
+        if (item) item.remove();
+    }
 }
 
 function showAddProject() {
@@ -803,11 +851,53 @@ function showAddProject() {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({title})
-    }).then(() => location.reload());
+    }).then(r => r.json()).then(p => {
+        // Append to project list in right panel
+        const panel = document.querySelector('.panel:last-child');
+        if (panel) {
+            const row = document.createElement('div');
+            row.className = 'stat-row';
+            row.innerHTML = `<span class="stat-label">${escapeHtml(p.title || title)}</span><span class="stat-val" style="font-size:12px;">0</span>`;
+            panel.appendChild(row);
+        }
+    });
 }
 
 // Hide done on initial load
 document.querySelectorAll('.hidden-done').forEach(el => { el.style.display = 'none'; });
+
+// ── Summary stats refresh ────────────────────────
+async function refreshSummary() {
+    try {
+        const res = await fetch('/api/work');
+        const data = await res.json();
+        if (data.error) return;
+        const s = data.summary || {};
+        const statVals = document.querySelectorAll('.panel .stat-val');
+        // Update summary panel (Active, Todo, Done, Total)
+        const rows = document.querySelectorAll('.panel .stat-row');
+        rows.forEach(row => {
+            const label = row.querySelector('.stat-label');
+            const val = row.querySelector('.stat-val');
+            if (!label || !val) return;
+            const key = label.textContent.trim().toLowerCase();
+            if (key === 'active') val.textContent = s.active || 0;
+            else if (key === 'todo') val.textContent = s.todo || 0;
+            else if (key === 'done') val.textContent = s.done || 0;
+            else if (key === 'total') val.textContent = s.total || 0;
+            else if (key === 'with handoffs') val.textContent = s.with_handoffs || 0;
+        });
+        // Update project progress counts
+        (data.projects || []).forEach(p => {
+            const sec = document.querySelector(`.project-section[data-project="${p.id}"]`);
+            if (!sec) return;
+            const cnt = sec.querySelector('.project-count');
+            const fill = sec.querySelector('.project-progress-fill');
+            if (cnt && p.progress) cnt.textContent = `${p.progress.done}/${p.progress.total}`;
+            if (fill && p.progress) fill.style.width = p.progress.pct + '%';
+        });
+    } catch(e) { /* silent */ }
+}
 
 // ── Load unanswered messages ─────────────────────
 async function loadMessages() {
@@ -836,13 +926,11 @@ async function loadMessages() {
 }
 loadMessages();
 
-// SSE — auto-reload on work events (from CLI or other tabs)
-const sse = new EventSource('/api/stream');
-let reloadTimer = null;
-sse.addEventListener('work', () => {
-    // Debounce: wait 500ms after last event before reloading
-    // (batch rapid CLI operations into one reload)
-    clearTimeout(reloadTimer);
-    reloadTimer = setTimeout(() => location.reload(), 500);
+// ── SSE: live updates via shared dispatcher ──────
+let refreshTimer = null;
+AOS.on('work', (ev) => {
+    // Debounce rapid events into one refresh
+    clearTimeout(refreshTimer);
+    refreshTimer = setTimeout(refreshSummary, 500);
 });
 {% endblock %}
