@@ -22,7 +22,7 @@ from telegram.ext import (
     filters,
 )
 
-from session_manager import stream_claude, clear_session, SessionResult, get_session_id
+from session_manager import stream_claude, clear_session, cancel_stream, SessionResult, get_session_id
 from message_renderer import render_stream
 from interactive_buttons import (
     detect_options,
@@ -1005,6 +1005,16 @@ class TelegramChannel:
         chat_id = query.message.chat_id
         if not self._is_authorized(chat_id):
             await query.answer("Unauthorized")
+            return
+
+        # ── Stop button — kill the active Claude process ──
+        if query.data == "stop_generation":
+            thread_id = getattr(query.message, 'message_thread_id', None)
+            user_key = f"telegram:{chat_id}:topic:{thread_id}" if thread_id else f"telegram:{chat_id}"
+            cancelled = cancel_stream(user_key)
+            await query.answer("Stopping..." if cancelled else "Nothing running")
+            # Don't edit the message here — the renderer will handle final delivery
+            # when the process dies and the generator ends.
             return
 
         await query.answer()  # dismiss the loading spinner

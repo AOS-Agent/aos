@@ -21,6 +21,26 @@ WORKSPACE = Path.home() / "aos"
 SESSIONS_FILE = WORKSPACE / "data" / "bridge" / "sessions.json"
 AGENTS_DIR = WORKSPACE / ".claude" / "agents"
 
+# ── Active process registry — enables stop button ────────────
+# Maps user_key → asyncio.subprocess.Process for in-flight Claude calls.
+# cancel_stream() sends SIGTERM; the generator handles cleanup naturally.
+_active_processes: dict[str, asyncio.subprocess.Process] = {}
+
+
+def cancel_stream(user_key: str) -> bool:
+    """Cancel an in-flight Claude stream by sending SIGTERM.
+
+    Returns True if a process was found and terminated.
+    The session is preserved — next message can --resume.
+    """
+    proc = _active_processes.get(user_key)
+    if proc and proc.returncode is None:
+        logger.info(f"Cancelling stream for {user_key} (pid={proc.pid})")
+        proc.terminate()
+        bridge_event("stream_cancelled", user_key=user_key)
+        return True
+    return False
+
 
 def _get_default_agent() -> str:
     """Read operator's configured agent name (default: chief)."""
@@ -477,6 +497,9 @@ async def stream_claude(
             )
             return
 
+        # Register process so stop button can kill it
+        _active_processes[user_key] = proc
+
         new_session_id = None
         is_stale_session = False
 
@@ -514,8 +537,9 @@ async def stream_claude(
                 num_turns=0,
             )
 
-        # Wait for process to finish
+        # Wait for process to finish and unregister
         await proc.wait()
+        _active_processes.pop(user_key, None)
 
         # Handle stale session: retry without --resume
         if is_stale_session and session_id:
