@@ -80,6 +80,12 @@ jobs:
     at: "08:00"
     timeout: 60
 
+  contact-sync:
+    command: python3 ~/aos/core/comms/sync_contacts.py
+    at: "05:30"
+    timeout: 120
+    # Incremental sync from macOS Contacts → People DB. Runs before morning briefing.
+
   stale-initiatives:
     command: python3 ~/aos/core/bin/stale-initiatives
     at: "09:00"
@@ -127,5 +133,5 @@ jobs:
   # meeting-prep:     needs calendar integration
   # monthly-review:   needs 4+ weekly digests
   # channel-update:   v1 script, needs v2 rewrite
-  # phoenix-weekly:   v1 script, needs v2 rewrite
+
   # friction-rules:   needs bridge approval workflow
