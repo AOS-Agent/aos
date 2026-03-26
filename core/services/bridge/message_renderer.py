@@ -22,6 +22,7 @@ from session_manager import (
 )
 from telegram_formatter import md_to_telegram_html
 from bridge_events import bridge_event
+from longform_handler import is_longform, publish_longform
 
 logger = logging.getLogger("bridge.renderer")
 
@@ -126,12 +127,16 @@ async def render_stream(
     is_dm: bool = False,
     is_resumed: bool = False,
     initial_msg_id: int | None = None,
+    user_query: str | None = None,
 ) -> tuple[str, SessionResult | None]:
     """Render a stream of Claude events to Telegram.
 
     Single-message flow: the initial_msg_id ("Thinking..." + Stop button) gets
     progressively edited — tool status → streaming text → final response.
     One message throughout, no ghost notifications.
+
+    Long responses (>6000 chars) are saved to vault + published to Telegraph,
+    with a summary + link sent inline instead of chunked messages.
 
     Returns (final_text, session_result).
     """
@@ -224,19 +229,73 @@ async def render_stream(
     if not accumulated_text:
         accumulated_text = "(empty response)"
 
-    html = _safe_html(accumulated_text)
-    chunks = _split_message(html)
+    _no_markup = InlineKeyboardMarkup([])
 
-    if msg_id and chunks:
-        # Final edit: remove stop button, deliver complete response
-        _no_markup = InlineKeyboardMarkup([])
-        await _edit_safe(bot, chat_id, msg_id, chunks[0],
-                         reply_markup=_no_markup)
-        # Additional chunks as new messages (response > 4096 chars)
-        for chunk in chunks[1:]:
-            await _send_safe(bot, chat_id, chunk, **send_kwargs)
-    elif chunks:
-        for chunk in chunks:
-            await _send_safe(bot, chat_id, chunk, **send_kwargs)
+    # Long response → save to vault + Telegraph, send summary + link
+    if is_longform(accumulated_text):
+        try:
+            metadata = {"user_query": user_query}
+            if session_result and session_result.session_id:
+                metadata["session_id"] = session_result.session_id
+
+            result_info = publish_longform(
+                markdown=accumulated_text,
+                metadata=metadata,
+            )
+
+            # Build summary message with link
+            summary_html = _safe_html(result_info["summary"])
+            parts = [summary_html]
+
+            if result_info["telegraph_url"]:
+                parts.append(
+                    f'\n\n📖 <a href="{result_info["telegraph_url"]}">Read full response</a>'
+                )
+
+            vault_rel = str(result_info["vault_path"]).replace(
+                str(result_info["vault_path"].home()) + "/", "~/")
+            parts.append(f'\n💾 <i>Saved to {vault_rel}</i>')
+
+            final_html = "".join(parts)
+
+            if msg_id:
+                await _edit_safe(bot, chat_id, msg_id, final_html,
+                                 reply_markup=_no_markup)
+            else:
+                await _send_safe(bot, chat_id, final_html, **send_kwargs)
+
+            bridge_event("longform_published",
+                         chars=len(accumulated_text),
+                         telegraph=bool(result_info["telegraph_url"]),
+                         vault=str(result_info["vault_path"]))
+            logger.info(f"Longform response ({len(accumulated_text)} chars) → "
+                        f"vault + telegraph")
+
+        except Exception as e:
+            # Fallback: if longform publish fails, deliver normally
+            logger.error(f"Longform publish failed, falling back to chunks: {e}")
+            html = _safe_html(accumulated_text)
+            chunks = _split_message(html)
+            if msg_id and chunks:
+                await _edit_safe(bot, chat_id, msg_id, chunks[0],
+                                 reply_markup=_no_markup)
+                for chunk in chunks[1:]:
+                    await _send_safe(bot, chat_id, chunk, **send_kwargs)
+            elif chunks:
+                for chunk in chunks:
+                    await _send_safe(bot, chat_id, chunk, **send_kwargs)
+    else:
+        # Normal short response — inline delivery
+        html = _safe_html(accumulated_text)
+        chunks = _split_message(html)
+
+        if msg_id and chunks:
+            await _edit_safe(bot, chat_id, msg_id, chunks[0],
+                             reply_markup=_no_markup)
+            for chunk in chunks[1:]:
+                await _send_safe(bot, chat_id, chunk, **send_kwargs)
+        elif chunks:
+            for chunk in chunks:
+                await _send_safe(bot, chat_id, chunk, **send_kwargs)
 
     return accumulated_text, session_result

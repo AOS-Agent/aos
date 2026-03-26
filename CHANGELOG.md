@@ -2,6 +2,31 @@
 
 All notable changes to AOS. Release notes sent via Telegram after each 4am update.
 
+## v0.5.1 — 2026-03-26
+
+Trust Graduation — the system learns your communication patterns and graduates from observing to assisting.
+
+- Added retroactive extraction pipeline — mines iMessage + WhatsApp history through existing adapters (18,000+ messages → 1,900 interactions in one pass)
+- Added WhatsApp local adapter — reads ChatStorage.sqlite directly for 6 years of history (vs 5 days from the bridge)
+- Added communication patterns: per-person response baselines, preferred hours, message style ratios
+- Added auto-classification of importance tiers from interaction data (inner circle / active / acquaintance / peripheral)
+- Added transactional contact filtering — detects delivery services, shops, one-time contacts
+- Added graduation engine — evaluates trust per-person, queues promotions for approval, applies demotions instantly
+- Added draft engine — assembles conversation context + person profile + style samples, generates reply drafts via Claude Code CLI
+- Added draft feedback loop — accept/edit/discard via Telegram, every action feeds graduation
+- Added style learning — operator edits to drafts are saved and fed back into future draft prompts
+- Added autonomous layer — Level 3 handles routine messages (confirmations, scheduling, greetings) with hard guardrails and confidence gate
+- Added circuit breaker — 2 corrections out of 5 autonomous actions triggers instant demotion
+- Added daily extraction lifecycle hook — auto-detects channels, runs on fresh install + new channel + daily
+- Added cron chain: extract (05:00) → patterns (05:30) → graduation (06:00)
+- Added dashboard trust page at /trust — trust map, graduation timeline, pending proposals
+- Added 5 trust API endpoints on the dashboard
+- Added Telegram /trust commands — check status, override levels
+- Added contact resolver: 340 aliases, 10 relationships, 308 auto-generated last-name aliases
+- Added TelegramAdapter for comms bus — bridge writes to JSONL queue, adapter reads during poll
+- Changed Comms Intelligence from executing to review — all 6 phases complete
+- Changed Contact Resolution to archived — consolidated into Comms Intelligence Phase 1
+
 ## v0.4.0 — 2026-03-24
 
 Initiative pipeline, Bridge v2 mobile command center, Google Workspace integration.

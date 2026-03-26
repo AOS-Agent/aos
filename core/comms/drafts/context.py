@@ -147,9 +147,9 @@ def assemble_context(
 
     # ── Relationship ─────────────────────────────────────
     try:
-        # Find Hisham's person_id (the operator)
+        # Find the operator's person_id (importance = 5 = self)
         operator = conn.execute(
-            "SELECT id FROM people WHERE nickname = 'Your Highness' LIMIT 1"
+            "SELECT id FROM people WHERE importance = 5 LIMIT 1"
         ).fetchone()
         if operator:
             rel = conn.execute(
