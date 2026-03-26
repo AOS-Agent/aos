@@ -1,847 +1,204 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AOS — System Status</title>
-    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
-    <style>
-        :root {
-            --bg: #0f1117;
-            --surface: #1a1d27;
-            --surface-alt: #222633;
-            --text: #e8e9ed;
-            --text-secondary: rgba(232,233,237,0.65);
-            --text-tertiary: rgba(232,233,237,0.4);
-            --text-faint: rgba(232,233,237,0.25);
-            --accent: #e8723a;
-            --accent-dim: rgba(232,114,58,0.15);
-            --border: #2a2d3a;
-            --border-light: rgba(232,233,237,0.08);
-            --green: #3dd68c;
-            --green-dim: rgba(61,214,140,0.12);
-            --red: #f04848;
-            --red-dim: rgba(240,72,72,0.12);
-            --yellow: #e8b339;
-            --yellow-dim: rgba(232,179,57,0.12);
-            --blue: #5b9ff0;
-            --blue-dim: rgba(91,159,240,0.12);
-            --radius: 6px;
-            --font: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
-            --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-        }
-
-        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-        body {
-            background: var(--bg);
-            color: var(--text);
-            font-family: var(--font);
-            font-size: 14px;
-            line-height: 1.5;
-            min-height: 100vh;
-            -webkit-font-smoothing: antialiased;
-        }
-
-        /* Top bar */
-        .topbar {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 12px 24px;
-            background: var(--surface);
-            border-bottom: 1px solid var(--border);
-            position: sticky;
-            top: 0;
-            z-index: 100;
-        }
-
-        .topbar-left {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-        }
-
-        .topbar-logo {
-            width: 24px; height: 24px;
-            background: var(--accent);
-            border-radius: 4px;
-            display: flex; align-items: center; justify-content: center;
-            font-weight: 700; font-size: 13px; color: #fff;
-        }
-
-        .topbar-title {
-            font-size: 15px;
-            font-weight: 600;
-            color: var(--text);
-        }
-
-        .topbar-subtitle {
-            font-size: 12px;
-            color: var(--text-tertiary);
-            font-family: var(--font-mono);
-        }
-
-        .topbar-right {
-            display: flex;
-            align-items: center;
-            gap: 16px;
-        }
-
-        .topbar-link {
-            color: var(--text-tertiary);
-            text-decoration: none;
-            font-size: 13px;
-            font-weight: 500;
-            transition: color 0.15s;
-        }
-
-        .topbar-link:hover { color: var(--text); }
-
-        .pulse-dot {
-            width: 8px; height: 8px;
-            border-radius: 50%;
-            background: var(--green);
-            animation: pulse 2s infinite;
-        }
-
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.4; }
-        }
-
-        .refresh-label {
-            font-size: 11px;
-            color: var(--text-faint);
-            font-family: var(--font-mono);
-        }
-
-        /* Main grid */
-        .status-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 16px;
-            padding: 20px 24px;
-            max-width: 1400px;
-            margin: 0 auto;
-        }
-
-        .status-grid > .full-width {
-            grid-column: 1 / -1;
-        }
-
-        /* Cards */
-        .card {
-            background: var(--surface);
-            border: 1px solid var(--border);
-            border-radius: var(--radius);
-            padding: 16px 20px;
-        }
-
-        .card-header {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            margin-bottom: 14px;
-        }
-
-        .card-title {
-            font-size: 11px;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.8px;
-            color: var(--text-tertiary);
-        }
-
-        .card-badge {
-            font-size: 11px;
-            font-family: var(--font-mono);
-            padding: 2px 8px;
-            border-radius: 3px;
-        }
-
-        /* Service row */
-        .service-row {
-            display: flex;
-            gap: 12px;
-            flex-wrap: wrap;
-        }
-
-        .service-item {
-            flex: 1;
-            min-width: 140px;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            padding: 10px 14px;
-            background: var(--surface-alt);
-            border-radius: var(--radius);
-            border: 1px solid var(--border-light);
-        }
-
-        .service-dot {
-            width: 10px; height: 10px;
-            border-radius: 50%;
-            flex-shrink: 0;
-        }
-
-        .service-dot.running { background: var(--green); box-shadow: 0 0 6px var(--green); }
-        .service-dot.down { background: var(--red); box-shadow: 0 0 6px var(--red); }
-
-        .service-name {
-            font-weight: 600;
-            font-size: 13px;
-            color: var(--text);
-        }
-
-        .service-detail {
-            font-size: 11px;
-            color: var(--text-tertiary);
-            font-family: var(--font-mono);
-        }
-
-        /* Stat grid */
-        .stat-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
-            gap: 12px;
-        }
-
-        .stat-block {
-            text-align: center;
-            padding: 10px;
-            background: var(--surface-alt);
-            border-radius: var(--radius);
-            border: 1px solid var(--border-light);
-        }
-
-        .stat-value {
-            font-family: var(--font-mono);
-            font-size: 26px;
-            font-weight: 700;
-            color: var(--text);
-            line-height: 1.2;
-        }
-
-        .stat-value.accent { color: var(--accent); }
-
-        .stat-label {
-            font-size: 11px;
-            color: var(--text-tertiary);
-            text-transform: uppercase;
-            letter-spacing: 0.3px;
-            margin-top: 2px;
-        }
-
-        /* Watcher row */
-        .watcher-row {
-            display: flex;
-            gap: 10px;
-            flex-wrap: wrap;
-            margin-bottom: 12px;
-        }
-
-        .watcher-item {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            padding: 5px 10px;
-            background: var(--surface-alt);
-            border-radius: var(--radius);
-            font-size: 12px;
-            border: 1px solid var(--border-light);
-        }
-
-        .watcher-dot {
-            width: 6px; height: 6px;
-            border-radius: 50%;
-        }
-
-        .watcher-dot.on { background: var(--green); }
-        .watcher-dot.off { background: var(--red); }
-
-        /* Unanswered messages */
-        .unanswered-list {
-            list-style: none;
-        }
-
-        .unanswered-item {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 8px 0;
-            border-bottom: 1px solid var(--border-light);
-            font-size: 13px;
-        }
-
-        .unanswered-item:last-child { border-bottom: none; }
-
-        .unanswered-name {
-            font-weight: 500;
-            color: var(--text);
-        }
-
-        .unanswered-channel {
-            font-family: var(--font-mono);
-            font-size: 11px;
-            color: var(--text-tertiary);
-            background: var(--surface-alt);
-            padding: 1px 6px;
-            border-radius: 3px;
-        }
-
-        .unanswered-time {
-            font-family: var(--font-mono);
-            font-size: 11px;
-            color: var(--text-faint);
-        }
-
-        /* Event feed */
-        .event-feed {
-            max-height: 400px;
-            overflow-y: auto;
-            scrollbar-width: thin;
-            scrollbar-color: var(--border) transparent;
-        }
-
-        .event-feed::-webkit-scrollbar { width: 4px; }
-        .event-feed::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
-
-        .event-item {
-            display: flex;
-            align-items: flex-start;
-            gap: 10px;
-            padding: 7px 0;
-            border-bottom: 1px solid var(--border-light);
-            animation: fadeIn 0.2s ease;
-        }
-
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
-
-        .event-item:last-child { border-bottom: none; }
-
-        .event-type {
-            font-family: var(--font-mono);
-            font-size: 11px;
-            padding: 2px 6px;
-            border-radius: 3px;
-            white-space: nowrap;
-            flex-shrink: 0;
-        }
-
-        .event-type.message { background: var(--blue-dim); color: var(--blue); }
-        .event-type.comms { background: var(--accent-dim); color: var(--accent); }
-        .event-type.system { background: rgba(232,233,237,0.06); color: var(--text-tertiary); }
-
-        .event-content {
-            flex: 1;
-            min-width: 0;
-        }
-
-        .event-sender {
-            font-weight: 500;
-            font-size: 13px;
-            color: var(--text);
-        }
-
-        .event-summary {
-            font-size: 12px;
-            color: var(--text-tertiary);
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
-
-        .event-time {
-            font-family: var(--font-mono);
-            font-size: 11px;
-            color: var(--text-faint);
-            flex-shrink: 0;
-            white-space: nowrap;
-        }
-
-        /* Trust level */
-        .trust-display {
-            display: flex;
-            align-items: center;
-            gap: 16px;
-        }
-
-        .trust-level-bar {
-            display: flex;
-            gap: 4px;
-            flex: 1;
-        }
-
-        .trust-segment {
-            flex: 1;
-            height: 6px;
-            border-radius: 3px;
-            background: var(--border);
-            transition: background 0.3s;
-        }
-
-        .trust-segment.active-0 { background: var(--text-tertiary); }
-        .trust-segment.active-1 { background: var(--yellow); }
-        .trust-segment.active-2 { background: var(--blue); }
-        .trust-segment.active-3 { background: var(--green); }
-
-        .trust-label {
-            font-family: var(--font-mono);
-            font-size: 14px;
-            font-weight: 600;
-            white-space: nowrap;
-        }
-
-        /* Work items */
-        .work-stats {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 10px;
-        }
-
-        .work-stat {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            padding: 8px 12px;
-            background: var(--surface-alt);
-            border-radius: var(--radius);
-            border: 1px solid var(--border-light);
-        }
-
-        .work-stat-icon {
-            width: 32px; height: 32px;
-            border-radius: var(--radius);
-            display: flex; align-items: center; justify-content: center;
-            flex-shrink: 0;
-        }
-
-        .work-stat-icon i { width: 16px; height: 16px; }
-
-        .work-stat-value {
-            font-family: var(--font-mono);
-            font-size: 20px;
-            font-weight: 700;
-            line-height: 1.2;
-        }
-
-        .work-stat-label {
-            font-size: 11px;
-            color: var(--text-tertiary);
-        }
-
-        /* Empty state */
-        .empty-state {
-            text-align: center;
-            padding: 24px;
-            color: var(--text-faint);
-            font-size: 13px;
-        }
-
-        /* Responsive */
-        @media (max-width: 768px) {
-            .status-grid {
-                grid-template-columns: 1fr;
-                padding: 12px;
-                gap: 12px;
-            }
-
-            .service-row {
-                flex-direction: column;
-            }
-
-            .service-item { min-width: 0; }
-
-            .work-stats { grid-template-columns: 1fr; }
-
-            .topbar { padding: 10px 16px; }
-        }
-    </style>
-</head>
-<body>
-    <!-- Top Bar -->
-    <div class="topbar">
-        <div class="topbar-left">
-            <a href="/" class="topbar-logo" style="text-decoration:none;">A</a>
-            <div>
-                <div class="topbar-title">System Status</div>
-                <div class="topbar-subtitle" id="last-updated">Loading...</div>
-            </div>
-        </div>
-        <div class="topbar-right">
-            <a href="/" class="topbar-link">Dashboard</a>
-            <a href="/work" class="topbar-link">Work</a>
-            <a href="/logs" class="topbar-link">Logs</a>
-            <div class="pulse-dot" id="pulse-dot" title="Auto-refreshing"></div>
-            <span class="refresh-label" id="refresh-countdown">5s</span>
-        </div>
+{% extends "base.html" %}
+
+{% block title %}System Status{% endblock %}
+{% block page_name %}System{% endblock %}
+
+{% block styles %}
+/* ── Status Grid ──────────────────────────── */
+.status-grid { display: grid; gap: 12px; margin-bottom: 16px; }
+.status-row-4 { grid-template-columns: repeat(4, 1fr); }
+.status-row-2 { grid-template-columns: 1fr 1fr; }
+
+@media (max-width: 768px) {
+    .status-row-4 { grid-template-columns: 1fr 1fr; }
+    .status-row-2 { grid-template-columns: 1fr; }
+}
+
+/* ── Service Cards ──────────────────────────── */
+.svc-card {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px 20px;
+}
+
+.svc-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+
+.svc-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.svc-dot.up { background: #448361; box-shadow: 0 0 6px rgba(68,131,97,0.5); }
+.svc-dot.down { background: #D44C47; box-shadow: 0 0 6px rgba(212,76,71,0.5); }
+
+.svc-name { font-size: 13px; font-weight: 600; color: var(--text); }
+.svc-port { font-family: var(--font-mono); font-size: 11px; color: var(--text-faint); margin-left: auto; }
+.svc-detail { font-size: 12px; color: var(--text-tertiary); }
+
+/* ── Stat Cards ──────────────────────────────── */
+.stat-card {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px 20px;
+}
+
+.stat-card-label {
+    font-size: 12px; font-weight: 500; color: var(--text-tertiary);
+    text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;
+}
+
+.stat-num { font-family: var(--font-mono); font-size: 24px; font-weight: 700; color: var(--text); }
+.stat-num.accent { color: var(--orange); }
+.stat-sub { font-size: 12px; color: var(--text-faint); margin-top: 4px; }
+
+/* ── Section Headers ──────────────────────── */
+.section-label {
+    font-size: 12px; font-weight: 600; color: var(--text-tertiary);
+    text-transform: uppercase; letter-spacing: 0.5px; margin: 20px 0 8px;
+}
+
+/* ── Feed Cards ───────────────────────────── */
+.feed-card {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    max-height: 340px;
+    overflow-y: auto;
+}
+
+.feed-entry {
+    display: flex; align-items: flex-start; gap: 10px;
+    padding: 10px 16px; border-bottom: 1px solid var(--border-light); font-size: 13px;
+}
+.feed-entry:last-child { border-bottom: none; }
+
+.feed-type {
+    font-family: var(--font-mono); font-size: 11px; color: var(--text-faint);
+    background: var(--tag-gray-bg); padding: 1px 6px; border-radius: 3px;
+    white-space: nowrap; flex-shrink: 0;
+}
+
+.feed-body { flex: 1; min-width: 0; }
+.feed-sender { font-weight: 500; color: var(--text); }
+.feed-text { color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.feed-time { font-size: 11px; color: var(--text-faint); white-space: nowrap; flex-shrink: 0; }
+
+/* ── Messages ────────────────────────────── */
+.msg-entry { display: flex; align-items: flex-start; gap: 10px; padding: 10px 16px; border-bottom: 1px solid var(--border-light); }
+.msg-entry:last-child { border-bottom: none; }
+.msg-name { font-size: 13px; font-weight: 500; color: var(--text); }
+.msg-channel { font-size: 11px; color: var(--text-faint); }
+.msg-preview { font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
+.msg-time { font-size: 11px; color: var(--text-faint); margin-left: auto; white-space: nowrap; }
+.msg-empty { padding: 16px; font-size: 13px; color: #448361; }
+
+/* ── Trust Bar ────────────────────────────── */
+.trust-bar { display: flex; gap: 4px; height: 8px; margin-top: 12px; }
+.trust-seg { flex: 1; border-radius: 4px; background: var(--border); transition: background 0.3s; }
+.trust-seg.active-0 { background: var(--text-faint); }
+.trust-seg.active-1 { background: #CB912F; }
+.trust-seg.active-2 { background: #337EA9; }
+.trust-seg.active-3 { background: #448361; }
+.trust-label { display: flex; justify-content: space-between; font-size: 11px; color: var(--text-faint); margin-top: 6px; }
+
+/* ── Pulse ────────────────────────────────── */
+.pulse { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-faint); }
+.pulse-dot { width: 6px; height: 6px; border-radius: 50%; background: #448361; animation: pulse 2s infinite; }
+@keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.3; } }
+{% endblock %}
+
+{% block page_actions_block %}
+<div class="pulse"><div class="pulse-dot"></div> Live</div>
+{% endblock %}
+
+{% block content %}
+<div class="section-label">Services</div>
+<div class="status-grid status-row-4" id="services-row">
+    <div class="svc-card" id="svc-dashboard"><div class="svc-header"><div class="svc-dot"></div><div class="svc-name">Dashboard</div><div class="svc-port">:4096</div></div><div class="svc-detail">-</div></div>
+    <div class="svc-card" id="svc-eventd"><div class="svc-header"><div class="svc-dot"></div><div class="svc-name">eventd</div><div class="svc-port">:4097</div></div><div class="svc-detail">-</div></div>
+    <div class="svc-card" id="svc-whatsapp"><div class="svc-header"><div class="svc-dot"></div><div class="svc-name">WhatsApp</div><div class="svc-port">:7601</div></div><div class="svc-detail">-</div></div>
+    <div class="svc-card" id="svc-bridge"><div class="svc-header"><div class="svc-dot"></div><div class="svc-name">Bridge</div><div class="svc-port">:8880</div></div><div class="svc-detail">-</div></div>
+</div>
+
+<div class="status-grid status-row-4">
+    <div class="stat-card"><div class="stat-card-label">People</div><div class="stat-num" id="stat-people">-</div><div class="stat-sub" id="stat-people-sub"></div></div>
+    <div class="stat-card"><div class="stat-card-label">Tasks</div><div class="stat-num" id="stat-tasks">-</div><div class="stat-sub" id="stat-tasks-sub"></div></div>
+    <div class="stat-card"><div class="stat-card-label">Events</div><div class="stat-num" id="stat-events">-</div><div class="stat-sub" id="stat-events-sub"></div></div>
+    <div class="stat-card">
+        <div class="stat-card-label">Comms Trust</div>
+        <div class="stat-num" id="stat-trust">-</div>
+        <div class="trust-bar"><div class="trust-seg" id="t0"></div><div class="trust-seg" id="t1"></div><div class="trust-seg" id="t2"></div><div class="trust-seg" id="t3"></div></div>
+        <div class="trust-label"><span>Observe</span><span>Surface</span><span>Draft</span><span>Act</span></div>
     </div>
+</div>
 
-    <!-- Status Grid -->
-    <div class="status-grid">
-
-        <!-- Services (full width) -->
-        <div class="card full-width">
-            <div class="card-header">
-                <span class="card-title">Services</span>
-                <span class="card-badge" id="services-badge" style="background:var(--green-dim);color:var(--green);">--</span>
-            </div>
-            <div class="service-row" id="services-row">
-                <div class="service-item">
-                    <div class="service-dot down"></div>
-                    <div>
-                        <div class="service-name">Loading...</div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Communications -->
-        <div class="card">
-            <div class="card-header">
-                <span class="card-title">Communications</span>
-                <span class="card-badge" id="comms-badge" style="background:var(--surface-alt);color:var(--text-tertiary);">--</span>
-            </div>
-
-            <!-- Watchers -->
-            <div class="watcher-row" id="watchers-row"></div>
-
-            <!-- Unanswered -->
-            <div style="margin-bottom:10px;">
-                <div style="font-size:11px;color:var(--text-faint);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;">Unanswered</div>
-                <ul class="unanswered-list" id="unanswered-list">
-                    <li class="empty-state">No unanswered messages</li>
-                </ul>
-            </div>
-        </div>
-
-        <!-- Event Feed -->
-        <div class="card">
-            <div class="card-header">
-                <span class="card-title">Event Feed</span>
-                <span class="card-badge" id="events-badge" style="background:var(--surface-alt);color:var(--text-tertiary);">0</span>
-            </div>
-            <div class="event-feed" id="event-feed">
-                <div class="empty-state">Waiting for events...</div>
-            </div>
-        </div>
-
-        <!-- People DB -->
-        <div class="card">
-            <div class="card-header">
-                <span class="card-title">People Database</span>
-            </div>
-            <div class="stat-grid" id="people-stats">
-                <div class="stat-block">
-                    <div class="stat-value accent" id="people-total">--</div>
-                    <div class="stat-label">People</div>
-                </div>
-                <div class="stat-block">
-                    <div class="stat-value" id="people-identifiers">--</div>
-                    <div class="stat-label">Identifiers</div>
-                </div>
-                <div class="stat-block">
-                    <div class="stat-value" id="people-groups">--</div>
-                    <div class="stat-label">Groups</div>
-                </div>
-                <div class="stat-block">
-                    <div class="stat-value" id="people-interactions">--</div>
-                    <div class="stat-label">Today</div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Work System -->
-        <div class="card">
-            <div class="card-header">
-                <span class="card-title">Work System</span>
-                <a href="/work" class="card-badge" style="background:var(--accent-dim);color:var(--accent);text-decoration:none;" id="work-total-badge">--</a>
-            </div>
-            <div class="work-stats" id="work-stats">
-                <div class="work-stat">
-                    <div class="work-stat-icon" style="background:var(--green-dim);color:var(--green);">
-                        <i data-lucide="play"></i>
-                    </div>
-                    <div>
-                        <div class="work-stat-value" id="work-active">--</div>
-                        <div class="work-stat-label">Active</div>
-                    </div>
-                </div>
-                <div class="work-stat">
-                    <div class="work-stat-icon" style="background:var(--blue-dim);color:var(--blue);">
-                        <i data-lucide="list"></i>
-                    </div>
-                    <div>
-                        <div class="work-stat-value" id="work-todo">--</div>
-                        <div class="work-stat-label">Todo</div>
-                    </div>
-                </div>
-                <div class="work-stat">
-                    <div class="work-stat-icon" style="background:var(--accent-dim);color:var(--accent);">
-                        <i data-lucide="folder"></i>
-                    </div>
-                    <div>
-                        <div class="work-stat-value" id="work-projects">--</div>
-                        <div class="work-stat-label">Projects</div>
-                    </div>
-                </div>
-                <div class="work-stat">
-                    <div class="work-stat-icon" style="background:var(--yellow-dim);color:var(--yellow);">
-                        <i data-lucide="inbox"></i>
-                    </div>
-                    <div>
-                        <div class="work-stat-value" id="work-inbox">--</div>
-                        <div class="work-stat-label">Inbox</div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Trust Level -->
-        <div class="card full-width">
-            <div class="card-header">
-                <span class="card-title">Communications Trust Level</span>
-            </div>
-            <div class="trust-display">
-                <div class="trust-level-bar" id="trust-bar">
-                    <div class="trust-segment" id="trust-seg-0"></div>
-                    <div class="trust-segment" id="trust-seg-1"></div>
-                    <div class="trust-segment" id="trust-seg-2"></div>
-                    <div class="trust-segment" id="trust-seg-3"></div>
-                </div>
-                <div class="trust-label" id="trust-label" style="color:var(--text-tertiary);">Level 0 &mdash; Observe</div>
-            </div>
-        </div>
-
+<div class="status-grid status-row-2">
+    <div>
+        <div class="section-label">Unanswered Messages</div>
+        <div class="feed-card" id="msg-feed"><div class="msg-empty">Loading...</div></div>
     </div>
+    <div>
+        <div class="section-label">Recent Events</div>
+        <div class="feed-card" id="event-feed"><div class="msg-empty">Loading...</div></div>
+    </div>
+</div>
+{% endblock %}
 
-    <script>
-        lucide.createIcons();
+{% block scripts %}
+function timeAgo(iso) {
+    try {
+        const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+        if (s < 60) return 'just now';
+        if (s < 3600) return Math.floor(s/60) + 'm ago';
+        if (s < 86400) return Math.floor(s/3600) + 'h ago';
+        return Math.floor(s/86400) + 'd ago';
+    } catch(e) { return ''; }
+}
 
-        let countdown = 5;
+function esc(s) { const d=document.createElement('div'); d.textContent=s||''; return d.innerHTML; }
 
-        function relativeTime(ts) {
-            if (!ts) return '';
-            try {
-                const d = new Date(ts);
-                const now = new Date();
-                const delta = Math.floor((now - d) / 1000);
-                if (delta < 60) return 'just now';
-                if (delta < 3600) return Math.floor(delta / 60) + 'm ago';
-                if (delta < 86400) return Math.floor(delta / 3600) + 'h ago';
-                return Math.floor(delta / 86400) + 'd ago';
-            } catch (e) {
-                return '';
-            }
-        }
+function update(d) {
+    for (const [name, svc] of Object.entries(d.services || {})) {
+        const el = document.getElementById('svc-' + name);
+        if (!el) continue;
+        const dot = el.querySelector('.svc-dot');
+        const detail = el.querySelector('.svc-detail');
+        const up = svc.status === 'running' || svc.status === 'connected';
+        dot.className = 'svc-dot ' + (up ? 'up' : 'down');
+        let info = up ? 'Running' : 'Down';
+        if (svc.events_total != null) info += ' \u00b7 ' + svc.events_total + ' events';
+        if (svc.consumers) info += ' \u00b7 ' + svc.consumers.length + ' consumers';
+        detail.textContent = info;
+    }
 
-        function escapeHtml(text) {
-            const d = document.createElement('div');
-            d.textContent = text || '';
-            return d.innerHTML;
-        }
+    const p = d.people || {};
+    document.getElementById('stat-people').textContent = p.total || 0;
+    document.getElementById('stat-people-sub').textContent = (p.identifiers||0) + ' identifiers \u00b7 ' + (p.groups||0) + ' groups';
 
-        function updateStatus(data) {
-            // Update timestamp
-            const now = new Date();
-            document.getElementById('last-updated').textContent =
-                'Updated ' + now.toLocaleTimeString();
+    const w = d.work || {};
+    document.getElementById('stat-tasks').textContent = (w.active_tasks||0) + (w.todo_tasks||0);
+    document.getElementById('stat-tasks-sub').textContent = (w.done_tasks||0) + ' done \u00b7 ' + (w.inbox||0) + ' inbox';
 
-            // -- Services --
-            const svcRow = document.getElementById('services-row');
-            const svcs = data.services || {};
-            let svcHtml = '';
-            let runningCount = 0;
-            let totalCount = 0;
+    document.getElementById('stat-events').textContent = d.services?.eventd?.events_total || 0;
+    document.getElementById('stat-events-sub').textContent = Object.keys(d.comms?.watchers||{}).filter(k=>d.comms.watchers[k].running).length + ' watchers active';
 
-            for (const [name, info] of Object.entries(svcs)) {
-                totalCount++;
-                const running = info.status === 'running';
-                if (running) runningCount++;
+    const t = d.trust || {};
+    const level = t.comms_level || 0;
+    document.getElementById('stat-trust').textContent = t.level_name || 'Observe';
+    for (let i=0;i<4;i++) document.getElementById('t'+i).className = 'trust-seg' + (i<=level ? ' active-'+level : '');
 
-                let detail = ':' + info.port;
-                if (name === 'eventd' && info.events_total !== undefined) {
-                    detail += ' | ' + info.events_total + ' events';
-                    if (info.consumers && info.consumers.length) {
-                        detail += ' | ' + info.consumers.length + ' consumers';
-                    }
-                }
+    const mf = document.getElementById('msg-feed');
+    const msgs = d.comms?.unanswered || [];
+    mf.innerHTML = msgs.length === 0
+        ? '<div class="msg-empty">\u2705 All caught up</div>'
+        : msgs.map(m => `<div class="msg-entry"><div><div class="msg-name">${esc(m.person_name)} <span class="msg-channel">${esc(m.channel)}</span></div><div class="msg-preview">${esc(m.text_preview)}</div></div><div class="msg-time">${m.time_ago||timeAgo(m.received_at)}</div></div>`).join('');
 
-                svcHtml += `<div class="service-item">
-                    <div class="service-dot ${running ? 'running' : 'down'}"></div>
-                    <div>
-                        <div class="service-name">${escapeHtml(name)}</div>
-                        <div class="service-detail">${escapeHtml(detail)}</div>
-                    </div>
-                </div>`;
-            }
-            svcRow.innerHTML = svcHtml;
+    const ef = document.getElementById('event-feed');
+    const evts = (d.comms?.recent_events || []).slice().reverse();
+    ef.innerHTML = evts.length === 0
+        ? '<div class="msg-empty">No events yet</div>'
+        : evts.slice(0,20).map(e => {
+            const type = (e.type||'').split('.').pop().replace(/_/g,' ');
+            return `<div class="feed-entry"><div class="feed-type">${esc(type)}</div><div class="feed-body">${e.sender?`<div class="feed-sender">${esc(e.sender)}</div>`:''}${e.summary?`<div class="feed-text">${esc((e.summary||'').substring(0,60))}</div>`:''}</div><div class="feed-time">${timeAgo(e.timestamp)}</div></div>`;
+        }).join('');
+}
 
-            const svcBadge = document.getElementById('services-badge');
-            if (runningCount === totalCount) {
-                svcBadge.textContent = runningCount + '/' + totalCount + ' online';
-                svcBadge.style.background = 'var(--green-dim)';
-                svcBadge.style.color = 'var(--green)';
-            } else {
-                svcBadge.textContent = runningCount + '/' + totalCount + ' online';
-                svcBadge.style.background = 'var(--red-dim)';
-                svcBadge.style.color = 'var(--red)';
-            }
-
-            // Pulse dot color
-            const pulseDot = document.getElementById('pulse-dot');
-            pulseDot.style.background = (runningCount === totalCount) ? 'var(--green)' : 'var(--red)';
-
-            // -- Communications --
-            const comms = data.comms || {};
-
-            // Watchers
-            const watcherRow = document.getElementById('watchers-row');
-            const watchers = comms.watchers || {};
-            let watcherHtml = '';
-            for (const [name, info] of Object.entries(watchers)) {
-                const running = info.running || info.status === 'running';
-                const interval = info.poll_interval ? info.poll_interval + 's' : '';
-                watcherHtml += `<div class="watcher-item">
-                    <div class="watcher-dot ${running ? 'on' : 'off'}"></div>
-                    <span style="color:var(--text);font-weight:500;">${escapeHtml(name)}</span>
-                    ${interval ? `<span style="color:var(--text-faint);font-family:var(--font-mono);font-size:11px;">${interval}</span>` : ''}
-                </div>`;
-            }
-            if (!watcherHtml) {
-                watcherHtml = '<div class="watcher-item"><span style="color:var(--text-faint);">No watchers active</span></div>';
-            }
-            watcherRow.innerHTML = watcherHtml;
-
-            // Unanswered messages
-            const unanswered = comms.unanswered || [];
-            const ulist = document.getElementById('unanswered-list');
-            const commsBadge = document.getElementById('comms-badge');
-
-            if (unanswered.length === 0) {
-                ulist.innerHTML = '<li class="empty-state">No unanswered messages</li>';
-                commsBadge.textContent = 'clear';
-                commsBadge.style.background = 'var(--green-dim)';
-                commsBadge.style.color = 'var(--green)';
-            } else {
-                let uHtml = '';
-                for (const msg of unanswered) {
-                    uHtml += `<li class="unanswered-item">
-                        <span>
-                            <span class="unanswered-name">${escapeHtml(msg.person_name)}</span>
-                            <span class="unanswered-channel">${escapeHtml(msg.channel)}</span>
-                        </span>
-                        <span class="unanswered-time">${escapeHtml(msg.time_ago)}</span>
-                    </li>`;
-                }
-                ulist.innerHTML = uHtml;
-                commsBadge.textContent = unanswered.length + ' unanswered';
-                commsBadge.style.background = 'var(--yellow-dim)';
-                commsBadge.style.color = 'var(--yellow)';
-            }
-
-            // -- Event Feed --
-            const events = comms.recent_events || [];
-            const feed = document.getElementById('event-feed');
-            const eventsBadge = document.getElementById('events-badge');
-            eventsBadge.textContent = events.length;
-
-            if (events.length === 0) {
-                feed.innerHTML = '<div class="empty-state">Waiting for events...</div>';
-            } else {
-                let feedHtml = '';
-                for (const ev of events.slice(0, 20)) {
-                    const evType = (ev.type || '').toLowerCase();
-                    let typeCls = 'system';
-                    if (evType.includes('message') || evType.includes('comms')) typeCls = 'message';
-                    else if (evType.includes('notify') || evType.includes('alert')) typeCls = 'comms';
-
-                    const typeLabel = (ev.type || 'event').replace(/[_.]/g, ' ');
-                    const time = relativeTime(ev.timestamp) || ev.timestamp;
-
-                    feedHtml += `<div class="event-item">
-                        <span class="event-type ${typeCls}">${escapeHtml(typeLabel)}</span>
-                        <div class="event-content">
-                            ${ev.sender ? `<div class="event-sender">${escapeHtml(ev.sender)}</div>` : ''}
-                            ${ev.summary ? `<div class="event-summary">${escapeHtml(ev.summary)}</div>` : ''}
-                            ${!ev.sender && !ev.summary && ev.source ? `<div class="event-sender">${escapeHtml(ev.source)}</div>` : ''}
-                        </div>
-                        <span class="event-time">${escapeHtml(time)}</span>
-                    </div>`;
-                }
-                feed.innerHTML = feedHtml;
-            }
-
-            // -- People DB --
-            const people = data.people || {};
-            document.getElementById('people-total').textContent = (people.total || 0).toLocaleString();
-            document.getElementById('people-identifiers').textContent = (people.identifiers || 0).toLocaleString();
-            document.getElementById('people-groups').textContent = (people.groups || 0).toLocaleString();
-            document.getElementById('people-interactions').textContent = people.interactions_today || 0;
-
-            // -- Work System --
-            const work = data.work || {};
-            document.getElementById('work-active').textContent = work.active_tasks || 0;
-            document.getElementById('work-todo').textContent = work.todo_tasks || 0;
-            document.getElementById('work-projects').textContent = work.projects || 0;
-            document.getElementById('work-inbox').textContent = work.inbox || 0;
-
-            const workBadge = document.getElementById('work-total-badge');
-            workBadge.textContent = (work.total_tasks || 0) + ' tasks';
-
-            // -- Trust Level --
-            const trust = data.trust || {};
-            const level = trust.comms_level || 0;
-            const levelName = trust.level_name || 'Observe';
-            const trustLabel = document.getElementById('trust-label');
-            trustLabel.textContent = 'Level ' + level + ' \u2014 ' + levelName;
-
-            const levelColors = {
-                0: 'var(--text-tertiary)',
-                1: 'var(--yellow)',
-                2: 'var(--blue)',
-                3: 'var(--green)'
-            };
-            trustLabel.style.color = levelColors[level] || 'var(--text-tertiary)';
-
-            // Update trust segments
-            for (let i = 0; i <= 3; i++) {
-                const seg = document.getElementById('trust-seg-' + i);
-                if (seg) {
-                    // Reset
-                    seg.className = 'trust-segment';
-                    if (i <= level) {
-                        seg.classList.add('active-' + level);
-                    }
-                }
-            }
-        }
-
-        async function fetchStatus() {
-            try {
-                const r = await fetch('/api/system/status');
-                if (r.ok) {
-                    const data = await r.json();
-                    updateStatus(data);
-                }
-            } catch (e) {
-                document.getElementById('last-updated').textContent = 'Error: ' + e.message;
-            }
-        }
-
-        // Initial fetch
-        fetchStatus();
-
-        // Auto-refresh every 5 seconds
-        setInterval(() => {
-            countdown--;
-            if (countdown <= 0) {
-                countdown = 5;
-                fetchStatus();
-            }
-            document.getElementById('refresh-countdown').textContent = countdown + 's';
-        }, 1000);
-    </script>
-</body>
-</html>
+async function refresh() { try { update(await (await fetch('/api/system/status')).json()); } catch(e) {} }
+refresh();
+setInterval(refresh, 5000);
+{% endblock %}
