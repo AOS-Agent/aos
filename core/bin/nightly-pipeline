@@ -7,17 +7,17 @@ echo "[$(date +%H:%M:%S)] nightly-pipeline starting"
 DAY=$(date +%u)  # 1=Monday, 7=Sunday
 if [ "$DAY" != "7" ]; then
     echo "Running daily session analysis..."
-    python3 ~/aos/core/bin/session-analysis daily 2>&1 || echo "session-analysis failed (non-fatal)"
+    ~/aos/core/bin/aos-python ~/aos/core/bin/session-analysis daily 2>&1 || echo "session-analysis failed (non-fatal)"
 else
     echo "Skipping session-analysis (Sunday — scheduler already ran weekly version)"
 fi
 
 # Step 2: Stale detector
 echo "Running stale detector..."
-python3 ~/aos/core/bin/stale-detector 2>&1 || echo "stale-detector failed (non-fatal)"
+~/aos/core/bin/aos-python ~/aos/core/bin/stale-detector 2>&1 || echo "stale-detector failed (non-fatal)"
 
 # Step 3: Compile daily summary (ensure it ran)
 echo "Running compile-daily..."
-python3 ~/aos/core/bin/compile-daily 2>&1 || echo "compile-daily failed (non-fatal)"
+~/aos/core/bin/aos-python ~/aos/core/bin/compile-daily 2>&1 || echo "compile-daily failed (non-fatal)"
 
 echo "[$(date +%H:%M:%S)] nightly-pipeline done"

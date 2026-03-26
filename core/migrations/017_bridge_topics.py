@@ -170,16 +170,18 @@ def up() -> bool:
     """Create bridge-topics.yaml and the daily topic."""
 
     # 1. Read projects.yaml for forum_group_id and existing topic IDs
+    # Skip gracefully if config doesn't exist — forum topics are optional.
+    # The TopicManager creates topics at runtime when config appears later.
     proj_data = _read_projects_yaml()
     if proj_data is None:
-        print("       projects.yaml not found — cannot determine forum_group_id")
-        print("       Create ~/.aos/config/projects.yaml first")
-        return False
+        print("       projects.yaml not found — skipping (forum topics are optional)")
+        print("       TopicManager will handle this when projects.yaml is created")
+        return True  # Don't block downstream migrations
 
     forum_group_id = _extract_forum_group_id(proj_data)
     if forum_group_id is None:
-        print("       No forum_group_id found in projects.yaml")
-        return False
+        print("       No forum_group_id in projects.yaml — skipping (forum topics are optional)")
+        return True  # Don't block downstream migrations
 
     print(f"       Forum group ID: {forum_group_id}")
 

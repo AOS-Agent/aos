@@ -42,8 +42,8 @@ def check_reboot():
         import ctypes
         import struct
 
-        # Get boot time from sysctl
-        result = subprocess.run(["sysctl", "-n", "kern.boottime"],
+        # Get boot time from sysctl (full path — /usr/sbin not in LaunchAgent PATH)
+        result = subprocess.run(["/usr/sbin/sysctl", "-n", "kern.boottime"],
                                 capture_output=True, text=True, timeout=5)
         # Parse: "{ sec = 1711036800, usec = 0 } ..."
         boot_sec = int(result.stdout.split("sec =")[1].split(",")[0].strip())

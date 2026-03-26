@@ -48,7 +48,7 @@ case "${1:-help}" in
 
     reconcile)
         # Run invariant checks — fixes drift from wrong installs, brew updates, etc.
-        python3 "$AOS_DIR/core/reconcile/runner.py" "${2:-run}"
+        "$AOS_DIR/core/bin/aos-python" "$AOS_DIR/core/reconcile/runner.py" "${2:-run}"
         ;;
 
     sync-skills)
@@ -619,13 +619,13 @@ print('\n'.join(deps))
     trust)
         # Trust review and management
         shift
-        python3 "$AOS_DIR/core/bin/trust-review" "$@"
+        "$AOS_DIR/core/bin/aos-python" "$AOS_DIR/core/bin/trust-review" "$@"
         ;;
 
     trust-log)
         # Log a trust action
         shift
-        python3 "$AOS_DIR/core/bin/trust-log" "$@"
+        "$AOS_DIR/core/bin/aos-python" "$AOS_DIR/core/bin/trust-log" "$@"
         ;;
 
     feedback)

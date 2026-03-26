@@ -31,9 +31,10 @@ def check() -> bool:
         return False
 
     # Verify mlx_whisper is importable
+    # First import compiles/caches and can take 20-30s — use 120s timeout
     result = subprocess.run(
         [str(python), "-c", "import mlx_whisper; import fastapi; print('ok')"],
-        capture_output=True, text=True, timeout=15)
+        capture_output=True, text=True, timeout=120)
     return result.returncode == 0 and "ok" in result.stdout
 
 
@@ -80,10 +81,10 @@ def up() -> bool:
                 print(f"       Direct install also failed: {result.stderr[:200]}")
                 return False
 
-    # Verify installation
+    # Verify installation (120s — first import compiles/caches mlx_whisper)
     result = subprocess.run(
         [str(python), "-c", "import mlx_whisper; import fastapi; print('ok')"],
-        capture_output=True, text=True, timeout=15)
+        capture_output=True, text=True, timeout=120)
     if result.returncode != 0 or "ok" not in result.stdout:
         print(f"       Verification failed: {result.stderr[:200]}")
         return False

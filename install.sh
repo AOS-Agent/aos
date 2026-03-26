@@ -279,6 +279,9 @@ prereq_python3() {
 
         if [[ "$major" -ge 3 ]] && [[ "$minor" -ge 11 ]]; then
             _skip "Python $ver"
+            # Write resolved path for aos-python wrapper
+            mkdir -p "$HOME/.aos/config"
+            which python3 > "$HOME/.aos/config/python"
             return 0
         fi
         _warn "Python $ver found but 3.11+ required"
@@ -311,9 +314,19 @@ prereq_python3() {
         # Symlink so python3 resolves to brew python everywhere
         mkdir -p "$HOME/.local/bin"
         ln -sf "$brew_python" "$HOME/.local/bin/python3"
+        # Write resolved path for aos-python wrapper
+        mkdir -p "$HOME/.aos/config"
+        echo "$brew_python" > "$HOME/.aos/config/python"
         # Rehash so this session sees the new python3
         hash -r 2>/dev/null || true
     else
+        # Still write whatever python3 we have, even if < 3.11
+        local fallback_python
+        fallback_python=$(which python3 2>/dev/null || echo "")
+        if [[ -n "$fallback_python" ]]; then
+            mkdir -p "$HOME/.aos/config"
+            echo "$fallback_python" > "$HOME/.aos/config/python"
+        fi
         _warn "Python 3.11+ not found — some features won't work"
     fi
 }
@@ -1117,11 +1130,34 @@ for path in [str(Path.home()), str(Path.home() / 'aos')]:
     d['projects'][path]['hasTrustDialogAccepted'] = True
     d['projects'][path]['hasTrustDialogHooksAccepted'] = True
 
+# AOS defaults: always-on features (verified keys — see rules/claude-code-config.md)
+# remoteControlAtStartup: enables Remote Control for all sessions (stored in ~/.claude.json, not settings.json)
+# claudeInChromeDefaultEnabled: enables Chrome MCP for all sessions
+if not d.get('remoteControlAtStartup'):
+    d['remoteControlAtStartup'] = True
+if not d.get('claudeInChromeDefaultEnabled'):
+    d['claudeInChromeDefaultEnabled'] = True
+
 p.write_text(json.dumps(d, indent=2) + '\n')
 print('ok')
 " 2>/dev/null && _ok "Trust dialog pre-accepted" || _warn "Trust dialog — may prompt on first run"
 
     echo ""
+
+    # Runtime protection — prevent accidental commits to ~/aos/
+    _step "Installing runtime protection..."
+    local hooks_dir="$AOS_DIR/.git/hooks"
+    mkdir -p "$hooks_dir"
+    cat > "$hooks_dir/pre-commit" << 'HOOK'
+#!/bin/bash
+# Installed by AOS — do not remove
+# ~/aos/ is a read-only runtime copy. All commits go to ~/project/aos/
+echo "ERROR: ~/aos/ is read-only runtime. Commit to ~/project/aos/ instead." >&2
+exit 1
+HOOK
+    chmod +x "$hooks_dir/pre-commit"
+    touch "$AOS_DIR/.no-auto-commit"
+    _ok "Runtime protection installed"
 
     # Sync agents (system agents: chief, steward, advisor)
     _step "Syncing agents..."

@@ -132,14 +132,12 @@ class RootClaudeMdCheck(ReconcileCheck):
 GLOBAL_HEADER = "# AOS — Agentic Operating System\n\nThis machine runs AOS. Every session operates within this context."
 
 GLOBAL_SECTIONS = {
-    "boundaries": (1, """\
+    "boundaries": (2, """\
 ## Boundaries
 
 ```
-~/aos/       SYSTEM (code, safe to git pull)
-~/.aos/      USER DATA (never in git)
-~/vault/     KNOWLEDGE (Obsidian, QMD-indexed)
-~/project/   PROJECTS (self-contained workspaces)
+INTERNAL:  ~/aos/ (system), ~/.aos/ (instance data)
+AOS-X:     ~/vault/, ~/project/, ~/.cache/, ~/Library/Developer/ (all symlinked)
 ```"""),
 
     "agents": (1, """\
@@ -159,23 +157,29 @@ Additional agents activated from catalog or created by user."""),
 Skills at `~/.claude/skills/`. Each has `SKILL.md` with trigger phrases.
 When a request matches, load and follow the skill's protocol."""),
 
-    "rules": (1, """\
+    "rules": (2, """\
 ## Rules
 
+- **NEVER edit `~/aos/` directly.** All framework changes go in `~/project/aos/` (dev workspace). Commit and push from there. Runtime pulls on next update. Only `~/.aos/` and `~/.claude/` are edited directly.
 - Secrets: macOS Keychain only (`agent-secret get/set`). Never in files.
 - Network: localhost only. Tailscale for remote access.
 - Questions: one at a time, never batch.
 - Research first: check vault, config, and available data before asking.
 - Delegate: dispatch to specialist agents for domain work."""),
 
-    "quick-reference": (1, """\
+    "quick-reference": (3, """\
 ## Quick Reference
 
 - Operator profile: ~/.aos/config/operator.yaml
 - Config: ~/aos/config/
 - User data: ~/.aos/
-- Vault search: `qmd query "<topic>" -n 5`
-- Secrets: `~/aos/core/bin/agent-secret get/set`"""),
+- Vault search: `qmd query "<topic>" -n 5` or via QMD MCP tools
+- Secrets: `~/aos/core/bin/agent-secret get/set`
+- Memory index: `qmd status` (789 files, 9 collections)
+- Claude Code harness: `~/.claude/settings.json` (permissions, hooks, agent, chrome)
+- Claude Code preferences: `~/.claude.json` (remote control, UI toggles — set via `/config`)
+
+**Claude Code config rule:** Never assume a setting key exists. If unsure, check docs at `code.claude.com/docs/en/settings` or toggle via `/config` and diff the file. See `rules/claude-code-config.md` for verified keys."""),
 }
 
 

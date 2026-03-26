@@ -150,7 +150,7 @@ apply() {
     # Always run reconcile — even if version didn't change.
     # Catches drift from Homebrew updates, manual edits, etc.
     log "Running reconcile..."
-    python3 "$AOS_DIR/core/reconcile/runner.py" run 2>>"$HOME/.aos/logs/reconcile-stderr.log" || true
+    "$AOS_DIR/core/bin/aos-python" "$AOS_DIR/core/reconcile/runner.py" run 2>>"$HOME/.aos/logs/reconcile-stderr.log" || true
 
     # Skip the rest if version didn't change
     if [[ "$old_version" == "$new_version" ]]; then
@@ -162,7 +162,7 @@ apply() {
 
     # Run migrations
     log "Running migrations..."
-    python3 "$AOS_DIR/core/migrations/runner.py" migrate 2>/dev/null || true
+    "$AOS_DIR/core/bin/aos-python" "$AOS_DIR/core/migrations/runner.py" migrate 2>/dev/null || true
 
     # Sync skills, agents, rules, and MCP servers
     log "Syncing..."
@@ -189,20 +189,27 @@ apply() {
     git diff --name-only "$old_hash..HEAD" 2>/dev/null | grep -q "core/services/dashboard/" && reload_dashboard=true
     git diff --name-only "$old_hash..HEAD" 2>/dev/null | grep -q "core/services/listen/" && reload_listen=true
 
+    # Use bootout/bootstrap/kickstart instead of unload/load to avoid launchd throttling.
+    # See GitHub issue #6: unload/load doesn't reset the throttle counter, so services
+    # that crash during update stay dead even after reload.
+    local uid=$(id -u)
     if [[ "$reload_bridge" == true ]]; then
-        log "Reloading bridge..."
-        launchctl unload "$HOME/Library/LaunchAgents/com.aos.bridge.plist" 2>/dev/null
-        launchctl load "$HOME/Library/LaunchAgents/com.aos.bridge.plist" 2>/dev/null
+        log "Restarting bridge (kickstart)..."
+        launchctl bootout "gui/$uid/com.aos.bridge" 2>/dev/null
+        launchctl bootstrap "gui/$uid" "$HOME/Library/LaunchAgents/com.aos.bridge.plist" 2>/dev/null
+        launchctl kickstart -k "gui/$uid/com.aos.bridge" 2>/dev/null
     fi
     if [[ "$reload_dashboard" == true ]]; then
-        log "Reloading dashboard..."
-        launchctl unload "$HOME/Library/LaunchAgents/com.aos.dashboard.plist" 2>/dev/null
-        launchctl load "$HOME/Library/LaunchAgents/com.aos.dashboard.plist" 2>/dev/null
+        log "Restarting dashboard (kickstart)..."
+        launchctl bootout "gui/$uid/com.aos.dashboard" 2>/dev/null
+        launchctl bootstrap "gui/$uid" "$HOME/Library/LaunchAgents/com.aos.dashboard.plist" 2>/dev/null
+        launchctl kickstart -k "gui/$uid/com.aos.dashboard" 2>/dev/null
     fi
     if [[ "$reload_listen" == true ]]; then
-        log "Reloading listen..."
-        launchctl unload "$HOME/Library/LaunchAgents/com.aos.listen.plist" 2>/dev/null
-        launchctl load "$HOME/Library/LaunchAgents/com.aos.listen.plist" 2>/dev/null
+        log "Restarting listen (kickstart)..."
+        launchctl bootout "gui/$uid/com.aos.listen" 2>/dev/null
+        launchctl bootstrap "gui/$uid" "$HOME/Library/LaunchAgents/com.aos.listen.plist" 2>/dev/null
+        launchctl kickstart -k "gui/$uid/com.aos.listen" 2>/dev/null
     fi
 
     # Health check after update
@@ -219,8 +226,9 @@ apply() {
         log "Health check failed — rolling back to $old_hash"
         git checkout "$old_hash" 2>/dev/null
         for la in com.aos.bridge com.aos.dashboard com.aos.listen; do
-            launchctl unload "$HOME/Library/LaunchAgents/${la}.plist" 2>/dev/null
-            launchctl load "$HOME/Library/LaunchAgents/${la}.plist" 2>/dev/null
+            launchctl bootout "gui/$uid/$la" 2>/dev/null
+            launchctl bootstrap "gui/$uid" "$HOME/Library/LaunchAgents/${la}.plist" 2>/dev/null
+            launchctl kickstart -k "gui/$uid/$la" 2>/dev/null
         done
         notify "⚠️ Update to $new_version rolled back — services were unhealthy. Developer notified."
         bash "$AOS_DIR/core/bin/feedback" --auto "Update rollback: $new_version → $old_version" "auto-update" 2>/dev/null || true
@@ -250,30 +258,41 @@ if not match:
 notes = match.group(1).strip()
 lines = [l.strip() for l in notes.split('\n') if l.strip()]
 
-# Parse structured changelog: Summary + sections (Added/Changed/Fixed/Removed)
+# Extract summary and categorized changes
+# New format: first non-bullet line is the summary, bullets start with '- Verb ...'
+# Legacy format: 'Summary: ...' prefix, 'Verb: ...' entries
 summary = ''
-sections = {}
-current_section = None
+changes = {'Added': [], 'Changed': [], 'Fixed': [], 'Removed': []}
+# Also match rewording verbs to their base category
+verb_map = {'Added': 'Added', 'Changed': 'Changed', 'Fixed': 'Fixed', 'Removed': 'Removed',
+            'Rewrote': 'Changed', 'Expanded': 'Changed', 'Moved': 'Changed'}
+other = []
 
 for line in lines:
+    # Legacy: 'Summary: ...'
     if line.startswith('Summary:'):
         summary = line.replace('Summary:', '').strip()
-    elif line.startswith('### '):
-        current_section = line.replace('### ', '').strip()
-        sections[current_section] = []
-    elif line.startswith('- ') and current_section:
-        item = line[2:].strip()
-        # Shorten long items: keep the part after the em-dash (the user-facing description)
-        if ' — ' in item:
-            name, desc = item.split(' — ', 1)
-            # Use description (user-facing) not the technical name
-            short = desc[0].upper() + desc[1:] if desc else name
-            # Trim to ~80 chars for Telegram readability
-            if len(short) > 80:
-                short = short[:77] + '...'
-        else:
-            short = item[:80] + '...' if len(item) > 80 else item
-        sections.setdefault(current_section, []).append(short)
+    # Bullet: '- Added foo', '- Fixed bar', '- Rewrote baz'
+    elif line.startswith('- '):
+        text = line[2:]
+        matched = False
+        for verb, cat in verb_map.items():
+            if text.startswith(verb + ' '):
+                changes[cat].append(text[len(verb)+1:])
+                matched = True
+                break
+        if not matched:
+            other.append(text)
+    # Legacy: 'Added: foo'
+    elif ':' in line and line.split(':')[0] in changes:
+        cat = line.split(':')[0]
+        rest = ':'.join(line.split(':')[1:]).strip().lstrip('- ')
+        changes[cat].append(rest)
+    # Plain line before any bullets = summary
+    elif not line.startswith('#') and not summary:
+        summary = line
+    elif not line.startswith('#'):
+        other.append(line)
 
 # Build conversational Telegram message
 # Focus on what's NEW (Added section) — that's what users care about
@@ -281,31 +300,21 @@ if summary:
     print(summary)
     print()
 
-added = sections.get('Added', [])
-changed = sections.get('Changed', [])
-fixed = sections.get('Fixed', [])
+# Show categorized changes with emoji prefixes
+icons = {'Added': '✦', 'Changed': '↻', 'Fixed': '✓', 'Removed': '✕'}
+for cat in ['Added', 'Changed', 'Fixed', 'Removed']:
+    items = changes[cat]
+    if not items:
+        continue
+    icon = icons[cat]
+    for item in items[:8]:
+        print(f'{icon} {item}')
+    if len(items) > 8:
+        print(f'  ... and {len(items)-8} more')
 
-if added:
-    print('What\\'s new:')
-    for item in added[:5]:
-        print(f'  → {item}')
-    if len(added) > 5:
-        print(f'  + {len(added) - 5} more')
-    print()
-
-if changed:
-    print('Improved:')
-    for item in changed[:3]:
-        print(f'  ↻ {item}')
-    print()
-
-if fixed:
-    count = len(fixed)
-    if count == 1:
-        print(f'Fixed: {fixed[0]}')
-    else:
-        print(f'{count} bug fixes')
-
+if other:
+    for line in other[:3]:
+        print(f'  {line}')
 " 2>/dev/null)
 
     # Update state

@@ -1,0 +1,43 @@
+#!/bin/bash
+# aos-python — Central Python resolver for AOS
+#
+# All AOS scripts use this instead of bare `python3`.
+# Reads the detected Python path from ~/.aos/config/python.
+# Falls back to python3 in PATH if config doesn't exist.
+#
+# Why: macOS ships Python 3.9 (EOL). AOS requires ≥ 3.10.
+# LaunchAgents and cron jobs may resolve python3 differently
+# than interactive shells. This wrapper ensures consistency.
+#
+# See GitHub issue #4.
+
+set -euo pipefail
+
+PYTHON_CONFIG="$HOME/.aos/config/python"
+
+if [[ -f "$PYTHON_CONFIG" ]]; then
+    PYTHON_PATH=$(cat "$PYTHON_CONFIG")
+    if [[ -x "$PYTHON_PATH" ]]; then
+        exec "$PYTHON_PATH" "$@"
+    fi
+fi
+
+# Fallback: try common locations in order of preference
+for candidate in \
+    /opt/homebrew/bin/python3 \
+    /usr/local/bin/python3 \
+    /Library/Frameworks/Python.framework/Versions/Current/bin/python3 \
+    python3; do
+    if command -v "$candidate" >/dev/null 2>&1; then
+        # Verify version ≥ 3.10
+        version=$("$candidate" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>/dev/null || echo "0.0")
+        major=$(echo "$version" | cut -d. -f1)
+        minor=$(echo "$version" | cut -d. -f2)
+        if [[ "$major" -ge 3 ]] && [[ "$minor" -ge 10 ]]; then
+            exec "$candidate" "$@"
+        fi
+    fi
+done
+
+echo "ERROR: No Python ≥ 3.10 found. Install via: brew install python" >&2
+exit 1

@@ -79,10 +79,10 @@ The Mac Mini is configured to be always-on. Monitor and self-heal:
 uptime
 
 # When did it last boot?
-sysctl -n kern.boottime | awk '{print $4}' | tr -d ','
+/usr/sbin/sysctl -n kern.boottime | awk '{print $4}' | tr -d ','
 
 # Was there a recent reboot? (uptime < 10 minutes = just booted)
-uptime_seconds=$(sysctl -n kern.boottime | awk '{print $4}' | tr -d ',')
+uptime_seconds=$(/usr/sbin/sysctl -n kern.boottime | awk '{print $4}' | tr -d ',')
 now=$(date +%s)
 up=$((now - uptime_seconds))
 ```
