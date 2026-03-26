@@ -56,6 +56,9 @@
         <div class="sidebar-section">
             <div class="sidebar-label">Ops</div>
             <ul class="sidebar-nav">
+                <li><a href="/status" class="sidebar-link{% if active_page == 'status' %} active{% endif %}">
+                    <i data-lucide="activity"></i> <span>System</span>
+                </a></li>
                 <li><a href="/logs" class="sidebar-link{% if active_page == 'logs' %} active{% endif %}">
                     <i data-lucide="scroll-text"></i> <span>Logs</span>
                 </a></li>

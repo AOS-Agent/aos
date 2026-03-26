@@ -5,6 +5,7 @@ import setproctitle; setproctitle.setproctitle("aos-dashboard")
 import asyncio
 import json
 import shutil
+import sqlite3
 import subprocess
 from datetime import datetime
 from pathlib import Path
@@ -1701,6 +1702,244 @@ h1 {{ font-size: 1.6em; margin-bottom: 1em; color: #fff; }}
 {items if items else '<p style="color: var(--muted);">No documents yet.</p>'}
 </body>
 </html>"""
+
+
+# --- System Status (live mission control) ---
+
+
+def _check_port(port: int, timeout: float = 1.0) -> bool:
+    """Check if a TCP port is listening."""
+    import socket
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=timeout):
+            return True
+    except (OSError, ConnectionRefusedError):
+        return False
+
+
+def _get_eventd_health() -> dict:
+    """Fetch health info from eventd."""
+    try:
+        r = httpx.get("http://127.0.0.1:4097/health", timeout=3)
+        if r.status_code == 200:
+            return r.json()
+    except Exception:
+        pass
+    return {}
+
+
+def _get_eventd_events() -> list:
+    """Fetch recent events from eventd."""
+    try:
+        r = httpx.get("http://127.0.0.1:4097/events", timeout=3)
+        if r.status_code == 200:
+            return r.json() if isinstance(r.json(), list) else r.json().get("events", [])
+    except Exception:
+        pass
+    return []
+
+
+def _get_people_stats() -> dict:
+    """Query people.db for basic counts."""
+    db_path = Path.home() / "vault" / "people" / "people.db"
+    if not db_path.exists():
+        return {"total": 0, "identifiers": 0, "groups": 0, "interactions_today": 0}
+    try:
+        conn = sqlite3.connect(str(db_path), timeout=3)
+        total = conn.execute("SELECT COUNT(*) FROM people").fetchone()[0]
+        identifiers = conn.execute("SELECT COUNT(*) FROM person_identifiers").fetchone()[0]
+        groups = conn.execute("SELECT COUNT(*) FROM groups").fetchone()[0]
+        # Interactions today
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        try:
+            interactions_today = conn.execute(
+                "SELECT COUNT(*) FROM interactions WHERE date(timestamp) = ?",
+                (today_str,)
+            ).fetchone()[0]
+        except Exception:
+            interactions_today = 0
+        conn.close()
+        return {
+            "total": total,
+            "identifiers": identifiers,
+            "groups": groups,
+            "interactions_today": interactions_today,
+        }
+    except Exception:
+        return {"total": 0, "identifiers": 0, "groups": 0, "interactions_today": 0}
+
+
+def _get_triage_state() -> dict:
+    """Read triage state for unanswered messages."""
+    triage_file = Path.home() / ".aos" / "work" / "triage-state.json"
+    try:
+        if triage_file.exists():
+            return json.loads(triage_file.read_text())
+    except Exception:
+        pass
+    return {}
+
+
+def _get_trust_info() -> dict:
+    """Read comms trust level from trust.yaml."""
+    trust_file = Path.home() / ".aos" / "config" / "trust.yaml"
+    level_names = {0: "Observe", 1: "Surface", 2: "Assist", 3: "Autonomous"}
+    try:
+        if trust_file.exists():
+            trust = yaml.safe_load(trust_file.read_text()) or {}
+            # Check for comms capability across agents
+            for agent_name, agent_data in trust.get("agents", {}).items():
+                caps = agent_data.get("capabilities", {})
+                if "communications" in caps:
+                    level = caps["communications"]
+                    return {"comms_level": level, "level_name": level_names.get(level, f"Level {level}")}
+            # Fallback to global default
+            level = trust.get("defaults", {}).get("comms_level", 0)
+            return {"comms_level": level, "level_name": level_names.get(level, f"Level {level}")}
+    except Exception:
+        pass
+    return {"comms_level": 0, "level_name": "Observe"}
+
+
+def _get_work_summary() -> dict:
+    """Get work system summary stats."""
+    try:
+        mod = _work_mod("engine")
+        s = mod.summary()
+        by_status = s.get("by_status", {})
+        return {
+            "active_tasks": by_status.get("active", 0),
+            "total_tasks": s.get("total_tasks", 0),
+            "todo_tasks": by_status.get("todo", 0),
+            "done_tasks": by_status.get("done", 0),
+            "projects": s.get("projects", 0),
+            "goals": s.get("goals", 0),
+            "threads": s.get("threads", 0),
+            "inbox": s.get("inbox", 0),
+        }
+    except Exception:
+        return {
+            "active_tasks": 0, "total_tasks": 0, "todo_tasks": 0,
+            "done_tasks": 0, "projects": 0, "goals": 0, "threads": 0, "inbox": 0,
+        }
+
+
+def _build_system_status() -> dict:
+    """Build aggregated system status response."""
+    # 1. Service health via port checks
+    service_ports = {
+        "dashboard": 4096,
+        "eventd": 4097,
+        "whatsapp": 7601,
+        "bridge": 8880,
+    }
+    services = {}
+    for name, port in service_ports.items():
+        running = _check_port(port)
+        services[name] = {
+            "status": "running" if running else "down",
+            "port": port,
+        }
+
+    # Enrich eventd with health data (nested under "bus" and "watchers" keys)
+    eventd_health = _get_eventd_health()
+    if eventd_health:
+        bus = eventd_health.get("bus", {})
+        services["eventd"]["events_total"] = bus.get("events_total", 0)
+        services["eventd"]["consumers"] = bus.get("consumer_names", [])
+        watchers = eventd_health.get("watchers", {})
+    else:
+        watchers = {}
+
+    # 2. Communications
+    triage = _get_triage_state()
+    unanswered_raw = triage.get("unanswered", {})
+    now = datetime.now()
+    unanswered = []
+    for key, entry in unanswered_raw.items():
+        time_ago = "recently"
+        try:
+            ts = entry.get("received_at", "")
+            if ts:
+                msg_dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                if msg_dt.tzinfo:
+                    now_aware = datetime.now(msg_dt.tzinfo)
+                    delta = int((now_aware - msg_dt).total_seconds())
+                else:
+                    delta = int((now - msg_dt).total_seconds())
+                if delta < 60:
+                    time_ago = "just now"
+                elif delta < 3600:
+                    time_ago = f"{delta // 60}m ago"
+                elif delta < 86400:
+                    time_ago = f"{delta // 3600}h ago"
+                else:
+                    time_ago = f"{delta // 86400}d ago"
+        except Exception:
+            pass
+        unanswered.append({
+            "person_name": entry.get("person_name", key),
+            "channel": entry.get("channel", "unknown"),
+            "time_ago": time_ago,
+        })
+
+    # Recent events from eventd (events have nested "data" field)
+    recent_events_raw = _get_eventd_events()
+    recent_events = []
+    for ev in recent_events_raw[:20]:
+        ev_data = ev.get("data", {})
+        recent_events.append({
+            "type": ev.get("type", ""),
+            "source": ev.get("source", ev_data.get("channel", "")),
+            "timestamp": ev.get("timestamp", ""),
+            "sender": ev_data.get("sender", ev_data.get("person_name", "")),
+            "summary": (ev_data.get("text", "") or ev_data.get("summary", ""))[:120],
+        })
+
+    comms = {
+        "watchers": watchers,
+        "unanswered": unanswered,
+        "recent_events": recent_events,
+    }
+
+    # 3. People DB stats
+    people = _get_people_stats()
+
+    # 4. Work summary
+    work = _get_work_summary()
+
+    # 5. Trust level
+    trust = _get_trust_info()
+
+    return {
+        "services": services,
+        "comms": comms,
+        "people": people,
+        "work": work,
+        "trust": trust,
+    }
+
+
+@app.get("/api/system/status")
+async def api_system_status():
+    """Aggregated system status for the live mission control page."""
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, _build_system_status)
+
+
+@app.get("/status", response_class=HTMLResponse)
+async def status_page(request: Request):
+    """Live system status page — mission control."""
+    active_count = 0
+    try:
+        tasks = _load_tasks()
+        active_count = sum(1 for t in tasks if t.get("status") in ("active", "todo"))
+    except Exception:
+        pass
+    return templates.TemplateResponse(request, "status.html", {
+        "active_page": "status",
+        "task_count": active_count if active_count else None,
+    })
 
 
 if __name__ == "__main__":
