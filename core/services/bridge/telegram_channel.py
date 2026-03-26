@@ -43,25 +43,39 @@ from intent_classifier import dispatch as classify_intent
 
 logger = logging.getLogger(__name__)
 
-# ── STEER dispatch ──────────────────────────────────────
-# Keywords that suggest a task needs GUI/desktop automation
-_STEER_KEYWORDS = [
+# ── Task dispatch ──────────────────────────────────────
+# Tasks that should run in tmux (non-blocking) instead of streaming.
+# The agent in the tmux session decides which tools to use (STEER, obsidian CLI,
+# Drive, AppleScript, etc.) — the bridge doesn't guess.
+_TASK_KEYWORDS = [
+    # Explicit triggers
+    "/do ", "/task ", "/steer ",
+    # Desktop/GUI automation (agent will pick STEER vs CLI)
     "open ", "launch ", "use steer", "use computer",
-    "click ", "navigate to ", "find in obsidian",
-    "in obsidian", "in finder", "in mail", "in calendar",
-    "in safari", "in chrome", "in telegram app",
+    "click ", "navigate to ",
     "on the desktop", "on my screen", "screenshot",
     "graph view", "open the app", "switch to ",
+    # Multi-step work (agent needs time + tools)
+    "find and ", "search and ", "organize ", "create a note",
+    "go through ", "check all ", "summarize the ",
+    "set up ", "configure ", "install ",
 ]
 
-def _is_steer_task(text: str) -> bool:
-    """Detect if a message requires GUI automation (STEER dispatch)."""
+def _is_task_dispatch(text: str) -> bool:
+    """Detect if a message is a TASK (needs tmux dispatch) vs CHAT (stream response).
+
+    Tasks: multi-step work, GUI automation, file operations, etc.
+    Chat: questions, quick answers, code help, conversation.
+
+    The agent in the tmux session picks the right tools — STEER for GUI,
+    obsidian CLI for vault ops, Drive for terminal, APIs for services.
+    """
     lower = text.lower().strip()
-    # Explicit trigger
-    if lower.startswith("/steer ") or lower.startswith("steer:"):
+    # Explicit triggers
+    if lower.startswith(("/do ", "/task ", "/steer ", "steer:")):
         return True
     # Keyword matching
-    return any(kw in lower for kw in _STEER_KEYWORDS)
+    return any(kw in lower for kw in _TASK_KEYWORDS)
 
 async def _dispatch_steer_and_report(chat, message, text: str, thread_id=None):
     """Dispatch a STEER job via tmux and report results back to Telegram."""
@@ -831,10 +845,10 @@ class TelegramChannel:
                 message=update.message.text,
             )
 
-            # ── STEER dispatch: detect GUI automation tasks ──
-            if _is_steer_task(text):
-                logger.info(f"STEER dispatch: {user_key} → {text[:60]}")
-                log_activity("telegram", "steer_dispatch", summary=text[:100])
+            # ── Task dispatch: multi-step work runs in tmux, agent picks tools ──
+            if _is_task_dispatch(text):
+                logger.info(f"Task dispatch: {user_key} → {text[:60]}")
+                log_activity("telegram", "task_dispatch", summary=text[:100])
                 response = await _dispatch_steer_and_report(
                     update.message.chat, update.message, text,
                     thread_id=thread_id,
