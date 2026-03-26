@@ -27,6 +27,11 @@ def log_execution(
     agent: str | None = None,
     session_id: str | None = None,
     commands: list[str] | None = None,
+    input_tokens: int = 0,
+    output_tokens: int = 0,
+    cost_usd: float = 0.0,
+    num_turns: int = 0,
+    user_key: str | None = None,
 ):
     """Append an execution log entry for pattern compilation and analysis.
 
@@ -42,6 +47,11 @@ def log_execution(
         agent: Agent name if dispatched
         session_id: Claude session ID
         commands: Shell commands executed (for pattern compilation)
+        input_tokens: Actual input tokens from SessionResult
+        output_tokens: Actual output tokens from SessionResult
+        cost_usd: Cost in USD from SessionResult
+        num_turns: Number of agent turns from SessionResult
+        user_key: Who triggered this (e.g., "telegram:123456")
     """
     EXECUTION_LOG_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -70,6 +80,16 @@ def log_execution(
         entry["session_id"] = session_id[:16]
     if commands:
         entry["commands"] = commands[:10]  # Cap at 10 commands
+    if input_tokens:
+        entry["input_tokens"] = input_tokens
+    if output_tokens:
+        entry["output_tokens"] = output_tokens
+    if cost_usd:
+        entry["cost_usd"] = round(cost_usd, 6)
+    if num_turns:
+        entry["num_turns"] = num_turns
+    if user_key:
+        entry["user_key"] = user_key
 
     try:
         with open(log_file, "a") as f:

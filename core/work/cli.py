@@ -154,12 +154,43 @@ def cmd_start(args):
         sys.exit(1)
     query_str = " ".join(args)
     task = _resolve(query_str)
-    result = engine.start_task(task["id"])
+
+    # Pass session_id if available (from CLAUDE_SESSION_ID env or hook context)
+    session_id = os.environ.get("CLAUDE_SESSION_ID")
+    result = engine.start_task(task["id"], session_id=session_id)
     if result:
         print(f"Started {result['id']}: {result['title']}")
+        print(f"  → Live context set. All work will be attributed to this task.")
     else:
         print(f"Task {task['id']} not found")
         sys.exit(1)
+
+
+def cmd_stop(args):
+    """Stop tracking the current task without completing it."""
+    ctx = engine.get_live_context()
+    if not ctx:
+        print("No active task being tracked.")
+        return
+    task_id = ctx["task_id"]
+    title = ctx.get("title", "")
+    engine.clear_live_context()
+    print(f"Stopped tracking {task_id}: {title}")
+    print(f"  → Task remains active but work won't be auto-attributed.")
+
+
+def cmd_active(args):
+    """Show what's currently being tracked."""
+    ctx = engine.get_live_context()
+    if not ctx:
+        print("No active live context. Use 'work start <task>' to begin tracking.")
+        return
+    print(f"  🔵 {ctx['task_id']}: {ctx.get('title', '')}")
+    print(f"     Project:  {ctx.get('project', 'none')}")
+    print(f"     Started:  {ctx.get('started_at', '?')}")
+    sid = ctx.get('session_id') or 'unknown'
+    print(f"     Session:  {sid[:12]}...")
+    print(f"     CWD:      {ctx.get('cwd', '?')}")
 
 
 def cmd_cancel(args):
@@ -1364,6 +1395,8 @@ COMMANDS = {
     "add": cmd_add,
     "done": cmd_done,
     "start": cmd_start,
+    "stop": cmd_stop,
+    "active": cmd_active,
     "cancel": cmd_cancel,
     "show": cmd_show,
     "list": cmd_list,

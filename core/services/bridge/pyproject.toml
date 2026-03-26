@@ -19,4 +19,4 @@ requires = ["setuptools>=75.0"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-py-modules = ["main", "claude_cli", "telegram_channel", "telegram_formatter", "slack_channel", "heartbeat", "activity_client", "voice_transcriber", "interactive_buttons", "daily_briefing", "evening_checkin", "vault_tasks", "intent_classifier", "message_renderer", "session_manager", "context_loader", "execution_logger", "bridge_events", "shared_context", "topic_manager", "tracing"]
+py-modules = ["main", "claude_cli", "telegram_channel", "telegram_formatter", "slack_channel", "heartbeat", "activity_client", "voice_transcriber", "interactive_buttons", "daily_briefing", "evening_checkin", "intent_classifier", "message_renderer", "session_manager", "execution_logger", "bridge_events", "topic_manager"]

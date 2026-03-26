@@ -157,6 +157,44 @@ def _sanitize_html(text: str) -> str:
     return text
 
 
+def _format_tasks_telegram(tasks: list[dict]) -> str:
+    """Format work engine tasks for Telegram HTML output."""
+    if not tasks:
+        return "<i>No tasks.</i>"
+
+    icons = {"active": "🔄", "todo": "⬜", "done": "✅", "cancelled": "➖"}
+
+    by_project: dict[str, list] = {}
+    unassigned: list = []
+    for t in tasks:
+        proj = t.get("project")
+        if proj:
+            by_project.setdefault(proj, []).append(t)
+        else:
+            unassigned.append(t)
+
+    lines: list[str] = []
+    for proj, proj_tasks in sorted(by_project.items()):
+        lines.append(f"\n<b>{proj.upper()}</b>")
+        for t in sorted(proj_tasks, key=lambda x: x.get("priority", 9)):
+            icon = icons.get(t.get("status", "todo"), "⬜")
+            title = t.get("title", "Untitled")
+            p = t.get("priority", 3)
+            p_str = f" P{p}" if p and int(p) <= 2 else ""
+            tid = t.get("id", "")
+            lines.append(f"  {icon} {title}{p_str}  <i>{tid}</i>")
+
+    if unassigned:
+        lines.append(f"\n<b>UNASSIGNED</b>")
+        for t in sorted(unassigned, key=lambda x: x.get("priority", 9)):
+            icon = icons.get(t.get("status", "todo"), "⬜")
+            title = t.get("title", "Untitled")
+            tid = t.get("id", "")
+            lines.append(f"  {icon} {title}  <i>{tid}</i>")
+
+    return "\n".join(lines) if lines else "<i>No tasks.</i>"
+
+
 class TelegramChannel:
     def __init__(self, bot_token: str, allowed_chat_id: int,
                  forum_group_id: int = None, topic_routes: dict = None):
@@ -418,6 +456,11 @@ class TelegramChannel:
                     success=True, duration_ms=duration_ms,
                     agent=log_agent,
                     session_id=result.session_id[:16] if result.session_id else None,
+                    input_tokens=result.input_tokens,
+                    output_tokens=result.output_tokens,
+                    cost_usd=result.cost_usd,
+                    num_turns=result.num_turns,
+                    user_key=user_key,
                 )
             else:
                 had_error = True
@@ -430,6 +473,10 @@ class TelegramChannel:
                     success=False, duration_ms=duration_ms,
                     error=(result.text if result else "Unknown error")[:200],
                     agent=log_agent,
+                    input_tokens=result.input_tokens if result else 0,
+                    output_tokens=result.output_tokens if result else 0,
+                    cost_usd=result.cost_usd if result else 0,
+                    user_key=user_key,
                 )
 
         except Exception as exc:
@@ -1288,20 +1335,14 @@ class TelegramChannel:
           /tasks             — show active tasks (not done)
           /tasks all         — show everything including done
           /tasks add <name>  — create a new task
-          /tasks do <name>   — move to in-progress
+          /tasks do <name>   — start a task
           /tasks done <name> — mark as done
-          /tasks focus <name> — move to focus (max 3)
-          /tasks wait <name> <who> — mark as waiting
         """
         if not update.message:
             return
         if not self._is_authorized(update.message.chat_id):
             return
 
-        from vault_tasks import (
-            get_active_tasks, get_all_tasks, get_focus_tasks,
-            create_task, update_task_status, format_tasks_telegram,
-        )
         from activity_client import log_activity
 
         args = context.args or []
@@ -1310,47 +1351,72 @@ class TelegramChannel:
         if thread_id:
             kwargs["message_thread_id"] = thread_id
 
+        work_cli = str(Path.home() / "aos" / "core" / "work" / "cli.py")
+
+        def _run(*cmd_args):
+            try:
+                result = subprocess.run(
+                    ["python3", work_cli] + list(cmd_args),
+                    capture_output=True, text=True, timeout=15,
+                )
+                return result.stdout.strip(), result.returncode == 0
+            except Exception as e:
+                return str(e), False
+
         if not args:
-            # Show active tasks
             await update.message.chat.send_action("typing")
-            tasks = get_active_tasks()
-            msg = format_tasks_telegram(tasks)
+            out, ok = _run("list", "--json")
+            if ok and out:
+                try:
+                    tasks = json.loads(out)
+                    msg = _format_tasks_telegram(tasks)
+                except Exception:
+                    msg = "<i>Could not parse tasks.</i>"
+            else:
+                msg = "<i>No tasks found.</i>"
             await update.message.reply_text(
-                f"<b>Tasks</b>\n{msg}",
-                parse_mode="HTML", **kwargs,
+                f"<b>Tasks</b>\n{msg}", parse_mode="HTML", **kwargs,
             )
 
         elif args[0].lower() == "all":
             await update.message.chat.send_action("typing")
-            tasks = get_all_tasks()
-            msg = format_tasks_telegram(tasks)
+            out, ok = _run("list", "--all", "--json")
+            if ok and out:
+                try:
+                    tasks = json.loads(out)
+                    msg = _format_tasks_telegram(tasks)
+                except Exception:
+                    msg = "<i>Could not parse tasks.</i>"
+            else:
+                msg = "<i>No tasks found.</i>"
             await update.message.reply_text(
-                f"<b>All Tasks</b>\n{msg}",
-                parse_mode="HTML", **kwargs,
+                f"<b>All Tasks</b>\n{msg}", parse_mode="HTML", **kwargs,
             )
 
         elif args[0].lower() == "add" and len(args) > 1:
             task_name = " ".join(args[1:])
-            # Auto-detect domain from topic
             topic_config = self._get_topic_config(update.message)
             topic_agent = topic_config.get("agent")
-            domain = "nuchay" if topic_agent == "nuchay" else "aos"
-            path = create_task(task_name, domain=domain)
-            await update.message.reply_text(
-                f"✅ Task created: <b>{task_name}</b>\n<i>{path.name}</i>",
-                parse_mode="HTML", **kwargs,
-            )
-            log_activity("telegram", "task_created", summary=task_name[:100])
+            project = "nuchay" if topic_agent == "nuchay" else "aos"
+            out, ok = _run("add", task_name, "--project", project)
+            if ok:
+                await update.message.reply_text(
+                    f"✅ {out}", parse_mode="HTML", **kwargs,
+                )
+                log_activity("telegram", "task_created", summary=task_name[:100])
+            else:
+                await update.message.reply_text(
+                    f"Failed to create task.", **kwargs,
+                )
 
         elif args[0].lower() == "done" and len(args) > 1:
             search = " ".join(args[1:])
-            result = update_task_status(search, "done")
-            if result:
+            out, ok = _run("done", search)
+            if ok:
                 await update.message.reply_text(
-                    f"✅ Done: <b>{result['title']}</b>",
-                    parse_mode="HTML", **kwargs,
+                    f"✅ {out}", parse_mode="HTML", **kwargs,
                 )
-                log_activity("telegram", "task_done", summary=result["title"][:100])
+                log_activity("telegram", "task_done", summary=search[:100])
             else:
                 await update.message.reply_text(
                     f"No task matching '<b>{search}</b>'.",
@@ -1359,13 +1425,12 @@ class TelegramChannel:
 
         elif args[0].lower() == "do" and len(args) > 1:
             search = " ".join(args[1:])
-            result = update_task_status(search, "in-progress")
-            if result:
+            out, ok = _run("start", search)
+            if ok:
                 await update.message.reply_text(
-                    f"🔄 In Progress: <b>{result['title']}</b>",
-                    parse_mode="HTML", **kwargs,
+                    f"🔄 {out}", parse_mode="HTML", **kwargs,
                 )
-                log_activity("telegram", "task_started", summary=result["title"][:100])
+                log_activity("telegram", "task_started", summary=search[:100])
             else:
                 await update.message.reply_text(
                     f"No task matching '<b>{search}</b>'.",
@@ -1373,54 +1438,13 @@ class TelegramChannel:
                 )
 
         elif args[0].lower() == "focus" and len(args) > 1:
-            # Check focus cap
-            current_focus = get_focus_tasks()
-            if len(current_focus) >= 3:
-                names = ", ".join(t["title"] for t in current_focus)
-                await update.message.reply_text(
-                    f"⚠️ Already 3 focus items:\n{names}\n\nFinish or defocus one first.",
-                    **kwargs,
-                )
-                return
             search = " ".join(args[1:])
-            result = update_task_status(search, "focus")
-            if result:
+            out, ok = _run("start", search)
+            if ok:
                 await update.message.reply_text(
-                    f"🎯 Focus: <b>{result['title']}</b> ({len(current_focus) + 1}/3)",
-                    parse_mode="HTML", **kwargs,
+                    f"🎯 {out}", parse_mode="HTML", **kwargs,
                 )
-                log_activity("telegram", "task_focused", summary=result["title"][:100])
-            else:
-                await update.message.reply_text(
-                    f"No task matching '<b>{search}</b>'.",
-                    parse_mode="HTML", **kwargs,
-                )
-
-        elif args[0].lower() == "wait" and len(args) > 1:
-            # /tasks wait <name> <who> — parse last word as who
-            parts = " ".join(args[1:])
-            # Simple: last word is who, rest is name
-            words = parts.rsplit(" ", 1)
-            if len(words) == 2:
-                search, who = words
-            else:
-                search, who = parts, "unknown"
-            result = update_task_status(search, "waiting")
-            if result:
-                # Also update waiting_on in the file
-                path = Path(result["_path"])
-                content = path.read_text()
-                if "waiting_on:" not in content:
-                    content = content.replace(
-                        "status: waiting",
-                        f"status: waiting\nwaiting_on: {who}",
-                        1,
-                    )
-                    path.write_text(content)
-                await update.message.reply_text(
-                    f"⏳ Waiting: <b>{result['title']}</b> — on {who}",
-                    parse_mode="HTML", **kwargs,
-                )
+                log_activity("telegram", "task_focused", summary=search[:100])
             else:
                 await update.message.reply_text(
                     f"No task matching '<b>{search}</b>'.",
@@ -1435,8 +1459,7 @@ class TelegramChannel:
                 "  /tasks add &lt;name&gt; — create task\n"
                 "  /tasks do &lt;name&gt; — start task\n"
                 "  /tasks done &lt;name&gt; — complete task\n"
-                "  /tasks focus &lt;name&gt; — focus (max 3)\n"
-                "  /tasks wait &lt;name&gt; &lt;who&gt; — mark waiting",
+                "  /tasks focus &lt;name&gt; — focus on task",
                 parse_mode="HTML", **kwargs,
             )
 

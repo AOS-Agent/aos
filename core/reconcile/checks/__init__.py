@@ -8,9 +8,16 @@ from .google_workspace import GoogleWorkspaceCheck
 from .initiatives import InitiativeDirectoriesCheck, BridgeTopicsCheck
 from .transcriber import TranscriberServiceCheck
 from .disk_smart import DiskSmartCheck
+from .context_freshness import ContextFreshnessCheck
+from .claude_defaults import ClaudeDefaultsCheck
+from .dead_code import DeadCodeCheck
+from .runtime_protection import RuntimeProtectionCheck
 
 # Add new checks here — they run in this order on every update cycle.
 ALL_CHECKS = [
+    # Runtime protection — must run FIRST to unblock git pull
+    RuntimeProtectionCheck,
+
     # Structural — file locations
     McpLocationCheck,
     LogLocationCheck,
@@ -22,6 +29,9 @@ ALL_CHECKS = [
 
     # Config — settings.json hooks have valid paths
     HooksPathCheck,
+
+    # Config — ~/.claude.json always-on defaults (remote control, chrome)
+    ClaudeDefaultsCheck,
 
     # Services — LaunchAgent plists reference existing Python
     LaunchAgentPythonCheck,
@@ -42,4 +52,10 @@ ALL_CHECKS = [
 
     # Hardware — disk SMART health monitoring
     DiskSmartCheck,
+
+    # Context — CLAUDE.md dynamic content matches system state
+    ContextFreshnessCheck,
+
+    # Hygiene — detect orphaned scripts and stale module refs
+    DeadCodeCheck,
 ]
