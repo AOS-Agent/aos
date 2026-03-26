@@ -22,6 +22,7 @@ DASHBOARD_URL = "http://127.0.0.1:4096"
 WORK_DIR = Path.home() / ".aos" / "work"
 WORK_FILE = WORK_DIR / "work.yaml"
 ACTIVITY_FILE = WORK_DIR / "activity.yaml"
+LIVE_CONTEXT_FILE = WORK_DIR / ".live-context.json"
 MAX_ACTIVITY = 100  # Keep last N events
 
 
@@ -537,6 +538,9 @@ def complete_task(task_id: str) -> dict | None:
     _save(data)
     _log_activity("task_completed", task["id"], task.get("title"), task.get("project"))
 
+    # Clear live context if this was the active task
+    clear_live_context(task["id"])
+
     # Sync initiative checkbox (best-effort, never crashes)
     _sync_initiative_checkbox(task)
 
@@ -591,8 +595,8 @@ def update_task(task_id: str, **fields) -> dict | None:
     return None
 
 
-def start_task(task_id: str) -> dict | None:
-    """Move a task to active status."""
+def start_task(task_id: str, session_id: str = None) -> dict | None:
+    """Move a task to active status and set it as the live work context."""
     data = _load()
     for task in data["tasks"]:
         if task["id"] == task_id:
@@ -600,8 +604,57 @@ def start_task(task_id: str) -> dict | None:
             task["started"] = _now()
             _save(data)
             _log_activity("task_started", task["id"], task.get("title"), task.get("project"))
+            set_live_context(task, session_id=session_id)
             return task
     return None
+
+
+# ── Live Context ─────────────────────────────────────
+# The "workbench" — declares what's being worked on RIGHT NOW.
+# Written by `work start`, cleared by `work done`/`work stop`.
+# The Stop hook reads this to attribute work to tasks — no inference needed.
+
+
+def set_live_context(task: dict, session_id: str = None) -> None:
+    """Set the live work context. Called when a task is started."""
+    import json
+    WORK_DIR.mkdir(parents=True, exist_ok=True)
+    ctx = {
+        "task_id": task["id"],
+        "title": task.get("title", ""),
+        "project": task.get("project"),
+        "started_at": _now(),
+        "session_id": session_id,
+        "cwd": os.getcwd(),
+    }
+    LIVE_CONTEXT_FILE.write_text(json.dumps(ctx, indent=2))
+
+
+def clear_live_context(task_id: str = None) -> dict | None:
+    """Clear the live context. Returns the old context if it existed.
+    If task_id provided, only clears if it matches (prevents clearing wrong task)."""
+    import json
+    if not LIVE_CONTEXT_FILE.exists():
+        return None
+    try:
+        ctx = json.loads(LIVE_CONTEXT_FILE.read_text())
+        if task_id and ctx.get("task_id") != task_id:
+            return None  # Different task is active — don't touch
+        LIVE_CONTEXT_FILE.unlink()
+        return ctx
+    except Exception:
+        return None
+
+
+def get_live_context() -> dict | None:
+    """Read current live context. Returns None if nothing active."""
+    import json
+    if not LIVE_CONTEXT_FILE.exists():
+        return None
+    try:
+        return json.loads(LIVE_CONTEXT_FILE.read_text())
+    except Exception:
+        return None
 
 
 def cancel_task(task_id: str) -> dict | None:
@@ -609,6 +662,7 @@ def cancel_task(task_id: str) -> dict | None:
     result = update_task(task_id, status="cancelled")
     if result:
         _log_activity("task_cancelled", result["id"], result.get("title"), result.get("project"))
+        clear_live_context(task_id)  # Clear if this was the active task
     return result
 
 

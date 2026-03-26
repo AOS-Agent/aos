@@ -468,6 +468,51 @@ def main():
         for i, s in enumerate(suggestions[:3], 1):
             lines.append(f"  {i}. {s}")
 
+    # ── Stale live context recovery ──────────────────────
+    # If .live-context.json exists from a previous session, that session
+    # ended uncleanly (crash, terminal kill, SSH drop, machine sleep).
+    # Recover: log what happened, clear it, tell the operator.
+    stale_recovery = None
+    try:
+        live_ctx = engine.get_live_context()
+        if live_ctx:
+            old_session = live_ctx.get("session_id")
+            # Stale if: different session, OR null session (pre-session-id era)
+            if old_session != session_id:
+                stale_task_id = live_ctx.get("task_id", "?")
+                stale_title = live_ctx.get("title", "unknown task")
+                stale_started = live_ctx.get("started_at", "?")
+
+                # Log the unclean exit
+                sessions_log = Path.home() / ".aos" / "logs" / "sessions.jsonl"
+                sessions_log.parent.mkdir(parents=True, exist_ok=True)
+                from datetime import datetime
+                log_entry = {
+                    "ts": datetime.now().isoformat(),
+                    "session_id": old_session,
+                    "event": "session_unclean_exit",
+                    "active_task": stale_task_id,
+                    "started_at": stale_started,
+                    "recovered_by": session_id,
+                }
+                with open(sessions_log, "a") as f:
+                    f.write(json.dumps(log_entry) + "\n")
+
+                # Clear the stale context
+                engine.clear_live_context()
+
+                stale_recovery = (
+                    f"**⚠ Recovered from unclean exit:** Previous session was working on "
+                    f"**{stale_task_id}: {stale_title}** (started {stale_started}). "
+                    f"Session ended without cleanup. Task remains active — pick it up with "
+                    f"`work start {stale_task_id}` or check its status with `work show {stale_task_id}`."
+                )
+    except Exception:
+        pass  # Never crash the hook
+
+    if stale_recovery:
+        lines.insert(0, stale_recovery)
+
     if not lines:
         lines.append("No active tasks or urgent items.")
 

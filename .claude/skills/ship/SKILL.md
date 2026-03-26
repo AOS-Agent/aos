@@ -56,7 +56,11 @@ cd ~/aos && python3 core/bin/aos self-test 2>&1
 # 7. Dry-run reconcile from the dev workspace
 cd ~/project/aos && python3 core/reconcile/runner.py check 2>&1
 
-# 8. Check for runtime data that shouldn't ship
+# 8. Quality gate — code health, docs sync, consistency
+cd ~/project/aos && bash core/bin/ship-check 2>&1
+# Exit 0 = all pass, 1 = failures (block), 2 = warnings (allow with note)
+
+# 9. Check for runtime data that shouldn't ship
 git diff origin/main --name-only | grep -E "execution_log|\.jsonl|\.log$|__pycache__"
 ```
 
@@ -68,11 +72,13 @@ git diff origin/main --name-only | grep -E "execution_log|\.jsonl|\.log$|__pycac
 - `.env`, `credentials`, `*.key`, `*.pem` files are in the diff
 - Self-test fails
 - VERSION was bumped but no matching CHANGELOG.md entry exists
+- Quality gate has failures (exit 1) — syntax errors, missing docs, unregistered checks
 
 **Warn but allow if:**
 - Reconcile dry-run shows issues (might be expected if adding a new check)
 - Large diff (>500 lines changed) — ask operator to confirm
 - Untracked files exist that aren't in the diff (mention them)
+- Quality gate has warnings (exit 2) — debug artifacts, deprecated dirs, etc.
 
 ## Ship Flow
 
@@ -95,7 +101,8 @@ Changes:
 
 Self-test: ✓ passed
 Reconcile: ✓ all checks pass
-Safety: ✓ no runtime data, no secrets
+Quality:   ✓ code health, docs sync, consistency
+Safety:    ✓ no runtime data, no secrets
 ```
 
 If there are uncommitted changes, list them clearly:
@@ -174,18 +181,27 @@ If changes are significant enough to warrant a version bump:
    - Recommend a specific version with reasoning, e.g.:
      "You added a new skill and changed the update flow — that's a minor bump, v0.3.0 → v0.4.0."
 3. Ask: "Want me to bump to vX.Y.Z and add a changelog entry?"
-4. Write the CHANGELOG entry at the top of CHANGELOG.md:
+4. Write the CHANGELOG entry at the top of CHANGELOG.md (below the header), following this format:
 
 ```markdown
 ## vX.Y.Z — YYYY-MM-DD
 
-Summary: One line describing the release.
+One-line summary of the release theme.
 
-Added: new things
-Changed: modifications
-Fixed: bug fixes
-Removed: removed things
+- Added foo — short description of what it does and why it matters
+- Added `bar` command for doing X
+- Changed baz to use `new_approach` instead of `old_approach`
+- Fixed `thing` crashing when Y happens
+- Removed deprecated Z
 ```
+
+**Changelog style rules:**
+- Each bullet is a natural sentence starting with Added/Changed/Fixed/Removed
+- Use backticks liberally for commands, file paths, settings, code references
+- Each bullet should be self-contained — scannable without reading other bullets
+- No category headers (### Added, etc.) — the verb prefix is enough
+- Keep the one-line summary before the bullets (used for Telegram release notes)
+- Aim for specificity: "`SessionStart` hook crash on Python 3.9" not "fixed a crash"
 
 ## Rollback
 

@@ -1,0 +1,59 @@
+# AOS Account Registry — Template
+# Copy to ~/.aos/config/accounts.yaml and customize.
+# Populated during onboarding or manually.
+#
+# Trust levels:
+#   open   — use freely, no confirmation needed
+#   ask    — confirm with operator before using
+#   never  — registered but never use
+#
+# Credential keys reference macOS Keychain entries (via agent-secret).
+# Never store actual secrets here — only key names.
+
+operator:
+  name: ""
+  primary_email: ""
+
+# Contexts are domains the operator works in.
+# Agents match the current project to a context to pick the right account.
+contexts:
+  # Example:
+  # mycompany:
+  #   label: My Company
+  #   description: Main work
+  #   default: true
+  #   accounts:
+  #     google: me@mycompany.com
+  #     github: mycompany
+  #   projects:
+  #     - ~/project/mycompany-*
+
+  personal:
+    label: Personal
+    description: Personal accounts
+    accounts:
+      google: ""
+    projects: []
+
+# Full account details.
+accounts:
+  google:
+    _oauth:
+      client_id_key: GOOGLE_OAUTH_CLIENT_ID
+      client_secret_key: GOOGLE_OAUTH_CLIENT_SECRET
+    entries: {}
+      # email@example.com:
+      #   trust: open
+      #   label: My account
+      #   services: [gmail, drive, calendar]
+
+  telegram:
+    entries: {}
+
+  github:
+    entries: {}
+
+# Accounts found mid-session are appended here for operator review.
+discovered: []
+
+schema_version: 1

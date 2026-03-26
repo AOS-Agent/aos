@@ -526,6 +526,38 @@ class TelegramChannel:
 
     # ── Handlers ────────────────────────────────────────────
 
+    def _queue_message_for_bus(self, update: Update):
+        """Append incoming message to the comms bus queue file.
+
+        Written as JSONL so the TelegramAdapter can read it during poll cycles.
+        This is the bridge→comms layer handoff point.
+        """
+        try:
+            msg = update.message
+            if not msg or not msg.text:
+                return
+            queue_path = Path.home() / ".aos" / "data" / "telegram-messages.jsonl"
+            queue_path.parent.mkdir(parents=True, exist_ok=True)
+            from_user = msg.from_user
+            record = {
+                "id": f"tg-{msg.message_id}",
+                "chat_id": msg.chat_id,
+                "from_user": {
+                    "id": from_user.id if from_user else None,
+                    "first_name": from_user.first_name if from_user else "",
+                    "last_name": from_user.last_name if from_user else "",
+                    "username": from_user.username if from_user else "",
+                },
+                "text": msg.text,
+                "timestamp": msg.date.timestamp() if msg.date else _time.time(),
+                "from_me": False,
+                "thread_id": getattr(msg, "message_thread_id", None),
+            }
+            with open(queue_path, "a") as f:
+                f.write(json.dumps(record, default=str) + "\n")
+        except Exception as e:
+            logger.debug(f"Failed to queue message for bus: {e}")
+
     async def _handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not update.message or not update.message.text:
             return
@@ -533,6 +565,9 @@ class TelegramChannel:
         if not self._is_authorized(chat_id):
             logger.warning(f"Unauthorized message from chat_id={chat_id}")
             return
+
+        # Queue for comms bus (non-blocking, fire-and-forget)
+        self._queue_message_for_bus(update)
 
         # Check if this is an evening check-in reply (intercept before Claude dispatch)
         text_raw = update.message.text.strip()

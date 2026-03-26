@@ -1,0 +1,275 @@
+#!/usr/bin/env bash
+# AOS Ship Quality Gate
+#
+# Pre-ship validation beyond safety checks. Catches the things that
+# slip through: orphaned skills, unregistered reconcile checks,
+# syntax errors, stale docs.
+#
+# Usage:
+#   ship-check              # Run all checks against dev workspace diff
+#   ship-check --all        # Run all checks on entire codebase (not just diff)
+#
+# Exit codes:
+#   0 = all passed
+#   1 = failures found (block ship)
+#   2 = warnings found (ship with caution)
+
+set -uo pipefail
+
+DEV="$HOME/project/aos"
+RUNTIME="$HOME/aos"
+
+PASS=0
+WARN=0
+FAIL=0
+
+pass() { echo "  ✓ $1"; PASS=$((PASS + 1)); }
+warn() { echo "  ⚠ $1"; WARN=$((WARN + 1)); }
+fail() { echo "  ✗ $1"; FAIL=$((FAIL + 1)); }
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 1. CODE HEALTH — syntax errors in changed Python and Bash files
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+echo ""
+echo "Code Health"
+echo "───────────"
+
+cd "$DEV"
+
+if [[ "${1:-}" == "--all" ]]; then
+    PY_FILES=$(find . -name '*.py' -not -path './.git/*' -not -path '*/__pycache__/*' 2>/dev/null)
+    SH_FILES=$(find . -name '*.sh' -not -path './.git/*' 2>/dev/null; find ./core/bin -type f -not -path './.git/*' 2>/dev/null)
+else
+    # Only check files in the diff against main
+    PY_FILES=$(git diff origin/main --name-only --diff-filter=ACMR 2>/dev/null | grep '\.py$' || true)
+    SH_FILES=$(git diff origin/main --name-only --diff-filter=ACMR 2>/dev/null | grep -E '(\.sh$|^core/bin/)' || true)
+    # Also check uncommitted
+    PY_FILES="$PY_FILES"$'\n'"$(git diff --name-only --diff-filter=ACMR 2>/dev/null | grep '\.py$' || true)"
+    SH_FILES="$SH_FILES"$'\n'"$(git diff --name-only --diff-filter=ACMR 2>/dev/null | grep -E '(\.sh$|^core/bin/)' || true)"
+    # Deduplicate
+    PY_FILES=$(echo "$PY_FILES" | sort -u | grep -v '^$' || true)
+    SH_FILES=$(echo "$SH_FILES" | sort -u | grep -v '^$' || true)
+fi
+
+py_errors=0
+if [[ -n "$PY_FILES" ]]; then
+    while IFS= read -r f; do
+        [[ -z "$f" ]] && continue
+        [[ -f "$f" ]] || continue
+        if ! python3 -c "import py_compile; py_compile.compile('$f', doraise=True)" 2>/dev/null; then
+            fail "Syntax error: $f"
+            py_errors=$((py_errors + 1))
+        fi
+    done <<< "$PY_FILES"
+    if [[ $py_errors -eq 0 ]]; then
+        count=$(echo "$PY_FILES" | grep -c -v '^$' || echo 0)
+        pass "Python syntax OK ($count files)"
+    fi
+else
+    pass "No Python files changed"
+fi
+
+sh_errors=0
+if [[ -n "$SH_FILES" ]]; then
+    while IFS= read -r f; do
+        [[ -z "$f" ]] && continue
+        [[ -f "$f" ]] || continue
+        # Only check files that look like shell scripts
+        if head -1 "$f" 2>/dev/null | grep -qE '^#!.*\b(ba)?sh\b'; then
+            if ! bash -n "$f" 2>/dev/null; then
+                fail "Bash syntax error: $f"
+                sh_errors=$((sh_errors + 1))
+            fi
+        fi
+    done <<< "$SH_FILES"
+    if [[ $sh_errors -eq 0 ]]; then
+        count=$(echo "$SH_FILES" | grep -c -v '^$' || echo 0)
+        pass "Shell syntax OK ($count files)"
+    fi
+else
+    pass "No shell files changed"
+fi
+
+# Key entry points still import
+import_errors=0
+for module in \
+    "core.reconcile.runner" \
+    "core.work.cli" \
+    "core.work.inject_context"; do
+    mod_path=$(echo "$module" | tr '.' '/')
+    if [[ -f "$DEV/${mod_path}.py" ]]; then
+        if ! python3 -c "import sys; sys.path.insert(0,'$DEV'); __import__('${module}')" 2>/dev/null; then
+            fail "Import failed: $module"
+            import_errors=$((import_errors + 1))
+        fi
+    fi
+done
+if [[ $import_errors -eq 0 ]]; then
+    pass "Key imports OK"
+fi
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 2. DOCS SYNC — new components have their documentation
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+echo ""
+echo "Docs Sync"
+echo "─────────"
+
+# Every skill directory must have a SKILL.md
+skill_orphans=0
+for dir in "$DEV"/.claude/skills/*/; do
+    [[ -d "$dir" ]] || continue
+    name=$(basename "$dir")
+    if [[ ! -f "$dir/SKILL.md" ]]; then
+        fail "Skill '$name' has no SKILL.md"
+        skill_orphans=$((skill_orphans + 1))
+    fi
+done
+if [[ $skill_orphans -eq 0 ]]; then
+    skill_count=$(find "$DEV/.claude/skills" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
+    pass "All $skill_count skills have SKILL.md"
+fi
+
+# Every agent definition must have content
+agent_orphans=0
+for f in "$DEV"/core/agents/*.md; do
+    [[ -f "$f" ]] || continue
+    name=$(basename "$f")
+    if [[ ! -s "$f" ]]; then
+        fail "Agent definition '$name' is empty"
+        agent_orphans=$((agent_orphans + 1))
+    fi
+done
+if [[ $agent_orphans -eq 0 ]]; then
+    agent_count=$(find "$DEV/core/agents" -name '*.md' 2>/dev/null | wc -l | tr -d ' ')
+    pass "All $agent_count agent definitions have content"
+fi
+
+# CHANGELOG matches VERSION if VERSION was bumped
+if [[ "${1:-}" != "--all" ]]; then
+    version_changed=$(git diff origin/main --name-only 2>/dev/null | grep -c '^VERSION$' || true)
+    version_changed=${version_changed:-0}
+    if [[ "$version_changed" -gt 0 ]]; then
+        new_version=$(cat "$DEV/VERSION" 2>/dev/null | tr -d '[:space:]')
+        if [[ -f "$DEV/CHANGELOG.md" ]]; then
+            if grep -q "## $new_version" "$DEV/CHANGELOG.md" 2>/dev/null || \
+               grep -q "## v${new_version#v}" "$DEV/CHANGELOG.md" 2>/dev/null; then
+                pass "CHANGELOG has entry for $new_version"
+            else
+                fail "VERSION bumped to $new_version but no CHANGELOG entry"
+            fi
+        else
+            fail "VERSION bumped but CHANGELOG.md doesn't exist"
+        fi
+    fi
+fi
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 3. CONSISTENCY — internal references are wired up
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+echo ""
+echo "Consistency"
+echo "───────────"
+
+# Every .py in checks/ should be imported in checks/__init__.py
+checks_dir="$DEV/core/reconcile/checks"
+init_file="$checks_dir/__init__.py"
+if [[ -f "$init_file" ]]; then
+    unregistered=0
+    for pyfile in "$checks_dir"/*.py; do
+        [[ -f "$pyfile" ]] || continue
+        modname=$(basename "$pyfile" .py)
+        [[ "$modname" == "__init__" ]] && continue
+        [[ "$modname" == "__pycache__" ]] && continue
+        if ! grep -q "from \.$modname import\|from \.${modname} import\|import ${modname}" "$init_file" 2>/dev/null; then
+            fail "Reconcile check '$modname.py' not imported in __init__.py"
+            unregistered=$((unregistered + 1))
+        fi
+    done
+    if [[ $unregistered -eq 0 ]]; then
+        check_count=$(find "$checks_dir" -name '*.py' -not -name '__init__.py' -not -path '*/__pycache__/*' 2>/dev/null | wc -l | tr -d ' ')
+        pass "All $check_count reconcile checks registered"
+    fi
+else
+    warn "Reconcile checks/__init__.py missing"
+fi
+
+# Deprecated skills shouldn't have directories
+aos_cli="$DEV/core/bin/aos"
+if [[ -f "$aos_cli" ]]; then
+    deprecated=$(grep -oP 'DEPRECATED="\K[^"]+' "$aos_cli" 2>/dev/null || true)
+    if [[ -n "$deprecated" ]]; then
+        for name in $deprecated; do
+            if [[ -d "$DEV/.claude/skills/$name" ]]; then
+                warn "Deprecated skill '$name' still has a directory — consider removing"
+            fi
+        done
+    fi
+fi
+
+# Skills that define allowed-tools should only list valid tool names
+valid_tools="Bash|Read|Write|Edit|Glob|Grep|Agent|WebSearch|WebFetch"
+skill_tool_issues=0
+for skill_md in "$DEV"/.claude/skills/*/SKILL.md; do
+    [[ -f "$skill_md" ]] || continue
+    skill_name=$(basename "$(dirname "$skill_md")")
+    # Extract allowed-tools line from frontmatter
+    tools_line=$(sed -n '/^---$/,/^---$/{ /^allowed-tools:/p }' "$skill_md" 2>/dev/null || true)
+    if [[ -n "$tools_line" ]]; then
+        tools=$(echo "$tools_line" | sed 's/^allowed-tools:\s*//' | tr ',' '\n' | tr -d ' ')
+        while IFS= read -r tool; do
+            [[ -z "$tool" ]] && continue
+            # MCP tools and special tools are OK
+            if [[ "$tool" == mcp__* ]] || echo "$tool" | grep -qE "^($valid_tools)$"; then
+                :
+            else
+                warn "Skill '$skill_name' lists unknown tool: $tool"
+                skill_tool_issues=$((skill_tool_issues + 1))
+            fi
+        done <<< "$tools"
+    fi
+done
+if [[ $skill_tool_issues -eq 0 ]]; then
+    pass "Skill tool references valid"
+fi
+
+# Check for common leftover debug patterns in changed files
+if [[ "${1:-}" != "--all" ]]; then
+    changed_files=$(git diff origin/main --name-only --diff-filter=ACMR 2>/dev/null || true)
+    debug_hits=0
+    if [[ -n "$changed_files" ]]; then
+        while IFS= read -r f; do
+            [[ -z "$f" ]] && continue
+            [[ -f "$f" ]] || continue
+            # Skip binary and non-text files
+            if file "$f" 2>/dev/null | grep -q "text"; then
+                if grep -nE '(breakpoint\(\)|import pdb|print\(.*(DEBUG|TODO|FIXME|HACK))' "$f" 2>/dev/null | head -3; then
+                    warn "Debug artifact in $f"
+                    debug_hits=$((debug_hits + 1))
+                fi
+            fi
+        done <<< "$changed_files"
+    fi
+    if [[ $debug_hits -eq 0 ]]; then
+        pass "No debug artifacts in diff"
+    fi
+fi
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Summary
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+echo ""
+echo "───────────"
+total=$((PASS + WARN + FAIL))
+echo "  $PASS passed, $WARN warnings, $FAIL failed ($total checks)"
+
+if [[ $FAIL -gt 0 ]]; then
+    exit 1
+elif [[ $WARN -gt 0 ]]; then
+    exit 2
+else
+    exit 0
+fi

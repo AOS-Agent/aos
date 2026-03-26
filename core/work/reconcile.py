@@ -1,25 +1,19 @@
 #!/usr/bin/env python3
 """
-AOS Work Reconciliation Hook
+AOS Work Reconciliation Hook — Live Context Edition
 
-Runs on Stop (async, fire-and-forget). Scans the tool use history from
-the just-completed assistant turn to detect work-relevant patterns:
+Runs on Stop (async, fire-and-forget). Reads the LIVE CONTEXT to know what
+task is currently being worked on — no inference, no pattern matching needed.
 
-1. Did Claude run `cli.py done <id>`?  (explicit completion — already tracked, skip)
-2. Did Claude modify files in a project dir that has active tasks?
-3. Did the conversation involve multi-step work worth tracking?
+If a task is active (via `work start`):
+  → Attribute file modifications to that task immediately
+  → Detect completion signals for awareness
 
-This is Layer 2 of the three-layer cascade (skill -> hook -> command).
-Layer 1 (work-awareness skill) handles proactive detection during conversation.
-Layer 3 (explicit /work commands) is human override.
+If no task is active but work happened:
+  → Log it as untracked for visibility
 
-This hook bridges the gap — it catches completions and work that the skill
-didn't explicitly mark.
-
-Claude Code hooks protocol:
-- Read hook input from stdin (JSON with session info + tool results)
-- Async hook — no stdout needed, fire-and-forget
-- Must exit quickly, be idempotent, never crash
+The live context is set by `work start` and cleared by `work done`/`work stop`.
+This hook just reads it — making the Stop hook trivial and reliable.
 """
 
 import json
@@ -27,7 +21,6 @@ import os
 import sys
 from pathlib import Path
 
-# Add work engine to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 LOG_FILE = Path.home() / ".aos" / "logs" / "reconcile.log"
@@ -55,7 +48,6 @@ def main():
     session_id = hook_input.get("session_id", "")
     cwd = hook_input.get("cwd", os.getcwd())
     tool_results = hook_input.get("tool_use_results", [])
-    transcript_snippet = hook_input.get("transcript", "")
 
     if not session_id:
         return
@@ -67,86 +59,66 @@ def main():
         _log("Work engine not available — skipping")
         return
 
-    # Read session context written by inject_context.py
-    context_file = Path.home() / ".aos" / "work" / ".session-context.json"
-    task_ids_in_scope = []
-    try:
-        if context_file.exists():
-            ctx = json.loads(context_file.read_text())
-            if ctx.get("session_id") == session_id:
-                task_ids_in_scope = ctx.get("task_ids", [])
-    except Exception:
-        pass
+    # ── Read live context (the workbench) ──────────────
+    ctx = engine.get_live_context()
 
-    if not task_ids_in_scope:
-        # No tasks in scope — nothing to reconcile
-        return
-
-    # --- Pattern 1: Detect explicit cli.py done calls ---
-    # If the skill/user already ran `cli.py done`, don't double-process
-    already_completed = set()
-    for result in tool_results:
-        tool_input = result.get("input", "")
-        if isinstance(tool_input, dict):
-            tool_input = tool_input.get("command", "")
-        if "cli.py done" in str(tool_input) or "cli.py done" in str(result.get("command", "")):
-            # Extract task ID from the command
-            parts = str(tool_input).split("done")
-            if len(parts) > 1:
-                task_id = parts[1].strip().split()[0] if parts[1].strip() else ""
-                if task_id:
-                    already_completed.add(task_id)
-
-    # --- Pattern 2: Detect file modifications in project directories ---
+    # ── Extract what happened this turn ────────────────
     files_modified = []
-    for result in tool_results:
-        tool_name = result.get("tool_name", "")
-        if tool_name in ("Write", "Edit", "NotebookEdit"):
-            file_path = ""
-            inp = result.get("input", {})
-            if isinstance(inp, dict):
-                file_path = inp.get("file_path", "")
-            if file_path:
-                files_modified.append(file_path)
+    already_completed = set()
 
-    # --- Pattern 3: Link session to active tasks if meaningful work happened ---
-    if files_modified:
-        for task_id in task_ids_in_scope:
-            if task_id not in already_completed:
-                # Link the session with a summary of what was modified
-                file_count = len(files_modified)
-                sample = ", ".join(Path(f).name for f in files_modified[:3])
-                if file_count > 3:
-                    sample += f" +{file_count - 3} more"
-                engine.link_session_to_task(
-                    task_id, session_id,
-                    outcome=f"Modified {file_count} files: {sample}"
-                )
-        _log(f"Linked {len(files_modified)} file changes to {len(task_ids_in_scope)} tasks")
-
-    # --- Pattern 4: Detect bash commands that indicate task completion ---
-    completion_signals = []
     for result in tool_results:
         tool_name = result.get("tool_name", "")
         inp = result.get("input", {})
-        if isinstance(inp, dict):
-            command = inp.get("command", "")
-        else:
-            command = str(inp)
 
-        # Deployment, test passes, build successes
+        # Track file modifications
+        if tool_name in ("Write", "Edit", "NotebookEdit"):
+            if isinstance(inp, dict):
+                fp = inp.get("file_path", "")
+                if fp:
+                    files_modified.append(fp)
+
+        # Track explicit `work done` calls so we don't double-process
         if tool_name == "Bash":
-            lower_cmd = command.lower()
-            if any(sig in lower_cmd for sig in [
-                "deploy", "npm run build", "pytest", "cargo test",
-                "git push", "make install", "swift build"
-            ]):
-                completion_signals.append(command[:80])
+            command = inp.get("command", "") if isinstance(inp, dict) else str(inp)
+            if "cli.py done" in command:
+                parts = command.split("done")
+                if len(parts) > 1:
+                    tid = parts[1].strip().split()[0] if parts[1].strip() else ""
+                    if tid:
+                        already_completed.add(tid)
 
-    if completion_signals:
-        _log(f"Completion signals detected: {len(completion_signals)}")
-        # Don't auto-complete tasks — just log for awareness
-        # The work-awareness skill or human should explicitly mark done
+    # ── Case 1: Active task — attribute work directly ──
+    if ctx:
+        task_id = ctx["task_id"]
+
+        if files_modified and task_id not in already_completed:
+            file_count = len(files_modified)
+            sample = ", ".join(Path(f).name for f in files_modified[:3])
+            if file_count > 3:
+                sample += f" +{file_count - 3} more"
+
+            engine.link_session_to_task(
+                task_id, session_id,
+                outcome=f"Modified {file_count} files: {sample}"
+            )
+            _log(f"[live] Attributed {file_count} files to {task_id}")
+
+        elif files_modified:
+            _log(f"[live] {task_id} already completed via CLI — skipping attribution")
+
+        return  # Done — live context handled everything
+
+    # ── Case 2: No active task — check for untracked work ──
+    if files_modified:
+        _log(f"[untracked] {len(files_modified)} files modified with no active task: {', '.join(Path(f).name for f in files_modified[:5])}")
+        # Log to activity so dashboard can surface it
+        try:
+            engine._log_activity(
+                "session_untracked",
+                detail=f"{len(files_modified)} files modified without active task"
+            )
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":

@@ -1,0 +1,20 @@
+#!/bin/bash
+# eventd — AOS Event Daemon launcher
+# Sets process name to 'eventd' so Activity Monitor shows it properly.
+# Uses the service venv if available, falls back to system Python.
+
+set -euo pipefail
+
+AOS_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
+VENV="$HOME/.aos/services/eventd/.venv"
+EVENTD="$AOS_DIR/core/services/eventd/main.py"
+
+# Use service venv if it exists
+if [ -f "$VENV/bin/python3" ]; then
+    PYTHON="$VENV/bin/python3"
+else
+    PYTHON="python3"
+fi
+
+# exec -a sets the process name in ps/Activity Monitor
+exec -a eventd "$PYTHON" "$EVENTD" "$@"

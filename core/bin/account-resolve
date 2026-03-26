@@ -1,0 +1,238 @@
+#!/bin/bash
+# account-resolve — resolve the right account for a context + service
+#
+# Reads ~/.aos/config/accounts.yaml and returns the account identifier
+# for the given context and service. Falls back to default context.
+#
+# Usage:
+#   account-resolve <context> <service>        → account identifier
+#   account-resolve <context> <service> --key  → credential key name(s)
+#   account-resolve <context> <service> --trust → trust level
+#   account-resolve --list-contexts             → all context names
+#   account-resolve --list-accounts <service>   → all accounts for service
+#   account-resolve --discover <service> <id>   → log discovered account
+#   account-resolve --default <service>         → account from default context
+#
+# Examples:
+#   account-resolve nuchay google              → hisham@nuchay.com
+#   account-resolve personal google            → hishamalhadi@gmail.com
+#   account-resolve nuchay telegram --key      → TELEGRAM_BOT_TOKEN TELEGRAM_CHAT_ID
+#   account-resolve --default google           → hisham@nuchay.com
+#   account-resolve alhuda google --trust      → ask
+
+set -euo pipefail
+
+REGISTRY="$HOME/.aos/config/accounts.yaml"
+
+if [[ ! -f "$REGISTRY" ]]; then
+  echo "Error: account registry not found at $REGISTRY" >&2
+  exit 1
+fi
+
+# We use python3 + PyYAML for reliable YAML parsing.
+# Falls back to yq if available, then to grep-based extraction.
+_yaml_query() {
+  local query="$1"
+  if command -v python3 &>/dev/null; then
+    python3 -c "
+import yaml, sys
+with open('$REGISTRY') as f:
+    data = yaml.safe_load(f)
+result = data
+for key in '''$query'''.split('.'):
+    if key.startswith('['):
+        # list index
+        idx = int(key[1:-1])
+        result = result[idx]
+    elif isinstance(result, dict):
+        result = result.get(key)
+    else:
+        result = None
+    if result is None:
+        sys.exit(1)
+if isinstance(result, dict):
+    for k, v in result.items():
+        print(f'{k}: {v}')
+elif isinstance(result, list):
+    for item in result:
+        print(item)
+else:
+    print(result)
+" 2>/dev/null
+  else
+    echo "Error: python3 required for YAML parsing" >&2
+    exit 1
+  fi
+}
+
+# Resolve: context + service → account identifier
+_resolve() {
+  local context="$1" service="$2"
+  _yaml_query "contexts.$context.accounts.$service"
+}
+
+# Get trust level for an account
+_trust() {
+  local service="$1" account_id="$2"
+  python3 - "$REGISTRY" "$service" "$account_id" <<'PYEOF'
+import yaml, sys
+registry, service, account_id = sys.argv[1], sys.argv[2], sys.argv[3]
+with open(registry) as f:
+    data = yaml.safe_load(f)
+entry = data.get('accounts', {}).get(service, {}).get('entries', {}).get(account_id, {})
+trust = entry.get('trust')
+if trust:
+    print(trust)
+else:
+    sys.exit(1)
+PYEOF
+}
+
+# Get credential keys for an account
+_keys() {
+  local service="$1" account_id="$2"
+  python3 - "$REGISTRY" "$service" "$account_id" <<'PYEOF'
+import yaml, sys
+registry, service, account_id = sys.argv[1], sys.argv[2], sys.argv[3]
+with open(registry) as f:
+    data = yaml.safe_load(f)
+entry = data.get('accounts', {}).get(service, {}).get('entries', {}).get(account_id, {})
+keys = entry.get('credential_keys', {})
+if keys:
+    for k, v in keys.items():
+        print(v)
+else:
+    # For Google, the account ID is the email — no separate credential key
+    print(account_id)
+PYEOF
+}
+
+# Find the default context
+_default_context() {
+  python3 -c "
+import yaml
+with open('$REGISTRY') as f:
+    data = yaml.safe_load(f)
+for name, ctx in data.get('contexts', {}).items():
+    if ctx.get('default', False):
+        print(name)
+        break
+" 2>/dev/null
+}
+
+# List all contexts
+_list_contexts() {
+  python3 -c "
+import yaml
+with open('$REGISTRY') as f:
+    data = yaml.safe_load(f)
+for name, ctx in data.get('contexts', {}).items():
+    default = ' (default)' if ctx.get('default', False) else ''
+    label = ctx.get('label', name)
+    print(f'{name}: {label}{default}')
+" 2>/dev/null
+}
+
+# List all accounts for a service
+_list_accounts() {
+  local service="$1"
+  python3 -c "
+import yaml
+with open('$REGISTRY') as f:
+    data = yaml.safe_load(f)
+entries = data.get('accounts', {}).get('$service', {}).get('entries', {})
+for account_id, info in entries.items():
+    trust = info.get('trust', 'unknown')
+    label = info.get('label', '')
+    print(f'{account_id} [{trust}] {label}')
+" 2>/dev/null
+}
+
+# Log a discovered account for operator review
+_discover() {
+  local service="$1" account_id="$2"
+  local timestamp
+  timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  python3 -c "
+import yaml
+with open('$REGISTRY') as f:
+    data = yaml.safe_load(f)
+discovered = data.get('discovered', [])
+# Don't duplicate
+for item in discovered:
+    if item.get('service') == '$service' and item.get('id') == '$account_id':
+        print('Already discovered')
+        exit(0)
+discovered.append({
+    'service': '$service',
+    'id': '$account_id',
+    'discovered_at': '$timestamp',
+    'status': 'pending'
+})
+data['discovered'] = discovered
+with open('$REGISTRY', 'w') as f:
+    yaml.dump(data, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+print('Discovered: $service/$account_id')
+" 2>/dev/null
+}
+
+# ── Main dispatch ─────────────────────────────────────────
+case "${1:-}" in
+  --list-contexts)
+    _list_contexts
+    ;;
+  --list-accounts)
+    [[ -z "${2:-}" ]] && { echo "Usage: account-resolve --list-accounts <service>" >&2; exit 1; }
+    _list_accounts "$2"
+    ;;
+  --discover)
+    [[ -z "${2:-}" || -z "${3:-}" ]] && { echo "Usage: account-resolve --discover <service> <id>" >&2; exit 1; }
+    _discover "$2" "$3"
+    ;;
+  --default)
+    [[ -z "${2:-}" ]] && { echo "Usage: account-resolve --default <service>" >&2; exit 1; }
+    ctx=$(_default_context)
+    [[ -z "$ctx" ]] && { echo "Error: no default context found" >&2; exit 1; }
+    _resolve "$ctx" "$2"
+    ;;
+  -*)
+    echo "Unknown flag: $1" >&2
+    echo "Usage: account-resolve <context> <service> [--key|--trust]" >&2
+    echo "       account-resolve --default <service>" >&2
+    echo "       account-resolve --list-contexts" >&2
+    echo "       account-resolve --list-accounts <service>" >&2
+    echo "       account-resolve --discover <service> <id>" >&2
+    exit 1
+    ;;
+  *)
+    [[ -z "${1:-}" || -z "${2:-}" ]] && {
+      echo "Usage: account-resolve <context> <service> [--key|--trust]" >&2
+      exit 1
+    }
+    context="$1"
+    service="$2"
+    flag="${3:-}"
+
+    account_id=$(_resolve "$context" "$service")
+    if [[ -z "$account_id" ]]; then
+      echo "Error: no $service account in context '$context'" >&2
+      exit 1
+    fi
+
+    case "$flag" in
+      --key)
+        _keys "$service" "$account_id"
+        ;;
+      --trust)
+        _trust "$service" "$account_id"
+        ;;
+      "")
+        echo "$account_id"
+        ;;
+      *)
+        echo "Unknown flag: $flag" >&2
+        exit 1
+        ;;
+    esac
+    ;;
+esac
