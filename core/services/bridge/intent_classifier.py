@@ -195,15 +195,8 @@ INTENTS = {
         ],
         "handler": "handle_reply",
     },
-    "greeting": {
-        "patterns": [
-            "re:^(hey|hi|hello|hola|salam|asalamualaikum|assalamualaikum|salaam)$",
-            "re:^(hey|hi|hello|yo|sup) (there|chief|buddy)$",
-            "re:^good (morning|afternoon|evening|night)$",
-            "re:^(gm|gn)$",
-        ],
-        "handler": "handle_greeting",
-    },
+    # greeting intent removed — greetings go through Claude for natural
+    # personality response instead of canned text.
 }
 
 

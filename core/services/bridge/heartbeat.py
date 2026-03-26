@@ -49,9 +49,23 @@ def _check_health() -> dict:
     """Gather system health info. All checks are deterministic (no LLM)."""
     import shutil
 
-    # Disk
-    usage = shutil.disk_usage("/")
-    disk_pct = round(usage.used / usage.total * 100, 1)
+    # Disk — use df instead of shutil.disk_usage because macOS counts
+    # purgeable space as "used", giving false 85%+ readings on APFS volumes.
+    disk_pct = 0
+    try:
+        df_result = subprocess.run(
+            ["df", "-h", "/"], capture_output=True, text=True, timeout=5
+        )
+        # Parse "Capacity" column (e.g., "32%")
+        for line in df_result.stdout.strip().split("\n")[1:]:
+            parts = line.split()
+            for part in parts:
+                if part.endswith("%"):
+                    disk_pct = float(part.rstrip("%"))
+                    break
+    except Exception:
+        usage = shutil.disk_usage("/")
+        disk_pct = round(usage.used / usage.total * 100, 1)
 
     # RAM (macOS)
     ram_pct = 0

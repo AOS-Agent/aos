@@ -204,6 +204,8 @@ class TelegramChannel:
         # topic_routes: {thread_id: {"cwd": "/path/to/project", "agent": "nuchay"}}
         self.topic_routes = topic_routes or {}
         self.app: Application = None
+        # Per-conversation locks — prevents concurrent Claude processes
+        self._conversation_locks: dict[str, asyncio.Lock] = {}
 
     def _is_authorized(self, chat_id: int) -> bool:
         return chat_id == self.allowed_chat_id or chat_id == self.forum_group_id
@@ -662,41 +664,54 @@ class TelegramChannel:
         if topic_agent and not text.lower().startswith(("ask ", "tell ", "@")):
             text = f"ask {topic_agent} to {text}"
 
-        # Acknowledge receipt immediately
+        # Acknowledge receipt immediately (before lock — user sees 👀 right away)
         await self._ack_message(update.message)
         log_activity("telegram", "message_received", summary=text[:100])
 
-        # Persist in-flight message so it survives a bridge restart
-        _save_inflight(
-            chat_id=update.message.chat_id,
-            text=text,
-            user_key=user_key,
-            thread_id=thread_id,
-            cwd=topic_cwd,
-        )
+        # Per-conversation lock — only one Claude process at a time
+        lock = self._conversation_locks.setdefault(user_key, asyncio.Lock())
+        if lock.locked():
+            # Another message is being processed — let user know
+            _q_kwargs = {"disable_notification": True}
+            if thread_id:
+                _q_kwargs["message_thread_id"] = thread_id
+            try:
+                await update.message.chat.send_message("⏳", **_q_kwargs)
+            except Exception:
+                pass
 
-        # Log conversation start
-        _conv_start = _time.monotonic()
-        _topic_name = topic_agent or (f"topic:{thread_id}" if thread_id else "dm")
-        _conv_id = log_conversation(
-            user_key=user_key, agent=topic_agent, topic_name=_topic_name,
-            message=update.message.text,  # original text, not the "ask X to" version
-        )
+        async with lock:
+            # Persist in-flight message so it survives a bridge restart
+            _save_inflight(
+                chat_id=update.message.chat_id,
+                text=text,
+                user_key=user_key,
+                thread_id=thread_id,
+                cwd=topic_cwd,
+            )
 
-        # Stream response (typing keepalive + live progress + formatted delivery)
-        response = await self._stream_response(
-            update.message.chat, update.message, text, user_key,
-            cwd=topic_cwd,
-            thread_id=thread_id,
-        )
+            # Log conversation start
+            _conv_start = _time.monotonic()
+            _topic_name = topic_agent or (f"topic:{thread_id}" if thread_id else "dm")
+            _conv_id = log_conversation(
+                user_key=user_key, agent=topic_agent, topic_name=_topic_name,
+                message=update.message.text,
+            )
 
-        # Clear in-flight marker — response delivered successfully
-        _clear_inflight()
+            # Stream response (typing keepalive + live progress + formatted delivery)
+            response = await self._stream_response(
+                update.message.chat, update.message, text, user_key,
+                cwd=topic_cwd,
+                thread_id=thread_id,
+            )
 
-        # Log conversation completion
-        _conv_duration = int((_time.monotonic() - _conv_start) * 1000)
-        update_conversation(_conv_id, response=response[:10000], duration_ms=_conv_duration)
-        log_activity("telegram", "response_sent", summary=response[:100])
+            # Clear in-flight marker — response delivered successfully
+            _clear_inflight()
+
+            # Log conversation completion
+            _conv_duration = int((_time.monotonic() - _conv_start) * 1000)
+            update_conversation(_conv_id, response=response[:10000], duration_ms=_conv_duration)
+            log_activity("telegram", "response_sent", summary=response[:100])
 
     async def _handle_new(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not update.message:
