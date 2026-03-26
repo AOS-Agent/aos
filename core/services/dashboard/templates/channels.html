@@ -1,0 +1,290 @@
+{% extends "base.html" %}
+
+{% block title %}Channels{% endblock %}
+{% block page_name %}Channels{% endblock %}
+
+{% block styles %}
+/* ── Category Sections ──────────────────── */
+.cat-section { margin-bottom: 24px; }
+
+.cat-header {
+    display: flex; align-items: center; gap: 8px;
+    margin-bottom: 10px;
+}
+
+.cat-label {
+    font-size: 12px; font-weight: 600; color: var(--text-tertiary);
+    text-transform: uppercase; letter-spacing: 0.5px;
+}
+
+.cat-count {
+    font-size: 11px; color: var(--text-faint);
+    font-family: var(--font-mono);
+}
+
+/* ── Summary Row ──────────────────────────── */
+.summary-grid {
+    display: grid; gap: 12px; margin-bottom: 20px;
+    grid-template-columns: repeat(4, 1fr);
+}
+
+@media (max-width: 768px) {
+    .summary-grid { grid-template-columns: 1fr 1fr; }
+}
+
+.stat-card {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px 20px;
+}
+
+.stat-card-label {
+    font-size: 12px; font-weight: 500; color: var(--text-tertiary);
+    text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;
+}
+
+.stat-num { font-family: var(--font-mono); font-size: 24px; font-weight: 700; color: var(--text); }
+.stat-num.accent { color: var(--orange); }
+.stat-sub { font-size: 12px; color: var(--text-faint); margin-top: 4px; }
+
+/* ── Channel Grid ─────────────────────────── */
+.ch-grid {
+    display: grid; gap: 12px;
+    grid-template-columns: repeat(3, 1fr);
+}
+
+@media (max-width: 900px) {
+    .ch-grid { grid-template-columns: 1fr 1fr; }
+}
+
+@media (max-width: 560px) {
+    .ch-grid { grid-template-columns: 1fr; }
+}
+
+/* ── Channel Card ─────────────────────────── */
+.ch-card {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px 20px;
+    transition: border-color 0.15s;
+}
+
+.ch-card:hover { border-color: var(--text-faint); }
+
+.ch-card-head {
+    display: flex; align-items: center; gap: 8px; margin-bottom: 8px;
+}
+
+.ch-dot {
+    width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+}
+
+.ch-dot.active { background: #448361; box-shadow: 0 0 6px rgba(68,131,97,0.5); }
+.ch-dot.connected { background: var(--orange); box-shadow: 0 0 6px rgba(217,115,13,0.4); }
+.ch-dot.available { background: var(--text-faint); }
+
+.ch-name {
+    font-size: 13px; font-weight: 600; color: var(--text);
+    flex: 1; min-width: 0;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+.ch-tier {
+    font-family: var(--font-mono); font-size: 10px; color: var(--text-faint);
+    background: var(--tag-gray-bg); padding: 1px 6px; border-radius: 3px;
+    flex-shrink: 0;
+}
+
+.ch-desc {
+    font-size: 12px; color: var(--text-secondary); line-height: 1.4;
+    margin-bottom: 10px;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.ch-tags {
+    display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px;
+}
+
+.ch-tag {
+    font-size: 10px; color: var(--tag-blue);
+    background: var(--tag-blue-bg); padding: 1px 6px; border-radius: 3px;
+}
+
+.ch-live {
+    font-size: 11px; color: var(--text-faint);
+    border-top: 1px solid var(--border-light);
+    padding-top: 8px; margin-top: 4px;
+}
+
+.ch-live span { margin-right: 10px; }
+
+.ch-connect {
+    display: inline-block; font-size: 11px; color: var(--accent);
+    cursor: default; margin-top: 6px;
+}
+
+/* ── Section Label (reused) ───────────────── */
+.section-label {
+    font-size: 12px; font-weight: 600; color: var(--text-tertiary);
+    text-transform: uppercase; letter-spacing: 0.5px; margin: 20px 0 8px;
+}
+
+/* ── Loading state ───────────────────────── */
+.ch-loading {
+    text-align: center; padding: 40px 20px;
+    font-size: 13px; color: var(--text-faint);
+}
+{% endblock %}
+
+{% block page_actions_block %}
+<div style="font-size: 11px; color: var(--text-faint);" id="refresh-indicator">Loading...</div>
+{% endblock %}
+
+{% block content %}
+<!-- Summary -->
+<div class="summary-grid" id="summary-grid">
+    <div class="stat-card"><div class="stat-card-label">Total</div><div class="stat-num" id="stat-total">-</div><div class="stat-sub" id="stat-total-sub">integrations</div></div>
+    <div class="stat-card"><div class="stat-card-label">Active</div><div class="stat-num accent" id="stat-active">-</div><div class="stat-sub">running or connected</div></div>
+    <div class="stat-card"><div class="stat-card-label">Categories</div><div class="stat-num" id="stat-cats">-</div><div class="stat-sub">integration groups</div></div>
+    <div class="stat-card"><div class="stat-card-label">Communication</div><div class="stat-num" id="stat-comms">-</div><div class="stat-sub" id="stat-comms-sub">channels</div></div>
+</div>
+
+<!-- Channel sections (rendered by JS) -->
+<div id="channels-container">
+    <div class="ch-loading">Loading channels...</div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+const CATEGORY_ORDER = [
+    'communication', 'productivity', 'knowledge', 'development',
+    'personal', 'input', 'data', 'project_management'
+];
+
+const CATEGORY_LABELS = {
+    communication: 'Communication',
+    productivity: 'Productivity',
+    knowledge: 'Knowledge',
+    development: 'Development',
+    personal: 'Personal',
+    input: 'Input',
+    data: 'Data',
+    project_management: 'Project Management',
+};
+
+const TIER_LABELS = { 1: 'native', 2: 'builtin', 3: 'catalog' };
+
+function esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+
+function renderChannels(data) {
+    const channels = data.channels || [];
+    const categories = data.categories || {};
+
+    // Summary stats
+    const total = channels.length;
+    const active = channels.filter(c => c.status === 'active' || c.status === 'connected').length;
+    const catCount = Object.keys(categories).length;
+    const commCat = categories['communication'] || { count: 0, active: 0 };
+
+    document.getElementById('stat-total').textContent = total;
+    document.getElementById('stat-total-sub').textContent = total === 1 ? 'integration' : 'integrations';
+    document.getElementById('stat-active').textContent = active;
+    document.getElementById('stat-cats').textContent = catCount;
+    document.getElementById('stat-comms').textContent = commCat.count;
+    document.getElementById('stat-comms-sub').textContent = commCat.active + ' active';
+
+    // Group channels by category
+    const grouped = {};
+    for (const ch of channels) {
+        const cat = ch.category || 'other';
+        if (!grouped[cat]) grouped[cat] = [];
+        grouped[cat].push(ch);
+    }
+
+    // Sort within each category: active first, then connected, then available
+    const statusOrder = { active: 0, connected: 1, available: 2 };
+    for (const cat of Object.keys(grouped)) {
+        grouped[cat].sort((a, b) => (statusOrder[a.status] || 9) - (statusOrder[b.status] || 9));
+    }
+
+    // Render
+    const container = document.getElementById('channels-container');
+    let html = '';
+
+    const orderedCats = CATEGORY_ORDER.filter(c => grouped[c]);
+    // Append any categories not in the predefined order
+    for (const c of Object.keys(grouped)) {
+        if (!orderedCats.includes(c)) orderedCats.push(c);
+    }
+
+    for (const cat of orderedCats) {
+        const items = grouped[cat];
+        if (!items || items.length === 0) continue;
+        const catInfo = categories[cat] || {};
+        const label = CATEGORY_LABELS[cat] || cat.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+
+        html += `<div class="cat-section">`;
+        html += `<div class="cat-header"><div class="cat-label">${esc(label)}</div><div class="cat-count">${catInfo.active || 0}/${catInfo.count || items.length} active</div></div>`;
+        html += `<div class="ch-grid">`;
+
+        for (const ch of items) {
+            const dotClass = ch.status === 'active' ? 'active' : ch.status === 'connected' ? 'connected' : 'available';
+            const tierLabel = TIER_LABELS[ch.tier] || 'tier ' + ch.tier;
+
+            html += `<div class="ch-card">`;
+            html += `<div class="ch-card-head">`;
+            html += `<div class="ch-dot ${dotClass}"></div>`;
+            html += `<div class="ch-name">${esc(ch.name)}</div>`;
+            html += `<div class="ch-tier">${esc(tierLabel)}</div>`;
+            html += `</div>`;
+            html += `<div class="ch-desc">${esc(ch.description)}</div>`;
+
+            if (ch.provides && ch.provides.length > 0) {
+                html += `<div class="ch-tags">`;
+                for (const p of ch.provides) {
+                    html += `<span class="ch-tag">${esc(p)}</span>`;
+                }
+                html += `</div>`;
+            }
+
+            // Live data for active communication channels
+            if (ch.live && Object.keys(ch.live).length > 0 && ch.category === 'communication') {
+                html += `<div class="ch-live">`;
+                if (ch.live.running) html += `<span>Running</span>`;
+                if (ch.live.last_message) html += `<span>Last: ${esc(ch.live.last_message)}</span>`;
+                if (ch.live.message_count) html += `<span>${ch.live.message_count} msgs</span>`;
+                html += `</div>`;
+            }
+
+            if (ch.status === 'available') {
+                html += `<div class="ch-connect">Connect via CLI</div>`;
+            }
+
+            html += `</div>`;
+        }
+
+        html += `</div></div>`;
+    }
+
+    if (html === '') {
+        html = '<div class="ch-loading">No integrations found in registry.</div>';
+    }
+
+    container.innerHTML = html;
+}
+
+async function refresh() {
+    try {
+        const resp = await fetch('/api/channels');
+        const data = await resp.json();
+        renderChannels(data);
+        document.getElementById('refresh-indicator').textContent = 'Updated ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    } catch (e) {
+        document.getElementById('refresh-indicator').textContent = 'Error loading';
+    }
+}
+
+refresh();
+setInterval(refresh, 30000);
+{% endblock %}

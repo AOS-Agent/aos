@@ -1942,6 +1942,148 @@ async def status_page(request: Request):
     })
 
 
+# ── Channels ──────────────────────────────────────────────
+
+def _load_channels() -> dict:
+    """Load all integrations from registry, enrich with live status from eventd."""
+    # 1. Read registry
+    registry_path = WORKSPACE / "core" / "integrations" / "registry.yaml"
+    if not registry_path.exists():
+        return {"channels": [], "categories": {}}
+
+    try:
+        reg = yaml.safe_load(registry_path.read_text()) or {}
+    except Exception:
+        return {"channels": [], "categories": {}}
+
+    # 2. Fetch live watcher data from eventd
+    eventd_health = _get_eventd_health()
+    watchers = eventd_health.get("watchers", {}) if eventd_health else {}
+
+    # 3. Check which secrets exist (batch via agent-secret check)
+    all_requires: dict[str, list[str]] = {}  # integration_id -> required secrets
+    tier_map = {
+        "apple_native": 1,
+        "builtin": 2,
+        "catalog": 3,
+    }
+
+    channels = []
+    for tier_key in ("apple_native", "builtin", "catalog"):
+        tier_data = reg.get(tier_key, {})
+        if not isinstance(tier_data, dict):
+            continue
+        for int_id, info in tier_data.items():
+            if not isinstance(info, dict):
+                continue
+            channels.append({
+                "id": int_id,
+                "name": info.get("name", int_id.replace("_", " ").title()),
+                "tier": info.get("tier", tier_map.get(tier_key, 3)),
+                "category": info.get("category", "other"),
+                "description": info.get("description", ""),
+                "provides": info.get("provides", []),
+                "requires": info.get("requires", []),
+                "registry_status": info.get("status", "available"),
+                "_tier_key": tier_key,
+            })
+            all_requires[int_id] = info.get("requires", [])
+
+    # 4. Check credentials existence via agent-secret check (non-blocking, best effort)
+    secret_exists: dict[str, bool] = {}
+    secrets_to_check = set()
+    for reqs in all_requires.values():
+        for r in reqs:
+            # Only check things that look like credential names (not permissions/apps)
+            if "permission" not in r.lower() and "app" not in r.lower() and "sync" not in r.lower():
+                secrets_to_check.add(r)
+
+    if secrets_to_check:
+        try:
+            agent_secret = str(WORKSPACE / "core" / "bin" / "agent-secret")
+            result = subprocess.run(
+                [agent_secret, "check"] + list(secrets_to_check),
+                capture_output=True, text=True, timeout=5,
+            )
+            # agent-secret check prints "name: yes/no" lines or exits 0 if all exist
+            for line in result.stdout.strip().split("\n"):
+                if ":" in line:
+                    name, val = line.split(":", 1)
+                    secret_exists[name.strip()] = val.strip().lower() in ("yes", "true", "found", "1")
+                elif result.returncode == 0 and len(secrets_to_check) == 1:
+                    secret_exists[list(secrets_to_check)[0]] = True
+        except Exception:
+            pass
+
+    # 5. Determine status for each channel
+    for ch in channels:
+        int_id = ch["id"]
+        # If registry says active, trust it
+        if ch["registry_status"] == "active":
+            ch["status"] = "active"
+        # Check if there's a running watcher for this channel
+        elif int_id in watchers and watchers[int_id].get("running", False):
+            ch["status"] = "active"
+        # Check if any related watcher name matches
+        elif any(int_id in wk for wk in watchers if watchers[wk].get("running", False)):
+            ch["status"] = "active"
+        # Check if credentials exist
+        elif any(secret_exists.get(r, False) for r in all_requires.get(int_id, [])
+                 if "permission" not in r.lower()):
+            ch["status"] = "connected"
+        else:
+            ch["status"] = "available"
+
+        # Live data for communication channels
+        live = {}
+        watcher_data = watchers.get(int_id, {})
+        if watcher_data:
+            live["running"] = watcher_data.get("running", False)
+            if watcher_data.get("last_event"):
+                live["last_message"] = watcher_data["last_event"]
+            if watcher_data.get("message_count"):
+                live["message_count"] = watcher_data["message_count"]
+        ch["live"] = live
+
+        # Clean up internal keys
+        del ch["registry_status"]
+        del ch["_tier_key"]
+
+    # 6. Build category summary
+    categories = {}
+    for ch in channels:
+        cat = ch["category"]
+        if cat not in categories:
+            categories[cat] = {"count": 0, "active": 0}
+        categories[cat]["count"] += 1
+        if ch["status"] in ("active", "connected"):
+            categories[cat]["active"] += 1
+
+    return {"channels": channels, "categories": categories}
+
+
+@app.get("/api/channels")
+async def api_channels():
+    """All channels from registry with live status."""
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, _load_channels)
+
+
+@app.get("/channels", response_class=HTMLResponse)
+async def channels_page(request: Request):
+    """Channels page — all integrations grouped by category."""
+    active_count = 0
+    try:
+        tasks = _load_tasks()
+        active_count = sum(1 for t in tasks if t.get("status") in ("active", "todo"))
+    except Exception:
+        pass
+    return templates.TemplateResponse(request, "channels.html", {
+        "active_page": "channels",
+        "task_count": active_count if active_count else None,
+    })
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=4096)
