@@ -22,6 +22,19 @@ SESSIONS_FILE = WORKSPACE / "data" / "bridge" / "sessions.json"
 AGENTS_DIR = WORKSPACE / ".claude" / "agents"
 
 
+def _get_default_agent() -> str:
+    """Read operator's configured agent name (default: chief)."""
+    try:
+        import yaml
+        op_file = Path.home() / ".aos" / "config" / "operator.yaml"
+        if op_file.exists():
+            op = yaml.safe_load(op_file.read_text()) or {}
+            return op.get("agent_name", "chief")
+    except Exception:
+        pass
+    return "chief"
+
+
 # ── Event types ──────────────────────────────────────────────
 
 
@@ -361,8 +374,8 @@ async def stream_claude(
     user_key: str,
     cwd: str | None = None,
     image_paths: list[str] | None = None,
-    max_turns: int = 25,
-    max_budget_usd: float = 5.0,
+    max_turns: int = 100,
+    max_budget_usd: float = 50.0,
 ) -> tuple[str | None, bool, AsyncGenerator[StreamEvent, None]]:
     """Spawn a claude process and stream typed events.
 
@@ -379,7 +392,10 @@ async def stream_claude(
             f"[Attached media — use the Read tool to view these files]\n{img_lines}"
         )
 
-    # Build command
+    # Build command — lightweight Chief identity without full --agent harness.
+    # --agent chief triggers CLAUDE.md chain + hooks + MCP on EVERY message
+    # (each is a new process). This condensed prompt gives Chief's personality
+    # without the startup overhead.
     cmd = [
         "claude",
         "-p",
@@ -396,14 +412,30 @@ async def stream_claude(
         str(max_budget_usd),
     ]
 
-    # Non-interactive context — tell Claude it cannot ask questions
-    cmd.extend([
-        "--append-system-prompt",
-        "You are running non-interactively via Telegram. You CANNOT ask the user "
-        "interactive questions — there is no stdin. Make autonomous decisions and "
-        "state your assumptions in the response. If you are unsure about something, "
-        "pick the most reasonable option and explain what you chose and why.",
-    ])
+    # Chief identity — lightweight prompt for default conversations.
+    # Reads operator name from config for personalization.
+    if not agent_name:
+        default_agent = _get_default_agent()
+        _op_name = ""
+        try:
+            import yaml
+            _op_file = Path.home() / ".aos" / "config" / "operator.yaml"
+            if _op_file.exists():
+                _op = yaml.safe_load(_op_file.read_text()) or {}
+                _op_name = _op.get("name", "")
+        except Exception:
+            pass
+        _greeting = f" You talk to the operator ({_op_name})" if _op_name else " You talk to the operator"
+        cmd.extend([
+            "--append-system-prompt",
+            f"You are {default_agent.capitalize()}, the AOS orchestrator.{_greeting} "
+            "and get things done — by taking direct action, delegating to specialist "
+            "agents, or querying data sources. Be concise. Lead with the answer. "
+            "You are running via Telegram — no interactive questions, make autonomous "
+            "decisions and state your assumptions. If you need to delegate, use the "
+            "Agent tool with subagent_type: steward (system health), advisor (analysis), "
+            "or other installed agents. You have full tool access.",
+        ])
 
     # Session resumption (not for agent dispatches — they get fresh context)
     session_id = None
@@ -416,11 +448,9 @@ async def stream_claude(
             bridge_event("session_resuming", user_key=user_key,
                          session_id=session_id[:12])
 
-    # Agent system prompt
+    # Agent dispatch: "ask steward to ..." — use --agent for proper model/identity
     if agent_name:
-        agent_path = AGENTS_DIR / f"{agent_name}.md"
-        if agent_path.exists():
-            cmd.extend(["--append-system-prompt-file", str(agent_path)])
+        cmd.extend(["--agent", agent_name])
 
     work_dir = cwd or str(Path.home())
 
@@ -528,15 +558,18 @@ async def _retry_fresh(
         "stream-json",
         "--verbose",
         "--include-partial-messages",
+        "--permission-mode",
+        "bypassPermissions",
         "--max-turns",
         str(max_turns),
         "--max-budget-usd",
         str(max_budget_usd),
     ]
+    # Load proper agent identity
     if agent_name:
-        agent_path = AGENTS_DIR / f"{agent_name}.md"
-        if agent_path.exists():
-            cmd.extend(["--append-system-prompt-file", str(agent_path)])
+        cmd.extend(["--agent", agent_name])
+    else:
+        cmd.extend(["--agent", _get_default_agent()])
 
     try:
         proc = await asyncio.create_subprocess_exec(

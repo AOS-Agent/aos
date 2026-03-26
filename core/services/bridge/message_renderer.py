@@ -92,22 +92,24 @@ async def _send_safe(bot: Bot, chat_id: int, text: str, **kwargs) -> int | None:
     return None
 
 
-async def _edit_safe(bot: Bot, chat_id: int, msg_id: int, text: str):
-    """Edit a message with HTML fallback."""
+async def _edit_safe(bot: Bot, chat_id: int, msg_id: int, text: str,
+                     reply_markup=None):
+    """Edit a message with HTML fallback. Pass reply_markup to keep/change buttons."""
+    kwargs = {"text": text, "chat_id": chat_id, "message_id": msg_id, "parse_mode": "HTML"}
+    if reply_markup is not None:
+        kwargs["reply_markup"] = reply_markup
     try:
-        await bot.edit_message_text(
-            text=text, chat_id=chat_id, message_id=msg_id, parse_mode="HTML"
-        )
+        await bot.edit_message_text(**kwargs)
     except BadRequest as e:
         if "not modified" in str(e).lower():
             return
         # HTML parse error — try plain
         plain = re.sub(r"<[^>]+>", "", text)
         if plain.strip():
+            kwargs["text"] = plain
+            kwargs.pop("parse_mode", None)
             try:
-                await bot.edit_message_text(
-                    text=plain, chat_id=chat_id, message_id=msg_id
-                )
+                await bot.edit_message_text(**kwargs)
             except Exception:
                 pass
     except TimedOut:
@@ -123,142 +125,92 @@ async def render_stream(
     thread_id: int | None = None,
     is_dm: bool = False,
     is_resumed: bool = False,
+    initial_msg_id: int | None = None,
 ) -> tuple[str, SessionResult | None]:
     """Render a stream of Claude events to Telegram.
 
+    Single-message flow: the initial_msg_id ("Thinking..." + Stop button) gets
+    progressively edited — tool status → streaming text → final response.
+    One message throughout, no ghost notifications.
+
     Returns (final_text, session_result).
     """
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
     accumulated_text = ""
-    current_msg_id = None
-    draft_id = random.randint(1, 2**31) if is_dm else None
+    msg_id = initial_msg_id  # THE message — everything edits this
     last_update_time = 0.0
     session_result = None
-    status_msg_id = None  # For rate-limit / retry info (edited in-place, not deleted)
     send_kwargs = {}
     if thread_id:
         send_kwargs["message_thread_id"] = thread_id
 
-    async def _update_draft(text: str):
-        """Send progressive draft update (DM only)."""
-        nonlocal last_update_time
-        now = time.monotonic()
-        if now - last_update_time < DRAFT_THROTTLE_SECONDS:
-            return
-        try:
-            html = _safe_html(text)
-            if len(html) > MAX_MESSAGE_LENGTH:
-                html = html[: MAX_MESSAGE_LENGTH - 20] + "\n<i>...</i>"
-            await bot.send_message_draft(
-                chat_id=chat_id,
-                draft_id=draft_id,
-                text=html,
-                parse_mode="HTML",
-            )
-            last_update_time = now
-        except Exception as e:
-            logger.warning(f"Draft update failed: {e}")
+    # Stop button — kept during thinking/tools, removed when final response delivered
+    _stop_markup = InlineKeyboardMarkup([[
+        InlineKeyboardButton("■ Stop", callback_data="stop_generation")
+    ]])
 
-    async def _update_edit(text: str):
-        """Edit existing message (group/topic mode)."""
+    async def _edit_msg(html: str, keep_stop: bool = False):
+        """Edit the single message. Throttled to avoid rate limits."""
         nonlocal last_update_time
         now = time.monotonic()
         if now - last_update_time < EDIT_THROTTLE_SECONDS:
             return
-        if current_msg_id:
-            html = _safe_html(text)
+        if msg_id:
             if len(html) > MAX_MESSAGE_LENGTH:
                 html = html[: MAX_MESSAGE_LENGTH - 20] + "\n<i>...</i>"
-            await _edit_safe(bot, chat_id, current_msg_id, html)
+            markup = _stop_markup if keep_stop else None
+            await _edit_safe(bot, chat_id, msg_id, html, reply_markup=markup)
             last_update_time = now
 
-    async def _show_wait_status(text: str):
-        """Show rate-limit or retry info as a single message (edited in-place).
-
-        Unlike the old tool status: this message is NOT deleted. It gets
-        edited to the final response when text starts flowing. One message,
-        zero ghost notifications.
-        """
-        nonlocal status_msg_id
-        html = f"<i>{text}</i>"
-        if status_msg_id:
-            try:
-                await bot.edit_message_text(
-                    text=html,
-                    chat_id=chat_id,
-                    message_id=status_msg_id,
-                    parse_mode="HTML",
-                )
-            except Exception:
-                pass
+    async def _ensure_msg(html: str, keep_stop: bool = False):
+        """Make sure we have a message. Create if needed, edit if exists."""
+        nonlocal msg_id, last_update_time
+        if msg_id:
+            await _edit_msg(html, keep_stop=keep_stop)
         else:
             msg_id = await _send_safe(bot, chat_id, html, **send_kwargs)
-            if msg_id:
-                status_msg_id = msg_id
+            last_update_time = time.monotonic()
 
-    # Process events
-    # Bridge v2: No tool status messages (ghost notifications).
-    # ToolStart/ToolResult are silently logged. Only rate limits and retries
-    # show user-visible feedback — as an editable message, not a deletable one.
+    # Process events — single message, progressively edited
     async for event in events:
         if isinstance(event, SessionInit):
-            # Session resume is silent — no separate indicator message.
-            # The response will arrive normally.
             continue
 
-        if isinstance(event, TextDelta):
-            # If a wait-status message exists, reuse it as the response message
-            if status_msg_id and not current_msg_id:
-                current_msg_id = status_msg_id
-                status_msg_id = None
-
+        elif isinstance(event, TextDelta):
             accumulated_text += event.text
-
             if len(accumulated_text) < MIN_CHARS_TO_SHOW:
                 continue
-
-            if is_dm:
-                await _update_draft(accumulated_text)
-            else:
-                if not current_msg_id:
-                    html = _safe_html(accumulated_text)
-                    current_msg_id = await _send_safe(
-                        bot, chat_id, html, **send_kwargs
-                    )
-                    last_update_time = time.monotonic()
-                else:
-                    await _update_edit(accumulated_text)
+            html = _safe_html(accumulated_text)
+            await _ensure_msg(html, keep_stop=True)
 
         elif isinstance(event, ToolStart):
-            # Silent — just log it. No user-visible message.
-            logger.debug(f"Tool start: {event.input_preview[:80]}")
+            # Edit the thinking message with what Claude is actually doing
+            if not accumulated_text:
+                await _ensure_msg(f"<i>{event.input_preview}</i>", keep_stop=True)
 
         elif isinstance(event, ToolResult):
-            if event.is_error:
-                logger.warning(f"Tool error: {event.preview[:100]}")
+            if event.is_error and not accumulated_text:
+                await _ensure_msg(f"<i>⚠️ {event.preview[:200]}</i>", keep_stop=True)
 
         elif isinstance(event, TextComplete):
-            # Full text from an assistant turn — use as authoritative
             accumulated_text = event.text
 
         elif isinstance(event, RateLimit):
-            # Only show rate limit to user if NO response text has arrived yet.
-            # If Claude already answered, the rate limit is a system concern —
-            # the user got what they wanted. Log it, don't spam them.
             wait_s = max(0, event.resets_at - int(time.time()))
-            if wait_s > 0 and not accumulated_text:
+            if wait_s > 0:
                 wait_min = (wait_s + 59) // 60
-                await _show_wait_status(
-                    f"\u23f3 I'm at capacity. Back in ~{wait_min} min. "
-                    f"Quick commands still work \u2014 try \"tasks\" or \"add task: X\""
+                await _ensure_msg(
+                    f"<i>⏳ Rate limited (~{wait_min} min). "
+                    f"Quick commands still work — try \"tasks\" or \"add task: X\"</i>"
                 )
             bridge_event("rate_limit", level="warn",
                          status=event.status, resets_at=event.resets_at, wait_s=wait_s)
 
         elif isinstance(event, ApiRetry):
-            # Only show retry status if no response yet.
             if not accumulated_text:
-                await _show_wait_status(
-                    f"\u23f3 Retrying ({event.attempt}/{event.max_retries})..."
+                await _ensure_msg(
+                    f"<i>Retrying ({event.attempt}/{event.max_retries})...</i>"
                 )
             bridge_event("api_retry", level="warn",
                          attempt=event.attempt, delay_ms=event.delay_ms)
@@ -268,7 +220,7 @@ async def render_stream(
             if event.is_error and not accumulated_text:
                 accumulated_text = event.text or "An error occurred."
 
-    # Final delivery
+    # Final delivery — remove stop button, deliver complete response
     if not accumulated_text:
         accumulated_text = "(empty response)"
 
@@ -276,22 +228,17 @@ async def render_stream(
     chunks = _split_message(html)
 
     if is_dm:
-        # Send final message(s) to commit the draft
         for chunk in chunks:
             await _send_safe(bot, chat_id, chunk, **send_kwargs)
     else:
-        # If we have a status message but no current_msg_id, reuse it
-        if status_msg_id and not current_msg_id:
-            current_msg_id = status_msg_id
-
-        # Final edit for the first chunk
-        if current_msg_id and chunks:
-            await _edit_safe(bot, chat_id, current_msg_id, chunks[0])
-            # Send additional chunks as new messages
+        if msg_id and chunks:
+            # Final edit: remove stop button
+            _no_markup = InlineKeyboardMarkup([])
+            await _edit_safe(bot, chat_id, msg_id, chunks[0],
+                             reply_markup=_no_markup)
             for chunk in chunks[1:]:
                 await _send_safe(bot, chat_id, chunk, **send_kwargs)
         elif chunks:
-            # No message was sent yet (very short response)
             for chunk in chunks:
                 await _send_safe(bot, chat_id, chunk, **send_kwargs)
 

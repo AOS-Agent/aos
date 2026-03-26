@@ -407,15 +407,31 @@ class TelegramChannel:
         """
         start = _time.time()
 
-        # Typing keepalive — the only feedback before response streams.
-        # No "Thinking..." bubble (ghost notification), no ⚡ reaction.
-        # The 👀 reaction from _ack_message + typing indicator is enough.
+        # Typing keepalive
         stop_typing = asyncio.Event()
         typing_task = asyncio.create_task(self._typing_keepalive(chat, stop_typing))
 
-        # Determine if this is a DM (for sendMessageDraft)
+        # Determine if this is a DM
         is_dm = (chat.id == self.allowed_chat_id and thread_id is None
                  and self.forum_group_id is None)
+
+        # Send immediate thinking indicator with stop button
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+        thinking_kwargs = {}
+        if thread_id:
+            thinking_kwargs["message_thread_id"] = thread_id
+        stop_keyboard = InlineKeyboardMarkup([[
+            InlineKeyboardButton("■ Stop", callback_data="stop_generation")
+        ]])
+        try:
+            thinking_msg = await chat.send_message(
+                "<i>Thinking...</i>", parse_mode="HTML",
+                reply_markup=stop_keyboard,
+                disable_notification=True, **thinking_kwargs,
+            )
+            thinking_msg_id = thinking_msg.message_id
+        except Exception:
+            thinking_msg_id = None
 
         had_error = False
         final_text = ""
@@ -434,7 +450,8 @@ class TelegramChannel:
             aid = log_activity(log_agent, "invoke", status="running",
                                summary=message[:100])
 
-            # Render stream to Telegram
+            # Render stream to Telegram — pass the thinking message so it gets
+            # edited into the response (single message flow, no ghosts)
             final_text, result = await render_stream(
                 bot=self.app.bot,
                 chat_id=chat.id,
@@ -442,6 +459,7 @@ class TelegramChannel:
                 thread_id=thread_id,
                 is_dm=is_dm,
                 is_resumed=is_resumed,
+                initial_msg_id=thinking_msg_id,
             )
 
             duration_ms = int((_time.time() - start) * 1000)
