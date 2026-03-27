@@ -1,13 +1,12 @@
-# Preserved Services — deployed to ~/.aos/services/ but not in core/services/
+# Preserved Instance Artifacts
 #
-# These are data services, standalone apps, or operator-deployed services
-# that the framework code depends on but that don't ship as core services.
-# The instance_hygiene reconcile check will never auto-remove these.
+# Items listed here are deployed to instance space but don't have matching
+# templates in the framework. The instance_hygiene reconcile check skips them.
 #
-# Add a service here when:
-#   - It lives in ~/.aos/services/ (instance layer)
-#   - Framework code imports from it (core/comms/, cron jobs, etc.)
-#   - It's NOT in core/services/ (not a standard deployable service)
+# Add items when:
+#   - They live in instance space (~/.aos/services/, ~/Library/LaunchAgents/)
+#   - Framework code or the operator depends on them
+#   - They don't ship via core/services/ or config/launchagents/
 
 services:
   people:
@@ -18,3 +17,15 @@ services:
       - core/comms/patterns/compute.py
       - core/comms/graduation/runner.py
       - core/comms/consumers/people_intel.py
+
+launchagents:
+  com.aos.eventd:
+    reason: "Event daemon — runs the comms bus, watchers, and consumers on port 4097"
+    referenced_by:
+      - core/services/eventd/
+      - core/comms/bus.py
+  com.aos.whatsmeow:
+    reason: "WhatsApp bridge — Go-based relay on port 7601, used by comms WhatsApp adapter"
+    referenced_by:
+      - core/comms/channels/whatsapp.py
+      - core/services/eventd/watchers/whatsapp.py

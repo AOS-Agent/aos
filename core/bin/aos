@@ -922,8 +922,85 @@ sys.exit(0 if errors == 0 else 1)
         echo "  telemetry        Anonymous usage telemetry (opt-in/out/report)"
         echo "  sessions         View recorded onboarding/setup sessions"
         echo "  discover        Scan machine for existing setup"
+        echo "  hygiene         Find orphaned instance artifacts (services, plists, caches)"
         echo "  version         Show current version"
         echo ""
+        ;;
+
+    hygiene)
+        # Instance hygiene — find orphaned artifacts and optionally clean them.
+        # NEVER auto-deletes. Shows what it found, asks for each item.
+        python3 -c "
+import sys, os, shutil, subprocess
+sys.path.insert(0, '$AOS_DIR/core/reconcile')
+sys.path.insert(0, '$AOS_DIR/core/reconcile/checks')
+from instance_hygiene import find_orphans, _format_size, _dir_size, HYGIENE_STATE_FILE
+
+orphans = find_orphans()
+if not orphans:
+    print('  No orphaned artifacts found. System is clean.')
+    sys.exit(0)
+
+total_items = sum(len(v) for v in orphans.values())
+total_bytes = sum(size for items in orphans.values() for _, _, size in items)
+print(f'  Found {total_items} orphaned artifacts ({_format_size(total_bytes)})')
+print()
+
+apply = '--apply' in sys.argv
+dismiss_list = []
+
+for category, items in orphans.items():
+    for path, label, size in items:
+        size_str = f' ({_format_size(size)})' if size > 1024 else ''
+        tag = f'{category}:{label}'
+
+        if not apply:
+            print(f'  {category}: {label}{size_str}')
+            continue
+
+        # Interactive: ask for each item
+        print(f'  {category}: {label}{size_str}')
+        choice = input(f'    Delete? [y/N/dismiss]: ').strip().lower()
+
+        if choice == 'y':
+            try:
+                if category == 'launchagents':
+                    subprocess.run(['launchctl', 'bootout', f'gui/{os.getuid()}/{label}'],
+                                   capture_output=True, timeout=5)
+                    path.unlink()
+                elif category in ('services', 'models'):
+                    shutil.rmtree(path)
+                elif category in ('skills', 'logs'):
+                    path.unlink()
+                print(f'    ✓ Deleted')
+            except Exception as e:
+                print(f'    ✗ Failed: {e}')
+        elif choice == 'dismiss':
+            dismiss_list.append(tag)
+            print(f'    — Dismissed (won\\'t ask again)')
+        else:
+            print(f'    — Skipped')
+
+if not apply:
+    print()
+    print('  Run \\'aos hygiene --apply\\' to review each item and decide.')
+    sys.exit(0)
+
+# Save dismissed items
+if dismiss_list:
+    import yaml
+    HYGIENE_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    existing = {}
+    if HYGIENE_STATE_FILE.exists():
+        with open(HYGIENE_STATE_FILE) as f:
+            existing = yaml.safe_load(f) or {}
+    dismissed = set(existing.get('dismissed', []))
+    dismissed.update(dismiss_list)
+    existing['dismissed'] = sorted(dismissed)
+    with open(HYGIENE_STATE_FILE, 'w') as f:
+        yaml.dump(existing, f, default_flow_style=False)
+    print(f'  Saved {len(dismiss_list)} dismissals to {HYGIENE_STATE_FILE}')
+" "$@"
         ;;
 
     *)
