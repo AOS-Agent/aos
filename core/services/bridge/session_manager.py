@@ -28,11 +28,24 @@ _active_processes: dict[str, asyncio.subprocess.Process] = {}
 
 
 def cancel_stream(user_key: str) -> bool:
-    """Cancel an in-flight Claude stream by sending SIGTERM.
+    """Cancel an in-flight Claude stream.
 
-    Returns True if a process was found and terminated.
-    The session is preserved — next message can --resume.
+    For persistent sessions: kills and restarts the process.
+    For per-message processes: sends SIGTERM, session preserved.
     """
+    # Check if this is the persistent session
+    if _persistent and _persistent.alive:
+        import asyncio
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(_persistent.cancel())
+            logger.info(f"Cancelling persistent session for {user_key}")
+            bridge_event("stream_cancelled", user_key=user_key)
+            return True
+        except RuntimeError:
+            pass
+
+    # Fallback: per-message process
     proc = _active_processes.get(user_key)
     if proc and proc.returncode is None:
         logger.info(f"Cancelling stream for {user_key} (pid={proc.pid})")
@@ -386,6 +399,20 @@ def _auto_commit():
         pass
 
 
+# ── Persistent session singleton ─────────────────────────────
+
+_persistent: "PersistentSession | None" = None
+
+
+def get_persistent_session() -> "PersistentSession":
+    """Get or create the persistent session singleton."""
+    global _persistent
+    if _persistent is None:
+        from persistent_session import PersistentSession
+        _persistent = PersistentSession(cwd=str(Path.home()))
+    return _persistent
+
+
 # ── Core streaming function ─────────────────────────────────
 
 
@@ -397,12 +424,44 @@ async def stream_claude(
     max_turns: int = 100,
     max_budget_usd: float = 50.0,
 ) -> tuple[str | None, bool, AsyncGenerator[StreamEvent, None]]:
-    """Spawn a claude process and stream typed events.
+    """Stream typed events from Claude.
+
+    Default conversations use the persistent session (fast, ~3s).
+    Agent dispatches ("ask steward to...") still spawn per-message (isolated context).
 
     Returns (agent_name, is_resumed, event_generator).
     The caller must fully consume the generator.
     """
     agent_name, clean_message = detect_dispatch(message)
+
+    # ── Persistent session path (default conversations) ──
+    if not agent_name:
+        session = get_persistent_session()
+
+        # Build full message with image instructions
+        full_message = clean_message
+        if image_paths:
+            img_lines = "\n".join(f"- Read the image file at: {p}" for p in image_paths)
+            full_message = (
+                f"{clean_message or 'The user sent media without a caption.'}\n\n"
+                f"[Attached media — use the Read tool to view these files]\n{img_lines}"
+            )
+
+        # Register the persistent process for the stop button
+        if session.alive and session.proc:
+            _active_processes[user_key] = session.proc
+
+        async def _persistent_generate():
+            try:
+                async for event in session.send(full_message, image_paths=image_paths):
+                    yield event
+            finally:
+                _active_processes.pop(user_key, None)
+
+        is_resumed = session.session_id is not None
+        return None, is_resumed, _persistent_generate()
+
+    # ── Agent dispatch path (per-message, isolated) ──
 
     # Inject image read instructions
     if image_paths:
