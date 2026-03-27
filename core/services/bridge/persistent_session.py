@@ -169,9 +169,22 @@ class PersistentSession:
             )
             return
 
-        # Read stdout lines until we get a result event
+        # Read stdout line-by-line until we get a result event.
+        # Uses readline() instead of async-for to avoid closing the stdout
+        # iterator between calls — keeps the process alive across messages.
         try:
-            async for raw_line in self.proc.stdout:
+            while True:
+                raw_line = await self.proc.stdout.readline()
+                if not raw_line:
+                    # EOF — process died
+                    yield SessionResult(
+                        session_id=self.session_id or "",
+                        text="Session ended unexpectedly. Will restart on next message.",
+                        is_error=True, duration_ms=0, cost_usd=0,
+                        input_tokens=0, output_tokens=0, num_turns=0,
+                    )
+                    return
+
                 line = raw_line.decode("utf-8", errors="replace").strip()
                 if not line:
                     continue
