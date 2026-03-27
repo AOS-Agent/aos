@@ -55,34 +55,13 @@ def compute_patterns(conn, person_id: str) -> dict | None:
 
     ts = people_db.now_ts()
 
-    # Response time estimation
-    # For each inbound interaction, find the next outbound within 24h
-    response_times = []
-    inbound_times = []
-    outbound_times = []
-
-    for ix in interactions:
-        if ix["direction"] in ("inbound", "both"):
-            inbound_times.append(ix["occurred_at"])
-        if ix["direction"] in ("outbound", "both"):
-            outbound_times.append(ix["occurred_at"])
-
-    # Match inbound → next outbound
-    out_idx = 0
-    for in_ts in inbound_times:
-        while out_idx < len(outbound_times) and outbound_times[out_idx] <= in_ts:
-            out_idx += 1
-        if out_idx < len(outbound_times):
-            delta_mins = (outbound_times[out_idx] - in_ts) / 60
-            if 0 < delta_mins < 1440:  # within 24h
-                response_times.append(delta_mins)
-
-    avg_response = statistics.mean(response_times) if response_times else None
-    p50_response = statistics.median(response_times) if response_times else None
-    p90_response = (
-        sorted(response_times)[int(len(response_times) * 0.9)]
-        if len(response_times) >= 5 else None
-    )
+    # Response time: NOT computed from extraction data.
+    # Daily interaction aggregates can't produce meaningful per-message response times.
+    # Response times are computed from LIVE watchers where we have exact timestamps.
+    # Set to None here — the live pattern updater fills these in over time.
+    avg_response = None
+    p50_response = None
+    p90_response = None
 
     # Preferred hours and days
     hours = Counter()
@@ -177,35 +156,52 @@ def classify_importance(conn, person_id: str) -> int | None:
 def is_transactional(conn, person_id: str) -> bool:
     """Detect transactional/spam contacts.
 
-    Signals:
-    - Zero outbound messages ever
-    - Person name looks like a business (contains common business patterns)
-    - Very short interaction history (1-2 interactions, all inbound)
+    Checks name patterns FIRST — a business name means transactional
+    regardless of outbound messages (ordering pizza is still transactional).
+    Then checks interaction patterns for unnamed businesses.
     """
-    # Check outbound
+    # Check name patterns FIRST — this overrides everything
+    person = conn.execute(
+        "SELECT canonical_name, display_name FROM people WHERE id = ?",
+        (person_id,),
+    ).fetchone()
+
+    if person:
+        name = (person["canonical_name"] or "").lower()
+        display = (person["display_name"] or "").lower()
+        combined = f"{name} {display}"
+
+        business_patterns = [
+            "shop", "store", "pizza", "food", "driver", "delivery",
+            "service", "clinic", "hospital", "bank", "insurance",
+            "plumber", "electrician", "maid", "cleaner", "taxi",
+            "uber", "careem", "courier", "pharmacy", "restaurant",
+            "gym", "salon", "barber", "laundry", "repair",
+            "street", "avenue", "plaza",  # "14th Street Pizza"
+        ]
+        if any(p in combined for p in business_patterns):
+            return True
+
+        # Phone-number-only names (no real name = likely business/spam)
+        import re
+        if re.match(r'^[\+\d\s\-\(\)]+$', name.strip()):
+            return True
+
+    # Check interaction patterns
     outbound_ever = conn.execute(
         "SELECT COUNT(*) FROM interactions "
         "WHERE person_id = ? AND direction IN ('outbound', 'both')",
         (person_id,),
     ).fetchone()[0]
 
-    if outbound_ever > 0:
-        return False  # Operator engages = not spam
-
-    # Check total interaction count
     total = conn.execute(
         "SELECT COUNT(*) FROM interactions WHERE person_id = ?",
         (person_id,),
     ).fetchone()[0]
 
-    if total <= 2:
-        return True  # 1-2 inbound-only = likely transactional
-
-    # Check name patterns
-    person = conn.execute(
-        "SELECT canonical_name, display_name FROM people WHERE id = ?",
-        (person_id,),
-    ).fetchone()
+    # No outbound + few interactions = transactional
+    if outbound_ever == 0 and total <= 2:
+        return True
 
     if person:
         name = (person["canonical_name"] or "").lower()
@@ -286,15 +282,24 @@ def run_compute(person_ids: list[str] | None = None, dry_run: bool = False) -> d
             ).fetchone()
             if current:
                 old_importance = current["importance"]
-                # Only auto-upgrade to tier 1-2, never auto-downgrade inner circle
-                # Manual importance <= 2 is never overridden downward
                 should_update = False
-                if old_importance == 3 and new_importance <= 2:
-                    should_update = True  # Promote acquaintance to active/inner
+
+                # Transactional override: businesses ALWAYS get demoted to 4
+                # regardless of current importance. "14th Street Pizza" at imp=2 is wrong.
+                if new_importance == 4 and is_transactional(conn, pid):
+                    should_update = True
+
+                # Promote acquaintance/peripheral to active/inner
+                elif old_importance >= 3 and new_importance < old_importance:
+                    should_update = True
+
+                # Reclassify within same tier range
                 elif old_importance >= 3 and new_importance != old_importance:
-                    should_update = True  # Reclassify acquaintance/peripheral
+                    should_update = True
+
+                # Default (5) → anything
                 elif old_importance == 5 and new_importance <= 4:
-                    should_update = True  # Default (5) → anything
+                    should_update = True
 
                 if should_update:
                     if not dry_run:

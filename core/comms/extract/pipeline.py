@@ -165,20 +165,39 @@ def _nanoid() -> str:
 def _group_messages(messages, resolver: ResolverCache) -> dict:
     """Group messages by (person_id, channel, date).
 
-    Returns: {(person_id, channel, date_str): {"inbound": N, "outbound": N, "occurred_at": earliest_ts}}
+    IMPORTANT: For group chats, only attributes messages to the specific sender,
+    not to the conversation partner. This prevents group chat noise from inflating
+    individual interaction counts.
+
+    Returns: {(person_id, channel, date_str): {"inbound": N, "outbound": N, "occurred_at": earliest_ts, "is_group": bool}}
     """
     groups: dict[tuple, dict] = {}
 
     for msg in messages:
+        is_group = msg.metadata.get("is_group", False)
+        # Also detect groups from conversation_id patterns
+        if not is_group:
+            conv_id = msg.conversation_id or ""
+            is_group = "@g.us" in conv_id or "chat" in conv_id.lower()
+
         # Resolve sender
         sender = msg.sender
         if msg.from_me:
-            # For outbound, we need to resolve the conversation partner
-            # The conversation_id or metadata might have the handle
+            if is_group:
+                # In a group, outbound goes to the group — skip individual attribution
+                # We don't know WHO in the group we're talking to
+                continue
+            # For DM outbound, resolve the conversation partner
             handle = msg.conversation_id
             person_id = resolver.resolve(handle)
         else:
-            person_id = resolver.resolve(sender)
+            if is_group:
+                # In a group, only count messages FROM this specific person
+                # Use the actual sender (from_jid), not the group conversation partner
+                from_jid = msg.metadata.get("from_jid", "")
+                person_id = resolver.resolve(from_jid) if from_jid else resolver.resolve(sender)
+            else:
+                person_id = resolver.resolve(sender)
 
         if not person_id:
             continue
@@ -191,6 +210,7 @@ def _group_messages(messages, resolver: ResolverCache) -> dict:
                 "inbound": 0,
                 "outbound": 0,
                 "occurred_at": msg.timestamp,
+                "is_group": is_group,
             }
 
         if msg.from_me:

@@ -107,6 +107,18 @@ def evaluate_person(
         recommended_level=current,
     )
 
+    # Get person importance
+    importance_row = conn.execute(
+        "SELECT importance FROM people WHERE id = ?", (person_id,)
+    ).fetchone()
+    importance = importance_row["importance"] if importance_row else 3
+    result.evidence["importance"] = importance
+
+    # Gate: peripheral/transactional contacts (importance >= 4) never graduate
+    if importance >= 4:
+        result.reason = f"Hold: importance {importance} (peripheral/transactional) — not eligible"
+        return result
+
     # Get interaction count
     ix_count = conn.execute(
         "SELECT COUNT(*) FROM interactions WHERE person_id = ?",
