@@ -62,25 +62,104 @@ def _save_triage_state(state: dict) -> None:
 
 
 def _get_comms_trust_level() -> int:
-    """Read the communications trust level from trust.yaml. Default 0."""
+    """Read the global communications trust level from trust.yaml. Default 0."""
     try:
         import yaml
         if _TRUST_FILE.exists():
             trust = yaml.safe_load(_TRUST_FILE.read_text()) or {}
-            # Check for a comms-specific capability level
             for agent_name, agent_data in trust.get("agents", {}).items():
                 caps = agent_data.get("capabilities", {})
                 if "communications" in caps:
                     return caps["communications"]
-            # Fallback: check global default
             return trust.get("defaults", {}).get("comms_level", 0)
     except Exception:
         pass
     return 0
 
 
+def _get_person_trust_level(person_id: str) -> int:
+    """Read per-person comms trust level from comms.per_person in trust.yaml.
+
+    Falls back to global level if no per-person entry exists.
+    """
+    try:
+        import yaml
+        if _TRUST_FILE.exists():
+            trust = yaml.safe_load(_TRUST_FILE.read_text()) or {}
+            per_person = trust.get("comms", {}).get("per_person", {})
+            entry = per_person.get(person_id, {})
+            if isinstance(entry, dict) and "level" in entry:
+                return entry["level"]
+            elif isinstance(entry, int):
+                return entry
+    except Exception:
+        pass
+    return _get_comms_trust_level()
+
+
+def _try_draft_cascade(person_id: str, person_name: str, channel: str,
+                       conversation_id: str, text: str) -> bool:
+    """Try to generate a draft reply for Level 2+ contacts.
+
+    Returns True if draft was generated and sent to operator.
+    """
+    try:
+        _aos_dev = str(Path.home() / "project" / "aos")
+        _aos_root = str(Path.home() / "aos")
+        for p in [_aos_dev, _aos_root]:
+            if p not in sys.path:
+                sys.path.insert(0, p)
+
+        from core.comms.drafts.consumer import process_message_for_drafting
+        result = process_message_for_drafting(
+            person_id=person_id,
+            person_name=person_name,
+            channel=channel,
+            conversation_id=conversation_id,
+            inbound_text=text,
+        )
+        return result is not None
+    except Exception as e:
+        log.debug(f"Draft cascade failed: {e}")
+        return False
+
+
+def _try_autonomous_cascade(person_id: str, person_name: str, channel: str,
+                            conversation_id: str, text: str) -> bool:
+    """Try to handle a message autonomously for Level 3 contacts.
+
+    Returns True if handled, False to fall through to draft.
+    """
+    try:
+        _aos_dev = str(Path.home() / "project" / "aos")
+        _aos_root = str(Path.home() / "aos")
+        for p in [_aos_dev, _aos_root]:
+            if p not in sys.path:
+                sys.path.insert(0, p)
+
+        from core.comms.autonomous.handler import handle_autonomous
+        result = handle_autonomous(
+            person_id=person_id,
+            person_name=person_name,
+            channel=channel,
+            conversation_id=conversation_id,
+            inbound_text=text,
+        )
+        return result is not None
+    except Exception as e:
+        log.debug(f"Autonomous cascade failed: {e}")
+        return False
+
+
 class TriageConsumer(EventConsumer):
-    """Evaluates message urgency and surfaces what matters."""
+    """Evaluates message urgency and surfaces what matters.
+
+    Full trust cascade:
+      L3 (ACT)     → autonomous handling (auto-reply if eligible)
+      L2 (DRAFT)   → draft reply for operator approval
+      L1 (SURFACE) → urgency notification
+      L0 (OBSERVE) → log only
+    """
 
     name = "triage"
     handles = ["comms.message_received", "comms.message_sent"]
@@ -168,13 +247,33 @@ class TriageConsumer(EventConsumer):
         }
         _save_triage_state(self._state)
 
-        # At Level 0 (OBSERVE): just log, surface nothing
-        if self.trust_level < 1:
-            log.debug("Triage [L0 observe]: %s on %s — tracked as unanswered", person_name, channel)
+        # ── Trust cascade (per-person) ──────────────────────
+        # Use per-person trust level if available, else fall back to global
+        person_level = _get_person_trust_level(person_id) if person_id else self.trust_level
+        text = data.get("text", "")
+        conversation_id = data.get("conversation_id", "")
+
+        # L3 (ACT): try autonomous handling
+        if person_level >= 3 and person_id:
+            if _try_autonomous_cascade(person_id, person_name, channel, conversation_id, text):
+                log.info("Triage [L3 act]: %s — handled autonomously", person_name)
+                return
+            # Fall through to L2
+
+        # L2 (DRAFT): generate a draft reply
+        if person_level >= 2 and person_id:
+            if _try_draft_cascade(person_id, person_name, channel, conversation_id, text):
+                log.info("Triage [L2 draft]: %s — draft sent to operator", person_name)
+                return
+            # Fall through to L1
+
+        # L1 (SURFACE): check if this needs the operator's attention
+        if person_level >= 1:
+            self._evaluate_urgency(key, person_name, channel, data)
             return
 
-        # At Level 1+ (SURFACE): check if this needs attention
-        self._evaluate_urgency(key, person_name, channel, data)
+        # L0 (OBSERVE): just log, surface nothing
+        log.debug("Triage [L0 observe]: %s on %s — tracked as unanswered", person_name, channel)
 
     def _on_message_sent(self, event: Event) -> None:
         """Handle outbound message — clear unanswered status for that person."""
