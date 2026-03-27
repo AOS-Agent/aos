@@ -240,6 +240,17 @@ async def handle_health(request):
     }, headers={"Access-Control-Allow-Origin": "*"})
 
 
+async def handle_cancel(request):
+    """POST /cancel — stop current generation."""
+    from session_manager import get_persistent_session
+    session = get_persistent_session()
+    cancelled = await session.cancel()
+    return web.json_response(
+        {"ok": True, "cancelled": cancelled},
+        headers={"Access-Control-Allow-Origin": "*"},
+    )
+
+
 async def handle_options(request):
     """CORS preflight."""
     return web.Response(headers={
@@ -257,9 +268,11 @@ async def start_api_server():
     app = web.Application()
     app.router.add_get("/stream", handle_stream)
     app.router.add_post("/send", handle_send)
+    app.router.add_post("/cancel", handle_cancel)
     app.router.add_get("/history", handle_history)
     app.router.add_get("/health", handle_health)
     app.router.add_route("OPTIONS", "/send", handle_options)
+    app.router.add_route("OPTIONS", "/cancel", handle_options)
 
     runner = web.AppRunner(app)
     await runner.setup()
