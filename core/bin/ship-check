@@ -347,6 +347,25 @@ if [[ -f "$DEV/core/integrations/registry.yaml" ]]; then
     fi
 fi
 
+# Framework code should not import from services not in core/services/ or preserved-services.yaml
+if [[ -f "$DEV/config/preserved-services.yaml" ]]; then
+    # Extract preserved service names
+    preserved=$(python3 -c "
+import yaml
+with open('$DEV/config/preserved-services.yaml') as f:
+    d = yaml.safe_load(f) or {}
+for s in (d.get('services') or {}):
+    print(s)
+" 2>/dev/null)
+    # Check that every preserved service is actually imported by framework code
+    while IFS= read -r svc_name; do
+        [[ -z "$svc_name" ]] && continue
+        if ! grep -rq "services/$svc_name" "$DEV/core/" 2>/dev/null; then
+            warn "Preserved service '$svc_name' not referenced by any framework code — consider removing from preserved-services.yaml"
+        fi
+    done <<< "$preserved"
+fi
+
 # install.sh should not create standalone venvs for deps that belong to a service
 if grep -q 'services/mlx-whisper' "$DEV/install.sh" 2>/dev/null; then
     # Allow references in cleanup code (rm -rf) but not in install code

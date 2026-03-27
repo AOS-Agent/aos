@@ -1,0 +1,20 @@
+# Preserved Services — deployed to ~/.aos/services/ but not in core/services/
+#
+# These are data services, standalone apps, or operator-deployed services
+# that the framework code depends on but that don't ship as core services.
+# The instance_hygiene reconcile check will never auto-remove these.
+#
+# Add a service here when:
+#   - It lives in ~/.aos/services/ (instance layer)
+#   - Framework code imports from it (core/comms/, cron jobs, etc.)
+#   - It's NOT in core/services/ (not a standard deployable service)
+
+services:
+  people:
+    reason: "People DB — used by core/comms/ resolver, patterns, graduation, sync_contacts"
+    referenced_by:
+      - core/comms/resolver.py
+      - core/comms/sync_contacts.py
+      - core/comms/patterns/compute.py
+      - core/comms/graduation/runner.py
+      - core/comms/consumers/people_intel.py

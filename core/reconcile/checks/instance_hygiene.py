@@ -29,16 +29,40 @@ AOS = Path.home() / "aos"
 USER = Path.home() / ".aos"
 CLAUDE = Path.home() / ".claude"
 
+# Services that don't ship in core/services/ but are deployed to ~/.aos/services/
+# and referenced by framework code. Never auto-remove these.
+# Format: service directory name → reason it's preserved.
+PRESERVED_SERVICES_FILE = AOS / "config" / "preserved-services.yaml"
+
+
+def _preserved_services():
+    """Service names that are explicitly preserved from cleanup.
+
+    Reads from ~/aos/config/preserved-services.yaml. These are services
+    deployed outside core/services/ but still referenced by framework code
+    (e.g., data services used by core/comms/).
+    """
+    if not PRESERVED_SERVICES_FILE.exists():
+        return set()
+    try:
+        import yaml
+        with open(PRESERVED_SERVICES_FILE) as f:
+            data = yaml.safe_load(f) or {}
+        return set(data.get("services", {}).keys())
+    except Exception:
+        return set()
+
 
 def _framework_services():
-    """Service names the framework declares (has pyproject.toml)."""
+    """Service names the framework declares (has pyproject.toml) plus preserved services."""
     svc_dir = AOS / "core" / "services"
-    if not svc_dir.is_dir():
-        return set()
-    return {
-        d.name for d in svc_dir.iterdir()
-        if d.is_dir() and (d / "pyproject.toml").exists()
-    }
+    declared = set()
+    if svc_dir.is_dir():
+        declared = {
+            d.name for d in svc_dir.iterdir()
+            if d.is_dir() and (d / "pyproject.toml").exists()
+        }
+    return declared | _preserved_services()
 
 
 def _framework_launchagents():
