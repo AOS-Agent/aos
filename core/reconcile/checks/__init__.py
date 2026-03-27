@@ -12,6 +12,7 @@ from .context_freshness import ContextFreshnessCheck
 from .claude_defaults import ClaudeDefaultsCheck
 from .dead_code import DeadCodeCheck
 from .runtime_protection import RuntimeProtectionCheck
+from .instance_hygiene import InstanceHygieneCheck
 
 # Add new checks here — they run in this order on every update cycle.
 ALL_CHECKS = [
@@ -58,4 +59,9 @@ ALL_CHECKS = [
 
     # Hygiene — detect orphaned scripts and stale module refs
     DeadCodeCheck,
+
+    # Instance hygiene — diff framework declarations against instance state,
+    # clean orphaned service venvs, stale LaunchAgents, broken symlinks,
+    # old model caches, and excess log archives. Runs last.
+    InstanceHygieneCheck,
 ]
