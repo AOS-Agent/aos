@@ -983,8 +983,6 @@ HANDLERS = {
     "handle_reply": handle_reply,
     "handle_greeting": handle_greeting,
     "handle_trust": handle_trust,
-    "handle_draft_feedback": handle_draft_feedback,
-    "handle_proposals": handle_proposals,
 }
 
 
@@ -1126,6 +1124,11 @@ def handle_proposals(text: str) -> str:
     lines.append("/reject <name> — reject one")
 
     return "\n".join(lines)
+
+
+# Register handlers defined after _HANDLERS dict
+_HANDLERS["handle_draft_feedback"] = handle_draft_feedback
+_HANDLERS["handle_proposals"] = handle_proposals
 
 
 def dispatch(text: str) -> str | None:

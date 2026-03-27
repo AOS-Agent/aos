@@ -854,7 +854,10 @@ class TelegramChannel:
                     thread_id=thread_id,
                 )
             else:
-                logger.info(f"Claude dispatch: {user_key} → {'resume' if get_session_id(user_key) else 'new'}")
+                from session_manager import get_persistent_session
+                _ps = get_persistent_session()
+                _mode = "persistent" if _ps.alive else "new (starting persistent)"
+                logger.info(f"Claude dispatch: {user_key} → {_mode}")
 
                 response = await self._stream_response(
                     update.message.chat, update.message, text, user_key,
