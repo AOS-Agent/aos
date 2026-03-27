@@ -170,6 +170,8 @@ class TriageConsumer(EventConsumer):
         self._people_conn = None
         self._trust_level = None
         self._last_trust_check = 0
+        self._seen_messages: dict[str, float] = {}  # hash → timestamp for dedup
+        self._DEDUP_WINDOW = 60  # seconds
 
     @property
     def trust_level(self) -> int:
@@ -210,6 +212,28 @@ class TriageConsumer(EventConsumer):
         elif event.action == "message_sent":
             self._on_message_sent(event)
 
+    def _is_duplicate(self, sender: str, channel: str, text: str) -> bool:
+        """Check if we've seen this message recently (dedup across watchers).
+
+        Uses hash of (sender + channel + first 50 chars) with a 60s window.
+        Prevents double-processing when both bridge and local watcher fire.
+        """
+        import hashlib
+        key = hashlib.md5(f"{sender}:{channel}:{text[:50]}".encode()).hexdigest()
+        now = time.time()
+
+        # Clean old entries
+        self._seen_messages = {
+            k: v for k, v in self._seen_messages.items()
+            if now - v < self._DEDUP_WINDOW
+        }
+
+        if key in self._seen_messages:
+            return True
+
+        self._seen_messages[key] = now
+        return False
+
     def _on_message_received(self, event: Event) -> None:
         """Handle inbound message — track as unanswered, evaluate urgency."""
         data = event.data
@@ -217,9 +241,15 @@ class TriageConsumer(EventConsumer):
         channel = data.get("channel", "")
         from_me = data.get("from_me", False)
         ts = data.get("timestamp", datetime.now().isoformat())
+        text = data.get("text", "")
 
         # Skip our own messages
         if from_me or sender == "me":
+            return
+
+        # Dedup — skip if we saw this same message within 60s
+        if self._is_duplicate(sender, channel, text):
+            log.debug("Triage: dedup skip for %s on %s", sender, channel)
             return
 
         # Resolve sender

@@ -1,0 +1,162 @@
+#!/bin/bash
+# aos setup-whatsapp — Build and pair the WhatsApp send bridge.
+#
+# This is OPTIONAL. WhatsApp receive works without it (reads desktop app DB).
+# The bridge is only needed for SENDING: draft replies (L2) and autonomous replies (L3).
+#
+# What it does:
+#   1. Checks Go is installed
+#   2. Builds the whatsmeow binary
+#   3. Starts the bridge
+#   4. Opens the pairing page in your browser
+#   5. Creates the LaunchAgent for auto-start
+#
+# Usage:
+#   aos setup-whatsapp           # full setup
+#   aos setup-whatsapp --pair    # re-pair only (bridge already built)
+#   aos setup-whatsapp --status  # check if bridge is running
+
+set -euo pipefail
+
+SERVICE_DIR="$HOME/.aos/services/whatsmeow"
+SOURCE_DIR="$(cd "$(dirname "$0")/.." && pwd)/core/services/whatsmeow"
+PLIST="$HOME/Library/LaunchAgents/com.aos.whatsmeow.plist"
+BRIDGE_URL="http://127.0.0.1:7601"
+
+# Colors
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+NC='\033[0m'
+
+info()  { echo -e "${GREEN}✓${NC} $1"; }
+warn()  { echo -e "${YELLOW}!${NC} $1"; }
+error() { echo -e "${RED}✗${NC} $1"; }
+
+# --- Status check ---
+if [[ "${1:-}" == "--status" ]]; then
+    if curl -s "$BRIDGE_URL/health" >/dev/null 2>&1; then
+        health=$(curl -s "$BRIDGE_URL/health")
+        connected=$(echo "$health" | python3 -c "import json,sys; print(json.load(sys.stdin).get('connected', False))" 2>/dev/null)
+        phone=$(echo "$health" | python3 -c "import json,sys; print(json.load(sys.stdin).get('phone', 'unknown'))" 2>/dev/null)
+        if [[ "$connected" == "True" ]]; then
+            info "WhatsApp bridge running and connected (phone: $phone)"
+        else
+            warn "WhatsApp bridge running but NOT connected — needs pairing"
+        fi
+    else
+        error "WhatsApp bridge not running"
+        echo "  Run: aos setup-whatsapp"
+    fi
+    exit 0
+fi
+
+# --- Re-pair only ---
+if [[ "${1:-}" == "--pair" ]]; then
+    if ! curl -s "$BRIDGE_URL/health" >/dev/null 2>&1; then
+        error "Bridge not running. Run 'aos setup-whatsapp' first."
+        exit 1
+    fi
+    echo ""
+    echo "Opening WhatsApp pairing page..."
+    echo "  1. Go to: $BRIDGE_URL/qr"
+    echo "  2. Open WhatsApp on your phone"
+    echo "  3. Settings → Linked Devices → Link a Device"
+    echo "  4. Scan the QR code"
+    echo ""
+    open "$BRIDGE_URL/qr" 2>/dev/null || echo "  Open manually: $BRIDGE_URL/qr"
+    exit 0
+fi
+
+# --- Full setup ---
+echo ""
+echo "Setting up WhatsApp send bridge..."
+echo "This is optional — WhatsApp receive already works via the desktop app."
+echo "The bridge enables sending: draft replies (L2) and autonomous replies (L3)."
+echo ""
+
+# 1. Check Go
+if ! command -v go &>/dev/null; then
+    error "Go is not installed."
+    echo "  Install: brew install go"
+    echo "  Then re-run: aos setup-whatsapp"
+    exit 1
+fi
+info "Go $(go version | awk '{print $3}')"
+
+# 2. Check source
+if [[ ! -f "$SOURCE_DIR/main.go" ]]; then
+    error "WhatsApp bridge source not found at $SOURCE_DIR"
+    exit 1
+fi
+info "Source found"
+
+# 3. Build
+mkdir -p "$SERVICE_DIR"
+cp "$SOURCE_DIR/main.go" "$SERVICE_DIR/"
+cp "$SOURCE_DIR/go.mod" "$SERVICE_DIR/"
+cp "$SOURCE_DIR/go.sum" "$SERVICE_DIR/"
+
+echo "  Building (this takes ~30s first time)..."
+cd "$SERVICE_DIR"
+CGO_ENABLED=1 go build -o whatsmeow main.go 2>&1
+info "Binary built"
+
+# 4. Create LaunchAgent
+cat > "$PLIST" << PLISTEOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.aos.whatsmeow</string>
+    <key>WorkingDirectory</key>
+    <string>$SERVICE_DIR</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>$SERVICE_DIR/whatsmeow</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>$HOME/.aos/logs/whatsmeow.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>$HOME/.aos/logs/whatsmeow.err.log</string>
+</dict>
+</plist>
+PLISTEOF
+info "LaunchAgent created"
+
+# 5. Start bridge
+launchctl unload "$PLIST" 2>/dev/null || true
+launchctl load "$PLIST"
+sleep 2
+info "Bridge started"
+
+# 6. Check if already paired
+health=$(curl -s "$BRIDGE_URL/health" 2>/dev/null || echo '{}')
+connected=$(echo "$health" | python3 -c "import json,sys; print(json.load(sys.stdin).get('connected', False))" 2>/dev/null || echo "False")
+
+if [[ "$connected" == "True" ]]; then
+    phone=$(echo "$health" | python3 -c "import json,sys; print(json.load(sys.stdin).get('phone', 'unknown'))" 2>/dev/null)
+    info "Already paired to $phone — ready to send!"
+else
+    echo ""
+    warn "Bridge needs WhatsApp pairing."
+    echo ""
+    echo "  Opening: $BRIDGE_URL/qr"
+    echo ""
+    echo "  1. Open WhatsApp on your phone"
+    echo "  2. Settings → Linked Devices → Link a Device"
+    echo "  3. Scan the QR code"
+    echo ""
+    open "$BRIDGE_URL/qr" 2>/dev/null || true
+fi
+
+echo ""
+info "WhatsApp send bridge setup complete"
+echo "  Health: $BRIDGE_URL/health"
+echo "  Status: aos setup-whatsapp --status"
+echo "  Re-pair: aos setup-whatsapp --pair"

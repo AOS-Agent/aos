@@ -1,12 +1,15 @@
-"""WhatsApp watcher — polls the whatsmeow bridge for new messages.
+"""WhatsApp bridge watcher — monitors whatsmeow bridge health for send capability.
 
-The whatsmeow bridge receives WhatsApp messages in real-time via the
-WhatsApp Web protocol. This watcher polls the bridge's /messages endpoint
-periodically and publishes new messages to the system bus.
+The whatsmeow bridge is used for SENDING messages (drafts, autonomous replies).
+Message DETECTION is handled by the WhatsAppLocalWatcher (reads ChatStorage.sqlite).
 
-Graceful skip: if the bridge isn't running or WhatsApp isn't configured,
-the watcher logs a warning and goes dormant. It checks availability
-on each cycle, so it automatically activates when the bridge comes online.
+This watcher's job:
+1. Track whether the bridge is available for sending
+2. Publish bridge health status so the draft/autonomous systems know if send is possible
+3. Does NOT publish comms.message_received — that's the local watcher's job
+
+If the local watcher is not available (no desktop app), this watcher falls back to
+publishing message events from the bridge. But that's the backup path.
 """
 
 from __future__ import annotations
@@ -57,11 +60,21 @@ class WhatsAppWatcher(BaseWatcher):
         except Exception:
             return False
 
-    def start(self) -> None:
-        """Poll the bridge for new messages."""
-        log.info("WhatsApp watcher started (polling bridge every %ds)", POLL_INTERVAL)
+    def _local_watcher_active(self) -> bool:
+        """Check if the WhatsApp local watcher is running (it's the primary)."""
+        from pathlib import Path
+        wa_db = (
+            Path.home() / "Library" / "Group Containers"
+            / "group.net.whatsapp.WhatsApp.shared" / "ChatStorage.sqlite"
+        )
+        return wa_db.exists()
 
-        # Start from now
+    def start(self) -> None:
+        """Monitor bridge health. Only publish messages if local watcher is unavailable."""
+        self._fallback_mode = not self._local_watcher_active()
+        mode = "FALLBACK (publishing messages)" if self._fallback_mode else "SEND-ONLY (local watcher handles receive)"
+        log.info("WhatsApp bridge watcher started — %s, polling every %ds", mode, POLL_INTERVAL)
+
         self._last_message_ts = datetime.now()
 
         while self._running:
@@ -70,20 +83,22 @@ class WhatsAppWatcher(BaseWatcher):
                     if self._consecutive_failures == 0:
                         log.info("WhatsApp bridge not available — waiting")
                     self._consecutive_failures += 1
-                    # Back off: check less frequently when bridge is down
                     time.sleep(min(POLL_INTERVAL * self._consecutive_failures, 60))
                     continue
 
                 self._consecutive_failures = 0
-                self._poll_messages()
+
+                # Only poll messages if local watcher is NOT available (fallback mode)
+                if self._fallback_mode:
+                    self._poll_messages()
 
             except Exception as e:
-                log.error("WhatsApp watcher error: %s", e)
+                log.error("WhatsApp bridge watcher error: %s", e)
 
             time.sleep(POLL_INTERVAL)
 
     def _poll_messages(self) -> None:
-        """Read new messages from the bridge and publish events."""
+        """Fallback: read messages from bridge when no local watcher."""
         adapter = self._get_adapter()
         if not adapter:
             return
@@ -97,10 +112,8 @@ class WhatsAppWatcher(BaseWatcher):
         if not messages:
             return
 
-        # Update timestamp
         self._last_message_ts = max(m.timestamp for m in messages) + timedelta(seconds=1)
 
-        # Publish to system bus
         from core.bus import system_bus, Event
 
         for msg in messages:
@@ -114,10 +127,10 @@ class WhatsAppWatcher(BaseWatcher):
                     "from_me": msg.from_me,
                     "timestamp": msg.timestamp.isoformat(),
                 },
-                source="whatsapp_watcher",
+                source="whatsapp_watcher_fallback",
             ))
 
-        log.info("WhatsApp: %d new message(s) published", len(messages))
+        log.info("WhatsApp (fallback): %d new message(s) published", len(messages))
 
     def stop(self) -> None:
         pass
