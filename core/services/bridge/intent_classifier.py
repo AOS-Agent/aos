@@ -1127,8 +1127,8 @@ def handle_proposals(text: str) -> str:
 
 
 # Register handlers defined after _HANDLERS dict
-_HANDLERS["handle_draft_feedback"] = handle_draft_feedback
-_HANDLERS["handle_proposals"] = handle_proposals
+HANDLERS["handle_draft_feedback"] = handle_draft_feedback
+HANDLERS["handle_proposals"] = handle_proposals
 
 
 def dispatch(text: str) -> str | None:
