@@ -99,7 +99,16 @@ class iMessageWatcher(BaseWatcher):
         # Update last seen timestamp
         self._last_message_ts = max(m.timestamp for m in messages) + timedelta(seconds=1)
 
-        # Publish each message as an event
+        # Transcribe voice messages before publishing
+        try:
+            from core.comms.transcribe import transcribe_message_if_needed
+            for msg in messages:
+                if msg.needs_transcription:
+                    transcribe_message_if_needed(msg)
+        except ImportError:
+            pass
+
+        # Publish each message as an event (all types, not just text)
         from core.bus import system_bus, Event
 
         for msg in messages:
@@ -108,15 +117,20 @@ class iMessageWatcher(BaseWatcher):
                 data={
                     "channel": "imessage",
                     "sender": msg.sender,
-                    "text": msg.text[:500],
+                    "text": (msg.text or "")[:500],
                     "conversation_id": msg.conversation_id,
                     "from_me": msg.from_me,
                     "timestamp": msg.timestamp.isoformat(),
+                    "media_type": msg.media_type,
+                    "media_path": msg.media_path,
                 },
                 source="imessage_watcher",
             ))
 
-        log.info("iMessage: %d new message(s) published", len(messages))
+        voice_count = sum(1 for m in messages if m.media_type == "voice")
+        media_count = sum(1 for m in messages if m.has_media)
+        log.info("iMessage: %d new message(s) published (%d voice, %d media)",
+                 len(messages), voice_count, media_count)
 
     def stop(self) -> None:
         """No resources to clean up."""

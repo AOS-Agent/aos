@@ -20,9 +20,12 @@ class Message:
         channel: Source channel name ("whatsapp", "imessage", "email", etc.).
         conversation_id: Identifier for the conversation this belongs to.
         sender: Sender identifier — phone number, email, handle, or "me".
-        text: Message body text.
+        text: Message body text (empty for media-only messages).
         timestamp: When the message was sent (UTC-aware preferred).
         from_me: Whether the operator sent this message.
+        media_type: Content type — "text", "voice", "image", "video",
+                    "document", "reaction", "location", "contact", "sticker".
+        media_path: Local file path for voice/image/video/document (if available).
         metadata: Channel-specific data (service type, read status, attachments, etc.).
     """
     id: str
@@ -32,7 +35,21 @@ class Message:
     text: str
     timestamp: datetime
     from_me: bool = False
+    media_type: str = "text"
+    media_path: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def is_voice(self) -> bool:
+        return self.media_type == "voice"
+
+    @property
+    def has_media(self) -> bool:
+        return self.media_type != "text"
+
+    @property
+    def needs_transcription(self) -> bool:
+        return self.media_type == "voice" and not self.text
 
     @property
     def time_str(self) -> str:
@@ -48,6 +65,8 @@ class Message:
             "text": self.text,
             "timestamp": self.timestamp.isoformat(),
             "from_me": self.from_me,
+            "media_type": self.media_type,
+            "media_path": self.media_path,
             "metadata": self.metadata,
         }
 
@@ -61,9 +80,11 @@ class Message:
             channel=data["channel"],
             conversation_id=data["conversation_id"],
             sender=data["sender"],
-            text=data["text"],
+            text=data.get("text", ""),
             timestamp=ts,
             from_me=data.get("from_me", False),
+            media_type=data.get("media_type", "text"),
+            media_path=data.get("media_path", ""),
             metadata=data.get("metadata", {}),
         )
 

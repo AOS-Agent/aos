@@ -100,8 +100,6 @@ class iMessageAdapter(ChannelAdapter):
                 JOIN chat_message_join cmj ON c.rowid = cmj.chat_id
                 JOIN message m ON cmj.message_id = m.rowid
                 WHERE m.date >= ?
-                  AND m.text IS NOT NULL
-                  AND m.text != ''
                 GROUP BY c.rowid
                 ORDER BY last_msg_date DESC
             """
@@ -148,6 +146,8 @@ class iMessageAdapter(ChannelAdapter):
                     datetime.now() - timedelta(days=DEFAULT_DAYS)
                 )
 
+            # Include ALL message types — not just text.
+            # associated_message_type != 0 means reactions/tapbacks.
             query = """
                 SELECT
                     m.rowid,
@@ -159,14 +159,18 @@ class iMessageAdapter(ChannelAdapter):
                     h.uncanonicalized_id AS handle_raw,
                     c.display_name AS chat_name,
                     c.chat_identifier,
-                    c.rowid AS chat_rowid
+                    c.rowid AS chat_rowid,
+                    m.associated_message_type,
+                    a.mime_type AS attachment_mime,
+                    a.filename AS attachment_path,
+                    a.transfer_name AS attachment_name
                 FROM message m
                 LEFT JOIN chat_message_join cmj ON m.rowid = cmj.message_id
                 LEFT JOIN chat c ON cmj.chat_id = c.rowid
                 LEFT JOIN handle h ON m.handle_id = h.rowid
-                WHERE m.text IS NOT NULL
-                  AND m.text != ''
-                  AND m.date >= ?
+                LEFT JOIN message_attachment_join maj ON m.rowid = maj.message_id
+                LEFT JOIN attachment a ON maj.attachment_id = a.rowid
+                WHERE m.date >= ?
             """
             params = [cutoff_ns]
 
@@ -181,28 +185,68 @@ class iMessageAdapter(ChannelAdapter):
 
             cursor = conn.execute(query, params)
             messages = []
+            seen_ids = set()  # Dedup: a message with multiple attachments appears multiple times
 
             for row in cursor:
+                msg_id = row[0]
+                if msg_id in seen_ids:
+                    continue
+                seen_ids.add(msg_id)
+
                 ts = self._from_apple_ns(row[2])
                 if not ts:
                     continue
 
                 from_me = bool(row[3])
                 handle = row[6] or row[5] or "Unknown"
+                text = row[1] or ""
+                assoc_type = row[10] or 0
+                mime = row[11] or ""
+                att_path = row[12] or ""
+                att_name = row[13] or ""
+
+                # Determine media type
+                if assoc_type != 0:
+                    media_type = "reaction"
+                elif mime.startswith("audio"):
+                    media_type = "voice"
+                elif mime.startswith("image"):
+                    media_type = "image"
+                elif mime.startswith("video"):
+                    media_type = "video"
+                elif mime == "text/x-vlocation":
+                    media_type = "location"
+                elif mime == "text/vcard":
+                    media_type = "contact"
+                elif mime and "pdf" in mime or "document" in mime or "zip" in mime:
+                    media_type = "document"
+                elif text:
+                    media_type = "text"
+                else:
+                    media_type = "unknown"
+                    continue  # Skip truly empty messages
+
+                # Resolve attachment path (expand ~ to absolute)
+                media_path = ""
+                if att_path:
+                    media_path = att_path.replace("~", str(Path.home()))
 
                 msg = Message(
-                    id=f"im-{row[0]}",
+                    id=f"im-{msg_id}",
                     channel=self.name,
                     conversation_id=str(row[9]) if row[9] else "unknown",
                     sender="me" if from_me else handle,
-                    text=row[1],
+                    text=text,
                     timestamp=ts,
                     from_me=from_me,
+                    media_type=media_type,
+                    media_path=media_path,
                     metadata={
                         "service": row[4] or "iMessage",
                         "handle_id": row[5],
                         "chat_name": row[7] or row[8] or "Unknown",
                         "chat_identifier": row[8],
+                        "attachment_name": att_name,
                     },
                 )
                 messages.append(msg)

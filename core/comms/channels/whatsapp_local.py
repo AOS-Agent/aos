@@ -114,8 +114,7 @@ class WhatsAppLocalAdapter(ChannelAdapter):
                     COUNT(m.Z_PK) as msg_count
                 FROM ZWACHATSESSION c
                 JOIN ZWAMESSAGE m ON m.ZCHATSESSION = c.Z_PK
-                WHERE m.ZTEXT IS NOT NULL AND m.ZTEXT != ''
-                  AND m.ZMESSAGEDATE >= ?
+                WHERE m.ZMESSAGEDATE >= ?
                 GROUP BY c.Z_PK
                 ORDER BY last_msg DESC
             """, (cutoff,)).fetchall()
@@ -153,6 +152,16 @@ class WhatsAppLocalAdapter(ChannelAdapter):
                 datetime.now() - timedelta(days=DEFAULT_DAYS)
             )
 
+            # WA message types: 0=text, 1=image, 2=video, 3=voice/ptt,
+            # 5=location, 6=system, 7=document/link, 8=audio_file,
+            # 9=sticker, 14=deleted, 15=contact
+            _WA_MEDIA_TYPES = {
+                0: "text", 1: "image", 2: "video", 3: "voice",
+                5: "location", 6: "system", 7: "document", 8: "voice",
+                9: "sticker", 14: "deleted", 15: "contact",
+            }
+            _SKIP_TYPES = {"system", "deleted", "sticker"}
+
             query = """
                 SELECT
                     m.Z_PK,
@@ -161,12 +170,15 @@ class WhatsAppLocalAdapter(ChannelAdapter):
                     m.ZISFROMME,
                     m.ZFROMJID,
                     m.ZTOJID,
+                    m.ZMESSAGETYPE,
                     c.ZCONTACTJID,
-                    c.ZPARTNERNAME
+                    c.ZPARTNERNAME,
+                    mi.ZMEDIALOCALPATH,
+                    mi.ZMOVIEDURATION
                 FROM ZWAMESSAGE m
                 LEFT JOIN ZWACHATSESSION c ON m.ZCHATSESSION = c.Z_PK
-                WHERE m.ZTEXT IS NOT NULL AND m.ZTEXT != ''
-                  AND m.ZMESSAGEDATE >= ?
+                LEFT JOIN ZWAMEDIAITEM mi ON mi.ZMESSAGE = m.Z_PK
+                WHERE m.ZMESSAGEDATE >= ?
             """
             params = [cutoff]
 
@@ -181,34 +193,60 @@ class WhatsAppLocalAdapter(ChannelAdapter):
 
             rows = conn.execute(query, params).fetchall()
 
+            # WhatsApp media container for resolving local paths
+            _WA_CONTAINER = (
+                Path.home() / "Library" / "Group Containers"
+                / "group.net.whatsapp.WhatsApp.shared"
+            )
+
             messages = []
             for r in rows:
                 ts = self._from_apple_ts(r["ZMESSAGEDATE"])
                 if not ts:
                     continue
 
+                msg_type_int = r["ZMESSAGETYPE"] or 0
+                media_type = _WA_MEDIA_TYPES.get(msg_type_int, "unknown")
+
+                # Skip system messages, deleted, stickers
+                if media_type in _SKIP_TYPES:
+                    continue
+
                 from_me = bool(r["ZISFROMME"])
-                # For group messages, ZFROMJID has the sender JID
-                # For DMs, the partner is always the other person
                 if from_me:
                     sender = "me"
                 else:
                     sender = r["ZPARTNERNAME"] or r["ZFROMJID"] or "Unknown"
 
                 jid = r["ZCONTACTJID"] or ""
+                text = r["ZTEXT"] or ""
+
+                # Resolve media path — DB stores "Media/..." but files are at "Message/Media/..."
+                media_path = ""
+                local_path = r["ZMEDIALOCALPATH"]
+                if local_path:
+                    # Try both possible locations
+                    for prefix in ["Message/", ""]:
+                        full_path = _WA_CONTAINER / prefix / local_path
+                        if full_path.exists():
+                            media_path = str(full_path)
+                            break
 
                 messages.append(Message(
                     id=f"wa-local-{r['Z_PK']}",
-                    channel="whatsapp",  # Unified channel name
+                    channel="whatsapp",
                     conversation_id=jid,
                     sender=sender,
-                    text=r["ZTEXT"],
+                    text=text,
                     timestamp=ts,
                     from_me=from_me,
+                    media_type=media_type,
+                    media_path=media_path,
                     metadata={
                         "jid": jid,
                         "from_jid": r["ZFROMJID"],
                         "is_group": "@g.us" in jid if jid else False,
+                        "duration": r["ZMOVIEDURATION"],
                     },
                 ))
 

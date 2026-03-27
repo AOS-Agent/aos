@@ -117,6 +117,15 @@ class WhatsAppLocalWatcher(BaseWatcher):
         if not inbound:
             return
 
+        # Transcribe voice messages before publishing
+        try:
+            from core.comms.transcribe import transcribe_message_if_needed
+            for msg in inbound:
+                if msg.needs_transcription:
+                    transcribe_message_if_needed(msg)
+        except ImportError:
+            pass  # Transcriber not available — voice stays untranscribed
+
         # Publish each inbound message as an event
         from core.bus import system_bus, Event
 
@@ -126,15 +135,20 @@ class WhatsAppLocalWatcher(BaseWatcher):
                 data={
                     "channel": "whatsapp",
                     "sender": msg.sender,
-                    "text": msg.text[:500],
+                    "text": (msg.text or "")[:500],
                     "conversation_id": msg.conversation_id,
                     "from_me": msg.from_me,
                     "timestamp": msg.timestamp.isoformat(),
+                    "media_type": msg.media_type,
+                    "media_path": msg.media_path,
                 },
                 source="whatsapp_local_watcher",
             ))
 
-        log.info("WhatsApp local: %d new message(s) published", len(inbound))
+        log.info("WhatsApp local: %d new message(s) published (%d voice, %d media)",
+                 len(inbound),
+                 sum(1 for m in inbound if m.media_type == "voice"),
+                 sum(1 for m in inbound if m.has_media))
 
     def stop(self) -> None:
         pass
