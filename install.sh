@@ -35,7 +35,7 @@ if ! sudo true; then
 fi
 
 # ── Version ──────────────────────────────────────────
-AOS_VERSION="0.1.0"
+AOS_VERSION=$(cat "$HOME/aos/VERSION" 2>/dev/null | tr -d '[:space:]' || echo "0.1.0")
 AOS_REPO="https://github.com/hishamalhadi/aos.git"
 AOS_BRANCH="main"
 
@@ -1166,7 +1166,7 @@ HOOK
 
     # Activate onboard agent from catalog
     if [[ ! -f "$HOME/.claude/agents/onboard.md" ]]; then
-        bash "$AOS_DIR/core/bin/activate-agent" onboard 2>&1 | sed 's/^/  /'
+        "$AOS_DIR/core/bin/activate-agent" onboard 2>&1 | sed 's/^/  /'
     else
         echo "  ✓ Onboard agent already active"
     fi
@@ -1174,8 +1174,10 @@ HOOK
     # Initialize trust config if not present
     if [[ ! -f "$USER_DIR/config/trust.yaml" ]]; then
         _step "Initializing trust configuration..."
-        cp "$AOS_DIR/config/defaults/trust.yaml" "$USER_DIR/config/trust.yaml" 2>/dev/null || {
-            # No default template — create minimal trust config
+        if [[ -f "$AOS_DIR/config/defaults/trust.yaml" ]]; then
+            cp "$AOS_DIR/config/defaults/trust.yaml" "$USER_DIR/config/trust.yaml"
+        else
+            # Inline fallback — create trust config
             cat > "$USER_DIR/config/trust.yaml" << 'TRUST'
 # Trust Configuration — Per-capability trust levels
 # Levels: 0=SHADOW, 1=APPROVAL, 2=SEMI-AUTO, 3=FULL-AUTO
@@ -1199,7 +1201,7 @@ always_escalate:
   - external_communication_new_contact
 promotions: []
 TRUST
-        }
+        fi
         _ok "Trust configuration initialized"
     else
         _skip "Trust configuration"
@@ -1965,37 +1967,37 @@ assert s.get('hooks', {}).get('$hook_name')
 
     # ── Skills ─────────────────────────────────────────────────
     _step "Skills"
-    local default_skills="recall work review step-by-step obsidian-cli extract telegram-admin bridge-ops marketing diagram session-analysis frontend-design architect skill-creator skill-scanner"
-    local skill_count=0 skill_missing=0
-    for skill_name in $default_skills; do
-        if [[ -L "$HOME/.claude/skills/$skill_name" ]]; then
+    # Auto-discover: every skill directory in the framework should be symlinked globally
+    local skill_count=0 skill_missing=0 missing_names=""
+    for skill_dir in "$AOS_DIR"/.claude/skills/*/; do
+        [[ -d "$skill_dir" ]] || continue
+        [[ -f "$skill_dir/SKILL.md" ]] || continue
+        local skill_name
+        skill_name=$(basename "$skill_dir")
+        if [[ -L "$HOME/.claude/skills/$skill_name" ]] || [[ -d "$HOME/.claude/skills/$skill_name" ]]; then
             ((skill_count++))
         else
             ((skill_missing++))
+            missing_names="$missing_names $skill_name"
         fi
     done
     if [[ "$skill_missing" -eq 0 ]]; then
-        _ok "All $skill_count default skills linked"
+        _ok "All $skill_count skills linked"
         ((pass++))
     else
-        _fail "$skill_missing of $((skill_count + skill_missing)) skills missing"
+        _fail "$skill_missing of $((skill_count + skill_missing)) skills missing:$missing_names"
         ((fail++))
         failures+=("$skill_missing skills missing")
     fi
 
-    if [[ -f "$USER_DIR/config/developer-mode" ]]; then
-        local dev_count=0
-        for skill_name in systematic-debugging verification-before-completion requesting-code-review receiving-code-review executing-plans writing-plans dispatching-parallel-agents writing-skills autonomous-execution; do
-            [[ -L "$HOME/.claude/skills/$skill_name" ]] && ((dev_count++))
-        done
-        _ok "$dev_count developer skills"
-        ((pass++))
-    fi
-
     # ── Services ───────────────────────────────────────────────
     _step "Services"
-    for svc in bridge dashboard listen memory; do
-        _check "Service $svc venv" "[[ -f '$USER_DIR/services/$svc/.venv/bin/python' ]]" critical
+    # Check all services that have pyproject.toml (auto-discovered)
+    for svc_dir in "$AOS_DIR"/core/services/*/; do
+        [[ -f "$svc_dir/pyproject.toml" ]] || continue
+        local svc_name
+        svc_name=$(basename "$svc_dir")
+        _check "Service $svc_name venv" "[[ -f '$USER_DIR/services/$svc_name/.venv/bin/python' ]]" critical
     done
     # Verify critical imports in service venvs
     _check "Bridge: yaml+httpx" "'$USER_DIR/services/bridge/.venv/bin/python' -c 'import yaml, httpx'"
@@ -2007,25 +2009,29 @@ assert s.get('hooks', {}).get('$hook_name')
 
     # ── LaunchAgents ───────────────────────────────────────────
     _step "LaunchAgents"
-    for la in com.aos.scheduler com.aos.bridge com.aos.dashboard com.aos.listen; do
+    # Auto-discover: check all AOS LaunchAgents installed in ~/Library/LaunchAgents
+    for plist in "$HOME/Library/LaunchAgents"/com.aos.*.plist; do
+        [[ -f "$plist" ]] || continue
+        local la
+        la=$(basename "$plist" .plist)
         _check "LaunchAgent $la" "launchctl list 2>/dev/null | grep -q '$la'"
     done
 
     # ── LaunchAgent path validation ─────────────────────────────
     # Detect when launchd has cached stale paths that don't match the plist on disk
     local la_drift=0
-    for la in com.aos.scheduler com.aos.bridge com.aos.dashboard com.aos.listen; do
-        local plist_file="$HOME/Library/LaunchAgents/${la}.plist"
-        if [[ -f "$plist_file" ]]; then
-            # Get the path launchd is actually using
-            local loaded_args
-            loaded_args=$(launchctl print "gui/$(id -u)/$la" 2>/dev/null | grep -A2 "arguments" | tail -1 | xargs 2>/dev/null || true)
-            if [[ -n "$loaded_args" ]] && [[ ! -f "$loaded_args" ]]; then
-                _warn "LaunchAgent $la has stale path: $loaded_args"
-                ((la_drift++))
-                ((warn++))
-                warnings+=("$la has stale cached path — run: launchctl bootout gui/\$(id -u)/$la && launchctl bootstrap gui/\$(id -u) $plist_file")
-            fi
+    for plist in "$HOME/Library/LaunchAgents"/com.aos.*.plist; do
+        [[ -f "$plist" ]] || continue
+        local la
+        la=$(basename "$plist" .plist)
+        # Get the path launchd is actually using
+        local loaded_args
+        loaded_args=$(launchctl print "gui/$(id -u)/$la" 2>/dev/null | grep -A2 "arguments" | tail -1 | xargs 2>/dev/null || true)
+        if [[ -n "$loaded_args" ]] && [[ ! -f "$loaded_args" ]]; then
+            _warn "LaunchAgent $la has stale path: $loaded_args"
+            ((la_drift++))
+            ((warn++))
+            warnings+=("$la has stale cached path — run: launchctl bootout gui/\$(id -u)/$la && launchctl bootstrap gui/\$(id -u) $plist")
         fi
     done
     if [[ "$la_drift" -eq 0 ]]; then

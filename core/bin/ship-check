@@ -259,6 +259,105 @@ fi
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 4. INSTALL ↔ RUNTIME DRIFT — catch hardcoded lists that fall behind
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+echo ""
+echo "Install Drift"
+echo "─────────────"
+
+# VERSION in install.sh should not be hardcoded
+if grep -q '^AOS_VERSION="[0-9]' "$DEV/install.sh" 2>/dev/null; then
+    fail "install.sh has hardcoded AOS_VERSION — should read from VERSION file"
+fi
+
+# Every service with pyproject.toml should be checked by the health scorecard
+svc_count=0
+for svc_dir in "$DEV"/core/services/*/; do
+    [[ -f "$svc_dir/pyproject.toml" ]] || continue
+    svc_count=$((svc_count + 1))
+done
+# Scorecard should use auto-discovery, not a hardcoded list
+if grep -q 'for svc in bridge dashboard' "$DEV/install.sh" 2>/dev/null; then
+    fail "install.sh health scorecard has hardcoded service list ($svc_count services exist)"
+else
+    pass "Service checks use auto-discovery ($svc_count services)"
+fi
+
+# Skills in scorecard should use auto-discovery
+if grep -q 'default_skills=' "$DEV/install.sh" 2>/dev/null; then
+    fail "install.sh has hardcoded skills list — should auto-discover from .claude/skills/"
+else
+    skill_count=$(find "$DEV/.claude/skills" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
+    pass "Skill checks use auto-discovery ($skill_count skills)"
+fi
+
+# LaunchAgents in scorecard should use auto-discovery
+if grep -q 'for la in com.aos.scheduler com.aos.bridge' "$DEV/install.sh" 2>/dev/null; then
+    fail "install.sh has hardcoded LaunchAgent list — should auto-discover"
+else
+    la_count=$(find "$DEV/config/launchagents" -name 'com.aos.*' 2>/dev/null | wc -l | tr -d ' ')
+    pass "LaunchAgent checks use auto-discovery ($la_count templates)"
+fi
+
+# config/defaults/trust.yaml should exist (install.sh tries to copy it)
+if [[ -f "$DEV/config/defaults/trust.yaml" ]]; then
+    pass "Default trust template exists"
+else
+    fail "config/defaults/trust.yaml missing — install.sh expects it"
+fi
+
+# Onboarding skill should not reference non-existent config files
+if grep -q 'projects\.yaml' "$DEV/.claude/skills/onboard/SKILL.md" 2>/dev/null; then
+    fail "Onboarding references projects.yaml which doesn't exist — projects use CLI"
+else
+    pass "Onboarding config references valid"
+fi
+
+# Onboarding should not OFFER integrations that don't have setup scripts.
+# Mentioning them in a "not available yet" context is fine — only flag if
+# they appear as setup targets (with AskUserQuestion or setup.sh calls).
+onboard_integration_drift=0
+for tool in "Linear" "Notion" "Plane" "Slack" "Discord"; do
+    # Only flag if the tool is presented as a setup option, not a graceful decline
+    if grep -E "(Set up $tool|ask about $tool|→ ask about $tool)" "$DEV/.claude/skills/onboard/SKILL.md" 2>/dev/null | grep -qv "not in this list\|not available\|wishlist"; then
+        tool_lower=$(echo "$tool" | tr '[:upper:]' '[:lower:]')
+        if [[ ! -d "$DEV/core/integrations/$tool_lower" ]]; then
+            warn "Onboarding offers to set up $tool but no integration exists"
+            onboard_integration_drift=$((onboard_integration_drift + 1))
+        fi
+    fi
+done
+if [[ $onboard_integration_drift -eq 0 ]]; then
+    pass "Onboarding integration references valid"
+fi
+
+# Every integration directory in registry.yaml should have a setup.sh if referenced
+if [[ -f "$DEV/core/integrations/registry.yaml" ]]; then
+    setup_missing=0
+    for int_dir in "$DEV"/core/integrations/*/; do
+        [[ -d "$int_dir" ]] || continue
+        int_name=$(basename "$int_dir")
+        if [[ -f "$int_dir/manifest.yaml" ]] && [[ ! -f "$int_dir/setup.sh" ]]; then
+            warn "Integration '$int_name' has manifest but no setup.sh"
+            setup_missing=$((setup_missing + 1))
+        fi
+    done
+    if [[ $setup_missing -eq 0 ]]; then
+        pass "All integrations with manifests have setup.sh"
+    fi
+fi
+
+# Hooks in install.sh should use tilde paths, not absolute paths
+if grep -q '/Users/' "$DEV/install.sh" 2>/dev/null | grep -v 'comment\|#\|echo\|printf' 2>/dev/null; then
+    # Only flag if absolute user paths appear in hook definitions
+    hook_abs=$(grep -n 'command.*python3.*/Users/' "$DEV/install.sh" 2>/dev/null || true)
+    if [[ -n "$hook_abs" ]]; then
+        warn "install.sh has absolute user paths in hook definitions — use ~ for portability"
+    fi
+fi
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Summary
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 echo ""

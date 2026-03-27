@@ -1,0 +1,30 @@
+# Trust Configuration — Default Template
+# Copied to ~/.aos/config/trust.yaml on fresh install.
+# Levels: 0=SHADOW, 1=APPROVAL, 2=SEMI-AUTO, 3=FULL-AUTO
+#
+# Per-capability trust. Agents start at the default level and graduate
+# through accumulated evidence (see graduation thresholds below).
+
+agents: {}
+
+graduation:
+  0_to_1:
+    min_observations: 20
+    accuracy_threshold: 0.80
+    requires_human_approval: true
+  1_to_2:
+    min_weighted_score: 30
+    max_revert_rate: 0.05
+    requires_human_approval: true
+  2_to_3:
+    min_autonomous_actions: 50
+    max_revert_rate: 0.02
+    requires_human_approval: true
+
+always_escalate:
+  - financial_commitment
+  - delete_production_data
+  - external_communication_new_contact
+  - change_goal_priorities
+
+promotions: []

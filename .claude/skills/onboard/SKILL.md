@@ -225,15 +225,16 @@ AskUserQuestion:
 - question: "Name your main agent?"
 - options: ["Keep 'Chief'", "Give it a custom name"]
 
-If custom: `bash ~/aos/core/bin/aos rename-agent {name}`
+If custom: `~/aos/core/bin/aos rename-agent {name}`
 
 **Schedule** (`operator.yaml` → schedule.blocks):
 - Create blocks from what they described ("You mentioned teaching mornings — I'll block 8-12")
 - Set daily loop times based on their rhythm
 
-**Projects** (`~/aos/config/projects.yaml`):
-- Create projects from what they mentioned, not from directory scanning
-- For each: ask display name, confirm
+**Projects** (via work CLI):
+- Create projects from what they mentioned using the work CLI
+- For each: `python3 ~/aos/core/work/cli.py add "{first task}" --project {project_name}`
+- Projects are created dynamically when tasks are added with `--project` — no config file needed
 
 **Daily note:**
 Save their ramble transcript as their first daily note:
@@ -375,11 +376,11 @@ AskUserQuestion:
 
 If yes: run the setup script. Store credentials via `agent-secret set`.
 
-**Catalog tools** — only ask about tools relevant to what they described:
+**Other tools** — only offer integrations that actually exist:
 
-If they mentioned project management → ask about Linear, Notion, Plane
-If they mentioned code → ask about GitHub
-If they mentioned communication → ask about Slack, Discord
+Available integrations: Telegram, GitHub, Email, WhatsApp, Obsidian, Google Workspace, Apple Native.
+If they mention tools not in this list (Linear, Notion, Slack, etc.), note the interest:
+"That's not connected yet — I'll note it as something to add later." Save to `~/.aos/config/integration-wishlist.yaml`.
 
 **Apple Native:**
 Run silently: `bash ~/aos/core/integrations/apple_native/setup.sh --check`
@@ -648,7 +649,7 @@ echo "$ts_ip"
 
 Generate the connect script:
 ```bash
-bash ~/aos/core/bin/generate-connect-script ~/Desktop/connect-to-aos.sh
+~/aos/core/bin/generate-connect-script ~/Desktop/connect-to-aos.sh
 ```
 
 This creates a personalized script on the Desktop with this machine's
@@ -832,7 +833,7 @@ If confusing or broke: ask what, file via `~/aos/core/bin/feedback --auto`
 Write `~/.aos/config/onboarding.yaml`:
 ```yaml
 completed: "{timestamp}"
-version: "2.0"
+version: "3.0"
 phases:
   conversation: completed
   tools: completed
@@ -1190,7 +1191,7 @@ Format:
 - Duration: Xm
 - Ramble transcript: (full text)
 - Extracted: name, projects, schedule, daily rhythm
-- Configured: operator.yaml, projects.yaml, schedule blocks
+- Configured: operator.yaml, work projects (via CLI), schedule blocks
 - Agent renamed to: {name or "kept Chief"}
 
 ## Phase 2: Tools

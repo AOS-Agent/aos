@@ -72,13 +72,21 @@ git diff origin/main --name-only | grep -E "execution_log|\.jsonl|\.log$|__pycac
 - `.env`, `credentials`, `*.key`, `*.pem` files are in the diff
 - Self-test fails
 - VERSION was bumped but no matching CHANGELOG.md entry exists
-- Quality gate has failures (exit 1) — syntax errors, missing docs, unregistered checks
+- Quality gate has failures (exit 1) — syntax errors, missing docs, unregistered checks, install drift
 
 **Warn but allow if:**
 - Reconcile dry-run shows issues (might be expected if adding a new check)
 - Large diff (>500 lines changed) — ask operator to confirm
 - Untracked files exist that aren't in the diff (mention them)
-- Quality gate has warnings (exit 2) — debug artifacts, deprecated dirs, etc.
+- Quality gate has warnings (exit 2) — debug artifacts, deprecated dirs, integration gaps
+
+**Install drift checks** (in ship-check section 4):
+The quality gate catches things that silently break new installs:
+- Hardcoded lists in install.sh (services, skills, LaunchAgents) that should auto-discover
+- Onboarding referencing config files or integrations that don't exist
+- Missing default templates that install.sh tries to copy
+- Absolute paths that should use `~` for portability
+When adding a new service, skill, agent, or integration — ship-check catches if install.sh can't see it.
 
 ## Ship Flow
 
@@ -101,7 +109,7 @@ Changes:
 
 Self-test: ✓ passed
 Reconcile: ✓ all checks pass
-Quality:   ✓ code health, docs sync, consistency
+Quality:   ✓ code health, docs sync, consistency, install drift
 Safety:    ✓ no runtime data, no secrets
 ```
 
