@@ -375,6 +375,14 @@ def main():
 
     signal.signal(signal.SIGHUP, _reload_routes)
 
+    # Bridge API server (for Mission Control)
+    try:
+        from api_server import start_api_server
+        telegram._api_start = start_api_server  # started inside the asyncio loop
+        logger.info("Bridge API will start on :4098")
+    except ImportError as e:
+        logger.warning(f"Bridge API not available: {e}")
+
     logger.info(f"Starting Telegram channel (main thread, forum group: {forum_group_id})")
     telegram.start()
 

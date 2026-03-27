@@ -1746,6 +1746,13 @@ class TelegramChannel:
             logger.error(f"Failed to replay in-flight message: {e}")
             _clear_inflight()
 
+        # Start Bridge API server (for Mission Control)
+        if hasattr(self, '_api_start'):
+            try:
+                await self._api_start()
+            except Exception as e:
+                logger.warning(f"Bridge API failed to start: {e}")
+
     def start(self):
         """Start the Telegram bot (blocking)."""
         # Global error handler — registered FIRST so no errors are ever unhandled

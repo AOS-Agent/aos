@@ -453,7 +453,15 @@ async def stream_claude(
 
         async def _persistent_generate():
             try:
+                from api_server import publish_event, publish_user_message
+                publish_user_message(full_message, source="telegram")
+            except ImportError:
+                publish_event = None
+
+            try:
                 async for event in session.send(full_message, image_paths=image_paths):
+                    if publish_event:
+                        publish_event(event)
                     yield event
             finally:
                 _active_processes.pop(user_key, None)
