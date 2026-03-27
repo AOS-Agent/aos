@@ -205,6 +205,25 @@ INTENTS = {
         ],
         "handler": "handle_trust",
     },
+    "draft_feedback": {
+        "patterns": [
+            "re:^/reply_accept_",
+            "re:^/reply_edit_",
+            "re:^/reply_discard_",
+        ],
+        "handler": "handle_draft_feedback",
+    },
+    "proposals": {
+        "patterns": [
+            "re:^/proposals",
+            "re:^/approve_all",
+            "re:^/approve ",
+            "re:^/reject ",
+            "pending promotions",
+            "graduation proposals",
+        ],
+        "handler": "handle_proposals",
+    },
 }
 
 
@@ -964,7 +983,149 @@ HANDLERS = {
     "handle_reply": handle_reply,
     "handle_greeting": handle_greeting,
     "handle_trust": handle_trust,
+    "handle_draft_feedback": handle_draft_feedback,
+    "handle_proposals": handle_proposals,
 }
+
+
+def handle_draft_feedback(text: str) -> str:
+    """Handle /reply_accept_, /reply_edit_, /reply_discard_ commands."""
+    import sys
+    from pathlib import Path
+
+    _aos_dev = str(Path.home() / "project" / "aos")
+    _aos_root = str(Path.home() / "aos")
+    for p in [_aos_dev, _aos_root]:
+        if p not in sys.path:
+            sys.path.insert(0, p)
+
+    try:
+        from core.comms.drafts.feedback import handle_accept, handle_edit, handle_discard, get_pending_draft
+
+        parts = text.strip().split("_", 2)
+        # Format: /reply_accept_d_abc12345 or /reply_discard_d_abc12345
+        # Extract action and draft_id
+        if text.startswith("/reply_accept_"):
+            draft_id = text.replace("/reply_accept_", "")
+            draft = handle_accept(draft_id)
+            if draft:
+                return (
+                    f"✅ Reply sent to {draft['person_name']} via {draft['channel']}:\n"
+                    f"\"{draft['draft_text'][:200]}\""
+                )
+            return "Draft not found or already handled."
+
+        elif text.startswith("/reply_edit_"):
+            draft_id = text.replace("/reply_edit_", "")
+            draft = get_pending_draft(draft_id)
+            if draft:
+                return (
+                    f"✏️ Reply to {draft['person_name']}. Send your edited version now.\n"
+                    f"Original draft: \"{draft['draft_text'][:200]}\"\n\n"
+                    f"(Type your reply — next message will be sent as the edited version)"
+                )
+            return "Draft not found or already handled."
+
+        elif text.startswith("/reply_discard_"):
+            draft_id = text.replace("/reply_discard_", "")
+            draft = handle_discard(draft_id)
+            if draft:
+                return f"🗑 Draft to {draft['person_name']} discarded."
+            return "Draft not found or already handled."
+
+        return "Unknown draft command."
+
+    except Exception as e:
+        logger.error(f"Draft feedback handler failed: {e}")
+        return f"Error: {str(e)[:200]}"
+
+
+def handle_proposals(text: str) -> str:
+    """Handle /proposals, /approve, /reject, /approve_all commands."""
+    import json
+    import sys
+    from pathlib import Path
+
+    _aos_dev = str(Path.home() / "project" / "aos")
+    _aos_root = str(Path.home() / "aos")
+    _people = str(Path.home() / ".aos" / "services" / "people")
+    for p in [_aos_dev, _aos_root, _people]:
+        if p not in sys.path:
+            sys.path.insert(0, p)
+
+    proposals_path = Path.home() / ".aos" / "work" / "comms" / "graduation_proposals.json"
+
+    try:
+        proposals = json.loads(proposals_path.read_text()) if proposals_path.exists() else []
+    except Exception:
+        proposals = []
+
+    text_lower = text.strip().lower()
+
+    # /approve_all — bulk approve all proposals
+    if text_lower.startswith("/approve_all"):
+        if not proposals:
+            return "No pending proposals."
+        try:
+            from core.comms.graduation.runner import confirm
+            approved = 0
+            for p in proposals:
+                if confirm(p["person_id"], "accept"):
+                    approved += 1
+            return f"✅ Approved {approved} promotions to Level 1."
+        except Exception as e:
+            return f"Error: {e}"
+
+    # /approve <name> — approve a specific proposal
+    if text_lower.startswith("/approve "):
+        name_query = text.strip()[9:].strip()
+        match = None
+        for p in proposals:
+            if name_query.lower() in p.get("name", "").lower():
+                match = p
+                break
+        if not match:
+            return f"No proposal found for '{name_query}'."
+        try:
+            from core.comms.graduation.runner import confirm
+            confirm(match["person_id"], "accept")
+            return f"✅ {match['name']} promoted to Level {match['to_level']}."
+        except Exception as e:
+            return f"Error: {e}"
+
+    # /reject <name>
+    if text_lower.startswith("/reject "):
+        name_query = text.strip()[8:].strip()
+        match = None
+        for p in proposals:
+            if name_query.lower() in p.get("name", "").lower():
+                match = p
+                break
+        if not match:
+            return f"No proposal found for '{name_query}'."
+        try:
+            from core.comms.graduation.runner import confirm
+            confirm(match["person_id"], "reject")
+            return f"❌ {match['name']} stays at Level {match['from_level']}."
+        except Exception as e:
+            return f"Error: {e}"
+
+    # /proposals — list all
+    if not proposals:
+        return "No pending graduation proposals."
+
+    lines = [f"<b>Pending Promotions ({len(proposals)})</b>"]
+    for p in proposals[:15]:
+        name = p.get("name", p.get("person_id", "?"))
+        lines.append(f"  ⬆️ {name}: L{p.get('from_level',0)} → L{p.get('to_level',1)}")
+    if len(proposals) > 15:
+        lines.append(f"  ... and {len(proposals) - 15} more")
+    lines.append("")
+    lines.append("/approve_all — approve all")
+    lines.append("/approve <name> — approve one")
+    lines.append("/reject <name> — reject one")
+
+    return "\n".join(lines)
 
 
 def dispatch(text: str) -> str | None:

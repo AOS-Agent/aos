@@ -2241,6 +2241,61 @@ async def api_thresholds():
     return config.get("comms", {}).get("thresholds", {})
 
 
+@app.post("/api/comms/graduation-proposals/{person_id}/accept")
+async def api_proposal_accept(person_id: str):
+    """Accept a graduation proposal."""
+    import sys
+    _grad = str(Path.home() / "project" / "aos" / "core" / "comms" / "graduation")
+    _people = str(Path.home() / ".aos" / "services" / "people")
+    for p in [_grad, _people]:
+        if p not in sys.path:
+            sys.path.insert(0, p)
+    try:
+        from runner import confirm
+        success = confirm(person_id, "accept")
+        return {"ok": success}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@app.post("/api/comms/graduation-proposals/{person_id}/reject")
+async def api_proposal_reject(person_id: str):
+    """Reject a graduation proposal."""
+    import sys
+    _grad = str(Path.home() / "project" / "aos" / "core" / "comms" / "graduation")
+    _people = str(Path.home() / ".aos" / "services" / "people")
+    for p in [_grad, _people]:
+        if p not in sys.path:
+            sys.path.insert(0, p)
+    try:
+        from runner import confirm
+        success = confirm(person_id, "reject")
+        return {"ok": success}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@app.post("/api/comms/graduation-proposals/approve-all")
+async def api_proposals_approve_all():
+    """Approve all pending graduation proposals."""
+    import sys
+    _grad = str(Path.home() / "project" / "aos" / "core" / "comms" / "graduation")
+    _people = str(Path.home() / ".aos" / "services" / "people")
+    for p in [_grad, _people]:
+        if p not in sys.path:
+            sys.path.insert(0, p)
+    try:
+        proposals = json.loads(_PROPOSALS_FILE.read_text()) if _PROPOSALS_FILE.exists() else []
+        from runner import confirm
+        approved = 0
+        for p in proposals:
+            if confirm(p["person_id"], "accept"):
+                approved += 1
+        return {"ok": True, "approved": approved}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=4096)

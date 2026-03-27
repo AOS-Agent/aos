@@ -72,10 +72,29 @@ class MessageBus:
     4. Delivers the stream to all registered consumers
     """
 
-    def __init__(self):
+    def __init__(self, auto_register: bool = True):
         self.consumers: list[Consumer] = []
         self._adapters = None  # Lazy-loaded
         self._last_poll: datetime | None = None
+
+        if auto_register:
+            self._register_default_consumers()
+
+    def _register_default_consumers(self):
+        """Register all standard consumers. Failures are non-fatal."""
+        _consumer_classes = [
+            ("core.comms.consumers.people_intel", "PeopleIntelConsumer"),
+            ("core.comms.consumers.pattern_update", "PatternUpdateConsumer"),
+            ("core.comms.orchestrator", "CommsOrchestrator"),
+        ]
+        for mod_path, cls_name in _consumer_classes:
+            try:
+                import importlib
+                mod = importlib.import_module(mod_path)
+                consumer = getattr(mod, cls_name)()
+                self.register_consumer(consumer)
+            except Exception as e:
+                log.debug(f"Could not load consumer {cls_name}: {e}")
 
     @property
     def adapters(self):
