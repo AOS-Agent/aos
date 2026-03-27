@@ -347,6 +347,14 @@ if [[ -f "$DEV/core/integrations/registry.yaml" ]]; then
     fi
 fi
 
+# install.sh should not create standalone venvs for deps that belong to a service
+if grep -q 'services/mlx-whisper' "$DEV/install.sh" 2>/dev/null; then
+    # Allow references in cleanup code (rm -rf) but not in install code
+    if grep 'services/mlx-whisper' "$DEV/install.sh" | grep -qv 'rm\|Clean\|legacy\|Legacy'; then
+        warn "install.sh references legacy mlx-whisper venv — mlx-whisper is now in the transcriber service"
+    fi
+fi
+
 # Hooks in install.sh should use tilde paths, not absolute paths
 if grep -q '/Users/' "$DEV/install.sh" 2>/dev/null | grep -v 'comment\|#\|echo\|printf' 2>/dev/null; then
     # Only flag if absolute user paths appear in hook definitions

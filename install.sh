@@ -608,32 +608,24 @@ prereq_ffmpeg() {
 }
 
 prereq_mlx_whisper() {
-    # mlx-whisper — Apple Silicon optimized local transcription
-    # Only relevant on Apple Silicon. Installed into its own venv to avoid polluting system python.
+    # mlx-whisper is now part of the transcriber service (core/services/transcriber).
+    # The service venv gets deployed in deploy_services(). This prereq only checks
+    # that Apple Silicon is present (required for MLX) and cleans up the legacy
+    # standalone venv if it exists.
     if [[ "$(uname -m)" != "arm64" ]]; then
-        _skip "mlx-whisper (Intel — not applicable)"
+        _skip "mlx-whisper (Intel — not applicable, transcription unavailable)"
         return 0
     fi
 
-    local mlx_venv="$HOME/.aos/services/mlx-whisper/.venv"
-    if [[ -f "$mlx_venv/bin/python" ]] && "$mlx_venv/bin/python" -c "import mlx_whisper" 2>/dev/null; then
-        _skip "mlx-whisper"
-        return 0
+    # Clean up legacy standalone venv — mlx-whisper now lives in the transcriber service
+    local legacy_venv="$HOME/.aos/services/mlx-whisper"
+    if [[ -d "$legacy_venv" ]]; then
+        rm -rf "$legacy_venv"
+        _ok "Cleaned up legacy mlx-whisper venv (now in transcriber service)"
     fi
 
-    _step "Installing mlx-whisper (Apple Silicon transcription)..."
-    mkdir -p "$(dirname "$mlx_venv")"
-    python3 -m venv "$mlx_venv" 2>/dev/null || uv venv "$mlx_venv" 2>/dev/null
-    if [[ -f "$mlx_venv/bin/pip" ]]; then
-        "$mlx_venv/bin/pip" install --quiet mlx-whisper 2>&1 | tail -3
-        if "$mlx_venv/bin/python" -c "import mlx_whisper" 2>/dev/null; then
-            _ok "mlx-whisper"
-        else
-            _warn "mlx-whisper — install failed (non-critical, voice transcription unavailable)"
-        fi
-    else
-        _warn "mlx-whisper — could not create venv (non-critical)"
-    fi
+    # Actual install happens via deploy_services() → transcriber/pyproject.toml
+    _skip "mlx-whisper (installed via transcriber service)"
 }
 
 prereq_claude() {
@@ -2097,7 +2089,7 @@ for name, job in (data.get('jobs') or {}).items():
     _check "QMD"            "[[ -f '$HOME/.bun/bin/qmd' ]] || command -v qmd"
     _check "Claude Code"    "command -v claude"         critical
     if [[ "$(uname -m)" == "arm64" ]]; then
-        _check "mlx-whisper"    "[[ -f '$USER_DIR/services/mlx-whisper/.venv/bin/python' ]] && '$USER_DIR/services/mlx-whisper/.venv/bin/python' -c 'import mlx_whisper'"
+        _check "Transcriber: mlx-whisper"    "[[ -f '$USER_DIR/services/transcriber/.venv/bin/python' ]] && '$USER_DIR/services/transcriber/.venv/bin/python' -c 'import mlx_whisper'"
     fi
 
     # ── Apps ───────────────────────────────────────────────────
@@ -2254,7 +2246,7 @@ main() {
     if [[ "$DRY_RUN" == true ]]; then
         echo "  ${YELLOW}DRY RUN${RESET} — showing what would be installed"
         echo ""
-        echo "  ${BOLD}Phase 1:${RESET} Prerequisites (Homebrew, Python, uv, bun, jq, ffmpeg, gh, mlx-whisper)"
+        echo "  ${BOLD}Phase 1:${RESET} Prerequisites (Homebrew, Python, uv, bun, jq, ffmpeg, gh, Claude Code)"
         echo "  ${BOLD}Phase 2:${RESET} Repository clone/update, PATH setup, git config"
         echo "  ${BOLD}Phase 3:${RESET} User data bootstrap, migrations, agents, skills"
         echo "  ${BOLD}Phase 4:${RESET} Service venvs (bridge, dashboard, listen, memory)"
