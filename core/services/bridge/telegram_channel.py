@@ -1701,13 +1701,21 @@ class TelegramChannel:
             )
 
     async def _replay_inflight(self, app: Application):
-        """Check for an in-flight message from a previous crash and replay it."""
+        """Post-init: replay crashed messages + start API server."""
+        # ── Start Bridge API server (for Mission Control) ──
+        if hasattr(self, '_api_start'):
+            try:
+                await self._api_start()
+                logger.info("Bridge API server started on :4098")
+            except Exception as e:
+                logger.warning(f"Bridge API failed to start: {e}", exc_info=True)
+
+        # ── Replay in-flight message from crash ──
         pending = _load_inflight()
         if not pending or not pending.get("text"):
             _clear_inflight()
             return
 
-        # Discard stale inflight (>10 min old)
         ts = pending.get("timestamp", 0)
         if _time.time() - ts > 600:
             logger.info(f"Discarding stale inflight message ({int(_time.time() - ts)}s old)")
@@ -1724,8 +1732,6 @@ class TelegramChannel:
 
         try:
             chat = await app.bot.get_chat(chat_id)
-
-            # Let the user know we're resuming
             resume_kwargs = {"parse_mode": "HTML"}
             if thread_id:
                 resume_kwargs["message_thread_id"] = thread_id
@@ -1734,8 +1740,6 @@ class TelegramChannel:
                 "<i>Bridge restarted — resuming your request...</i>",
                 **resume_kwargs,
             )
-
-            # Re-process the message
             response = await self._stream_response(
                 chat, None, text, user_key,
                 cwd=cwd, thread_id=thread_id,
@@ -1745,13 +1749,6 @@ class TelegramChannel:
         except Exception as e:
             logger.error(f"Failed to replay in-flight message: {e}")
             _clear_inflight()
-
-        # Start Bridge API server (for Mission Control)
-        if hasattr(self, '_api_start'):
-            try:
-                await self._api_start()
-            except Exception as e:
-                logger.warning(f"Bridge API failed to start: {e}")
 
     def start(self):
         """Start the Telegram bot (blocking)."""
