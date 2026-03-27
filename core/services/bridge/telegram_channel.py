@@ -1706,6 +1706,9 @@ class TelegramChannel:
         if hasattr(self, '_api_start'):
             try:
                 await self._api_start()
+                # Register bot so MC messages forward to Telegram
+                from api_server import set_telegram_bot
+                set_telegram_bot(app.bot, self.allowed_chat_id)
                 logger.info("Bridge API server started on :4098")
             except Exception as e:
                 logger.warning(f"Bridge API failed to start: {e}", exc_info=True)

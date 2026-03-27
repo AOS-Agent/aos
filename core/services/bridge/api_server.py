@@ -137,6 +137,38 @@ async def handle_stream(request):
     return response
 
 
+_telegram_bot = None
+_telegram_chat_id = None
+
+
+def set_telegram_bot(bot, chat_id: int):
+    """Called by telegram_channel to register the bot for MC→Telegram forwarding."""
+    global _telegram_bot, _telegram_chat_id
+    _telegram_bot = bot
+    _telegram_chat_id = chat_id
+
+
+async def _forward_to_telegram(user_text: str, response_text: str):
+    """Forward a Mission Control exchange to Telegram so both sides see it."""
+    if not _telegram_bot or not _telegram_chat_id:
+        return
+    try:
+        # Send the user's message as a quote + the response
+        import re
+        # Clean HTML tags for Telegram
+        clean = re.sub(r"<[^>]+>", "", response_text)
+        msg = f"<i>[from Mission Control]</i>\n<b>You:</b> {user_text}\n\n{clean}"
+        if len(msg) > 4096:
+            msg = msg[:4090] + "..."
+        await _telegram_bot.send_message(
+            chat_id=_telegram_chat_id,
+            text=msg,
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        logger.warning(f"Failed to forward to Telegram: {e}")
+
+
 async def handle_send(request):
     """POST /send — send a message to the persistent session."""
     try:
@@ -162,11 +194,19 @@ async def handle_send(request):
 
     # Collect events and publish them as they arrive
     result_event = None
+    response_text = ""
     async for event in session.send(text):
         publish_event(event)
-        from session_manager import SessionResult
+        from session_manager import SessionResult, TextComplete
+        if isinstance(event, TextComplete):
+            response_text = event.text
         if isinstance(event, SessionResult):
             result_event = event
+            response_text = response_text or event.text
+
+    # Forward to Telegram so both interfaces see the conversation
+    if result_event and response_text:
+        await _forward_to_telegram(text, response_text)
 
     if result_event:
         return web.json_response({
