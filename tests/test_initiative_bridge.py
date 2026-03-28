@@ -194,8 +194,8 @@ check("vault/knowledge/initiatives/ exists",
 check("vault/knowledge/expertise/ exists",
       (VAULT / "knowledge" / "expertise").is_dir())
 
-check("vault/ideas/ exists",
-      (VAULT / "ideas").is_dir())
+check("vault/knowledge/captures/ exists",
+      (VAULT / "knowledge" / "captures").is_dir())
 
 
 # ─────────────────────────────────────────────────────────────

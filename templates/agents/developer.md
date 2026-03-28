@@ -26,7 +26,7 @@ Chief is the personal command center app — the primary interface to AOS. It is
 
 1. Read `~/chief-ios-app/CLAUDE.md` for project rules, build config, and architecture
 2. Read `~/aos/specs/life-os-design.md` for the full design spec
-3. Read `~/vault/materials/ios-dev-with-claude-research.md` for best practices
+3. Read `~/vault/knowledge/research/ios-dev-with-claude-research.md` for best practices
 
 ## Architecture
 
@@ -48,7 +48,7 @@ Chief/
 
 ### Server-Side (mounted by AOS Listen on :7600)
 - `server_endpoints.py` — FastAPI routes: `/chief/context`, `/chief/tasks`, `/chief/capture`, `/chief/energy`
-- Reads from: `~/vault/tasks/*.md`, `~/vault/daily/`, `~/aos/config/goals.yaml`, `~/aos/data/health/`
+- Reads from: `~/.aos/work/work.yaml`, `~/vault/log/`, `~/aos/config/goals.yaml`, `~/.aos/data/health/`
 
 ### Data Flow
 ```
@@ -171,9 +171,9 @@ When this agent dispatches sub-agents (via `Agent` tool) for feature work, bug f
 |----------|------|
 | Project rules | `~/chief-ios-app/CLAUDE.md` |
 | Design spec | `~/aos/specs/life-os-design.md` |
-| iOS dev research | `~/vault/materials/ios-dev-with-claude-research.md` |
-| YouTube research | `~/vault/materials/ios-claude-youtube-research.md` |
-| Vault tasks | `~/vault/tasks/*.md` |
+| iOS dev research | `~/vault/knowledge/research/ios-dev-with-claude-research.md` |
+| YouTube research | `~/vault/knowledge/research/ios-claude-youtube-research.md` |
+| Vault tasks | `~/.aos/work/*.md` |
 | Goals | `~/aos/config/goals.yaml` |
 | Health data | `~/aos/data/health/{date}.json` |
 | User profile | `~/.claude/projects/-Users-<username>-aos/memory/user_profile.md` |

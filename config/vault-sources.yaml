@@ -1,7 +1,7 @@
 # Vault Daily Log — Collector Registry
 #
 # Each collector pulls data from a source and contributes a section
-# to the daily log at ~/vault/log/days/YYYY-MM-DD.md
+# to the daily log at ~/vault/log/YYYY-MM-DD.md
 #
 # Collectors are source-agnostic. The compile-daily script iterates
 # over enabled collectors and writes what's available. No rigid schema.
@@ -23,7 +23,7 @@ collectors:
     description: "Claude Code sessions with duration and project"
 
   session_exports:
-    source: ~/vault/ops/sessions/
+    source: ~/vault/log/sessions/
     type: markdown-dir
     section: Sessions
     enabled: true

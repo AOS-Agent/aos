@@ -4,7 +4,6 @@ Invariant: Initiative pipeline infrastructure exists on the data layer.
 Checks:
 1. vault/knowledge/initiatives/ directory exists
 2. vault/knowledge/expertise/ directory exists
-3. vault/ideas/ directory exists
 4. bridge-topics.yaml exists (Bridge v2)
 
 Auto-fixes by creating missing directories. Config files are
@@ -26,7 +25,6 @@ class InitiativeDirectoriesCheck(ReconcileCheck):
     REQUIRED_DIRS = [
         VAULT / "knowledge" / "initiatives",
         VAULT / "knowledge" / "expertise",
-        VAULT / "ideas",
     ]
 
     def check(self) -> bool:

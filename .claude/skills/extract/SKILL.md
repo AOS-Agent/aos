@@ -174,7 +174,7 @@ This is opt-in — always ask before linking. If no initiatives match, skip sile
 
 ## Integration
 
-- Vault notes land in `~/vault/materials/content-extract/`
+- Vault notes land in `~/vault/knowledge/captures/`
 - QMD indexes them every 30 minutes (or manually via `bin/qmd-reindex`)
 - The `/recall` skill can find extracted content via semantic search
 - Bridge `/capture` should route social media URLs here

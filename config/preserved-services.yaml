@@ -8,15 +8,8 @@
 #   - Framework code or the operator depends on them
 #   - They don't ship via core/services/ or config/launchagents/
 
-services:
-  people:
-    reason: "People DB — used by core/comms/ resolver, patterns, graduation, sync_contacts"
-    referenced_by:
-      - core/comms/resolver.py
-      - core/comms/sync_contacts.py
-      - core/comms/patterns/compute.py
-      - core/comms/graduation/runner.py
-      - core/comms/consumers/people_intel.py
+services: {}
+  # people.db moved to ~/.aos/data/people.db (no longer a service venv)
 
 launchagents:
   com.aos.eventd:

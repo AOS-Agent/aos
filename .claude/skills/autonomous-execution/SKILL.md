@@ -35,7 +35,7 @@ If the task involves an **undocumented format, API, or configuration**:
 - Search the vault first: `qmd query "<format name>"` — a reference may already exist
 - If not found, web search for the real schema/docs BEFORE attempting trial-and-error
 - One research step saves 10 brute-force attempts and thousands of tokens
-- When you discover a working format, save it to `~/vault/materials/` for future sessions
+- When you discover a working format, save it to `~/vault/knowledge/references/` for future sessions
 
 **Anti-pattern**: Writing 8 variants of a config file hoping one works.
 **Correct pattern**: Research → find authoritative source → write once correctly.

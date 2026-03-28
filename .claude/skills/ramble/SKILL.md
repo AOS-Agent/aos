@@ -139,7 +139,7 @@ after one message. Just show the updated summary and wait.
 
 If they go deep on a topic (more than a ramble — they're actually thinking through
 something), capture that as a **note** in the vault, not just a thought. Create a
-dedicated note at `~/vault/ideas/{topic-slug}.md` with their full thinking.
+dedicated note at `~/vault/knowledge/captures/{topic-slug}.md` with their full thinking.
 
 ### Step 5: Approval and Commit
 
@@ -168,7 +168,7 @@ date=$(date +%Y-%m-%d)
 
 For deep-dive notes, create separate vault entries:
 ```bash
-# ~/vault/ideas/{slug}.md with frontmatter
+# ~/vault/knowledge/captures/{slug}.md with frontmatter
 ```
 
 If initiative signals were detected:

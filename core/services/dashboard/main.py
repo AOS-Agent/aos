@@ -1518,8 +1518,8 @@ async def api_log_stream(request: Request, source: str = "bridge"):
 
 @app.get("/read", response_class=HTMLResponse)
 async def docs_index(request: Request):
-    """List all readable markdown docs in vault/materials/."""
-    materials = WORKSPACE.parent / "vault" / "materials"
+    """List all readable markdown docs in vault/knowledge/captures/."""
+    materials = WORKSPACE.parent / "vault" / "knowledge" / "captures"
     docs = []
     if materials.exists():
         for f in sorted(materials.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True):
@@ -1531,10 +1531,10 @@ async def docs_index(request: Request):
 @app.get("/read/{filename}", response_class=HTMLResponse)
 async def docs_view(filename: str):
     """Render a vault markdown file as clean, mobile-friendly HTML."""
-    # Security: only allow .md files from vault/materials
+    # Security: only allow .md files from vault/knowledge/captures
     if not filename.endswith(".md") or "/" in filename or ".." in filename:
         return HTMLResponse("<h1>Not found</h1>", status_code=404)
-    path = WORKSPACE.parent / "vault" / "materials" / filename
+    path = WORKSPACE.parent / "vault" / "knowledge" / "captures" / filename
     if not path.exists():
         return HTMLResponse("<h1>Not found</h1>", status_code=404)
     raw = path.read_text()
@@ -1741,7 +1741,7 @@ def _get_eventd_events() -> list:
 
 def _get_people_stats() -> dict:
     """Query people.db for basic counts."""
-    db_path = Path.home() / "vault" / "people" / "people.db"
+    db_path = Path.home() / ".aos" / "data" / "people.db"
     if not db_path.exists():
         return {"total": 0, "identifiers": 0, "groups": 0, "interactions_today": 0}
     try:
@@ -2101,7 +2101,7 @@ async def trust_page(request: Request):
 
 # ── Trust Observability APIs ─────────────────────────────────────────
 
-_PEOPLE_DB = Path.home() / "vault" / "people" / "people.db"
+_PEOPLE_DB = Path.home() / ".aos" / "data" / "people.db"
 _TRUST_YAML = Path.home() / ".aos" / "config" / "trust.yaml"
 _GRADUATION_LOG = Path.home() / ".aos" / "logs" / "comms-graduation.log"
 _PROPOSALS_FILE = Path.home() / ".aos" / "work" / "comms" / "graduation_proposals.json"

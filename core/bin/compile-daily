@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Daily Log Compiler — Aggregates data from multiple sources into a single
-daily log file at ~/vault/log/days/YYYY-MM-DD.md
+daily log file at ~/vault/log/YYYY-MM-DD.md
 
 Sources are defined in ~/aos/config/vault-sources.yaml.
 The compiler only writes sections for which data exists — no nulls, no empty sections.
@@ -21,10 +21,10 @@ import yaml
 from datetime import datetime, date, timedelta
 from pathlib import Path
 
-VAULT_DAYS = Path.home() / "vault" / "log" / "days"
+VAULT_DAYS = Path.home() / "vault" / "log"
 WORK_FILE = Path.home() / ".aos" / "work" / "work.yaml"
 SESSIONS_LOG = Path.home() / ".aos" / "logs" / "sessions.jsonl"  # may not exist if session hook isn't installed; load_sessions_for_date() handles this gracefully (returns [])
-SESSION_EXPORTS = Path.home() / "vault" / "ops" / "sessions"
+SESSION_EXPORTS = Path.home() / "vault" / "log" / "sessions"
 HEALTH_DIR = Path.home() / ".aos" / "data" / "health"
 
 DAYS_OF_WEEK = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]

@@ -27,7 +27,7 @@ from pathlib import Path
 import yaml
 
 # Paths
-VAULT_SESSIONS = Path.home() / "vault" / "ops" / "sessions"
+VAULT_SESSIONS = Path.home() / "vault" / "log" / "sessions"
 WORK_FILE = Path.home() / ".aos" / "work" / "work.yaml"
 RECONCILE_LOG = Path.home() / ".aos" / "logs" / "reconcile-sessions.jsonl"
 RECONCILE_STATE = Path.home() / ".aos" / "work" / ".reconciled-sessions.json"

@@ -24,8 +24,8 @@ Generate structured reviews by reading work data, vault, and session history.
 **Data sources:**
 1. Work tasks: `python3 ~/aos/core/work/cli.py list --status done` (completed today)
 2. Work tasks: `python3 ~/aos/core/work/cli.py list` (remaining active/todo)
-3. Daily log: `~/vault/log/days/YYYY-MM-DD.md` (health, sessions, work summary)
-4. Sessions: `~/vault/ops/sessions/` for recent session summaries
+3. Daily log: `~/vault/log/YYYY-MM-DD.md` (health, sessions, work summary)
+4. Sessions: `~/vault/log/sessions/` for recent session summaries
 
 **Output format:**
 
@@ -54,9 +54,9 @@ Generate structured reviews by reading work data, vault, and session history.
 **Data sources:**
 1. All tasks completed this week: filter by completed date
 2. Goal progress: `python3 ~/aos/core/work/cli.py goals`
-3. Daily logs from the week: `~/vault/log/days/` for health/energy/work patterns
-4. Session summaries: `~/vault/ops/sessions/` for this week
-5. Friction reports: `~/vault/ops/friction/` for this week
+3. Daily logs from the week: `~/vault/log/` for health/energy/work patterns
+4. Session summaries: `~/vault/log/sessions/` for this week
+5. Friction reports: `~/vault/log/friction/` for this week
 6. Work summary: `python3 ~/aos/core/work/cli.py summary`
 7. Initiative state: `python3 ~/aos/core/work/cli.py initiatives` for active initiative progress
 
@@ -138,13 +138,13 @@ Stale (>7 days):
 2. Synthesize -- don't just list raw data, identify patterns
 3. Be honest about drift and gaps
 4. Keep it scannable -- the operator reads this in 2 minutes, not 10
-5. Save the review to `~/vault/reviews/` if it's weekly or monthly
+5. Save the review to `~/vault/log/` if it's weekly or monthly
 
 ## Rules
 
 - Daily reviews are ephemeral -- show them, don't save unless asked
-- Weekly reviews get saved: `~/vault/log/weeks/YYYY-wNN.md`
-- Monthly reviews get saved: `~/vault/log/months/YYYY-MM.md`
+- Weekly reviews get saved: `~/vault/log/YYYY-WNN.md`
+- Monthly reviews get saved: `~/vault/log/YYYY-MM.md`
 - Always cite evidence -- "3 of 5 tasks completed" not "good progress"
 - If data is missing (no daily notes, no sessions), say so -- don't fabricate
 
@@ -185,7 +185,7 @@ When an initiative reaches status: review (all phases complete):
 - {concrete takeaways}
 ```
 
-Save to initiative document's ## Review section and to `~/vault/reviews/`.
+Save to initiative document's ## Review section and to `~/vault/log/`.
 Update initiative frontmatter: status → done.
 
 ### Expertise Accumulation

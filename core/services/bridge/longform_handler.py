@@ -1,7 +1,7 @@
 """Long-form response handler — vault save + Telegraph publish.
 
 When Claude's response exceeds LONGFORM_THRESHOLD, this module:
-1. Saves the full markdown to vault/log/responses/
+1. Saves the full markdown to vault/log/
 2. Publishes to Telegraph for Instant View reading
 3. Extracts a summary (first heading + first paragraph) for inline Telegram delivery
 """
@@ -14,7 +14,7 @@ from pathlib import Path
 logger = logging.getLogger("bridge.longform")
 
 LONGFORM_THRESHOLD = 6000  # chars — about 1.5 Telegram messages
-VAULT_RESPONSES_DIR = Path.home() / "vault" / "log" / "responses"
+VAULT_RESPONSES_DIR = Path.home() / "vault" / "log"
 
 
 def _slugify(text: str, max_len: int = 40) -> str:
