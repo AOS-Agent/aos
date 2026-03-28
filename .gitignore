@@ -16,7 +16,8 @@ vendor/
 /logs
 /data
 /bin
-/apps
+/apps/*
+!/apps/content-engine/
 
 # Runtime
 *.log
