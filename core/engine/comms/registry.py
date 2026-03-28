@@ -1,6 +1,6 @@
 """Communication channel registry.
 
-Reads from the integrations registry (core/integrations/registry.yaml) to
+Reads from the integrations registry (core/infra/integrations/registry.yaml) to
 discover which communication channels are active. No separate comms config —
 the integrations registry is the single source of truth.
 
@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 
 # Path to integrations registry (relative to ~/aos/)
 _AOS_ROOT = Path(os.environ.get("AOS_ROOT", Path.home() / "aos"))
-_REGISTRY_PATH = _AOS_ROOT / "core" / "integrations" / "registry.yaml"
+_REGISTRY_PATH = _AOS_ROOT / "core" / "infra" / "integrations" / "registry.yaml"
 
 # Map integration IDs to their adapter module paths
 # Only channels with implemented adapters are listed here.

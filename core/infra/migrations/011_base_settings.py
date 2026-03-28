@@ -34,7 +34,7 @@ POSTCOMPACT_HOOK = {
     "hooks": [
         {
             "type": "command",
-            "command": f"python3 {Path.home()}/aos/core/work/inject_context.py",
+            "command": f"python3 {Path.home()}/aos/core/engine/work/inject_context.py",
         }
     ],
 }

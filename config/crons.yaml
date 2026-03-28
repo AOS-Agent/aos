@@ -1,5 +1,5 @@
 # AOS v2 — Scheduled Jobs
-# Read by ~/aos/core/bin/scheduler every 5 minutes
+# Read by ~/aos/core/bin/internal/scheduler every 5 minutes
 #
 # Schedule types:
 #   every: 5m / 30m / 1h / 2h      — interval-based
@@ -15,17 +15,17 @@ jobs:
   # ── Tier 1: System health ───────────────────────────────────────────────────
 
   watchdog:
-    command: bash ~/aos/core/bin/watchdog
+    command: bash ~/aos/core/bin/crons/watchdog
     every: 5m
     timeout: 60
 
   check-update:
-    command: bash ~/aos/core/bin/check-update
+    command: bash ~/aos/core/bin/crons/check-update
     every: 2h
     timeout: 120
 
   auto-update:
-    command: bash ~/aos/core/bin/check-update --apply
+    command: bash ~/aos/core/bin/crons/check-update --apply
     at: "04:00"
     timeout: 300
     # Runs at 4am daily. Pulls latest, migrates, syncs.
@@ -33,72 +33,78 @@ jobs:
     # enabled: false
 
   sync-sessions:
-    command: python3 ~/aos/core/bin/sync-sessions
+    command: python3 ~/aos/core/bin/crons/sync-sessions
     every: 30m
     timeout: 120
 
   auto-commit:
-    command: bash ~/aos/core/bin/auto-commit cron
+    command: bash ~/aos/core/bin/crons/auto-commit cron
     every: 30m
     timeout: 120
 
   qmd-reindex:
-    command: bash ~/aos/core/bin/qmd-reindex
+    command: bash ~/aos/core/bin/crons/qmd-reindex
     every: 30m
     timeout: 120
 
   session-export:
-    command: python3 ~/aos/core/bin/session-export
+    command: python3 ~/aos/core/bin/crons/session-export
     every: 2h
     timeout: 300
 
   rotate-logs:
-    command: bash ~/aos/core/bin/rotate-logs
+    command: bash ~/aos/core/bin/crons/rotate-logs
     at: "03:00"
     timeout: 60
 
   # ── Tier 2: Knowledge & awareness ───────────────────────────────────────────
 
   compile-daily:
-    command: python3 ~/aos/core/bin/compile-daily
+    command: python3 ~/aos/core/bin/crons/compile-daily
     at: "23:30"
     timeout: 120
 
+  compile-weekly:
+    command: python3 ~/aos/core/bin/crons/compile-weekly
+    at: "23:45"
+    weekday: friday
+    timeout: 120
+
   inbox-collect:
-    command: python3 ~/aos/core/bin/inbox-collect
+    command: python3 ~/aos/core/bin/crons/inbox-collect
     every: 30m
     timeout: 120
 
   session-analysis:
-    command: python3 ~/aos/core/bin/session-analysis
+    command: python3 ~/aos/core/bin/crons/session-analysis
     at: "22:00"
     weekday: sunday
     timeout: 180
 
   stale-detector:
-    command: python3 ~/aos/core/bin/stale-detector
+    command: python3 ~/aos/core/bin/crons/stale-detector
     at: "08:00"
     timeout: 60
 
   contact-sync:
-    command: python3 ~/aos/core/comms/sync_contacts.py
+    command: python3 ~/aos/core/engine/comms/sync_contacts.py
     at: "05:30"
     timeout: 120
     # Incremental sync from macOS Contacts → People DB. Runs before morning briefing.
 
   stale-initiatives:
-    command: python3 ~/aos/core/bin/stale-initiatives
+    command: python3 ~/aos/core/bin/crons/stale-initiatives
     at: "09:00"
     timeout: 60
     # Scans initiative docs for staleness (>3 days untouched), sends Telegram nudge
 
   nightly-pipeline:
-    command: bash ~/aos/core/bin/nightly-pipeline
+    command: bash ~/aos/core/bin/crons/nightly-pipeline
     at: "23:00"
     timeout: 600
 
   morning-context:
-    command: python3 ~/aos/core/bin/morning-context
+    command: python3 ~/aos/core/bin/crons/morning-context
     at: "06:30"
     timeout: 60
 
@@ -106,20 +112,20 @@ jobs:
   # Enable these as integrations come online.
 
   weekly-digest:
-    command: python3 ~/aos/core/bin/weekly-digest
+    command: python3 ~/aos/core/bin/crons/weekly-digest
     at: "20:00"
     weekday: sunday
     timeout: 300
     # Sends Telegram summary + writes vault review note
 
   compile-patterns:
-    command: python3 ~/aos/core/bin/compile-patterns
+    command: python3 ~/aos/core/bin/crons/compile-patterns
     at: "04:00"
     timeout: 120
     # Scans sessions for repeated behaviors, compiles to scripts/docs
 
   reconcile-sessions:
-    command: python3 ~/aos/core/bin/reconcile-sessions --quiet
+    command: python3 ~/aos/core/bin/crons/reconcile-sessions --quiet
     every: 2h
     timeout: 60
     # Catch-up reconciliation. Primary trigger is SessionEnd hook.
@@ -128,17 +134,17 @@ jobs:
   # ── Tier 4: Intelligence ────────────────────────────────────────────────────
 
   comms-extract:
-    command: python3 ~/aos/core/comms/extract/lifecycle.py
+    command: python3 ~/aos/core/engine/comms/extract/lifecycle.py
     at: "05:00"
     timeout: 300
 
   comms-patterns:
-    command: python3 ~/aos/core/comms/patterns/compute.py
+    command: python3 ~/aos/core/engine/comms/patterns/compute.py
     at: "05:30"
     timeout: 180
 
   comms-graduation:
-    command: python3 ~/aos/core/comms/graduation/runner.py
+    command: python3 ~/aos/core/engine/comms/graduation/runner.py
     at: "06:00"
     timeout: 120
 

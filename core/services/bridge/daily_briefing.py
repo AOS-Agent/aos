@@ -446,7 +446,7 @@ def _build_briefing() -> str:
 def _split_for_telegram(text: str, limit: int = 4096) -> list[str]:
     """Split text at paragraph/newline boundaries for Telegram's limit.
 
-    Imports the canonical splitter from core/lib/notify.py when possible,
+    Imports the canonical splitter from core/infra/lib/notify.py when possible,
     falls back to a local implementation.
     """
     if len(text) <= limit:
@@ -454,7 +454,7 @@ def _split_for_telegram(text: str, limit: int = 4096) -> list[str]:
 
     try:
         import sys
-        sys.path.insert(0, str(Path.home() / "aos" / "core" / "lib"))
+        sys.path.insert(0, str(Path.home() / "aos" / "core" / "infra" / "lib"))
         from notify import _split_message
         return _split_message(text, limit)
     except Exception:

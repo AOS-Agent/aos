@@ -4,7 +4,7 @@ Scans directories for subclasses and loads them automatically.
 Drop a file → restart eventd → it's live. No registration needed.
 
 Watchers:  core/services/eventd/watchers/*.py
-Consumers: core/bus/consumers/*.py
+Consumers: core/engine/bus/consumers/*.py
 """
 
 from __future__ import annotations
@@ -30,16 +30,16 @@ def discover_watchers() -> list:
 
 
 def discover_consumers() -> list:
-    """Find all EventConsumer subclasses in core/bus/consumers/."""
+    """Find all EventConsumer subclasses in core/engine/bus/consumers/."""
     # Add AOS root to path so imports work
     aos_root = str(_AOS_ROOT)
     if aos_root not in sys.path:
         sys.path.insert(0, aos_root)
 
-    from core.bus.consumer import EventConsumer
+    from core.engine.bus.consumer import EventConsumer
 
-    consumers_dir = _AOS_ROOT / "core" / "bus" / "consumers"
-    return _discover_subclasses(consumers_dir, EventConsumer, "core.bus.consumers")
+    consumers_dir = _AOS_ROOT / "core" / "engine" / "bus" / "consumers"
+    return _discover_subclasses(consumers_dir, EventConsumer, "core.engine.bus.consumers")
 
 
 def _discover_subclasses(directory: Path, base_class: type, package_prefix: str) -> list:

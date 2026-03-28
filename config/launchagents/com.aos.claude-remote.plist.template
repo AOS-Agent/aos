@@ -7,7 +7,7 @@
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
-        <string>__HOME__/aos/core/bin/claude-remote-start</string>
+        <string>__HOME__/aos/core/bin/setup/claude-remote-start</string>
     </array>
     <key>WorkingDirectory</key>
     <string>__HOME__/aos</string>

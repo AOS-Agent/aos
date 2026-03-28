@@ -7,8 +7,8 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>__HOME__/aos/core/bin/aos-python</string>
-        <string>__HOME__/aos/core/bin/scheduler</string>
+        <string>__HOME__/aos/core/bin/internal/aos-python</string>
+        <string>__HOME__/aos/core/bin/internal/scheduler</string>
     </array>
 
     <!-- Every 5 minutes via StartCalendarInterval (survives sleep/wake) -->

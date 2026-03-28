@@ -7,7 +7,7 @@ runs the system bus in-process, exposes an HTTP API for external services.
 
 Usage:
     python3 -m core.services.eventd.main          # foreground
-    core/bin/eventd                                 # via wrapper (sets process name)
+    core/bin/internal/eventd                        # via wrapper (sets process name)
 
 Process name: Shows as 'eventd' in Activity Monitor (via setproctitle or exec -a).
 """
@@ -65,7 +65,7 @@ class EventDaemon:
         log.info("eventd starting (pid=%d)", os.getpid())
 
         # Import bus
-        from core.bus import system_bus
+        from core.engine.bus import system_bus
 
         # Auto-discover consumers
         from core.services.eventd.discovery import discover_consumers

@@ -14,7 +14,7 @@ Conversational first-time setup, triggered by Chief when it detects a fresh inst
 
 ## How it works
 
-Each stage reads integration manifests from `core/integrations/*/manifest.yaml`
+Each stage reads integration manifests from `core/infra/integrations/*/manifest.yaml`
 and walks the user through the setup steps defined there.
 
 Progress is saved to `~/.aos/config/onboarding-state.yaml` so it can resume

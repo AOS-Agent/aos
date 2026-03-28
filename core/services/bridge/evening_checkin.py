@@ -28,7 +28,7 @@ INITIATIVES_DIR = VAULT_ROOT / "knowledge" / "initiatives"
 # ── Message splitting ────────────────────────────────────────────────────────
 
 def _split_message(text: str, limit: int = 4096) -> list[str]:
-    """Split text into Telegram-safe chunks. Imported from core/lib/notify if
+    """Split text into Telegram-safe chunks. Imported from core/infra/lib/notify if
     available, otherwise uses this inline fallback."""
     if len(text) <= limit:
         return [text]
@@ -48,10 +48,10 @@ def _split_message(text: str, limit: int = 4096) -> list[str]:
     return chunks
 
 
-# Try to import the canonical _split_message from core/lib/notify
+# Try to import the canonical _split_message from core/infra/lib/notify
 try:
     _notify_spec = importlib.util.spec_from_file_location(
-        "notify", str(AOS_ROOT / "core" / "lib" / "notify.py"))
+        "notify", str(AOS_ROOT / "core" / "infra" / "lib" / "notify.py"))
     if _notify_spec:
         _notify_mod = importlib.util.module_from_spec(_notify_spec)
         _notify_spec.loader.exec_module(_notify_mod)

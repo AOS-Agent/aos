@@ -12,7 +12,7 @@ import pytest
 from pathlib import Path
 
 # Make the work package importable without installing it
-WORK_DIR_SRC = Path(__file__).parent.parent / "core" / "work"
+WORK_DIR_SRC = Path(__file__).parent.parent / "core" / "engine" / "work"
 if str(WORK_DIR_SRC) not in sys.path:
     sys.path.insert(0, str(WORK_DIR_SRC))
 

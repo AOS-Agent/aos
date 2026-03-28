@@ -14,7 +14,7 @@
 set -euo pipefail
 
 AOS_DIR="$HOME/aos"
-RUNNER="$AOS_DIR/core/migrations/runner.py"
+RUNNER="$AOS_DIR/core/infra/migrations/runner.py"
 
 case "${1:-help}" in
     migrate)
@@ -31,9 +31,9 @@ case "${1:-help}" in
 
     update)
         # Full update: pull + migrate + sync
-        bash "$AOS_DIR/core/bin/check-update" --apply
+        bash "$AOS_DIR/core/bin/crons/check-update" --apply
         # Check if any reported issues were fixed in this update
-        bash "$AOS_DIR/core/bin/check-fixed-issues" 2>/dev/null || true
+        bash "$AOS_DIR/core/bin/internal/check-fixed-issues" 2>/dev/null || true
         # Run test suite if available (non-blocking — failures don't stop update)
         if [ -d "$AOS_DIR/tests" ] && ls "$AOS_DIR/tests"/test_*.py >/dev/null 2>&1; then
             echo ""
@@ -43,12 +43,12 @@ case "${1:-help}" in
         ;;
 
     check-update)
-        bash "$AOS_DIR/core/bin/check-update" "${2:---status}"
+        bash "$AOS_DIR/core/bin/crons/check-update" "${2:---status}"
         ;;
 
     reconcile)
         # Run invariant checks — fixes drift from wrong installs, brew updates, etc.
-        "$AOS_DIR/core/bin/aos-python" "$AOS_DIR/core/reconcile/runner.py" "${2:-run}"
+        "$AOS_DIR/core/bin/internal/aos-python" "$AOS_DIR/core/infra/reconcile/runner.py" "${2:-run}"
         ;;
 
     sync-skills)
@@ -318,7 +318,7 @@ _load()
 
         # Check scripts parse
         script_errors=0
-        for script in "$AOS_DIR"/core/bin/*; do
+        for script in "$AOS_DIR"/core/bin/cli/* "$AOS_DIR"/core/bin/crons/* "$AOS_DIR"/core/bin/internal/* "$AOS_DIR"/core/bin/setup/*; do
             [ -f "$script" ] || continue
             basename=$(basename "$script")
             [ "$basename" = "__pycache__" ] && continue
@@ -642,40 +642,40 @@ print('\n'.join(deps))
     activate)
         # Activate a catalog agent
         shift
-        bash "$AOS_DIR/core/bin/activate-agent" "$@"
+        bash "$AOS_DIR/core/bin/cli/activate-agent" "$@"
         ;;
 
     deactivate)
         # Deactivate a catalog agent
         shift
-        bash "$AOS_DIR/core/bin/activate-agent" --deactivate "$@"
+        bash "$AOS_DIR/core/bin/cli/activate-agent" --deactivate "$@"
         ;;
 
     trust)
         # Trust review and management
         shift
-        "$AOS_DIR/core/bin/aos-python" "$AOS_DIR/core/bin/trust-review" "$@"
+        "$AOS_DIR/core/bin/internal/aos-python" "$AOS_DIR/core/bin/cli/trust-review" "$@"
         ;;
 
     trust-log)
         # Log a trust action
         shift
-        "$AOS_DIR/core/bin/aos-python" "$AOS_DIR/core/bin/trust-log" "$@"
+        "$AOS_DIR/core/bin/internal/aos-python" "$AOS_DIR/core/bin/cli/trust-log" "$@"
         ;;
 
     feedback)
         shift
-        bash "$AOS_DIR/core/bin/feedback" "$@"
+        bash "$AOS_DIR/core/bin/cli/feedback" "$@"
         ;;
 
     telemetry)
         shift
-        bash "$AOS_DIR/core/bin/telemetry" "$@"
+        bash "$AOS_DIR/core/bin/internal/telemetry" "$@"
         ;;
 
     sessions)
         shift
-        bash "$AOS_DIR/core/bin/session-recorder" "$@"
+        bash "$AOS_DIR/core/bin/internal/session-recorder" "$@"
         ;;
 
     rename-agent)
@@ -772,7 +772,7 @@ p.write_text(json.dumps(s, indent=2) + '\n')
 
         # Migrate secrets to login keychain
         echo "  Migrating secrets..."
-        bash "$AOS_DIR/core/bin/agent-secret" migrate 2>/dev/null || true
+        bash "$AOS_DIR/core/bin/cli/agent-secret" migrate 2>/dev/null || true
 
         # Repair hooks in settings.json
         echo "  Repairing settings..."
@@ -967,8 +967,8 @@ sys.exit(0 if errors == 0 else 1)
         # NEVER auto-deletes. Shows what it found, asks for each item.
         python3 -c "
 import sys, os, shutil, subprocess
-sys.path.insert(0, '$AOS_DIR/core/reconcile')
-sys.path.insert(0, '$AOS_DIR/core/reconcile/checks')
+sys.path.insert(0, '$AOS_DIR/core/infra/reconcile')
+sys.path.insert(0, '$AOS_DIR/core/infra/reconcile/checks')
 from instance_hygiene import find_orphans, _format_size, _dir_size, HYGIENE_STATE_FILE
 
 orphans = find_orphans()

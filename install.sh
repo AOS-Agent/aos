@@ -926,7 +926,7 @@ run_bootstrap() {
     if [[ -d "$vault_dir" ]]; then
         _skip "Knowledge vault"
     else
-        mkdir -p "$vault_dir"/{daily,knowledge,log,ops/sessions,reviews,sessions}
+        mkdir -p "$vault_dir"/{log/{sessions,friction,weeks,months},knowledge/{captures,decisions,expertise,initiatives,references,research,synthesis}}
         _ok "Created ~/vault/ with standard structure"
     fi
 
@@ -991,7 +991,7 @@ OPERATOR
     # Run migrations
     _info "Running migrations..."
     echo ""
-    if python3 "$AOS_DIR/core/migrations/runner.py" migrate 2>&1 | sed 's/^/    /'; then
+    if python3 "$AOS_DIR/core/infra/migrations/runner.py" migrate 2>&1 | sed 's/^/    /'; then
         _ok "Migrations complete"
     else
         _warn "Some migrations failed — system may need manual fixes"
@@ -1096,7 +1096,7 @@ with open('$settings_file') as f:
 assert s.get('hooks', {}).get('SessionStart')
 " 2>/dev/null; then
         _info "Wiring work system hooks..."
-        python3 "$AOS_DIR/core/migrations/005_wire_hooks.py" 2>/dev/null && _ok "Hooks wired" || _warn "Hooks — wire manually later"
+        python3 "$AOS_DIR/core/infra/migrations/005_wire_hooks.py" 2>/dev/null && _ok "Hooks wired" || _warn "Hooks — wire manually later"
     fi
 
     # MCP servers — register AOS services into Claude Code's config
@@ -1807,17 +1807,17 @@ if 'hooks' not in s:
 
 hook_defs = {
     'SessionStart': [
-        {'hooks': [{'type': 'command', 'command': 'python3 ~/aos/core/work/inject_context.py', 'statusMessage': 'Loading work context...'}]},
+        {'hooks': [{'type': 'command', 'command': 'python3 ~/aos/core/engine/work/inject_context.py', 'statusMessage': 'Loading work context...'}]},
     ],
     'PostCompact': [
-        {'hooks': [{'type': 'command', 'command': 'python3 ~/aos/core/work/inject_context.py', 'statusMessage': 'Reloading work context...'}]},
+        {'hooks': [{'type': 'command', 'command': 'python3 ~/aos/core/engine/work/inject_context.py', 'statusMessage': 'Reloading work context...'}]},
     ],
     'Stop': [
-        {'hooks': [{'type': 'command', 'command': 'python3 ~/aos/core/work/reconcile.py', 'async': True}]},
+        {'hooks': [{'type': 'command', 'command': 'python3 ~/aos/core/engine/work/reconcile.py', 'async': True}]},
     ],
     'SessionEnd': [
         {'hooks': [
-            {'type': 'command', 'command': 'python3 ~/aos/core/work/session_close.py', 'async': True},
+            {'type': 'command', 'command': 'python3 ~/aos/core/engine/work/session_close.py', 'async': True},
             {'type': 'command', 'command': 'python3 ~/aos/core/bin/reconcile-sessions --hook --quiet', 'async': True},
         ]},
     ],
@@ -1873,7 +1873,7 @@ run_provisioning() {
 run_discovery() {
     _step "Running discovery scan..."
     echo ""
-    python3 "$AOS_DIR/core/migrations/runner.py" discover 2>&1 | sed 's/^/    /'
+    python3 "$AOS_DIR/core/infra/migrations/runner.py" discover 2>&1 | sed 's/^/    /'
     echo ""
 }
 

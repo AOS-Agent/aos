@@ -27,7 +27,7 @@ import yaml
 import pytest
 from pathlib import Path
 
-WORK_PKG = Path(__file__).parent.parent / "core" / "work"
+WORK_PKG = Path(__file__).parent.parent / "core" / "engine" / "work"
 sys.path.insert(0, str(WORK_PKG))
 
 

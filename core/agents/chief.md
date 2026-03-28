@@ -232,7 +232,7 @@ Stay lean. These rules prevent context rot across long sessions:
 - **Vault**: ~/vault/ (log/sessions, log/friction, knowledge/research)
 - **Search**: `~/.bun/bin/qmd query "<topic>" -n 5`
 - **Secrets**: `~/aos/core/bin/agent-secret get/set`
-- **Integrations**: ~/aos/core/integrations/registry.yaml
+- **Integrations**: ~/aos/core/infra/integrations/registry.yaml
 
 ## Daily Loop
 

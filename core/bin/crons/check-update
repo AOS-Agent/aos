@@ -26,8 +26,8 @@ log() { echo "$LOG_PREFIX $*"; }
 notify() {
     local msg="$1"
     local bot_token chat_id
-    bot_token=$("$AOS_DIR/core/bin/agent-secret" get TELEGRAM_BOT_TOKEN 2>/dev/null) || return 0
-    chat_id=$("$AOS_DIR/core/bin/agent-secret" get TELEGRAM_CHAT_ID 2>/dev/null) || return 0
+    bot_token=$("$AOS_DIR/core/bin/cli/agent-secret" get TELEGRAM_BOT_TOKEN 2>/dev/null) || return 0
+    chat_id=$("$AOS_DIR/core/bin/cli/agent-secret" get TELEGRAM_CHAT_ID 2>/dev/null) || return 0
     [[ -z "$bot_token" || -z "$chat_id" ]] && return 0
 
     curl -s --max-time 10 -X POST "https://api.telegram.org/bot${bot_token}/sendMessage" \
@@ -150,7 +150,7 @@ apply() {
     # Always run reconcile — even if version didn't change.
     # Catches drift from Homebrew updates, manual edits, etc.
     log "Running reconcile..."
-    "$AOS_DIR/core/bin/aos-python" "$AOS_DIR/core/reconcile/runner.py" run 2>>"$HOME/.aos/logs/reconcile-stderr.log" || true
+    "$AOS_DIR/core/bin/internal/aos-python" "$AOS_DIR/core/infra/reconcile/runner.py" run 2>>"$HOME/.aos/logs/reconcile-stderr.log" || true
 
     # Skip the rest if version didn't change
     if [[ "$old_version" == "$new_version" ]]; then
@@ -162,14 +162,14 @@ apply() {
 
     # Run migrations
     log "Running migrations..."
-    "$AOS_DIR/core/bin/aos-python" "$AOS_DIR/core/migrations/runner.py" migrate 2>/dev/null || true
+    "$AOS_DIR/core/bin/internal/aos-python" "$AOS_DIR/core/infra/migrations/runner.py" migrate 2>/dev/null || true
 
     # Sync skills, agents, rules, and MCP servers
     log "Syncing..."
-    bash "$AOS_DIR/core/bin/aos" sync-skills 2>/dev/null || true
-    bash "$AOS_DIR/core/bin/aos" sync-agents 2>/dev/null || true
-    bash "$AOS_DIR/core/bin/aos" sync-rules 2>/dev/null || true
-    bash "$AOS_DIR/core/bin/aos" sync-mcp 2>/dev/null || true
+    bash "$AOS_DIR/core/bin/cli/aos" sync-skills 2>/dev/null || true
+    bash "$AOS_DIR/core/bin/cli/aos" sync-agents 2>/dev/null || true
+    bash "$AOS_DIR/core/bin/cli/aos" sync-rules 2>/dev/null || true
+    bash "$AOS_DIR/core/bin/cli/aos" sync-mcp 2>/dev/null || true
 
     # Check if any pyproject.toml or requirements.lock changed — rebuild affected venvs
     local changed_services
@@ -179,7 +179,7 @@ apply() {
         for svc in $changed_services; do
             log "Rebuilding $svc venv..."
             rm -rf "$HOME/.aos/services/$svc/.venv"
-            bash "$AOS_DIR/core/bin/aos" deploy "$svc" 2>/dev/null || true
+            bash "$AOS_DIR/core/bin/cli/aos" deploy "$svc" 2>/dev/null || true
         done
     fi
 
@@ -231,7 +231,7 @@ apply() {
             launchctl kickstart -k "gui/$uid/$la" 2>/dev/null
         done
         notify "⚠️ Update to $new_version rolled back — services were unhealthy. Developer notified."
-        bash "$AOS_DIR/core/bin/feedback" --auto "Update rollback: $new_version → $old_version" "auto-update" 2>/dev/null || true
+        bash "$AOS_DIR/core/bin/cli/feedback" --auto "Update rollback: $new_version → $old_version" "auto-update" 2>/dev/null || true
         return 1
     fi
 

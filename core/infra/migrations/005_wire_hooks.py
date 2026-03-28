@@ -19,12 +19,12 @@ AOS_DIR = Path.home() / "aos"
 
 HOOKS = {
     "SessionStart": {
-        "command": "python3 ~/aos/core/work/inject_context.py",
+        "command": "python3 ~/aos/core/engine/work/inject_context.py",
         "statusMessage": "Loading work context...",
         "description": "AOS: inject active tasks and threads",
     },
     "SessionEnd": {
-        "command": "python3 ~/aos/core/work/session_close.py",
+        "command": "python3 ~/aos/core/engine/work/session_close.py",
         "async": True,
         "description": "AOS: link session to tasks and capture outcomes",
     },

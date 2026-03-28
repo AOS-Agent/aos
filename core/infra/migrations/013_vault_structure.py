@@ -16,26 +16,21 @@ from pathlib import Path
 
 VAULT = Path.home() / "vault"
 
-# Standard vault directories
+# Standard vault directories (v2 — 2-folder architecture)
 DIRS = [
-    "daily",                # Daily notes
-    "knowledge",            # Curated knowledge
-    "knowledge/decisions",  # Decision records
-    "knowledge/extracts",   # Extracted content (YouTube, articles, etc.)
-    "knowledge/research",   # Research notes
-    "knowledge/synthesis",  # Synthesized insights
-    "log",                  # Periodic logs
-    "log/days",             # Daily logs
-    "log/weeks",            # Weekly logs
-    "log/months",           # Monthly logs
-    "log/quarters",         # Quarterly logs
-    "log/years",            # Yearly logs
-    "ops",                  # Operational data
-    "ops/sessions",         # Session summaries
-    "ops/friction",         # Friction reports
-    "ops/patterns",         # Compiled patterns
-    "reviews",              # Work reviews
-    "sessions",             # Raw session exports
+    "log",                      # Temporal — daily logs, sessions, friction, reviews
+    "log/sessions",             # Session exports
+    "log/friction",             # Friction reports
+    "log/weeks",                # Weekly reviews
+    "log/months",               # Monthly reviews
+    "knowledge",                # Permanent — research, decisions, expertise
+    "knowledge/captures",       # Extracted content (YouTube, articles, etc.)
+    "knowledge/decisions",      # Decision records
+    "knowledge/expertise",      # Compiled expertise patterns
+    "knowledge/initiatives",    # Initiative tracking
+    "knowledge/references",     # Reference material, specs
+    "knowledge/research",       # Research notes
+    "knowledge/synthesis",      # Synthesized insights
 ]
 
 

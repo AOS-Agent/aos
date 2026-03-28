@@ -21,6 +21,12 @@ import yaml
 from datetime import datetime, date, timedelta
 from pathlib import Path
 
+try:
+    from hijri_converter import Gregorian
+    HAS_HIJRI = True
+except ImportError:
+    HAS_HIJRI = False
+
 VAULT_DAYS = Path.home() / "vault" / "log"
 WORK_FILE = Path.home() / ".aos" / "work" / "work.yaml"
 SESSIONS_LOG = Path.home() / ".aos" / "logs" / "sessions.jsonl"  # may not exist if session hook isn't installed; load_sessions_for_date() handles this gracefully (returns [])
@@ -229,11 +235,16 @@ def compile_day(target: date) -> str:
 
     # Build frontmatter — only include what we have
     fm = {
+        "title": f"{day_name}, {target.strftime('%B %d %Y')}",
+        "type": "daily",
         "date": target.isoformat(),
         "day": day_name,
-        "type": "daily-log",
-        "title": f"{day_name}, {target.strftime('%B %d %Y')}",
     }
+
+    # Hijri date
+    if HAS_HIJRI:
+        h = Gregorian(target.year, target.month, target.day).to_hijri()
+        fm["hijri_date"] = f"{h.day} {h.month_name()} {h.year}"
 
     # Add stats to frontmatter only if available
     if session_exports:
@@ -248,6 +259,8 @@ def compile_day(target: date) -> str:
             lines.append(f'{key}: "{val}"')
         else:
             lines.append(f"{key}: {val}")
+    lines.append("tags: [daily]")
+    # source_ref added after sessions section builds the list
     lines.append("---")
     lines.append("")
 
@@ -283,18 +296,23 @@ def compile_day(target: date) -> str:
                 lines.append(f"- + {t['id']}: {t['title']} (added)")
         lines.append("")
 
-    # Sessions section
+    # Sessions section — wikilinks to session exports
     if session_exports:
         lines.append("## Sessions")
-        lines.append("")
-        lines.append("| Time | Project | Messages | Summary |")
-        lines.append("|------|---------|----------|---------|")
+        source_refs = []
         for s in session_exports:
             summary = s["summary"][:60] + "..." if len(s.get("summary", "")) > 60 else s.get("summary", "")
-            # Clean project name — strip path prefixes like -Users-<username>-
             project = s.get("project", "?")
             project = re.sub(r'^-Users-\w+-', '', project)
-            lines.append(f"| {s.get('time', '?')} | {project} | {s.get('messages', '?')} | {summary} |")
+            filename = s.get("filename", "")
+            messages = s.get("messages", "?")
+            duration = s.get("duration_min", "?")
+            if filename:
+                link = f"log/sessions/{filename.replace('.md', '')}"
+                lines.append(f"- [[{link}|{summary}]] — {project}, {messages} messages, {duration}min")
+                source_refs.append(f"log/sessions/{filename}")
+            else:
+                lines.append(f"- {summary} — {project}, {messages} messages")
         lines.append("")
 
     # Reflections — preserve human content

@@ -1,0 +1,173 @@
+#!/usr/bin/env python3
+"""
+Weekly Review Compiler — Condenses 7 daily logs into a weekly review.
+
+Reads daily logs from ~/vault/log/YYYY-MM-DD.md for the past week,
+extracts themes, work summary, and people interactions, outputs
+~/vault/log/YYYY-WNN.md with source_ref linking back to each daily.
+
+Runs Friday 23:30 via cron, or manually: compile-weekly [--date YYYY-MM-DD]
+"""
+
+import re
+import sys
+import yaml
+from datetime import datetime, date, timedelta
+from pathlib import Path
+
+try:
+    from hijri_converter import Gregorian
+    HAS_HIJRI = True
+except ImportError:
+    HAS_HIJRI = False
+
+VAULT_LOG = Path.home() / "vault" / "log"
+
+
+def iso_week(d: date) -> str:
+    """ISO week string: 2026-W13"""
+    return f"{d.isocalendar()[0]}-W{d.isocalendar()[1]:02d}"
+
+
+def week_range(d: date) -> tuple[date, date]:
+    """Return Monday-Sunday containing the given date."""
+    monday = d - timedelta(days=d.weekday())
+    sunday = monday + timedelta(days=6)
+    return monday, sunday
+
+
+def load_daily(d: date) -> dict | None:
+    """Load a daily log and extract its frontmatter + body."""
+    path = VAULT_LOG / f"{d.isoformat()}.md"
+    if not path.exists():
+        return None
+    content = path.read_text()
+    fm = {}
+    body = content
+    if content.startswith("---\n"):
+        end = content.index("\n---", 4)
+        fm_text = content[4:end]
+        body = content[end + 4:]
+        for line in fm_text.split("\n"):
+            if ":" in line and not line.startswith(" ") and not line.startswith("-"):
+                key, val = line.split(":", 1)
+                fm[key.strip()] = val.strip().strip('"').strip("'")
+    return {"date": d, "frontmatter": fm, "body": body, "path": path}
+
+
+def compile_weekly(target_date: date) -> str:
+    """Compile a weekly review from daily logs."""
+    monday, sunday = week_range(target_date)
+    week_str = iso_week(monday)
+
+    # Load all dailies for the week
+    dailies = []
+    for i in range(7):
+        d = monday + timedelta(days=i)
+        daily = load_daily(d)
+        if daily:
+            dailies.append(daily)
+
+    if not dailies:
+        return ""
+
+    # Aggregate stats
+    total_sessions = sum(int(d["frontmatter"].get("sessions", 0)) for d in dailies)
+    total_tasks = sum(int(d["frontmatter"].get("tasks_completed", 0)) for d in dailies)
+    source_refs = [f"log/{d['date'].isoformat()}.md" for d in dailies]
+
+    # Extract work items from all dailies
+    work_lines = []
+    people_lines = []
+    journal_lines = []
+    for d in dailies:
+        body = d["body"]
+        # Extract Work section
+        work_match = re.search(r"## Work\n(.*?)(?=\n## |\Z)", body, re.DOTALL)
+        if work_match:
+            for line in work_match.group(1).strip().split("\n"):
+                if line.startswith("- ✅"):
+                    work_lines.append(line)
+        # Extract People section
+        people_match = re.search(r"## People\n(.*?)(?=\n## |\Z)", body, re.DOTALL)
+        if people_match:
+            for line in people_match.group(1).strip().split("\n"):
+                if line.strip():
+                    people_lines.append(line)
+        # Extract Journal section
+        journal_match = re.search(r"## Journal\n(.*?)(?=\n## |\Z)", body, re.DOTALL)
+        if journal_match:
+            text = journal_match.group(1).strip()
+            if text:
+                journal_lines.append(f"**{d['date'].strftime('%A')}**: {text[:200]}")
+
+    # Build frontmatter
+    fm_lines = ["---"]
+    fm_lines.append(f'title: "Week {monday.isocalendar()[1]} Review"')
+    fm_lines.append('type: review')
+    fm_lines.append(f'date: "{sunday.isoformat()}"')
+    if HAS_HIJRI:
+        h = Gregorian(sunday.year, sunday.month, sunday.day).to_hijri()
+        fm_lines.append(f'hijri_date: "{h.day} {h.month_name()} {h.year}"')
+    fm_lines.append(f'period: week')
+    fm_lines.append(f'range: "{monday.isoformat()}/{sunday.isoformat()}"')
+    fm_lines.append(f'tags: [review, weekly]')
+    fm_lines.append(f'source_ref: {source_refs}')
+    fm_lines.append(f'sessions: {total_sessions}')
+    fm_lines.append(f'tasks_completed: {total_tasks}')
+    fm_lines.append("---")
+    fm_lines.append("")
+
+    # Build body
+    body_lines = [f"# Week {monday.isocalendar()[1]} — {monday.strftime('%B %d')}–{sunday.strftime('%d')}"]
+    body_lines.append("")
+
+    # Compiled from
+    body_lines.append("Compiled from: " + ", ".join(f"[[log/{d['date'].isoformat()}]]" for d in dailies))
+    body_lines.append("")
+
+    # Work summary
+    if work_lines:
+        body_lines.append("## Work")
+        body_lines.append(f"- {total_tasks} tasks completed across {len(dailies)} days")
+        for line in work_lines[:20]:  # Cap at 20
+            body_lines.append(line)
+        body_lines.append("")
+
+    # People summary
+    if people_lines:
+        body_lines.append("## People")
+        # Deduplicate by name (first word after "- ")
+        seen = set()
+        for line in people_lines:
+            name = line.lstrip("- ").split("(")[0].strip()
+            if name not in seen:
+                body_lines.append(line)
+                seen.add(name)
+        body_lines.append("")
+
+    # Journal highlights
+    if journal_lines:
+        body_lines.append("## Highlights")
+        for line in journal_lines:
+            body_lines.append(f"- {line}")
+        body_lines.append("")
+
+    # Write
+    output = "\n".join(fm_lines + body_lines)
+    filepath = VAULT_LOG / f"{week_str}.md"
+    filepath.write_text(output)
+    return str(filepath)
+
+
+if __name__ == "__main__":
+    target = date.today()
+    if "--date" in sys.argv:
+        idx = sys.argv.index("--date") + 1
+        target = date.fromisoformat(sys.argv[idx])
+
+    result = compile_weekly(target)
+    if result:
+        print(f"Compiled weekly review: {result}")
+    else:
+        print("No daily logs found for this week.")

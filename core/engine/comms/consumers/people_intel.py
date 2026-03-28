@@ -41,7 +41,7 @@ def _get_people_db():
 
 
 def _get_resolver():
-    """Lazy import of the contact resolver from core/comms/."""
+    """Lazy import of the contact resolver from core/engine/comms/."""
     try:
         from .. import resolver
         return resolver

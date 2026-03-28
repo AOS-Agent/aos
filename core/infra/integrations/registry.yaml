@@ -104,7 +104,7 @@ builtin:
     description: Primary command interface. Talk to agents from your phone.
     provides: [messaging, slash commands, heartbeat alerts]
     requires: [bot_token, chat_id]
-    setup: core/integrations/telegram/setup.sh
+    setup: core/infra/integrations/telegram/setup.sh
 
   whatsapp:
     name: WhatsApp
@@ -115,7 +115,7 @@ builtin:
     description: Read and send WhatsApp messages via whatsmeow bridge.
     provides: [messaging, contact lookup, message history]
     requires: [whatsmeow service, QR pairing]
-    setup: core/integrations/whatsapp/setup.sh
+    setup: core/infra/integrations/whatsapp/setup.sh
 
   email:
     name: Email Accounts
@@ -126,7 +126,7 @@ builtin:
     description: IMAP/SMTP email. Supports multiple accounts.
     provides: [inbox reading, email sending, auto-reply]
     requires: [credentials per account]
-    setup: core/integrations/email/setup.sh
+    setup: core/infra/integrations/email/setup.sh
 
   obsidian:
     name: Obsidian Vault
@@ -137,7 +137,7 @@ builtin:
     description: Knowledge vault with daily notes, sessions, QMD search.
     provides: [note storage, daily notes, search, backlinks]
     requires: [vault_path]
-    setup: core/integrations/obsidian/setup.sh
+    setup: core/infra/integrations/obsidian/setup.sh
 
   github:
     name: GitHub
@@ -148,7 +148,7 @@ builtin:
     description: Repos, PRs, issues via gh CLI.
     provides: [repo management, PR workflow, issue tracking]
     requires: [gh auth]
-    setup: core/integrations/github/setup.sh
+    setup: core/infra/integrations/github/setup.sh
 
   health:
     name: HealthKit Sync
@@ -159,7 +159,7 @@ builtin:
     description: Health metrics from iOS via HealthSync app.
     provides: [sleep data, activity metrics, energy tracking]
     requires: [HealthSync iOS app, sync endpoint]
-    setup: core/integrations/health/setup.sh
+    setup: core/infra/integrations/health/setup.sh
 
 # ─── Tier 3: Catalog ──────────────────────────────────────
 # Common SaaS tools. We provide config templates.
@@ -221,7 +221,7 @@ catalog:
     mcp_server: google-workspace
     provides: [email, calendar, docs, sheets, slides, drive, forms, tasks, contacts, chat, apps_script]
     requires: [OAuth credentials in Keychain]
-    setup_hint: "Credentials in Keychain (GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET, GOOGLE_PRIMARY_EMAIL). Wrapper at core/bin/google-workspace-mcp."
+    setup_hint: "Credentials in Keychain (GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET, GOOGLE_PRIMARY_EMAIL). Wrapper at core/bin/internal/google-workspace-mcp."
 
   clickup:
     name: ClickUp

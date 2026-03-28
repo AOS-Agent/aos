@@ -8,7 +8,7 @@ description: >
   Full Google Workspace access via workspace-mcp (MCP server).
   Gmail, Drive, Calendar, Docs, Sheets, Slides, Forms, Tasks,
   Contacts, Chat, Apps Script, Google Search. OAuth credentials
-  stored in macOS Keychain, wrapper at core/bin/google-workspace-mcp.
+  stored in macOS Keychain, wrapper at core/bin/internal/google-workspace-mcp.
 
 # What this integration provides to the system
 provides:
@@ -65,7 +65,7 @@ requires:
     - name: workspace-mcp
       type: mcp
       binary: ~/.local/bin/workspace-mcp
-      wrapper: core/bin/google-workspace-mcp
+      wrapper: core/bin/internal/google-workspace-mcp
       description: MCP server wrapping workspace-mcp with Keychain credentials
   config: []
 
@@ -76,10 +76,10 @@ health:
       command: "test -x ~/.local/bin/workspace-mcp && echo installed"
       expect: installed
     - name: wrapper_exists
-      command: "test -x ~/aos/core/bin/google-workspace-mcp && echo exists"
+      command: "test -x ~/aos/core/bin/internal/google-workspace-mcp && echo exists"
       expect: exists
     - name: credentials_stored
-      command: "~/aos/core/bin/agent-secret get GOOGLE_OAUTH_CLIENT_ID >/dev/null 2>&1 && echo ok"
+      command: "~/aos/core/bin/cli/agent-secret get GOOGLE_OAUTH_CLIENT_ID >/dev/null 2>&1 && echo ok"
       expect: ok
     - name: mcp_in_settings
       command: "python3 -c \"import json; s=json.load(open('$HOME/.claude/settings.json')); print('ok' if 'google-workspace' in s.get('mcpServers',{}) else 'missing')\""
@@ -135,6 +135,6 @@ setup:
         agent-secret set GOOGLE_PRIMARY_EMAIL <email>
     - description: Register MCP server at user scope
       type: command
-      command: "claude mcp add --scope user --transport stdio google-workspace $HOME/aos/core/bin/google-workspace-mcp"
+      command: "claude mcp add --scope user --transport stdio google-workspace $HOME/aos/core/bin/internal/google-workspace-mcp"
     - description: Verify
       type: health_check

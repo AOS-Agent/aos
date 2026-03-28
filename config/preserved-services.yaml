@@ -16,9 +16,9 @@ launchagents:
     reason: "Event daemon — runs the comms bus, watchers, and consumers on port 4097"
     referenced_by:
       - core/services/eventd/
-      - core/comms/bus.py
+      - core/engine/comms/bus.py
   com.aos.whatsmeow:
     reason: "WhatsApp bridge — Go-based relay on port 7601, used by comms WhatsApp adapter"
     referenced_by:
-      - core/comms/channels/whatsapp.py
+      - core/engine/comms/channels/whatsapp.py
       - core/services/eventd/watchers/whatsapp.py

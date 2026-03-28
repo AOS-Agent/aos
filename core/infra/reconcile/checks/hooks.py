@@ -38,11 +38,11 @@ class HooksPathCheck(ReconcileCheck):
     # Required hooks — if missing, add them
     REQUIRED_HOOKS = {
         "SessionStart": {
-            "command": "python3 ~/aos/core/work/inject_context.py",
+            "command": "python3 ~/aos/core/engine/work/inject_context.py",
             "statusMessage": "Loading work context...",
         },
         "SessionEnd": {
-            "command": "python3 ~/aos/core/work/session_close.py",
+            "command": "python3 ~/aos/core/engine/work/session_close.py",
             "async": True,
         },
     }

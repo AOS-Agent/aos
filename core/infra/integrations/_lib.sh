@@ -7,7 +7,7 @@ set -euo pipefail
 
 AOS_DIR="$HOME/aos"
 USER_DIR="$HOME/.aos"
-AGENT_SECRET="$AOS_DIR/core/bin/agent-secret"
+AGENT_SECRET="$AOS_DIR/core/bin/cli/agent-secret"
 INTEGRATION_STATE="$USER_DIR/config/integrations.yaml"
 
 # Colors (minimal — works in any terminal)

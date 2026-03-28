@@ -23,11 +23,11 @@ LOG_DIR = Path.home() / ".aos" / "logs"
 PID_FILE = RUNTIME_DIR / "bridge.pid"
 
 # ── Structured JSON logging via shared lib ──────────────────────────────────
-_lib_path = str(Path.home() / "aos" / "core" / "lib")
+_lib_path = str(Path.home() / "aos" / "core" / "infra" / "lib")
 if _lib_path not in sys.path:
     sys.path.insert(0, _lib_path)
 
-from lib.log import get_logger  # noqa: E402
+from log import get_logger  # noqa: E402
 logger = get_logger(
     "bridge",
     log_file="~/.aos/logs/bridge.log",

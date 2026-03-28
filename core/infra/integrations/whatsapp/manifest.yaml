@@ -72,7 +72,7 @@ setup:
       command: "cd ~/.aos/services/whatsmeow && go build -o whatsmeow-bridge"
     - description: Start whatsmeow service
       type: command
-      command: "core/integrations/whatsapp/setup.sh"
+      command: "core/infra/integrations/whatsapp/setup.sh"
     - description: Pair with QR code
       type: interactive
       instruction: >

@@ -174,7 +174,7 @@ echo "Consistency"
 echo "───────────"
 
 # Every .py in checks/ should be imported in checks/__init__.py
-checks_dir="$DEV/core/reconcile/checks"
+checks_dir="$DEV/core/infra/reconcile/checks"
 init_file="$checks_dir/__init__.py"
 if [[ -f "$init_file" ]]; then
     unregistered=0
@@ -197,7 +197,7 @@ else
 fi
 
 # Deprecated skills shouldn't have directories
-aos_cli="$DEV/core/bin/aos"
+aos_cli="$DEV/core/bin/cli/aos"
 if [[ -f "$aos_cli" ]]; then
     deprecated=$(grep -oP 'DEPRECATED="\K[^"]+' "$aos_cli" 2>/dev/null || true)
     if [[ -n "$deprecated" ]]; then
@@ -321,7 +321,7 @@ for tool in "Linear" "Notion" "Plane" "Slack" "Discord"; do
     # Only flag if the tool is presented as a setup option, not a graceful decline
     if grep -E "(Set up $tool|ask about $tool|→ ask about $tool)" "$DEV/.claude/skills/onboard/SKILL.md" 2>/dev/null | grep -qv "not in this list\|not available\|wishlist"; then
         tool_lower=$(echo "$tool" | tr '[:upper:]' '[:lower:]')
-        if [[ ! -d "$DEV/core/integrations/$tool_lower" ]]; then
+        if [[ ! -d "$DEV/core/infra/integrations/$tool_lower" ]]; then
             warn "Onboarding offers to set up $tool but no integration exists"
             onboard_integration_drift=$((onboard_integration_drift + 1))
         fi
@@ -332,9 +332,9 @@ if [[ $onboard_integration_drift -eq 0 ]]; then
 fi
 
 # Every integration directory in registry.yaml should have a setup.sh if referenced
-if [[ -f "$DEV/core/integrations/registry.yaml" ]]; then
+if [[ -f "$DEV/core/infra/integrations/registry.yaml" ]]; then
     setup_missing=0
-    for int_dir in "$DEV"/core/integrations/*/; do
+    for int_dir in "$DEV"/core/infra/integrations/*/; do
         [[ -d "$int_dir" ]] || continue
         int_name=$(basename "$int_dir")
         if [[ -f "$int_dir/manifest.yaml" ]] && [[ ! -f "$int_dir/setup.sh" ]]; then

@@ -93,7 +93,7 @@ If they want to add:
 
 ### Phase 3: Integrations
 
-Read `~/aos/core/integrations/registry.yaml` to understand the full integration landscape.
+Read `~/aos/core/infra/integrations/registry.yaml` to understand the full integration landscape.
 
 Integrations are tiered:
 - **Tier 1 (Apple native)**: Already on the Mac. Just verify access.
@@ -105,7 +105,7 @@ Integrations are tiered:
 
 Run the health check silently:
 ```bash
-bash ~/aos/core/integrations/apple_native/setup.sh --check
+bash ~/aos/core/infra/integrations/apple_native/setup.sh --check
 ```
 
 Report what's accessible: "Your Mac already has Calendar, Notes, Reminders, Messages, Mail, and Contacts. I checked -- [N] of them are accessible. macOS will prompt you for permission when agents first use the others."
@@ -175,11 +175,11 @@ If yes, follow the **Telegram Chrome MCP Protocol** below.
 After Telegram, offer the rest one at a time:
 
 - **Email**: "Do you use email accounts you'd like AOS to read? Personal, work, school?"
-  - If yes, run: `bash ~/aos/core/integrations/email/setup.sh`
+  - If yes, run: `bash ~/aos/core/infra/integrations/email/setup.sh`
 - **WhatsApp**: "Want AOS to read and send WhatsApp messages?"
-  - If yes, explain QR pairing needed, run: `bash ~/aos/core/integrations/whatsapp/setup.sh`
+  - If yes, explain QR pairing needed, run: `bash ~/aos/core/infra/integrations/whatsapp/setup.sh`
 - **GitHub**: "Do you use GitHub for code?"
-  - If yes, run: `bash ~/aos/core/integrations/github/setup.sh`
+  - If yes, run: `bash ~/aos/core/infra/integrations/github/setup.sh`
 - **Obsidian**: Already set up by install.sh. Just confirm vault path exists.
 
 #### Step 3e: Catalog (what else do you use?)
@@ -356,7 +356,7 @@ and stay in the loop right from your phone.
 
 Run the health check:
 ```bash
-bash ~/aos/core/integrations/telegram/setup.sh --check
+bash ~/aos/core/infra/integrations/telegram/setup.sh --check
 ```
 
 ### Error Recovery

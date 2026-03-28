@@ -69,25 +69,25 @@ REQUIRED_FILES = [
     "core/services/bridge/main.py",
     "core/services/bridge/pyproject.toml",
     # Work engine / Initiative
-    "core/work/engine.py",
-    "core/work/cli.py",
-    "core/work/inject_context.py",
-    "core/work/session_close.py",
+    "core/engine/work/engine.py",
+    "core/engine/work/cli.py",
+    "core/engine/work/inject_context.py",
+    "core/engine/work/session_close.py",
     # Shared lib
-    "core/lib/__init__.py",
-    "core/lib/notify.py",
+    "core/infra/lib/__init__.py",
+    "core/infra/lib/notify.py",
     # Migrations
-    "core/migrations/017_bridge_topics.py",
-    "core/migrations/018_initiative_infrastructure.py",
+    "core/infra/migrations/017_bridge_topics.py",
+    "core/infra/migrations/018_initiative_infrastructure.py",
     # Reconcile
-    "core/reconcile/checks/__init__.py",
-    "core/reconcile/checks/initiatives.py",
+    "core/infra/reconcile/checks/__init__.py",
+    "core/infra/reconcile/checks/initiatives.py",
     # Cron
     "core/bin/stale-initiatives",
     # Config
     "config/crons.yaml",
     # Docs
-    "core/lib/CHANGES-initiative-pipeline.md",
+    "core/infra/lib/CHANGES-initiative-pipeline.md",
 ]
 
 for f in REQUIRED_FILES:
@@ -109,10 +109,10 @@ for f in PYTHON_FILES:
 print("\n  — Import verification —")
 
 try:
-    from core.lib.notify import send_telegram
-    check("Import: core.lib.notify.send_telegram", True)
+    from core.infra.lib.notify import send_telegram
+    check("Import: core.infra.lib.notify.send_telegram", True)
 except ImportError as e:
-    check("Import: core.lib.notify.send_telegram", False, str(e))
+    check("Import: core.infra.lib.notify.send_telegram", False, str(e))
 
 try:
     from core.services.bridge.shared_context import load, add_decision, get_decisions
@@ -139,20 +139,20 @@ except ImportError as e:
     check("Import: intent_classifier", False, str(e))
 
 try:
-    from core.work.engine import add_task
+    from core.engine.work.engine import add_task
     sig = inspect.signature(add_task)
     check("add_task has source_ref param", "source_ref" in sig.parameters)
 except ImportError as e:
     check("Import: work engine add_task", False, str(e))
 
 try:
-    from core.work.cli import cmd_initiatives
+    from core.engine.work.cli import cmd_initiatives
     check("Import: cli.cmd_initiatives", True)
 except ImportError as e:
     check("Import: cli.cmd_initiatives", False, str(e))
 
 try:
-    from core.reconcile.checks import ALL_CHECKS
+    from core.infra.reconcile.checks import ALL_CHECKS
     check_names = [c.__name__ for c in ALL_CHECKS]
     check("Reconcile: InitiativeDirectoriesCheck registered",
           "InitiativeDirectoriesCheck" in check_names)
@@ -206,14 +206,14 @@ section("PART 3: Reconcile Checks")
 
 # Run reconcile check
 result = subprocess.run(
-    [sys.executable, str(AOS_DEV / "core" / "reconcile" / "runner.py"), "check"],
+    [sys.executable, str(AOS_DEV / "core" / "infra" / "reconcile" / "runner.py"), "check"],
     capture_output=True, text=True, cwd=str(AOS_DEV)
 )
 check("Reconcile runner executes (check mode)", result.returncode == 0,
       (result.stdout + result.stderr).strip()[:200] if result.returncode != 0 else "")
 
 # Check initiative-specific reconcile (returns bool, not dict)
-from core.reconcile.checks.initiatives import InitiativeDirectoriesCheck, BridgeTopicsCheck
+from core.infra.reconcile.checks.initiatives import InitiativeDirectoriesCheck, BridgeTopicsCheck
 init_check = InitiativeDirectoriesCheck()
 bridge_check = BridgeTopicsCheck()
 
@@ -366,7 +366,7 @@ section("PART 5: Initiative Pipeline Functional")
 # inject_context — can it scan initiatives?
 print("  — Session Injection —")
 try:
-    from core.work import inject_context
+    from core.engine.work import inject_context
     funcs = [f for f in dir(inject_context) if not f.startswith("_") and callable(getattr(inject_context, f, None))]
     check("inject_context has callable functions", len(funcs) > 0, f"found: {funcs}")
 except ImportError as e:
@@ -392,7 +392,7 @@ else:
 # session_close — verify it has surgical update logic
 print("  — Session Close —")
 try:
-    from core.work import session_close
+    from core.engine.work import session_close
     source = inspect.getsource(session_close)
     check("session_close uses re (regex)", "import re" in source or "re.sub" in source)
     check("session_close handles 'updated:' field",
@@ -412,7 +412,7 @@ check("crons.yaml references stale-initiatives", "stale-initiatives" in crons_ya
 # Work CLI initiatives command
 print("  — Work CLI —")
 result = subprocess.run(
-    [sys.executable, str(AOS_DEV / "core" / "work" / "cli.py"), "initiatives"],
+    [sys.executable, str(AOS_DEV / "core" / "engine" / "work" / "cli.py"), "initiatives"],
     capture_output=True, text=True
 )
 check("'work initiatives' command runs", result.returncode == 0,
@@ -446,7 +446,7 @@ else:
     check("CHANGELOG.md exists", False)
 
 # Changes manifest
-changes_file = AOS_DEV / "core" / "lib" / "CHANGES-initiative-pipeline.md"
+changes_file = AOS_DEV / "core" / "infra" / "lib" / "CHANGES-initiative-pipeline.md"
 check("CHANGES manifest exists", changes_file.exists())
 
 
