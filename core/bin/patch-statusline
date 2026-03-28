@@ -1,18 +1,76 @@
 #!/bin/bash
-# Patches ~/.claude/statusline.sh to append AOS version at the end.
+# Ensures ~/.claude/statusline.sh exists with AOS version display.
+# If missing, creates the full statusline. If present, patches it.
 # Idempotent — safe to run multiple times.
 
 STATUSLINE="$HOME/.claude/statusline.sh"
 
-if [ ! -f "$STATUSLINE" ]; then
-  echo "No statusline.sh found at $STATUSLINE — skipping"
-  exit 0
-fi
-
+# Already patched — nothing to do
 if grep -q 'AOS_VER' "$STATUSLINE" 2>/dev/null; then
   echo "AOS version already in statusline — nothing to do"
   exit 0
 fi
+
+# No statusline exists — create the whole thing
+if [ ! -f "$STATUSLINE" ]; then
+  cat > "$STATUSLINE" << 'SCRIPT'
+#!/bin/bash
+input=$(cat)
+
+# AOS version
+AOS_VER=$(cat ~/aos/VERSION 2>/dev/null || echo "?")
+
+CWD=$(echo "$input" | jq -r '.cwd // empty')
+DIR=$(basename "${CWD:-$PWD}")
+
+# Git branch
+BRANCH=""
+if [ -n "$CWD" ] && [ -d "$CWD/.git" ]; then
+  BRANCH=$(git -C "$CWD" branch --show-current 2>/dev/null)
+elif [ -d ".git" ]; then
+  BRANCH=$(git branch --show-current 2>/dev/null)
+fi
+
+MODEL=$(echo "$input" | jq -r '.model.display_name // "?"' | sed 's/Claude //' | sed 's/ [0-9][0-9.]*[^ ]*//' | sed 's/ ([^)]*)$//' | awk '{print $1}')
+PCT=$(echo "$input" | jq -r '.context_window.used_percentage // 0' | cut -d. -f1)
+COST=$(printf "%.2f" "$(echo "$input" | jq -r '.cost.total_cost_usd // 0')")
+DUR_MS=$(echo "$input" | jq -r '.cost.total_duration_ms // 0')
+LINES_ADD=$(echo "$input" | jq -r '.cost.total_lines_added // 0')
+LINES_DEL=$(echo "$input" | jq -r '.cost.total_lines_removed // 0')
+
+# Context bar
+FILLED=$((PCT * 15 / 100))
+EMPTY=$((15 - FILLED))
+BAR=$(printf "%${FILLED}s" | tr ' ' '▓')$(printf "%${EMPTY}s" | tr ' ' '░')
+
+# Duration
+DUR_SEC=$((DUR_MS / 1000))
+MINS=$((DUR_SEC / 60))
+SECS=$((DUR_SEC % 60))
+
+# Context color
+if [ "$PCT" -ge 80 ]; then
+  C="\033[31m"
+elif [ "$PCT" -ge 50 ]; then
+  C="\033[33m"
+else
+  C="\033[32m"
+fi
+R="\033[0m"
+
+# Build output
+OUT="${DIR}"
+[ -n "$BRANCH" ] && [ "$BRANCH" != "main" ] && OUT="${OUT} \033[35m${BRANCH}\033[0m"
+OUT="${OUT}  ${C}${MODEL}${R} ${BAR} ${C}${PCT}%%${R}  \$${COST}  ${MINS}m${SECS}s  \033[32m+${LINES_ADD}\033[0m \033[31m-${LINES_DEL}\033[0m  \033[2m·\033[0m \033[33mAOS ${AOS_VER}\033[0m"
+
+printf "$OUT"
+SCRIPT
+  chmod +x "$STATUSLINE"
+  echo "Created statusline with AOS version"
+  exit 0
+fi
+
+# Statusline exists but no AOS version — patch it
 
 # Add AOS_VER variable after the input line
 sed -i '' '/^input=\$(cat)/a\
