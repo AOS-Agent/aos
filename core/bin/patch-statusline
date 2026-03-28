@@ -64,6 +64,7 @@ OUT="${DIR}"
 OUT="${OUT}  ${C}${MODEL}${R} ${BAR} ${C}${PCT}%%${R}  \$${COST}  ${MINS}m${SECS}s  \033[32m+${LINES_ADD}\033[0m \033[31m-${LINES_DEL}\033[0m  \033[2m·\033[0m \033[33mAOS ${AOS_VER}\033[0m"
 
 printf "$OUT"
+exit 0
 SCRIPT
   chmod +x "$STATUSLINE"
   echo "Created statusline with AOS version"
