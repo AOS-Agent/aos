@@ -607,6 +607,30 @@ prereq_ffmpeg() {
     _ok "ffmpeg"
 }
 
+prereq_ytdlp() {
+    if command -v yt-dlp &>/dev/null; then
+        _skip "yt-dlp"
+        return 0
+    fi
+
+    _step "Installing yt-dlp..."
+    brew install yt-dlp 2>&1 | tail -1
+    command -v yt-dlp &>/dev/null || _die "yt-dlp install failed"
+    _ok "yt-dlp"
+}
+
+prereq_youtube_transcript_api() {
+    if python3 -c "import youtube_transcript_api" &>/dev/null; then
+        _skip "youtube-transcript-api"
+        return 0
+    fi
+
+    _step "Installing youtube-transcript-api..."
+    pip3 install --break-system-packages youtube-transcript-api 2>&1 | tail -1
+    python3 -c "import youtube_transcript_api" &>/dev/null || _die "youtube-transcript-api install failed"
+    _ok "youtube-transcript-api"
+}
+
 prereq_mlx_whisper() {
     # mlx-whisper is now part of the transcriber service (core/services/transcriber).
     # The service venv gets deployed in deploy_services(). This prereq only checks
@@ -738,6 +762,8 @@ run_prereqs() {
     prereq_qmd
     prereq_jq
     prereq_ffmpeg
+    prereq_ytdlp
+    prereq_youtube_transcript_api
     prereq_mlx_whisper
     prereq_gh
     prereq_editor
@@ -906,7 +932,7 @@ run_bootstrap() {
     # Secrets use the login keychain (no separate keychain, no password prompts)
     # Migrate any existing secrets from agent.keychain if present
     if security list-keychains 2>/dev/null | grep -q "agent.keychain"; then
-        bash "$AOS_DIR/core/bin/agent-secret" migrate 2>/dev/null
+        bash "$AOS_DIR/core/bin/cli/agent-secret" migrate 2>/dev/null
         _ok "Migrated secrets to login keychain"
     else
         _skip "Secrets (login keychain)"
