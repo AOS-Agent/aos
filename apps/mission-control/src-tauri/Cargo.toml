@@ -1,0 +1,30 @@
+[package]
+name = "mission-control"
+version = "0.1.0"
+edition = "2024"
+description = "AOS Mission Control — native macOS dashboard"
+authors = ["AOS"]
+license = "MIT"
+repository = ""
+
+[lib]
+name = "mission_control_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-fs = "2"
+tauri-plugin-shell = "2"
+tauri-plugin-notification = "2"
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-positioner = { version = "2", features = ["tray-icon"] }
+tauri-plugin-window-state = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", features = ["json"] }
+tokio = { version = "1", features = ["full"] }
+dirs = "6"
+libc = "0.2"

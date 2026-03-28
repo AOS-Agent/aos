@@ -1,0 +1,230 @@
+@import "tailwindcss";
+@import "@fontsource-variable/inter";
+
+/* ============================================================
+   AOS Mission Control — Warm Dark Design System
+
+   Philosophy: "Warm room at night." Every gray leans warm
+   (hue ~32°, saturation 6-14%). Borders are opacity layers
+   on warm white, not solid hex. Spacing > borders for
+   section separation.
+
+   Palette built in HSL: hsl(32, 14%, L%) for backgrounds,
+   stepping L by 2-3% per elevation level.
+   ============================================================ */
+
+@theme {
+  /* === Backgrounds — warm dark browns ===
+     hsl(32, 14%, L%) where L = 8 → 10 → 12 → 14 → 17
+     R channel always leads B by 4-6 points = warm signature */
+  --color-bg:            #161210;
+  --color-bg-panel:      #1c1814;
+  --color-bg-secondary:  #211d19;
+  --color-bg-tertiary:   #28231e;
+  --color-bg-quaternary: #302a24;
+
+  /* === Text — pure white headings, warm grays for hierarchy === */
+  --color-text:           #FFFFFF;
+  --color-text-secondary: #E0DBD5;
+  --color-text-tertiary:  #9A9590;
+  --color-text-quaternary:#6E6862;
+
+  /* === Borders — warm white opacity, never solid hex === */
+  --color-border:           rgba(255, 230, 210, 0.06);
+  --color-border-secondary: rgba(255, 230, 210, 0.10);
+  --color-border-tertiary:  rgba(255, 230, 210, 0.15);
+
+  /* === AOS Accent (orange — already warm, perfect) === */
+  --color-accent:       #D9730D;
+  --color-accent-hover: #E8842A;
+  --color-accent-muted: #2C1A0E;
+  --color-accent-subtle: rgba(217, 115, 13, 0.15);
+
+  /* === Status Colors — warm-shifted === */
+  --color-green:        #3DAD6A;
+  --color-green-muted:  #141C16;
+  --color-yellow:       #D4A017;
+  --color-yellow-muted: #1C1808;
+  --color-orange:       #D07030;
+  --color-orange-muted: #1C1610;
+  --color-red:          #C9534A;
+  --color-red-muted:    #1C100F;
+  --color-blue:         #5A9FC4;
+  --color-blue-muted:   #101820;
+  --color-purple:       #6A6AB0;
+  --color-purple-muted: #161620;
+  --color-teal:         #40A8B0;
+  --color-teal-muted:   #141A1C;
+
+  /* === Tag Colors (warm muted) === */
+  --color-tag-gray:      #8A827A;
+  --color-tag-gray-bg:   #28231e;
+  --color-tag-green:     #4AAA5A;
+  --color-tag-green-bg:  #1A2018;
+  --color-tag-blue:      #5AABDA;
+  --color-tag-blue-bg:   #181E24;
+  --color-tag-purple:    #9A8EC0;
+  --color-tag-purple-bg: #1E1A24;
+  --color-tag-red:       #DA5A5A;
+  --color-tag-red-bg:    #241818;
+  --color-tag-yellow:    #C0A840;
+  --color-tag-yellow-bg: #221E14;
+  --color-tag-orange:    #C08040;
+  --color-tag-orange-bg: #241C14;
+  --color-tag-teal:      #50B0B8;
+  --color-tag-teal-bg:   #182022;
+  --color-tag-pink:      #C07090;
+  --color-tag-pink-bg:   #24181C;
+
+  /* === Interaction — warm white alpha === */
+  --color-hover:    rgba(255, 230, 210, 0.05);
+  --color-active:   rgba(255, 230, 210, 0.09);
+  --color-selected: rgba(255, 230, 210, 0.13);
+
+  /* === Border Radius === */
+  --radius-xs:   3px;
+  --radius-sm:   5px;
+  --radius:      7px;
+  --radius-lg:   10px;
+  --radius-xl:   14px;
+  --radius-full: 9999px;
+
+  /* === Shadows (dark: minimal, light: warm-tinted) === */
+  --shadow-low:    none;
+  --shadow-medium: 0px 4px 20px rgba(0, 0, 0, 0.4);
+  --shadow-high:   0px 8px 40px rgba(0, 0, 0, 0.6);
+
+  /* === Typography === */
+  --font-sans: "Inter Variable", "SF Pro Text", -apple-system,
+    BlinkMacSystemFont, sans-serif;
+  --font-mono: "Berkeley Mono", "SF Mono", ui-monospace, Menlo, monospace;
+
+  /* === Transitions === */
+  --duration-instant: 80ms;
+  --duration-fast:    150ms;
+  --duration-normal:  220ms;
+  --duration-slow:    350ms;
+  --ease-out:      cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  --ease-out-back: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-in-out:   cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* === Z-Index === */
+  --z-header:  100;
+  --z-overlay: 500;
+  --z-popover: 600;
+  --z-command: 650;
+  --z-dialog:  700;
+  --z-toast:   800;
+  --z-tooltip: 1100;
+}
+
+/* === Base Styles === */
+html {
+  scroll-behavior: smooth;
+  font-feature-settings: "calt";
+  font-variant-numeric: tabular-nums;
+}
+
+body {
+  color: var(--color-text);
+  background: var(--color-bg);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1.5;
+  letter-spacing: -0.008em;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+::selection {
+  background: var(--color-accent-subtle);
+  color: var(--color-accent);
+}
+
+/* === Scrollbar — warm, thin === */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(237, 229, 220, 0.08);
+  border-radius: var(--radius-full);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(237, 229, 220, 0.16);
+}
+
+/* === Focus Ring === */
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+  border-radius: var(--radius-sm);
+}
+
+/* === Light Mode — warm paper === */
+[data-theme="light"] {
+  --color-bg:            #F7F4F0;
+  --color-bg-panel:      #EFEBE4;
+  --color-bg-secondary:  #EAE5DD;
+  --color-bg-tertiary:   #E3DDD5;
+  --color-bg-quaternary: #DDD7CE;
+
+  --color-text:           #38322B;
+  --color-text-secondary: #5C554C;
+  --color-text-tertiary:  #8A827A;
+  --color-text-quaternary:#AEA69C;
+
+  --color-border:           rgba(56, 50, 43, 0.07);
+  --color-border-secondary: rgba(56, 50, 43, 0.12);
+  --color-border-tertiary:  rgba(56, 50, 43, 0.18);
+
+  --color-hover:    rgba(56, 50, 43, 0.04);
+  --color-active:   rgba(56, 50, 43, 0.08);
+  --color-selected: rgba(56, 50, 43, 0.12);
+
+  --color-green:       #2D8A50;
+  --color-green-muted: #E8F5EE;
+  --color-yellow:      #B8860E;
+  --color-yellow-muted:#FBF5E0;
+  --color-red:         #B84840;
+  --color-red-muted:   #FCE8E7;
+
+  --color-tag-gray:      #7A7570;
+  --color-tag-gray-bg:   #EDEAE5;
+  --color-tag-green:     #3D7A54;
+  --color-tag-green-bg:  #E5F0E9;
+  --color-tag-orange:    #D9730D;
+  --color-tag-orange-bg: #FAE8D8;
+  --color-tag-red:       #C44040;
+  --color-tag-red-bg:    #FAE5E5;
+  --color-tag-yellow:    #B8860E;
+  --color-tag-yellow-bg: #F5EDD0;
+  --color-tag-blue:      #3372A0;
+  --color-tag-blue-bg:   #E0EEF6;
+  --color-tag-purple:    #7A58A8;
+  --color-tag-purple-bg: #EEE8F5;
+  --color-tag-teal:      #308898;
+  --color-tag-teal-bg:   #E0F2F5;
+  --color-tag-pink:      #A04878;
+  --color-tag-pink-bg:   #F5E5EE;
+
+  --shadow-low:    0px 1px 2px rgba(38, 28, 18, 0.06), 0px 0px 0px 1px rgba(38, 28, 18, 0.04);
+  --shadow-medium: 0px 2px 8px rgba(38, 28, 18, 0.09), 0px 0px 0px 1px rgba(38, 28, 18, 0.04);
+  --shadow-high:   0px 6px 20px rgba(38, 28, 18, 0.12);
+}
+
+[data-theme="light"] ::-webkit-scrollbar-thumb {
+  background: rgba(56, 50, 43, 0.10);
+}
+[data-theme="light"] ::-webkit-scrollbar-thumb:hover {
+  background: rgba(56, 50, 43, 0.20);
+}
+
+/* Chief chat cursor blink */
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}

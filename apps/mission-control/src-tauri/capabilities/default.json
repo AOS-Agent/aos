@@ -1,0 +1,102 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Capability for the main window",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "notification:default",
+    "global-shortcut:allow-register",
+    "core:window:allow-show",
+    "core:window:allow-hide",
+    "core:window:allow-set-focus",
+    {
+      "identifier": "fs:allow-read-text-file",
+      "allow": [
+        { "path": "$HOME/.aos/**" },
+        { "path": "$HOME/vault/**" },
+        { "path": "$HOME/.claude/agents/**" },
+        { "path": "$HOME/aos/core/agents/**" },
+        { "path": "$HOME/aos/config/**" }
+      ]
+    },
+    {
+      "identifier": "fs:allow-write-text-file",
+      "allow": [
+        { "path": "$HOME/.aos/**" }
+      ]
+    },
+    {
+      "identifier": "fs:allow-read-dir",
+      "allow": [
+        { "path": "$HOME/.aos/**" },
+        { "path": "$HOME/vault/**" },
+        { "path": "$HOME/.claude/agents/**" },
+        { "path": "$HOME/aos/core/agents/**" },
+        { "path": "$HOME/aos/config/**" }
+      ]
+    },
+    {
+      "identifier": "fs:allow-exists",
+      "allow": [
+        { "path": "$HOME/.aos/**" },
+        { "path": "$HOME/vault/**" },
+        { "path": "$HOME/.claude/agents/**" },
+        { "path": "$HOME/aos/core/agents/**" },
+        { "path": "$HOME/aos/config/**" }
+      ]
+    },
+    {
+      "identifier": "shell:allow-execute",
+      "allow": [
+        {
+          "name": "qmd",
+          "cmd": "/Users/agentalhadi/.bun/bin/qmd",
+          "args": [
+            { "validator": "regex", "value": "^(query|search)$" },
+            { "validator": "regex", "value": ".*" }
+          ]
+        },
+        {
+          "name": "work-cli",
+          "cmd": "/usr/bin/python3",
+          "args": [
+            { "validator": "regex", "value": "^/Users/agentalhadi/aos/core/work/cli\\.py$" },
+            { "validator": "regex", "value": ".*" }
+          ]
+        },
+        {
+          "name": "osascript",
+          "cmd": "/usr/bin/osascript",
+          "args": [
+            { "validator": "regex", "value": ".*" }
+          ]
+        },
+        {
+          "name": "launchctl-list",
+          "cmd": "/bin/launchctl",
+          "args": [
+            { "validator": "regex", "value": "^list$" },
+            { "validator": "regex", "value": ".*" }
+          ]
+        },
+        {
+          "name": "launchctl-kickstart",
+          "cmd": "/bin/launchctl",
+          "args": [
+            { "validator": "regex", "value": "^kickstart$" },
+            { "validator": "regex", "value": ".*" }
+          ]
+        },
+        {
+          "name": "agent-secret",
+          "cmd": "/Users/agentalhadi/aos/core/bin/agent-secret",
+          "args": [
+            { "validator": "regex", "value": "^get$" },
+            { "validator": "regex", "value": ".*" }
+          ]
+        }
+      ]
+    }
+  ]
+}
