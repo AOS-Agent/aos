@@ -793,6 +793,11 @@ class TelegramChannel:
         topic_agent = topic_config.get("agent")
         text = update.message.text
 
+        # ── Reply-to context — when user swipes to reply ──
+        if update.message.reply_to_message and update.message.reply_to_message.text:
+            quoted = update.message.reply_to_message.text[:500]
+            text = f'[Replying to: "{quoted}"]\n\n{text}'
+
         # ── Quick command intercept ──────────────────────
         if not topic_agent:
             try:
