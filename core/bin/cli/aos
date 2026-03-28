@@ -561,16 +561,21 @@ TASKS
             fi
 
             # Install deps — prefer requirements.lock (pinned) over pyproject.toml (unpinned)
+            # Lock files may contain absolute paths from the dev machine, so fall back
+            # to pyproject.toml if lock file install fails.
             local lockfile="$src/requirements.lock"
+            local lock_ok=false
             if [[ -f "$lockfile" ]]; then
                 echo "    Installing from requirements.lock (pinned versions)..."
-                if ! uv pip install -p "$dst/.venv/bin/python" -r "$lockfile" 2>&1 | tail -5; then
-                    echo "  ✗ $name: pip install from lock file failed"
-                    return 1
+                if uv pip install -p "$dst/.venv/bin/python" -r "$lockfile" 2>&1 | tail -5; then
+                    lock_ok=true
+                else
+                    echo "    WARN: lock file install failed — falling back to pyproject.toml"
                 fi
-            else
+            fi
+            if [[ "$lock_ok" == false ]]; then
                 # Fallback: extract deps from pyproject.toml (unpinned)
-                echo "    WARNING: No requirements.lock — installing unpinned from pyproject.toml"
+                echo "    Installing from pyproject.toml..."
                 local deps
                 deps=$(python3 -c "
 try:
@@ -1036,6 +1041,11 @@ if dismiss_list:
         yaml.dump(existing, f, default_flow_style=False)
     print(f'  Saved {len(dismiss_list)} dismissals to {HYGIENE_STATE_FILE}')
 " "$@"
+        ;;
+
+    mesh)
+        shift
+        exec "$AOS_DIR/core/bin/cli/mesh" "$@"
         ;;
 
     *)

@@ -18,6 +18,10 @@ vendor/
 /bin
 /apps/*
 !/apps/content-engine/
+!/apps/mission-control/
+
+# Service lock files (contain absolute paths — machine-specific, regenerate per-machine)
+core/services/*/requirements.lock
 
 # Runtime
 *.log
