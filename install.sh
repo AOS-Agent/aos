@@ -404,16 +404,67 @@ prereq_qmd() {
 }
 
 prereq_git() {
+    # Check if git is already available (CLT, Xcode.app, or Homebrew)
     if command -v git &>/dev/null; then
         _skip "git"
         return 0
     fi
 
-    # Xcode CLT includes git — trigger install
-    _step "Installing Xcode Command Line Tools (for git)..."
-    xcode-select --install 2>/dev/null || true
-    _warn "Xcode CLT installing — re-run this script when done"
-    exit 0
+    _step "Installing Xcode Command Line Tools (includes git)..."
+
+    # Tier 1: Headless install via softwareupdate (works over SSH, no GUI)
+    # The placeholder file makes softwareupdate list CLT as available
+    local clt_placeholder="/tmp/.com.apple.dt.CommandLineTools.installondemand.in-progress"
+    sudo touch "${clt_placeholder}" 2>/dev/null
+
+    local clt_label
+    clt_label=$(/usr/sbin/softwareupdate -l 2>&1 |
+        grep -B 1 -E 'Command Line Tools' |
+        awk -F'*' '/^ *\*/ {print $2}' |
+        sed -e 's/^ *Label: //' -e 's/^ *//' |
+        sort -V |
+        tail -n1)
+
+    if [[ -n "${clt_label}" ]]; then
+        _info "Found: ${clt_label}"
+        _info "Downloading and installing (this may take a few minutes)..."
+        if sudo /usr/sbin/softwareupdate -i "${clt_label}" 2>&1 | tail -3; then
+            sudo /usr/bin/xcode-select --switch /Library/Developer/CommandLineTools 2>/dev/null
+        fi
+    fi
+
+    sudo rm -f "${clt_placeholder}" 2>/dev/null
+
+    # Check if Tier 1 succeeded
+    if command -v git &>/dev/null; then
+        _ok "git (via Xcode Command Line Tools)"
+        return 0
+    fi
+
+    # Tier 2: GUI fallback with polling (only in interactive terminal)
+    if test -t 0; then
+        _info "Trying GUI installer..."
+        xcode-select --install 2>/dev/null
+
+        _info "Waiting for installation to complete..."
+        local elapsed=0
+        while [[ ${elapsed} -lt 1800 ]]; do
+            if command -v git &>/dev/null; then
+                sudo /usr/bin/xcode-select --switch /Library/Developer/CommandLineTools 2>/dev/null
+                _ok "git (via Xcode Command Line Tools)"
+                return 0
+            fi
+            sleep 5
+            elapsed=$((elapsed + 5))
+            (( elapsed % 30 == 0 )) && printf "."
+        done
+        echo ""
+    fi
+
+    _fail "git not available after CLT install"
+    _warn "Install manually: xcode-select --install"
+    _warn "Then re-run this installer"
+    return 1
 }
 
 prereq_gh() {
