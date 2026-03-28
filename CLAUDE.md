@@ -35,12 +35,12 @@ Removed: what was removed
 ```
 Bump `VERSION` file. Users get release notes on Telegram after the 4am update.
 
-## Reconcile System (core/reconcile/)
+## Reconcile System (core/infra/reconcile/)
 
 Runs on EVERY update — not once like migrations. Checks invariants and auto-repairs drift.
 
 ```
-core/reconcile/
+core/infra/reconcile/
 ├── runner.py          # Loads checks, runs them, logs results
 ├── base.py            # ReconcileCheck: check() → bool, fix() → CheckResult
 └── checks/
@@ -60,8 +60,8 @@ core/reconcile/
 
 | Mechanism | Runs | Purpose |
 |-----------|------|---------|
-| **Migrations** (`core/migrations/`) | Once per version | Structural changes (new dirs, new files, schema) |
-| **Reconcile** (`core/reconcile/`) | Every update cycle | Fix drift, repair broken state, keep invariants |
+| **Migrations** (`core/infra/migrations/`) | Once per version | Structural changes (new dirs, new files, schema) |
+| **Reconcile** (`core/infra/reconcile/`) | Every update cycle | Fix drift, repair broken state, keep invariants |
 | **Sync** (`aos sync-skills/agents/mcp`) | Every update | Re-symlink skills/agents to framework |
 
 ## System Layout
@@ -72,8 +72,8 @@ core/reconcile/
 │   ├── services/              Bridge, dashboard, listen, memory
 │   ├── agents/                chief.md, steward.md, advisor.md
 │   ├── work/                  Work engine + hooks (inject_context, session_close)
-│   ├── reconcile/             Invariant checks (runs every update)
-│   ├── migrations/            Numbered one-shot migrations
+│   ├── infra/reconcile/       Invariant checks (runs every update)
+│   ├── infra/migrations/      Numbered one-shot migrations
 │   └── bin/                   CLI tools, crons, utilities
 ├── config/                    Shipped config (crons.yaml, etc.)
 ├── templates/                 Agent catalog + project scaffold

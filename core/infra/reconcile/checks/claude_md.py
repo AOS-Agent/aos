@@ -174,7 +174,7 @@ When a request matches, load and follow the skill's protocol."""),
 - Config: ~/aos/config/
 - User data: ~/.aos/
 - Vault search: `qmd query "<topic>" -n 5` or via QMD MCP tools
-- Secrets: `~/aos/core/bin/agent-secret get/set`
+- Secrets: `~/aos/core/bin/cli/agent-secret get/set`
 - Memory index: `qmd status` (5 collections: log, knowledge, skills, agents, aos-docs)
 - Claude Code harness: `~/.claude/settings.json` (permissions, hooks, agent, chrome)
 - Claude Code preferences: `~/.claude.json` (remote control, UI toggles — set via `/config`)

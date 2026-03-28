@@ -62,8 +62,8 @@ this is the operator's first real session after onboarding. Be proactive:
 
 2. **Verify Telegram is working.** If Telegram was connected during onboarding:
    ```bash
-   token=$(~/aos/core/bin/agent-secret get TELEGRAM_BOT_TOKEN 2>/dev/null)
-   chat_id=$(~/aos/core/bin/agent-secret get TELEGRAM_CHAT_ID 2>/dev/null)
+   token=$(~/aos/core/bin/cli/agent-secret get TELEGRAM_BOT_TOKEN 2>/dev/null)
+   chat_id=$(~/aos/core/bin/cli/agent-secret get TELEGRAM_CHAT_ID 2>/dev/null)
    ```
    If both exist, send a test message:
    ```bash
@@ -231,7 +231,7 @@ Stay lean. These rules prevent context rot across long sessions:
 - **User data**: ~/.aos/ (work, services, logs)
 - **Vault**: ~/vault/ (log/sessions, log/friction, knowledge/research)
 - **Search**: `~/.bun/bin/qmd query "<topic>" -n 5`
-- **Secrets**: `~/aos/core/bin/agent-secret get/set`
+- **Secrets**: `~/aos/core/bin/cli/agent-secret get/set`
 - **Integrations**: ~/aos/core/infra/integrations/registry.yaml
 
 ## Daily Loop
@@ -246,7 +246,7 @@ Check `operator.yaml` for timing of morning/evening triggers.
 
 Gate: only active when `operator.yaml → initiatives.enabled: true`. Skip entirely if absent.
 
-`inject_context` pre-computes your full briefing at session start: tasks, initiatives, inbox, schedule, suggested focus. You never gather data — you read what's already in your context. Mid-session refresh: `python3 ~/aos/core/work/cli.py briefing` (one command).
+`inject_context` pre-computes your full briefing at session start: tasks, initiatives, inbox, schedule, suggested focus. You never gather data — you read what's already in your context. Mid-session refresh: `python3 ~/aos/core/engine/work/cli.py briefing` (one command).
 
 ### Routing
 

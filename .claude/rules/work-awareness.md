@@ -23,24 +23,24 @@ When in a project directory, new tasks auto-assign to that project.
 
 **Complete a task** — When you finish work that matches an active task:
 ```bash
-python3 ~/aos/core/work/cli.py done "fuzzy search or exact id"
+python3 ~/aos/core/engine/work/cli.py done "fuzzy search or exact id"
 ```
 
 **Start a task** — When beginning work on a task:
 ```bash
-python3 ~/aos/core/work/cli.py start "fuzzy search or exact id"
+python3 ~/aos/core/engine/work/cli.py start "fuzzy search or exact id"
 ```
 
 **Create subtasks** — When you discover a task needs decomposition mid-work:
 ```bash
-python3 ~/aos/core/work/cli.py subtask aos#3 "Subtask title"
-python3 ~/aos/core/work/cli.py subtask aos#3 "Already done part" --done
+python3 ~/aos/core/engine/work/cli.py subtask aos#3 "Subtask title"
+python3 ~/aos/core/engine/work/cli.py subtask aos#3 "Already done part" --done
 ```
 Subtasks auto-cascade: when all subtasks of a parent are done, the parent auto-completes.
 
 **Write handoff** — Before ending a session where work is in progress. This is the relay baton for the next session:
 ```bash
-python3 ~/aos/core/work/cli.py handoff aos#4 \
+python3 ~/aos/core/engine/work/cli.py handoff aos#4 \
     --state "What was accomplished and where things stand" \
     --next "The specific next step to take" \
     --files "file1.py,file2.py" \
@@ -50,12 +50,12 @@ python3 ~/aos/core/work/cli.py handoff aos#4 \
 
 **Get dispatch context** — When picking up a task that has existing handoff context:
 ```bash
-python3 ~/aos/core/work/cli.py dispatch aos#4
+python3 ~/aos/core/engine/work/cli.py dispatch aos#4
 ```
 
 **Link this session**:
 ```bash
-python3 ~/aos/core/work/cli.py link aos#4 --session <session_id> --outcome "what was accomplished"
+python3 ~/aos/core/engine/work/cli.py link aos#4 --session <session_id> --outcome "what was accomplished"
 ```
 
 **Suggest tracking** — When a conversation evolves into multi-step work that isn't tracked, suggest once. Don't auto-create.
@@ -80,18 +80,18 @@ python3 ~/aos/core/work/cli.py link aos#4 --session <session_id> --outcome "what
 ## Key Commands
 
 ```bash
-python3 ~/aos/core/work/cli.py add "Title" --priority N
-python3 ~/aos/core/work/cli.py done "fuzzy title or exact id"
-python3 ~/aos/core/work/cli.py start "task"
-python3 ~/aos/core/work/cli.py subtask "parent" "Subtask title"
-python3 ~/aos/core/work/cli.py handoff "task" --state "..." --next "..."
-python3 ~/aos/core/work/cli.py dispatch "task"
-python3 ~/aos/core/work/cli.py show "task"
-python3 ~/aos/core/work/cli.py list
-python3 ~/aos/core/work/cli.py today
-python3 ~/aos/core/work/cli.py next
-python3 ~/aos/core/work/cli.py search "query"
-python3 ~/aos/core/work/cli.py projects
-python3 ~/aos/core/work/cli.py thread "Exploration title"
-python3 ~/aos/core/work/cli.py inbox "Vague thought to triage later"
+python3 ~/aos/core/engine/work/cli.py add "Title" --priority N
+python3 ~/aos/core/engine/work/cli.py done "fuzzy title or exact id"
+python3 ~/aos/core/engine/work/cli.py start "task"
+python3 ~/aos/core/engine/work/cli.py subtask "parent" "Subtask title"
+python3 ~/aos/core/engine/work/cli.py handoff "task" --state "..." --next "..."
+python3 ~/aos/core/engine/work/cli.py dispatch "task"
+python3 ~/aos/core/engine/work/cli.py show "task"
+python3 ~/aos/core/engine/work/cli.py list
+python3 ~/aos/core/engine/work/cli.py today
+python3 ~/aos/core/engine/work/cli.py next
+python3 ~/aos/core/engine/work/cli.py search "query"
+python3 ~/aos/core/engine/work/cli.py projects
+python3 ~/aos/core/engine/work/cli.py thread "Exploration title"
+python3 ~/aos/core/engine/work/cli.py inbox "Vague thought to triage later"
 ```

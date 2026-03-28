@@ -44,6 +44,6 @@ skills regardless of which directory the session is in.
 
 ## Integration Framework
 
-Integration manifests in `core/integrations/`. Each integration directory has a `manifest.yaml`
+Integration manifests in `core/infra/integrations/`. Each integration directory has a `manifest.yaml`
 declaring what it provides, requires, and how to verify health.
-Registry at `core/integrations/registry.yaml` lists all known integrations.
+Registry at `core/infra/integrations/registry.yaml` lists all known integrations.

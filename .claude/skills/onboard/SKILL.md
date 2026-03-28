@@ -83,18 +83,18 @@ If install issues exist, note them — you'll address them in the relevant phase
 
 Create the onboarding project:
 ```bash
-python3 ~/aos/core/work/cli.py add "First conversation" --project onboarding --priority 2
-python3 ~/aos/core/work/cli.py add "Connect your tools" --project onboarding --priority 2
-python3 ~/aos/core/work/cli.py add "Meet the team" --project onboarding --priority 2
-python3 ~/aos/core/work/cli.py add "Remote access" --project onboarding --priority 2
-python3 ~/aos/core/work/cli.py add "Your first task" --project onboarding --priority 2
+python3 ~/aos/core/engine/work/cli.py add "First conversation" --project onboarding --priority 2
+python3 ~/aos/core/engine/work/cli.py add "Connect your tools" --project onboarding --priority 2
+python3 ~/aos/core/engine/work/cli.py add "Meet the team" --project onboarding --priority 2
+python3 ~/aos/core/engine/work/cli.py add "Remote access" --project onboarding --priority 2
+python3 ~/aos/core/engine/work/cli.py add "Your first task" --project onboarding --priority 2
 ```
 
 ---
 
 ## Phase 1: The First Conversation
 
-`python3 ~/aos/core/work/cli.py start "first conversation"`
+`python3 ~/aos/core/engine/work/cli.py start "first conversation"`
 
 ### Opening — The Grounding
 
@@ -233,7 +233,7 @@ If custom: `~/aos/core/bin/aos rename-agent {name}`
 
 **Projects** (via work CLI):
 - Create projects from what they mentioned using the work CLI
-- For each: `python3 ~/aos/core/work/cli.py add "{first task}" --project {project_name}`
+- For each: `python3 ~/aos/core/engine/work/cli.py add "{first task}" --project {project_name}`
 - Projects are created dynamically when tasks are added with `--project` — no config file needed
 
 **Daily note:**
@@ -307,13 +307,13 @@ AskUserQuestion:
 If "Show me more": point out the graph view (cmd+G), the search (cmd+shift+F),
 and how daily notes link to sessions. Keep it brief — they'll explore on their own.
 
-`python3 ~/aos/core/work/cli.py done "first conversation"`
+`python3 ~/aos/core/engine/work/cli.py done "first conversation"`
 
 ---
 
 ## Phase 2: Connect Your Tools
 
-`python3 ~/aos/core/work/cli.py start "connect your tools"`
+`python3 ~/aos/core/engine/work/cli.py start "connect your tools"`
 
 ### Security First
 
@@ -383,17 +383,17 @@ If they mention tools not in this list (Linear, Notion, Slack, etc.), note the i
 "That's not connected yet — I'll note it as something to add later." Save to `~/.aos/config/integration-wishlist.yaml`.
 
 **Apple Native:**
-Run silently: `bash ~/aos/core/integrations/apple_native/setup.sh --check`
+Run silently: `bash ~/aos/core/infra/integrations/apple_native/setup.sh --check`
 Report briefly: "Calendar, Contacts, and Messages are accessible — macOS will
 prompt for the rest when agents first use them."
 
-`python3 ~/aos/core/work/cli.py done "connect your tools"`
+`python3 ~/aos/core/engine/work/cli.py done "connect your tools"`
 
 ---
 
 ## Phase 3: Meet the Team
 
-`python3 ~/aos/core/work/cli.py start "meet the team"`
+`python3 ~/aos/core/engine/work/cli.py start "meet the team"`
 
 This is where Sahib introduces the agents. Not as software — as team members.
 
@@ -515,13 +515,13 @@ AskUserQuestion:
 
 If yes: `~/aos/core/bin/telemetry opt-in`
 
-`python3 ~/aos/core/work/cli.py done "meet the team"`
+`python3 ~/aos/core/engine/work/cli.py done "meet the team"`
 
 ---
 
 ## Phase 4: Remote Access
 
-`python3 ~/aos/core/work/cli.py start "remote access"`
+`python3 ~/aos/core/engine/work/cli.py start "remote access"`
 
 "This machine is meant to run 24/7 — even when no one's sitting in front of it. We need
 to set up three things: auto-login so it recovers from power outages, SSH so you can reach
@@ -708,22 +708,22 @@ If didn't work: troubleshoot — Tailscale running? Same account? SSH enabled?
 
 If works: "You're in. From anywhere in the world — `ssh aos`."
 
-`python3 ~/aos/core/work/cli.py done "remote access"`
+`python3 ~/aos/core/engine/work/cli.py done "remote access"`
 
 ---
 
 ## Phase 5: Your First Task
 
-`python3 ~/aos/core/work/cli.py start "your first task"`
+`python3 ~/aos/core/engine/work/cli.py start "your first task"`
 
 ### The Dashboard Moment
 
 Complete any remaining onboarding tasks:
 ```bash
-python3 ~/aos/core/work/cli.py done "first conversation" 2>/dev/null
-python3 ~/aos/core/work/cli.py done "connect your tools" 2>/dev/null
-python3 ~/aos/core/work/cli.py done "meet the team" 2>/dev/null
-python3 ~/aos/core/work/cli.py done "remote access" 2>/dev/null
+python3 ~/aos/core/engine/work/cli.py done "first conversation" 2>/dev/null
+python3 ~/aos/core/engine/work/cli.py done "connect your tools" 2>/dev/null
+python3 ~/aos/core/engine/work/cli.py done "meet the team" 2>/dev/null
+python3 ~/aos/core/engine/work/cli.py done "remote access" 2>/dev/null
 ```
 
 Open the dashboard:
@@ -750,7 +750,7 @@ Want to make that your first real task?"
 
 Let them describe it. Create the task:
 ```bash
-python3 ~/aos/core/work/cli.py add "{their task}" --project {relevant_project}
+python3 ~/aos/core/engine/work/cli.py add "{their task}" --project {relevant_project}
 ```
 
 "Done. Your first task is tracked. You can check on it anytime — just say `/work list`
@@ -846,7 +846,7 @@ integrations_connected: [list]
 projects_created: [list]
 ```
 
-`python3 ~/aos/core/work/cli.py done "your first task"`
+`python3 ~/aos/core/engine/work/cli.py done "your first task"`
 
 ### Final Words
 
@@ -1009,7 +1009,7 @@ mcp__claude-in-chrome__read_page with tabId: {tab_id}
 
 Extract the token from the response text. Store it securely:
 ```bash
-~/aos/core/bin/agent-secret set TELEGRAM_BOT_TOKEN {token}
+~/aos/core/bin/cli/agent-secret set TELEGRAM_BOT_TOKEN {token}
 ```
 
 Tell operator: "Got the token. Stored securely in your Keychain."
@@ -1029,14 +1029,14 @@ mcp__claude-in-chrome__computer with tabId: {tab_id}, action: "press", key: "Ent
 
 Now get the chat ID via API:
 ```bash
-token=$(~/aos/core/bin/agent-secret get TELEGRAM_BOT_TOKEN)
+token=$(~/aos/core/bin/cli/agent-secret get TELEGRAM_BOT_TOKEN)
 chat_id=$(curl -s "https://api.telegram.org/bot${token}/getUpdates" | python3 -c "
 import json, sys
 data = json.load(sys.stdin)
 updates = data.get('result', [])
 if updates: print(updates[-1]['message']['chat']['id'])
 ")
-~/aos/core/bin/agent-secret set TELEGRAM_CHAT_ID "$chat_id"
+~/aos/core/bin/cli/agent-secret set TELEGRAM_CHAT_ID "$chat_id"
 ```
 
 ### Step 8: Restart Bridge + Send Test Message
@@ -1062,8 +1062,8 @@ tail -5 ~/.aos/logs/bridge.err.log 2>/dev/null
 Now send the introduction message. Read the operator's agent name from operator.yaml (default: Chief).
 
 ```bash
-token=$(~/aos/core/bin/agent-secret get TELEGRAM_BOT_TOKEN)
-chat_id=$(~/aos/core/bin/agent-secret get TELEGRAM_CHAT_ID)
+token=$(~/aos/core/bin/cli/agent-secret get TELEGRAM_BOT_TOKEN)
+chat_id=$(~/aos/core/bin/cli/agent-secret get TELEGRAM_CHAT_ID)
 curl -s -X POST "https://api.telegram.org/bot${token}/sendMessage" \
     -d "chat_id=${chat_id}" \
     -d "parse_mode=HTML" \
@@ -1140,7 +1140,7 @@ This is your daily practice. Phone → voice note → system organizes it."
 ### Step 10: Verify
 
 ```bash
-bash ~/aos/core/integrations/telegram/setup.sh --check
+bash ~/aos/core/infra/integrations/telegram/setup.sh --check
 ```
 
 ### Error Recovery
@@ -1216,7 +1216,7 @@ Format:
 ## Important
 
 - Always use `cld` when referencing CLI commands
-- Always use `~/aos/core/bin/agent-secret` for secrets — never in files
+- Always use `~/aos/core/bin/cli/agent-secret` for secrets — never in files
 - The operator may not be technical — plain language always
 - Mark each task done as you complete each phase — the work system is the demo
 - Save the initial ramble as a daily note — this IS the daily practice

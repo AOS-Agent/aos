@@ -53,8 +53,8 @@ This Mac Mini runs AOS. The operating system lives at `~/aos/`.
 |------|-------|
 | Update system | `aos update` |
 | Self-test | `aos self-test` |
-| Work CLI | `python3 ~/aos/core/work/cli.py list` |
-| Secrets | `~/aos/core/bin/agent-secret get/set` |
+| Work CLI | `python3 ~/aos/core/engine/work/cli.py list` |
+| Secrets | `~/aos/core/bin/cli/agent-secret get/set` |
 | Search vault | `~/.bun/bin/qmd query "<topic>" -n 5` |
 
 ## Rules
@@ -106,7 +106,7 @@ When a request matches, load and follow the skill's protocol.
 - Config: ~/aos/config/
 - User data: ~/.aos/
 - Vault search: `qmd query "<topic>" -n 5`
-- Secrets: `~/aos/core/bin/agent-secret get/set`
+- Secrets: `~/aos/core/bin/cli/agent-secret get/set`
 """
 
 

@@ -66,8 +66,8 @@ This Mac Mini runs AOS. The operating system lives at `~/aos/`.
 |------|-------|
 | Update system | `~/aos/core/bin/aos update` |
 | Self-test | `~/aos/core/bin/aos self-test` |
-| Work CLI | `python3 ~/aos/core/work/cli.py list` |
-| Secrets | `~/aos/core/bin/agent-secret get/set` |
+| Work CLI | `python3 ~/aos/core/engine/work/cli.py list` |
+| Secrets | `~/aos/core/bin/cli/agent-secret get/set` |
 | Search vault | `~/.bun/bin/qmd query "<topic>" -n 5` |
 | Services | bridge (daemon), dashboard (:4096), listen (:7600) |
 

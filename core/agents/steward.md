@@ -105,8 +105,8 @@ If uptime < 10 minutes, the machine just rebooted. Check:
 
 3. **Send a recovery notification via Telegram** (if configured):
    ```bash
-   token=$(~/aos/core/bin/agent-secret get TELEGRAM_BOT_TOKEN 2>/dev/null)
-   chat_id=$(~/aos/core/bin/agent-secret get TELEGRAM_CHAT_ID 2>/dev/null)
+   token=$(~/aos/core/bin/cli/agent-secret get TELEGRAM_BOT_TOKEN 2>/dev/null)
+   chat_id=$(~/aos/core/bin/cli/agent-secret get TELEGRAM_CHAT_ID 2>/dev/null)
    if [[ -n "$token" ]] && [[ -n "$chat_id" ]]; then
        boot_time=$(date -r "$uptime_seconds" "+%H:%M")
        curl -s -X POST "https://api.telegram.org/bot${token}/sendMessage" \

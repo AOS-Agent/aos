@@ -308,7 +308,7 @@ Use this token to access the HTTP API:
 
 - Read the page text or screenshot to find the token
 - Extract it using pattern matching (digits:alphanumeric string)
-- Store it: `~/aos/core/bin/agent-secret set TELEGRAM_BOT_TOKEN <token>`
+- Store it: `~/aos/core/bin/cli/agent-secret set TELEGRAM_BOT_TOKEN <token>`
 
 Tell the operator:
 ```
@@ -322,7 +322,7 @@ Got it! Bot created and token stored securely.
 - Then hit the Telegram API to get the chat ID:
 
 ```bash
-token=$(~/aos/core/bin/agent-secret get TELEGRAM_BOT_TOKEN)
+token=$(~/aos/core/bin/cli/agent-secret get TELEGRAM_BOT_TOKEN)
 curl -s "https://api.telegram.org/bot${token}/getUpdates" | python3 -c "
 import json, sys
 data = json.load(sys.stdin)
@@ -333,13 +333,13 @@ if updates:
 "
 ```
 
-- Store it: `~/aos/core/bin/agent-secret set TELEGRAM_CHAT_ID <chat_id>`
+- Store it: `~/aos/core/bin/cli/agent-secret set TELEGRAM_CHAT_ID <chat_id>`
 
 **8. Send Test Message**
 
 ```bash
-token=$(~/aos/core/bin/agent-secret get TELEGRAM_BOT_TOKEN)
-chat_id=$(~/aos/core/bin/agent-secret get TELEGRAM_CHAT_ID)
+token=$(~/aos/core/bin/cli/agent-secret get TELEGRAM_BOT_TOKEN)
+chat_id=$(~/aos/core/bin/cli/agent-secret get TELEGRAM_CHAT_ID)
 curl -s -X POST "https://api.telegram.org/bot${token}/sendMessage" \
     -d "chat_id=${chat_id}" \
     -d "text=Asalamualaikum! AOS is connected. You can talk to your agents from here."
@@ -470,6 +470,6 @@ On next dispatch, read it to see which phases completed and resume from there.
 ## Important
 
 - Always use `cld` (not `claude`) when referencing how to start sessions -- that's what's on PATH
-- Always use `~/aos/core/bin/agent-secret` for secrets -- never write them to files
+- Always use `~/aos/core/bin/cli/agent-secret` for secrets -- never write them to files
 - The operator may not be technical -- explain in plain language
 - This agent runs ONCE. After completion, Chief never dispatches it again.

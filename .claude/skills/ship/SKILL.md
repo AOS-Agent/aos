@@ -54,7 +54,7 @@ git diff origin/main --name-only
 cd ~/aos && python3 core/bin/aos self-test 2>&1
 
 # 7. Dry-run reconcile from the dev workspace
-cd ~/project/aos && python3 core/reconcile/runner.py check 2>&1
+cd ~/project/aos && python3 core/infra/reconcile/runner.py check 2>&1
 
 # 8. Quality gate — code health, docs sync, consistency
 cd ~/project/aos && bash core/bin/ship-check 2>&1
@@ -103,8 +103,8 @@ Files changed: N
 Lines: +X / -Y
 
 Changes:
-  ✦ core/reconcile/checks/new_check.py (new)
-  ↻ core/bin/check-update (modified)
+  ✦ core/infra/reconcile/checks/new_check.py (new)
+  ↻ core/bin/crons/check-update (modified)
   ✓ core/work/inject_context.py (modified)
 
 Self-test: ✓ passed

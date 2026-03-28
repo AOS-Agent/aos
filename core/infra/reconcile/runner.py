@@ -39,11 +39,11 @@ def _notify_telegram(message: str):
     aos_dir = Path.home() / "aos"
     try:
         token = subprocess.run(
-            [str(aos_dir / "core/bin/agent-secret"), "get", "TELEGRAM_BOT_TOKEN"],
+            [str(aos_dir / "core/bin/cli/agent-secret"), "get", "TELEGRAM_BOT_TOKEN"],
             capture_output=True, text=True, timeout=5
         ).stdout.strip()
         chat_id = subprocess.run(
-            [str(aos_dir / "core/bin/agent-secret"), "get", "TELEGRAM_CHAT_ID"],
+            [str(aos_dir / "core/bin/cli/agent-secret"), "get", "TELEGRAM_CHAT_ID"],
             capture_output=True, text=True, timeout=5
         ).stdout.strip()
         if not token or not chat_id:

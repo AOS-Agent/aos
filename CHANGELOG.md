@@ -2,6 +2,29 @@
 
 All notable changes to AOS. Release notes sent via Telegram after each 4am update.
 
+## v0.6.0 — 2026-03-28
+
+System revamp — restructured `core/` for navigability, hardened infrastructure, added tests and documentation.
+
+- Reorganized `core/bin/` into `cli/`, `crons/`, `setup/`, `internal/` — scripts are now self-documenting by location
+- Grouped `core/work/`, `bus/`, `comms/` under `core/engine/` — the active intelligence layer
+- Grouped `core/reconcile/`, `migrations/`, `integrations/`, `lib/` under `core/infra/` — system plumbing
+- Added `core/infra/lib/safe_io.py` — atomic file writes with `fsync`, safe YAML load/dump, atomic JSONL append
+- Added `core/infra/lib/log.py` — structured JSON logging (`{"ts":"...","level":"...","source":"...","msg":"..."}`)
+- Added `core/infra/lib/rate_limit.py` — token-bucket rate limiter, wired into Telegram sends (1 msg/sec)
+- Added `core/infra/lib/validate.py` — validates `operator.yaml`, `crons.yaml`, `bridge-topics.yaml` at startup
+- Added `fsync` to `engine.py` atomic writes — protects against power loss, not just crashes
+- Fixed unsafe write in `metrics.py` — was the only file using raw `open()` instead of atomic write
+- Pinned all service dependencies with `requirements.lock` files — `pip install` no longer grabs latest from PyPI
+- Updated `aos deploy` to prefer `requirements.lock` over unpinned `pyproject.toml`
+- Added pre-push git hook — 5 checks: Python syntax, Bash syntax, YAML syntax, critical imports, secret scanning
+- Converted bridge service to structured JSON logging via shared `get_logger()`
+- Added 30 pytest tests covering task CRUD, fuzzy resolution, subtask cascade, context injection, handoffs
+- Added README.md to all 6 services, 3 engine directories, and reconcile — each with restart commands and key files
+- Added `docs/ARCHITECTURE.md` — one-page system architecture overview
+- Added migration 022 — updates instance-side path references for existing installs
+- Updated 150+ hardcoded path references across 40+ files
+
 ## v0.5.1 — 2026-03-26
 
 Trust Graduation — the system learns your communication patterns and graduates from observing to assisting.
