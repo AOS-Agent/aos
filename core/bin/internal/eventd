@@ -5,7 +5,7 @@
 
 set -euo pipefail
 
-AOS_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
+AOS_DIR="$(cd "$(dirname "$0")/../../.." && pwd)"
 VENV="$HOME/.aos/services/eventd/.venv"
 EVENTD="$AOS_DIR/core/services/eventd/main.py"
 
