@@ -245,6 +245,7 @@ if [[ "${1:-}" != "--all" ]]; then
             [[ -f "$f" ]] || continue
             # Skip binary and non-text files
             if file "$f" 2>/dev/null | grep -q "text"; then
+                [[ "$f" == *"ship-check"* ]] && continue
                 if grep -nE '(breakpoint\(\)|import pdb|print\(.*(DEBUG|TODO|FIXME|HACK))' "$f" 2>/dev/null | head -3; then
                     warn "Debug artifact in $f"
                     debug_hits=$((debug_hits + 1))
@@ -375,11 +376,133 @@ if grep -q 'services/mlx-whisper' "$DEV/install.sh" 2>/dev/null; then
 fi
 
 # Hooks in install.sh should use tilde paths, not absolute paths
-if grep -q '/Users/' "$DEV/install.sh" 2>/dev/null | grep -v 'comment\|#\|echo\|printf' 2>/dev/null; then
-    # Only flag if absolute user paths appear in hook definitions
-    hook_abs=$(grep -n 'command.*python3.*/Users/' "$DEV/install.sh" 2>/dev/null || true)
-    if [[ -n "$hook_abs" ]]; then
-        warn "install.sh has absolute user paths in hook definitions — use ~ for portability"
+hook_abs=$(grep -n 'command.*python3.*/Users/' "$DEV/install.sh" 2>/dev/null | grep -vE '^\s*#' || true)
+if [[ -n "$hook_abs" ]]; then
+    warn "install.sh has absolute user paths in hook definitions — use ~ for portability"
+fi
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 5. PORTABILITY — no machine-specific paths in shipped code
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+echo ""
+echo "Portability"
+echo "───────────"
+
+# Scan ALL files in the diff for absolute user home paths
+# This catches lock files, hardcoded paths in scripts, YAML, pyproject.toml, etc.
+abs_path_hits=0
+shipped_files=$(git diff origin/main --name-only --diff-filter=ACMR 2>/dev/null || true)
+if [[ -n "$shipped_files" ]]; then
+    while IFS= read -r f; do
+        [[ -z "$f" || ! -f "$f" ]] && continue
+        # Skip binary files
+        file "$f" 2>/dev/null | grep -q "text" || continue
+        # Look for /Users/<username>/ paths, excluding comments
+        hits=$(grep -nE '/Users/[a-zA-Z_][a-zA-Z0-9_-]+/' "$f" 2>/dev/null \
+            | grep -vE '^\s*#|^\s*//' || true)
+        if [[ -n "$hits" ]]; then
+            fail "Absolute user path in $f"
+            echo "$hits" | head -3 | sed 's/^/    /'
+            abs_path_hits=$((abs_path_hits + 1))
+        fi
+    done <<< "$shipped_files"
+fi
+if [[ $abs_path_hits -eq 0 ]]; then
+    pass "No absolute user paths in diff"
+fi
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 6. DEPLOY SAFETY — catch issues that break remote machine updates
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+echo ""
+echo "Deploy Safety"
+echo "─────────────"
+
+# VERSION bump gate: if service deps changed, VERSION must bump
+# Without a version bump, check-update skips venv rebuild on remote machines
+if [[ "${1:-}" != "--all" ]]; then
+    svc_dep_changed=$(git diff origin/main --name-only 2>/dev/null \
+        | grep -cE 'core/services/.*/pyproject\.toml' || true)
+    svc_dep_changed=${svc_dep_changed:-0}
+    version_bumped=$(git diff origin/main --name-only 2>/dev/null \
+        | grep -c '^VERSION$' || true)
+    version_bumped=${version_bumped:-0}
+    if [[ "$svc_dep_changed" -gt 0 && "$version_bumped" -eq 0 ]]; then
+        warn "Service pyproject.toml changed but VERSION not bumped — remote machines won't rebuild venvs"
+    else
+        pass "Version/deps sync OK"
+    fi
+fi
+
+# Every migration must have a check() function (idempotency guard)
+migration_issues=0
+for mig in "$DEV"/core/infra/migrations/[0-9][0-9][0-9]_*.py; do
+    [[ -f "$mig" ]] || continue
+    mig_name=$(basename "$mig")
+    if ! grep -qE '^def check\(' "$mig" 2>/dev/null; then
+        fail "Migration $mig_name has no check() function — not idempotent"
+        migration_issues=$((migration_issues + 1))
+    fi
+done
+if [[ $migration_issues -eq 0 ]]; then
+    mig_count=$(find "$DEV/core/infra/migrations" -name '[0-9][0-9][0-9]_*.py' 2>/dev/null | wc -l | tr -d ' ')
+    pass "All $mig_count migrations have idempotency guards"
+fi
+
+# Import completeness: flag third-party imports not in pyproject.toml for changed services
+if [[ "${1:-}" != "--all" ]]; then
+    changed_svc_dirs=$(git diff origin/main --name-only 2>/dev/null \
+        | grep -oE 'core/services/[^/]+' | sort -u || true)
+    import_gaps=0
+    if [[ -n "$changed_svc_dirs" ]]; then
+        while IFS= read -r svc_rel; do
+            [[ -z "$svc_rel" ]] && continue
+            svc_dir="$DEV/$svc_rel"
+            svc_name=$(basename "$svc_rel")
+            [[ -f "$svc_dir/pyproject.toml" ]] || continue
+
+            # Extract top-level imports from Python files
+            used_imports=$(grep -rhE '^(import|from) ([a-z][a-z0-9_]*)' "$svc_dir"/*.py 2>/dev/null \
+                | awk '{print $2}' | cut -d. -f1 | sort -u || true)
+
+            # Extract declared deps from pyproject.toml (normalized: hyphens → underscores)
+            declared_deps=$(python3 -c "
+import re
+txt = open('$svc_dir/pyproject.toml').read()
+m = re.search(r'dependencies\s*=\s*\[(.*?)\]', txt, re.DOTALL)
+if m:
+    deps = re.findall(r'\"([a-z][a-z0-9_-]*)', m.group(1))
+    for d in deps:
+        print(d.replace('-','_'))
+" 2>/dev/null)
+
+            while IFS= read -r mod; do
+                [[ -z "$mod" ]] && continue
+                # Skip if it's stdlib (importable without install)
+                if python3 -c "
+import importlib, sys
+spec = importlib.util.find_spec('$mod')
+if spec is None:
+    sys.exit(1)
+loc = getattr(spec, 'origin', '') or ''
+if 'site-packages' in loc or 'dist-packages' in loc:
+    sys.exit(1)
+sys.exit(0)
+" 2>/dev/null; then
+                    continue  # stdlib or builtin
+                fi
+                # Check if declared
+                if ! echo "$declared_deps" | grep -qxF "$mod"; then
+                    warn "Service '$svc_name' imports '$mod' but it's not in pyproject.toml"
+                    import_gaps=$((import_gaps + 1))
+                fi
+            done <<< "$used_imports"
+        done <<< "$changed_svc_dirs"
+    fi
+    if [[ $import_gaps -eq 0 ]]; then
+        pass "Service imports match declared dependencies"
     fi
 fi
 

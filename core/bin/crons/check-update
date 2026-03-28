@@ -1,20 +1,30 @@
 #!/usr/bin/env bash
-# check-update — checks if a new AOS version is available
+# check-update — two-phase update system for AOS
 #
 # Usage:
 #   check-update              — check and notify if update available
 #   check-update --apply      — check and auto-apply if available
+#   check-update --continue   — phase 2: deploy after code pull (called via exec)
 #   check-update --status     — just print current vs remote version
+#
+# Architecture:
+#   Phase 1 (--apply): git pull only, then exec this script with --continue.
+#   Phase 2 (--continue): runs from the NEW code on disk. Reconcile, migrate,
+#   rebuild venvs, restart services, health check.
+#
+#   This solves the bootstrapping problem: the old script never drives deployment.
+#   After pull, the process is replaced by the new script via exec.
 #
 # Called by:
 #   - Scheduler (crons.yaml) every 2 hours
-#   - User via `aos check-update`
+#   - User via `aos check-update` / `aos update`
 #   - Dashboard update button
 
 set +e
 
 AOS_DIR="$HOME/aos"
 STATE_FILE="$HOME/.aos/data/update-state.json"
+HANDOFF_FILE="$HOME/.aos/data/update-handoff.json"
 LOG_PREFIX="[$(date '+%Y-%m-%d %H:%M:%S')]"
 
 mkdir -p "$(dirname "$STATE_FILE")"
@@ -41,7 +51,6 @@ notify() {
 check() {
     cd "$AOS_DIR" || { log "ERROR: AOS dir not found"; exit 1; }
 
-    # Ensure we have a remote
     local remote
     remote=$(git remote 2>/dev/null | head -1)
     if [[ -z "$remote" ]]; then
@@ -49,7 +58,6 @@ check() {
         return 1
     fi
 
-    # Fetch latest (quiet, no merge)
     git fetch "$remote" --quiet 2>/dev/null || {
         log "WARN: git fetch failed (network?)"
         return 1
@@ -68,7 +76,6 @@ check() {
 
     if [[ "$local_hash" == "$remote_hash" ]]; then
         log "Up to date"
-        # Write state
         python3 -c "
 import json, datetime
 state = {
@@ -83,18 +90,15 @@ with open('$STATE_FILE', 'w') as f:
         return 0
     fi
 
-    # Count new commits
     local ahead behind
     ahead=$(git rev-list --count "$remote/$branch..HEAD" 2>/dev/null || echo 0)
     behind=$(git rev-list --count "HEAD..$remote/$branch" 2>/dev/null || echo 0)
 
-    # Get commit summaries
     local changes
     changes=$(git log --oneline "HEAD..$remote/$branch" 2>/dev/null | head -5)
 
     log "Update available: $behind new commit(s)"
 
-    # Write state
     python3 -c "
 import json, datetime
 state = {
@@ -113,33 +117,36 @@ with open('$STATE_FILE', 'w') as f:
     return 2  # 2 = update available
 }
 
-# ── Apply update ─────────────────────────────────────────────────────────────
+# ── Phase 1: Pull code and hand off to new script ───────────────────────────
+#
+# This function does the MINIMUM possible work with the old code:
+# 1. git pull
+# 2. Write a handoff file with context for phase 2
+# 3. exec the NEW version of this script with --continue
+#
+# After exec, the old code is gone. Phase 2 runs entirely from disk.
 
 apply() {
-    log "Applying update..."
+    log "Phase 1: pulling code..."
 
     cd "$AOS_DIR" || exit 1
 
-    # Snapshot for rollback
-    local old_hash
+    local old_hash old_version
     old_hash=$(git rev-parse HEAD 2>/dev/null)
-    local old_version
     old_version=$(cat "$AOS_DIR/VERSION" 2>/dev/null || echo "unknown")
 
-    # Pull (main branch only, fast-forward)
     local pull_output
     pull_output=$(git pull --ff-only origin main 2>&1)
     local pull_status=$?
 
     if [[ $pull_status -ne 0 ]]; then
-        log "ERROR: git pull failed — attempting reset"
-        # Reset any dirty state and try again
+        log "git pull failed — clearing dirty state and retrying"
         git checkout -- . 2>/dev/null
         pull_output=$(git pull --ff-only origin main 2>&1)
         pull_status=$?
         if [[ $pull_status -ne 0 ]]; then
             log "ERROR: git pull failed after reset"
-            notify "⚠️ System update failed. Will retry next cycle."
+            notify "⚠️ System update failed (git pull). Will retry next cycle."
             return 1
         fi
     fi
@@ -147,208 +154,123 @@ apply() {
     local new_version
     new_version=$(cat "$AOS_DIR/VERSION" 2>/dev/null || echo "unknown")
 
-    # Always run reconcile — even if version didn't change.
-    # Catches drift from Homebrew updates, manual edits, etc.
-    log "Running reconcile..."
-    "$AOS_DIR/core/bin/internal/aos-python" "$AOS_DIR/core/infra/reconcile/runner.py" run 2>>"$HOME/.aos/logs/reconcile-stderr.log" || true
+    # Write handoff for phase 2
+    python3 -c "
+import json, datetime
+handoff = {
+    'triggered_at': datetime.datetime.now().isoformat(),
+    'old_hash': '$old_hash',
+    'old_version': '$old_version',
+    'new_version': '$new_version',
+}
+with open('$HANDOFF_FILE', 'w') as f:
+    json.dump(handoff, f, indent=2)
+"
 
-    # Skip the rest if version didn't change
-    if [[ "$old_version" == "$new_version" ]]; then
-        log "No version change ($old_version)"
+    log "Code pulled ($old_version → $new_version). Handing off to new script..."
+
+    # Replace this process with the NEW version of this script from disk.
+    # The old in-memory code is gone after this line.
+    exec "$AOS_DIR/core/bin/crons/check-update" --continue
+}
+
+# ── Phase 2: Deploy (runs from NEW code on disk) ────────────────────────────
+#
+# This function is always executed from the freshly pulled script.
+# It reads the handoff file written by phase 1, then:
+# 1. Deletes the handoff (idempotency — crash mid-deploy won't re-migrate)
+# 2. Runs reconcile, migrations, sync, venv rebuild, restart, health check
+
+deploy() {
+    cd "$AOS_DIR" || exit 1
+
+    if [[ ! -f "$HANDOFF_FILE" ]]; then
+        log "No handoff file — nothing to deploy"
         return 0
     fi
 
-    log "Updating $old_version → $new_version"
+    local old_hash old_version new_version
+    old_hash=$(python3 -c "import json; print(json.load(open('$HANDOFF_FILE'))['old_hash'])" 2>/dev/null)
+    old_version=$(python3 -c "import json; print(json.load(open('$HANDOFF_FILE'))['old_version'])" 2>/dev/null)
+    new_version=$(python3 -c "import json; print(json.load(open('$HANDOFF_FILE'))['new_version'])" 2>/dev/null)
+
+    # Delete handoff BEFORE destructive work — idempotency guard.
+    rm -f "$HANDOFF_FILE"
+
+    log "Phase 2: deploying $old_version → $new_version"
+
+    # Always run reconcile
+    log "Running reconcile..."
+    "$AOS_DIR/core/bin/internal/aos-python" "$AOS_DIR/core/infra/reconcile/runner.py" run \
+        2>>"$HOME/.aos/logs/reconcile-stderr.log" || true
+
+    # Skip the rest if version didn't change (reconcile-only update)
+    if [[ "$old_version" == "$new_version" ]]; then
+        log "No version change ($old_version) — reconcile only"
+        return 0
+    fi
 
     # Run migrations
     log "Running migrations..."
-    "$AOS_DIR/core/bin/internal/aos-python" "$AOS_DIR/core/infra/migrations/runner.py" migrate 2>/dev/null || true
+    "$AOS_DIR/core/bin/internal/aos-python" "$AOS_DIR/core/infra/migrations/runner.py" migrate 2>/dev/null || {
+        log "ERROR: migrations failed"
+        notify "⚠️ Update to $new_version: migrations failed. Services not restarted."
+        return 1
+    }
 
-    # Sync skills, agents, rules, and MCP servers
+    # Sync
     log "Syncing..."
-    bash "$AOS_DIR/core/bin/cli/aos" sync-skills 2>/dev/null || true
-    bash "$AOS_DIR/core/bin/cli/aos" sync-agents 2>/dev/null || true
-    bash "$AOS_DIR/core/bin/cli/aos" sync-rules 2>/dev/null || true
-    bash "$AOS_DIR/core/bin/cli/aos" sync-mcp 2>/dev/null || true
-
-    # Check if any pyproject.toml or requirements.lock changed — rebuild affected venvs
-    local changed_services
-    changed_services=$(git diff --name-only "$old_hash..HEAD" 2>/dev/null | grep -E "core/services/.*/(pyproject\.toml|requirements\.lock)" | sed 's|core/services/\([^/]*\)/.*|\1|' | sort -u || true)
-    if [[ -n "$changed_services" ]]; then
-        log "Dependencies changed in: $changed_services"
-        for svc in $changed_services; do
-            log "Rebuilding $svc venv..."
-            rm -rf "$HOME/.aos/services/$svc/.venv"
-            bash "$AOS_DIR/core/bin/cli/aos" deploy "$svc" 2>/dev/null || true
-        done
-    fi
-
-    # Reload services if bridge or dashboard code changed
-    local reload_bridge=false reload_dashboard=false reload_listen=false
-    git diff --name-only "$old_hash..HEAD" 2>/dev/null | grep -q "core/services/bridge/" && reload_bridge=true
-    git diff --name-only "$old_hash..HEAD" 2>/dev/null | grep -q "core/services/dashboard/" && reload_dashboard=true
-    git diff --name-only "$old_hash..HEAD" 2>/dev/null | grep -q "core/services/listen/" && reload_listen=true
-
-    # Use bootout/bootstrap/kickstart instead of unload/load to avoid launchd throttling.
-    # See GitHub issue #6: unload/load doesn't reset the throttle counter, so services
-    # that crash during update stay dead even after reload.
-    local uid=$(id -u)
-    if [[ "$reload_bridge" == true ]]; then
-        log "Restarting bridge (kickstart)..."
-        launchctl bootout "gui/$uid/com.aos.bridge" 2>/dev/null
-        launchctl bootstrap "gui/$uid" "$HOME/Library/LaunchAgents/com.aos.bridge.plist" 2>/dev/null
-        launchctl kickstart -k "gui/$uid/com.aos.bridge" 2>/dev/null
-    fi
-    if [[ "$reload_dashboard" == true ]]; then
-        log "Restarting dashboard (kickstart)..."
-        launchctl bootout "gui/$uid/com.aos.dashboard" 2>/dev/null
-        launchctl bootstrap "gui/$uid" "$HOME/Library/LaunchAgents/com.aos.dashboard.plist" 2>/dev/null
-        launchctl kickstart -k "gui/$uid/com.aos.dashboard" 2>/dev/null
-    fi
-    if [[ "$reload_listen" == true ]]; then
-        log "Restarting listen (kickstart)..."
-        launchctl bootout "gui/$uid/com.aos.listen" 2>/dev/null
-        launchctl bootstrap "gui/$uid" "$HOME/Library/LaunchAgents/com.aos.listen.plist" 2>/dev/null
-        launchctl kickstart -k "gui/$uid/com.aos.listen" 2>/dev/null
-    fi
-
-    # Health check after update — poll with retries
-    # Python services with venvs need time to import and initialize
-    local health_ok=false
-    local max_attempts=6
-    local attempt=0
-    while [[ $attempt -lt $max_attempts ]]; do
-        sleep 2
-        attempt=$((attempt + 1))
-        local all_up=true
-        for svc in bridge dashboard listen; do
-            if ! launchctl list 2>/dev/null | grep -q "com.aos.$svc"; then
-                all_up=false
-                break
-            fi
-        done
-        if [[ "$all_up" == true ]]; then
-            health_ok=true
-            break
-        fi
-        [[ $attempt -lt $max_attempts ]] && log "Health check attempt $attempt/$max_attempts — waiting..."
+    for cmd in sync-skills sync-agents sync-rules sync-mcp; do
+        bash "$AOS_DIR/core/bin/cli/aos" "$cmd" 2>/dev/null || true
     done
 
-    if [[ "$health_ok" == false ]]; then
-        # Log which services are actually down
-        for svc in bridge dashboard listen; do
-            if ! launchctl list 2>/dev/null | grep -q "com.aos.$svc"; then
-                log "WARN: $svc not running after update"
+    # Auto-discover which services changed and rebuild their venvs
+    local changed_services
+    changed_services=$(git diff --name-only "$old_hash..HEAD" 2>/dev/null \
+        | grep -E "core/services/[^/]+/(pyproject\.toml|[^/]+\.py)" \
+        | sed 's|core/services/\([^/]*\)/.*|\1|' \
+        | sort -u || true)
+
+    if [[ -n "$changed_services" ]]; then
+        log "Code/deps changed in: $changed_services"
+        for svc in $changed_services; do
+            if [[ -d "$HOME/.aos/services/$svc" ]]; then
+                log "Rebuilding $svc venv..."
+                rm -rf "$HOME/.aos/services/$svc/.venv"
+                bash "$AOS_DIR/core/bin/cli/aos" deploy "$svc" 2>/dev/null || true
             fi
         done
     fi
 
-    if [[ "$health_ok" == false ]]; then
-        # Do NOT rollback code after migrations have run.
-        # Migrations may have changed data layout (vault, instance dirs, config).
-        # Rolling back code while data is in the new layout creates a worse state
-        # than having a service temporarily down.
-        log "Health check failed after update to $new_version — services may need manual restart"
-        log "NOT rolling back: migrations already applied to data layer"
+    # Auto-discover which services need restart from LaunchAgents
+    local uid
+    uid=$(id -u)
+    local restarted_services=()
 
-        # Try one more restart of failed services
-        for svc in bridge dashboard listen; do
-            if ! launchctl list 2>/dev/null | grep -q "com.aos.$svc"; then
-                log "Attempting restart of $svc..."
-                launchctl bootout "gui/$uid/com.aos.$svc" 2>/dev/null
-                launchctl bootstrap "gui/$uid" "$HOME/Library/LaunchAgents/com.aos.${svc}.plist" 2>/dev/null
-                launchctl kickstart -k "gui/$uid/com.aos.$svc" 2>/dev/null
-            fi
-        done
+    for la_plist in "$HOME/Library/LaunchAgents/com.aos."*.plist; do
+        [[ -f "$la_plist" ]] || continue
+        local la_name svc_name
+        la_name=$(basename "$la_plist" .plist)
+        svc_name="${la_name#com.aos.}"
 
-        notify "⚠️ Update to $new_version applied but some services are unhealthy. Attempting restart. Check 'aos status' if issues persist."
-        bash "$AOS_DIR/core/bin/cli/feedback" --auto "Update $new_version: services unhealthy post-update" "auto-update" 2>/dev/null || true
-        # Don't return 1 — the update DID apply. Just services need attention.
+        if echo "$changed_services" | grep -qx "$svc_name"; then
+            log "Restarting $svc_name..."
+            launchctl bootout "gui/$uid/$la_name" 2>/dev/null
+            launchctl bootstrap "gui/$uid" "$la_plist" 2>/dev/null
+            launchctl kickstart -k "gui/$uid/$la_name" 2>/dev/null
+            restarted_services+=("$la_name")
+        fi
+    done
+
+    # Health check for restarted services only
+    if [[ ${#restarted_services[@]} -gt 0 ]]; then
+        _health_check "$uid" "$new_version" "${restarted_services[@]}"
     fi
 
-    # Read release notes from CHANGELOG.md
+    # Release notes + state update + notification
     local release_notes
-    release_notes=$(python3 -c "
-from pathlib import Path
-import re
+    release_notes=$(_extract_release_notes "$new_version")
 
-cl = Path('$AOS_DIR/CHANGELOG.md')
-if not cl.exists():
-    print('System updated.')
-    raise SystemExit()
-
-content = cl.read_text()
-
-# Find the section for this version (match v0.3.0, not v0.3.0-beta)
-pattern = r'## ${new_version}\b.*?\n(.*?)(?=\n## v|\Z)'
-match = re.search(pattern, content, re.DOTALL)
-if not match:
-    print('System updated.')
-    raise SystemExit()
-
-notes = match.group(1).strip()
-lines = [l.strip() for l in notes.split('\n') if l.strip()]
-
-# Extract summary and categorized changes
-# New format: first non-bullet line is the summary, bullets start with '- Verb ...'
-# Legacy format: 'Summary: ...' prefix, 'Verb: ...' entries
-summary = ''
-changes = {'Added': [], 'Changed': [], 'Fixed': [], 'Removed': []}
-# Also match rewording verbs to their base category
-verb_map = {'Added': 'Added', 'Changed': 'Changed', 'Fixed': 'Fixed', 'Removed': 'Removed',
-            'Rewrote': 'Changed', 'Expanded': 'Changed', 'Moved': 'Changed'}
-other = []
-
-for line in lines:
-    # Legacy: 'Summary: ...'
-    if line.startswith('Summary:'):
-        summary = line.replace('Summary:', '').strip()
-    # Bullet: '- Added foo', '- Fixed bar', '- Rewrote baz'
-    elif line.startswith('- '):
-        text = line[2:]
-        matched = False
-        for verb, cat in verb_map.items():
-            if text.startswith(verb + ' '):
-                changes[cat].append(text[len(verb)+1:])
-                matched = True
-                break
-        if not matched:
-            other.append(text)
-    # Legacy: 'Added: foo'
-    elif ':' in line and line.split(':')[0] in changes:
-        cat = line.split(':')[0]
-        rest = ':'.join(line.split(':')[1:]).strip().lstrip('- ')
-        changes[cat].append(rest)
-    # Plain line before any bullets = summary
-    elif not line.startswith('#') and not summary:
-        summary = line
-    elif not line.startswith('#'):
-        other.append(line)
-
-# Build conversational Telegram message
-# Focus on what's NEW (Added section) — that's what users care about
-if summary:
-    print(summary)
-    print()
-
-# Show categorized changes with emoji prefixes
-icons = {'Added': '✦', 'Changed': '↻', 'Fixed': '✓', 'Removed': '✕'}
-for cat in ['Added', 'Changed', 'Fixed', 'Removed']:
-    items = changes[cat]
-    if not items:
-        continue
-    icon = icons[cat]
-    for item in items[:8]:
-        print(f'{icon} {item}')
-    if len(items) > 8:
-        print(f'  ... and {len(items)-8} more')
-
-if other:
-    for line in other[:3]:
-        print(f'  {line}')
-" 2>/dev/null)
-
-    # Update state
     local new_hash
     new_hash=$(git rev-parse HEAD 2>/dev/null)
     python3 -c "
@@ -367,7 +289,6 @@ with open('$STATE_FILE', 'w') as f:
 
     log "Update complete: $new_version"
 
-    # Send release notification
     local note_text
     note_text="━━━━━━━━━━━━━━━━━━
 AOS $new_version
@@ -377,6 +298,115 @@ $release_notes
 
 Already applied. No action needed."
     notify "$note_text"
+}
+
+# ── Health check ─────────────────────────────────────────────────────────────
+
+_health_check() {
+    local uid="$1" new_version="$2"
+    shift 2
+    local services=("$@")
+
+    local max_attempts=8 attempt=0 all_up=false
+
+    while [[ $attempt -lt $max_attempts ]]; do
+        sleep 2
+        attempt=$((attempt + 1))
+        all_up=true
+        for la in "${services[@]}"; do
+            if ! launchctl list 2>/dev/null | grep -q "$la"; then
+                all_up=false
+                break
+            fi
+        done
+        [[ "$all_up" == true ]] && break
+        [[ $attempt -lt $max_attempts ]] && log "Health check attempt $attempt/$max_attempts — waiting..."
+    done
+
+    if [[ "$all_up" == false ]]; then
+        for la in "${services[@]}"; do
+            if ! launchctl list 2>/dev/null | grep -q "$la"; then
+                local svc_name="${la#com.aos.}"
+                log "WARN: $svc_name not running — attempting restart"
+                launchctl bootout "gui/$uid/$la" 2>/dev/null
+                launchctl bootstrap "gui/$uid" "$HOME/Library/LaunchAgents/${la}.plist" 2>/dev/null
+                launchctl kickstart -k "gui/$uid/$la" 2>/dev/null
+            fi
+        done
+        notify "⚠️ Update to $new_version applied but some services needed extra restart. Check 'aos status'."
+    fi
+}
+
+# ── Release notes extraction ────────────────────────────────────────────────
+
+_extract_release_notes() {
+    local version="$1"
+    python3 -c "
+from pathlib import Path
+import re
+
+cl = Path('$AOS_DIR/CHANGELOG.md')
+if not cl.exists():
+    print('System updated.')
+    raise SystemExit()
+
+content = cl.read_text()
+pattern = r'## ${version}\b.*?\n(.*?)(?=\n## v|\Z)'
+match = re.search(pattern, content, re.DOTALL)
+if not match:
+    print('System updated.')
+    raise SystemExit()
+
+notes = match.group(1).strip()
+lines = [l.strip() for l in notes.split('\n') if l.strip()]
+
+summary = ''
+changes = {'Added': [], 'Changed': [], 'Fixed': [], 'Removed': []}
+verb_map = {'Added': 'Added', 'Changed': 'Changed', 'Fixed': 'Fixed', 'Removed': 'Removed',
+            'Rewrote': 'Changed', 'Expanded': 'Changed', 'Moved': 'Changed'}
+other = []
+
+for line in lines:
+    if line.startswith('Summary:'):
+        summary = line.replace('Summary:', '').strip()
+    elif line.startswith('- '):
+        text = line[2:]
+        matched = False
+        for verb, cat in verb_map.items():
+            if text.startswith(verb + ' '):
+                changes[cat].append(text[len(verb)+1:])
+                matched = True
+                break
+        if not matched:
+            other.append(text)
+    elif ':' in line and line.split(':')[0] in changes:
+        cat = line.split(':')[0]
+        rest = ':'.join(line.split(':')[1:]).strip().lstrip('- ')
+        changes[cat].append(rest)
+    elif not line.startswith('#') and not summary:
+        summary = line
+    elif not line.startswith('#'):
+        other.append(line)
+
+if summary:
+    print(summary)
+    print()
+
+icons = {'Added': '✦', 'Changed': '↻', 'Fixed': '✓', 'Removed': '✕'}
+for cat in ['Added', 'Changed', 'Fixed', 'Removed']:
+    items = changes[cat]
+    if not items:
+        continue
+    icon = icons[cat]
+    for item in items[:8]:
+        print(f'{icon} {item}')
+    if len(items) > 8:
+        print(f'  ... and {len(items)-8} more')
+
+if other:
+    for line in other[:3]:
+        print(f'  {line}')
+" 2>/dev/null
 }
 
 # ── Status ───────────────────────────────────────────────────────────────────
@@ -413,12 +443,13 @@ case "${1:-}" in
             log "Already up to date"
         fi
         ;;
+    --continue)
+        deploy
+        ;;
     --status)
         status
         ;;
     *)
         check
-        # No notification — auto-update at 4am handles it.
-        # Only log to state file for dashboard visibility.
         ;;
 esac
