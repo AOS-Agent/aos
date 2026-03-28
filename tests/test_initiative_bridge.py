@@ -83,7 +83,7 @@ REQUIRED_FILES = [
     "core/infra/reconcile/checks/__init__.py",
     "core/infra/reconcile/checks/initiatives.py",
     # Cron
-    "core/bin/stale-initiatives",
+    "core/bin/crons/stale-initiatives",
     # Config
     "config/crons.yaml",
     # Docs
@@ -402,7 +402,7 @@ except Exception as e:
 
 # Stale initiatives cron
 print("  — Stale Initiatives Cron —")
-stale_script = AOS_DEV / "core" / "bin" / "stale-initiatives"
+stale_script = AOS_DEV / "core" / "bin" / "crons" / "stale-initiatives"
 check("stale-initiatives is executable", os.access(stale_script, os.X_OK))
 
 # Check crons.yaml includes stale-initiatives

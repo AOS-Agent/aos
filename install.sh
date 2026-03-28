@@ -732,7 +732,7 @@ prereq_tailscale() {
 
 prereq_claude_remote() {
     # Claude Code remote control — allows agents to reach this machine's Claude
-    local script="$AOS_DIR/core/bin/claude-remote-start"
+    local script="$AOS_DIR/core/bin/setup/claude-remote-start"
     local plist_template="$AOS_DIR/config/launchagents/com.aos.claude-remote.plist.template"
 
     if ! command -v claude &>/dev/null; then
@@ -815,7 +815,7 @@ setup_path() {
     _step "Setting up PATH..."
     echo ""
 
-    local aos_bin="$AOS_DIR/core/bin/aos"
+    local aos_bin="$AOS_DIR/core/bin/cli/aos"
     local link_target="$HOME/.local/bin/aos"
 
     # Ensure ~/.local/bin exists and is on PATH
@@ -855,7 +855,7 @@ setup_path() {
     chmod +x "$aos_bin"
 
     # Symlink cld (claude with bypassed permissions)
-    local cld_bin="$AOS_DIR/core/bin/cld"
+    local cld_bin="$AOS_DIR/core/bin/cli/cld"
     local cld_target="$HOME/.local/bin/cld"
     chmod +x "$cld_bin" 2>/dev/null
 
@@ -1127,7 +1127,7 @@ assert s.get('hooks', {}).get('SessionStart')
 
     # MCP servers — register AOS services into Claude Code's config
     _info "Syncing MCP servers..."
-    bash "$AOS_DIR/core/bin/aos" sync-mcp 2>/dev/null && _ok "MCP servers synced" || _warn "MCP sync — run 'aos sync-mcp' after deploy"
+    bash "$AOS_DIR/core/bin/cli/aos" sync-mcp 2>/dev/null && _ok "MCP servers synced" || _warn "MCP sync — run 'aos sync-mcp' after deploy"
 
     # projects dir — Claude Code per-project memory
     mkdir -p "$HOME/.claude/projects"
@@ -1180,11 +1180,11 @@ HOOK
     # Sync agents (system agents: chief, steward, advisor)
     _step "Syncing agents..."
     echo ""
-    bash "$AOS_DIR/core/bin/aos" sync-agents 2>&1 | sed 's/^/  /'
+    bash "$AOS_DIR/core/bin/cli/aos" sync-agents 2>&1 | sed 's/^/  /'
 
     # Activate onboard agent from catalog
     if [[ ! -f "$HOME/.claude/agents/onboard.md" ]]; then
-        "$AOS_DIR/core/bin/activate-agent" onboard 2>&1 | sed 's/^/  /'
+        "$AOS_DIR/core/bin/cli/activate-agent" onboard 2>&1 | sed 's/^/  /'
     else
         echo "  ✓ Onboard agent already active"
     fi
@@ -1239,10 +1239,10 @@ TRUST
     case "${dev_choice:-n}" in
         [Yy])
             touch "$USER_DIR/config/developer-mode"
-            bash "$AOS_DIR/core/bin/aos" sync-skills --all 2>&1 | sed 's/^/  /'
+            bash "$AOS_DIR/core/bin/cli/aos" sync-skills --all 2>&1 | sed 's/^/  /'
             ;;
         *)
-            bash "$AOS_DIR/core/bin/aos" sync-skills 2>&1 | sed 's/^/  /'
+            bash "$AOS_DIR/core/bin/cli/aos" sync-skills 2>&1 | sed 's/^/  /'
             ;;
     esac
 }
@@ -1844,7 +1844,7 @@ hook_defs = {
     'SessionEnd': [
         {'hooks': [
             {'type': 'command', 'command': 'python3 ~/aos/core/engine/work/session_close.py', 'async': True},
-            {'type': 'command', 'command': 'python3 ~/aos/core/bin/reconcile-sessions --hook --quiet', 'async': True},
+            {'type': 'command', 'command': 'python3 ~/aos/core/bin/crons/reconcile-sessions --hook --quiet', 'async': True},
         ]},
     ],
 }

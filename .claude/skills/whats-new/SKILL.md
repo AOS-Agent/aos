@@ -179,8 +179,8 @@ If yes, add the relevant config block to operator.yaml.
 ## Instrumentation
 
 ```bash
-~/aos/core/bin/telemetry event whats-new flow start
-~/aos/core/bin/telemetry event whats-new version "{old}→{new}"
+~/aos/core/bin/internal/telemetry event whats-new flow start
+~/aos/core/bin/internal/telemetry event whats-new version "{old}→{new}"
 # At end:
-~/aos/core/bin/telemetry event whats-new flow complete
+~/aos/core/bin/internal/telemetry event whats-new flow complete
 ```

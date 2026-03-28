@@ -73,7 +73,7 @@ tail -50 ~/.aos/logs/dashboard.log       # dashboard issues
 tail -50 ~/.aos/logs/crons/scheduler.log # cron job failures
 
 # 3. System context
-python3 ~/aos/core/bin/aos-report --context
+python3 ~/aos/core/bin/cli/aos-report --context
 ```
 
 Then trace: error message → stack trace → source file → root cause.
@@ -178,7 +178,7 @@ data = {
     'source_file': 'core/services/bridge/main.py'
 }
 result = subprocess.run(
-    ['python3', '$HOME/aos/core/bin/aos-report'],
+    ['python3', '$HOME/aos/core/bin/cli/aos-report'],
     input=json.dumps(data),
     capture_output=True, text=True, timeout=30
 )

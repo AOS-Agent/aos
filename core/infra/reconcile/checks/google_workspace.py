@@ -3,7 +3,7 @@ Invariant: Google Workspace MCP server is correctly configured.
 
 Checks:
 1. workspace-mcp binary is installed (via uv tool)
-2. Wrapper script exists at core/bin/google-workspace-mcp and uses absolute path
+2. Wrapper script exists at core/bin/internal/google-workspace-mcp and uses absolute path
 3. OAuth credentials exist in macOS Keychain
 4. MCP server is registered at user scope via `claude mcp add`
    (NOT in settings.json mcpServers — Claude Code ignores that location)
@@ -28,7 +28,7 @@ class GoogleWorkspaceCheck(ReconcileCheck):
     description = "Google Workspace MCP server is configured and healthy"
 
     CLAUDE_JSON = Path.home() / ".claude.json"
-    WRAPPER = Path.home() / "aos" / "core" / "bin" / "google-workspace-mcp"
+    WRAPPER = Path.home() / "aos" / "core" / "bin" / "internal" / "google-workspace-mcp"
     AGENT_SECRET = Path.home() / "aos" / "core" / "bin" / "agent-secret"
     REQUIRED_SECRETS = [
         "GOOGLE_OAUTH_CLIENT_ID",
@@ -106,7 +106,7 @@ class GoogleWorkspaceCheck(ReconcileCheck):
             return CheckResult(
                 name=self.name,
                 status=Status.NOTIFY,
-                message="Wrapper script missing at core/bin/google-workspace-mcp",
+                message="Wrapper script missing at core/bin/internal/google-workspace-mcp",
                 notify=True,
             )
 

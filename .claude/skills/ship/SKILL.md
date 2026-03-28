@@ -51,13 +51,13 @@ git diff origin/main --name-only
 # 6. Run self-test on current runtime
 # Note: this tests ~/aos/ (the running system), not the dev code.
 # It confirms the base system is healthy before shipping.
-cd ~/aos && python3 core/bin/aos self-test 2>&1
+cd ~/aos && python3 core/bin/cli/aos self-test 2>&1
 
 # 7. Dry-run reconcile from the dev workspace
 cd ~/project/aos && python3 core/infra/reconcile/runner.py check 2>&1
 
 # 8. Quality gate — code health, docs sync, consistency
-cd ~/project/aos && bash core/bin/ship-check 2>&1
+cd ~/project/aos && bash core/bin/cli/ship-check 2>&1
 # Exit 0 = all pass, 1 = failures (block), 2 = warnings (allow with note)
 
 # 9. Check for runtime data that shouldn't ship
@@ -116,7 +116,7 @@ Safety:    ✓ no runtime data, no secrets
 If there are uncommitted changes, list them clearly:
 ```
 Uncommitted (will be staged):
-  M core/bin/aos
+  M core/bin/cli/aos
   ?? .claude/skills/ship/SKILL.md (new, untracked)
 ```
 

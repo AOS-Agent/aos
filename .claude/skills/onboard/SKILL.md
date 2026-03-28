@@ -51,25 +51,25 @@ Record telemetry and session events at each phase:
 
 ```bash
 # Flow start:
-SESSION_ID=$(~/aos/core/bin/session-recorder start onboard)
-~/aos/core/bin/telemetry event onboard flow start
+SESSION_ID=$(~/aos/core/bin/internal/session-recorder start onboard)
+~/aos/core/bin/internal/telemetry event onboard flow start
 
 # Phase timing:
 PHASE_START=$(date +%s%3N)
-~/aos/core/bin/session-recorder event phase_start "{phase}"
+~/aos/core/bin/internal/session-recorder event phase_start "{phase}"
 # ... do the phase ...
 PHASE_END=$(date +%s%3N)
 DURATION=$((PHASE_END - PHASE_START))
-~/aos/core/bin/session-recorder event phase_end "{phase}"
-~/aos/core/bin/telemetry event onboard {phase} complete $DURATION
+~/aos/core/bin/internal/session-recorder event phase_end "{phase}"
+~/aos/core/bin/internal/telemetry event onboard {phase} complete $DURATION
 
 # On error:
-~/aos/core/bin/session-recorder error "{what}" "{context}"
-~/aos/core/bin/feedback --auto "Onboarding: {what}" "onboard" "{error}"
+~/aos/core/bin/internal/session-recorder error "{what}" "{context}"
+~/aos/core/bin/cli/feedback --auto "Onboarding: {what}" "onboard" "{error}"
 
 # Flow end:
-~/aos/core/bin/session-recorder end completed
-~/aos/core/bin/telemetry event onboard flow complete $TOTAL_DURATION
+~/aos/core/bin/internal/session-recorder end completed
+~/aos/core/bin/internal/telemetry event onboard flow complete $TOTAL_DURATION
 ```
 
 ---
@@ -225,7 +225,7 @@ AskUserQuestion:
 - question: "Name your main agent?"
 - options: ["Keep 'Chief'", "Give it a custom name"]
 
-If custom: `~/aos/core/bin/aos rename-agent {name}`
+If custom: `~/aos/core/bin/cli/aos rename-agent {name}`
 
 **Schedule** (`operator.yaml` → schedule.blocks):
 - Create blocks from what they described ("You mentioned teaching mornings — I'll block 8-12")
@@ -513,7 +513,7 @@ AskUserQuestion:
 - question: "Help improve AOS with anonymous stats?"
 - options: ["Opt in", "No thanks"]
 
-If yes: `~/aos/core/bin/telemetry opt-in`
+If yes: `~/aos/core/bin/internal/telemetry opt-in`
 
 `python3 ~/aos/core/engine/work/cli.py done "meet the team"`
 
@@ -649,7 +649,7 @@ echo "$ts_ip"
 
 Generate the connect script:
 ```bash
-~/aos/core/bin/generate-connect-script ~/Desktop/connect-to-aos.sh
+~/aos/core/bin/setup/generate-connect-script ~/Desktop/connect-to-aos.sh
 ```
 
 This creates a personalized script on the Desktop with this machine's
@@ -828,7 +828,7 @@ AskUserQuestion:
 - question: "How was the setup?"
 - options: ["Smooth", "Something was confusing", "Something broke"]
 
-If confusing or broke: ask what, file via `~/aos/core/bin/feedback --auto`
+If confusing or broke: ask what, file via `~/aos/core/bin/cli/feedback --auto`
 
 Write `~/.aos/config/onboarding.yaml`:
 ```yaml
@@ -1168,7 +1168,7 @@ Show: "We got through {completed phases}. Let's pick up at {next phase}."
 
 Automatic error capture:
 ```bash
-~/aos/core/bin/feedback --auto "Onboarding: {what failed}" "onboard" "{error}"
+~/aos/core/bin/cli/feedback --auto "Onboarding: {what failed}" "onboard" "{error}"
 ```
 
 ## Onboarding Log

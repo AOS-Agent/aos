@@ -185,7 +185,7 @@ Key parameters:
 
 **After every catalog agent dispatch, log the trust outcome:**
 ```bash
-python3 ~/aos/core/bin/trust-log record <agent> <capability> <result> --action "what was done"
+python3 ~/aos/core/bin/cli/trust-log record <agent> <capability> <result> --action "what was done"
 ```
 This is not optional — every dispatch to a catalog agent must be followed by a trust log entry.
 Results: approved (operator accepted), executed (agent acted), rejected (operator said no), reverted (operator undid it), escalated (agent deferred to operator).
@@ -346,7 +346,7 @@ Trust ramp is per-capability, not per-agent. Check `~/.aos/config/trust.yaml` be
 
 **After agent completes work, log the outcome:**
 ```bash
-python3 ~/aos/core/bin/trust-log record <agent> <capability> <result>
+python3 ~/aos/core/bin/cli/trust-log record <agent> <capability> <result>
 # result: approved | executed | rejected | reverted | escalated
 ```
 
@@ -356,4 +356,4 @@ python3 ~/aos/core/bin/trust-log record <agent> <capability> <result>
 - Deleting production data
 - Changing goal priorities
 
-**Review trust status:** `python3 ~/aos/core/bin/trust-review`
+**Review trust status:** `python3 ~/aos/core/bin/cli/trust-review`
