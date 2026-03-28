@@ -1,0 +1,27 @@
+#!/bin/bash
+# Patches ~/.claude/statusline.sh to append AOS version at the end.
+# Idempotent — safe to run multiple times.
+
+STATUSLINE="$HOME/.claude/statusline.sh"
+
+if [ ! -f "$STATUSLINE" ]; then
+  echo "No statusline.sh found at $STATUSLINE — skipping"
+  exit 0
+fi
+
+if grep -q 'AOS_VER' "$STATUSLINE" 2>/dev/null; then
+  echo "AOS version already in statusline — nothing to do"
+  exit 0
+fi
+
+# Add AOS_VER variable after the input line
+sed -i '' '/^input=\$(cat)/a\
+\
+# AOS version\
+AOS_VER=$(cat ~/aos/VERSION 2>/dev/null || echo "?")
+' "$STATUSLINE"
+
+# Append AOS version tag to the end of the output line
+sed -i '' 's|^OUT="${OUT}.*LINES_DEL.*|&  \\033[2m·\\033[0m \\033[33mAOS ${AOS_VER}\\033[0m"|' "$STATUSLINE"
+
+echo "Patched statusline with AOS version"
