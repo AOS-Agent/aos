@@ -23,6 +23,8 @@ class TwitterHandler(BasePlatformHandler):
                 content_id=content_id,
                 title=f"Tweet {content_id}",
                 content_type="tweet",
+                needs_fallback=True,
+                fallback_reason="twitter_text_only",
             )
 
         description = data.get("description", "") or ""

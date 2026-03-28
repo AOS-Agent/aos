@@ -166,11 +166,40 @@ This is opt-in — always ask before linking. If no initiatives match, skip sile
 | `--force` | Reprocess even if URL was already extracted |
 | `--json` | Output as JSON |
 
+## Fallback: Chrome MCP for Incomplete Extractions
+
+The CLI output may include a `FALLBACK_NEEDED: <reason>` line. This means yt-dlp returned incomplete data and the agent should fill in the gaps using Chrome MCP.
+
+### When you see `FALLBACK_NEEDED: twitter_text_only`
+
+yt-dlp can't extract text-only tweets. Use Chrome MCP to get the content:
+
+1. Open the tweet URL in a new tab: `mcp__claude-in-chrome__tabs_create_mcp`
+2. Wait for the page to load, then read the page: `mcp__claude-in-chrome__get_page_text`
+3. From the page text, extract: tweet text, author name, author handle, timestamp, engagement counts
+4. Use this data as the caption/description in your response
+5. If saving to vault, re-run the CLI with the extracted text piped in (or manually create the vault note)
+
+### When you see `FALLBACK_NEEDED: tiktok_ip_blocked`
+
+yt-dlp is IP-blocked for TikTok. Use Chrome MCP:
+
+1. Open the TikTok URL in a new tab: `mcp__claude-in-chrome__tabs_create_mcp`
+2. Read the page: `mcp__claude-in-chrome__get_page_text`
+3. Extract: video caption/description, author, hashtags, engagement counts
+4. Audio transcription won't be available via this path — note this in the response
+
+### General fallback rules
+
+- Only use Chrome MCP when `FALLBACK_NEEDED` appears in CLI output — don't preemptively bypass yt-dlp
+- Chrome MCP requires the browser extension to be active
+- If Chrome MCP also fails (page requires login, content is private), tell the user honestly
+
 ## Platform-Specific Notes
 
-**TikTok**: yt-dlp may be IP-blocked. If metadata returns a minimal result (just content ID), try Chrome MCP as a fallback to get the visible text content.
+**TikTok**: yt-dlp may be IP-blocked. The engine signals `FALLBACK_NEEDED: tiktok_ip_blocked` when this happens. Follow the Chrome MCP fallback procedure above.
 
-**X/Twitter text-only tweets**: yt-dlp only handles video tweets. For text-only tweets, use Chrome MCP's `get_page_text` on the tweet URL, then format as caption with no transcript.
+**X/Twitter text-only tweets**: yt-dlp only handles video tweets. The engine signals `FALLBACK_NEEDED: twitter_text_only` for text-only tweets. Follow the Chrome MCP fallback procedure above.
 
 ## Integration
 

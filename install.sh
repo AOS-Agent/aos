@@ -729,13 +729,34 @@ prereq_ffmpeg() {
 prereq_ytdlp() {
     if command -v yt-dlp &>/dev/null; then
         _skip "yt-dlp"
-        return 0
+    else
+        _step "Installing yt-dlp..."
+        brew install yt-dlp 2>&1 | tail -1
+        command -v yt-dlp &>/dev/null || _die "yt-dlp install failed"
+        _ok "yt-dlp"
     fi
 
-    _step "Installing yt-dlp..."
-    brew install yt-dlp 2>&1 | tail -1
-    command -v yt-dlp &>/dev/null || _die "yt-dlp install failed"
-    _ok "yt-dlp"
+    # PO Token plugin — required for YouTube since 2025
+    local ytdlp_python
+    ytdlp_python="$(head -1 "$(which yt-dlp)" | sed 's/^#!//')"
+    if [[ -x "$ytdlp_python" ]] && "$ytdlp_python" -c "import bgutil_ytdlp_pot_provider" &>/dev/null; then
+        _skip "yt-dlp PO Token plugin"
+    else
+        _step "Installing yt-dlp PO Token plugin..."
+        "$ytdlp_python" -m ensurepip 2>/dev/null || true
+        "$ytdlp_python" -m pip install bgutil-ytdlp-pot-provider 2>&1 | tail -1
+        _ok "yt-dlp PO Token plugin"
+    fi
+
+    # bgutil server (PO token generation scripts)
+    local bgutil_dir="$HOME/bgutil-ytdlp-pot-provider"
+    if [[ -d "$bgutil_dir/server/src" ]]; then
+        _skip "bgutil server"
+    else
+        _step "Cloning bgutil PO token server..."
+        git clone --depth 1 https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git "$bgutil_dir" 2>&1 | tail -1
+        _ok "bgutil server"
+    fi
 }
 
 prereq_youtube_transcript_api() {
@@ -748,6 +769,18 @@ prereq_youtube_transcript_api() {
     pip3 install --break-system-packages youtube-transcript-api 2>&1 | tail -1
     python3 -c "import youtube_transcript_api" &>/dev/null || _die "youtube-transcript-api install failed"
     _ok "youtube-transcript-api"
+}
+
+prereq_surya_ocr() {
+    if python3 -c "from surya.recognition import RecognitionPredictor" &>/dev/null; then
+        _skip "surya-ocr"
+        return 0
+    fi
+
+    _step "Installing surya-ocr + imagehash (video OCR)..."
+    pip3 install --break-system-packages "surya-ocr" "imagehash" "transformers>=4.40,<5" 2>&1 | tail -1
+    python3 -c "from surya.recognition import RecognitionPredictor" &>/dev/null || _die "surya-ocr install failed"
+    _ok "surya-ocr"
 }
 
 prereq_mlx_whisper() {
@@ -884,6 +917,7 @@ run_prereqs() {
     prereq_ffmpeg
     prereq_ytdlp
     prereq_youtube_transcript_api
+    prereq_surya_ocr
     prereq_mlx_whisper
     prereq_gh
     prereq_editor

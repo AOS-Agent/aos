@@ -33,6 +33,8 @@ def main():
                         help="File containing URLs (one per line)")
     parser.add_argument("--force", action="store_true",
                         help="Reprocess even if already extracted")
+    parser.add_argument("--no-ocr", action="store_true",
+                        help="Skip video frame OCR (faster)")
     parser.add_argument("--json", action="store_true", dest="json_output",
                         help="Output as JSON")
     args = parser.parse_args()
@@ -67,6 +69,7 @@ def main():
                 vault_dir=args.vault_dir,
                 whisper_model=args.model,
                 skip_transcript=args.metadata_only,
+                skip_ocr=args.no_ocr,
                 force=args.force,
             )
 
@@ -91,6 +94,8 @@ def main():
                     print(f"Transcript: {len(result.transcript)} chars ({result.transcript_source})")
                 if result.vault_path:
                     print(f"Vault:     {result.vault_path}")
+                if result.needs_fallback:
+                    print(f"FALLBACK_NEEDED: {result.fallback_reason}")
                 print(f"{'='*60}")
         else:
             print(f"Failed or skipped: {url}", file=sys.stderr)

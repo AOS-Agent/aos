@@ -46,9 +46,16 @@ class ExtractionResult:
     # Content (Tier 2 — populated on deep extraction)
     transcript: str | None = None
     transcript_source: str = ""  # captions | whisper | none
+    chapters: list[dict] = field(default_factory=list)  # [{start_time, title}]
+    comments: list[dict] = field(default_factory=list)  # [{author, text, like_count}]
+    ocr_text: list[dict] = field(default_factory=list)  # [{timestamp, text}]
 
     # Routing context
     source_context: SourceContext | None = None
+
+    # Fallback signals — when yt-dlp returns incomplete data
+    needs_fallback: bool = False
+    fallback_reason: str = ""  # e.g. "twitter_text_only", "tiktok_ip_blocked"
 
     # Output tracking
     vault_path: str | None = None
@@ -79,6 +86,8 @@ class ExtractionResult:
             "upload_date": self.upload_date,
             "transcript": self.transcript,
             "transcript_source": self.transcript_source,
+            "needs_fallback": self.needs_fallback,
+            "fallback_reason": self.fallback_reason,
             "vault_path": self.vault_path,
             "extracted_at": self.extracted_at,
         }

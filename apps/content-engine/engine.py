@@ -42,7 +42,8 @@ def extract_metadata_only(url: str) -> ExtractionResult | None:
 
 def extract(url: str, save_to_vault: bool = False, vault_dir: str | None = None,
             whisper_model: str = "medium", skip_transcript: bool = False,
-            force: bool = False, source_context: SourceContext | None = None,
+            skip_ocr: bool = False, force: bool = False,
+            source_context: SourceContext | None = None,
             ) -> ExtractionResult | None:
     """Full extraction pipeline: detect → metadata → transcribe → vault.
 
@@ -83,7 +84,16 @@ def extract(url: str, save_to_vault: bool = False, vault_dir: str | None = None,
     if source_context:
         result.source_context = source_context
 
-    # Step 2: Transcribe (if content has audio and transcription not skipped)
+    # Step 2: Fetch comments (YouTube only, deep extraction only)
+    if platform == "youtube" and not skip_transcript:
+        from platforms.youtube import YouTubeHandler
+        if isinstance(handler, YouTubeHandler):
+            print(f"[{platform}] Fetching top comments...")
+            result.comments = handler.fetch_comments(url)
+            if result.comments:
+                print(f"  Got {len(result.comments)} comments")
+
+    # Step 3: Transcribe (if content has audio and transcription not skipped)
     if not skip_transcript and result.has_audio:
         print(f"[{platform}] Transcribing ({result.duration}s audio)...")
         transcript, source = transcribe_url(
@@ -96,12 +106,27 @@ def extract(url: str, save_to_vault: bool = False, vault_dir: str | None = None,
         else:
             print("  No transcript available", file=sys.stderr)
 
-    # Step 3: Save to vault
+    # Step 4: OCR on-screen text (if video content and deep extraction)
+    if not skip_transcript and not skip_ocr and result.has_audio and not result.needs_fallback:
+        try:
+            from ocr import extract_ocr_text
+            print(f"[{platform}] Extracting on-screen text (OCR)...")
+            result.ocr_text = extract_ocr_text(url)
+            if result.ocr_text:
+                print(f"  OCR found text in {len(result.ocr_text)} frames")
+            else:
+                print("  No on-screen text detected")
+        except ImportError:
+            print("  OCR not available (surya-ocr not installed)", file=sys.stderr)
+        except Exception as e:
+            print(f"  OCR failed: {e}", file=sys.stderr)
+
+    # Step 5: Save to vault
     if save_to_vault:
         vault_path = save_vault_note(result, vault_dir=vault_dir)
         print(f"  Vault note: {vault_path}")
 
-    # Step 4: Record as processed
+    # Step 6: Record as processed
     mark_processed(url, content_id, platform,
                    tier="metadata" if skip_transcript else "deep",
                    vault_path=result.vault_path or "")

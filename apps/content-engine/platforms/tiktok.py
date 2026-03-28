@@ -24,6 +24,8 @@ class TikTokHandler(BasePlatformHandler):
                 content_id=content_id,
                 title=f"TikTok {content_id}",
                 content_type=content_type or "video",
+                needs_fallback=True,
+                fallback_reason="tiktok_ip_blocked",
             )
 
         description = data.get("description", "") or ""
