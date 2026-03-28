@@ -408,55 +408,73 @@ prereq_xcode_clt() {
     # EVERYTHING depends on this — Homebrew, Python, native gems, etc.
     # Must be first prereq. Must succeed before continuing.
 
-    # Check if CLT is already installed (the real check, not just git shim)
-    if [[ -e /Library/Developer/CommandLineTools/usr/bin/git ]]; then
+    local clt_dir="/Library/Developer/CommandLineTools"
+
+    # Check if CLT is already installed (the real check, not just the /usr/bin/git shim)
+    if [[ -e "$clt_dir/usr/bin/git" ]]; then
         _skip "Xcode Command Line Tools"
         return 0
     fi
 
     _step "Installing Xcode Command Line Tools (git, compiler, headers)..."
 
-    # Tier 1: Headless install via softwareupdate (works over SSH, no GUI)
-    # The placeholder file makes softwareupdate list CLT as available
-    # This is the same method Homebrew uses.
+    # ── Tier 1: Headless via softwareupdate ──────────────────────
+    # The placeholder file makes CLT appear in the softwareupdate catalog.
+    # This is the same method Homebrew uses. Works over SSH, no GUI.
     local clt_placeholder="/tmp/.com.apple.dt.CommandLineTools.installondemand.in-progress"
+
+    # Reset ignored updates (CLT might have been previously dismissed)
+    sudo /usr/sbin/softwareupdate --reset-ignored 2>/dev/null || true
     sudo touch "${clt_placeholder}" 2>/dev/null
 
-    local clt_label
-    clt_label=$(/usr/sbin/softwareupdate -l 2>&1 |
-        grep -B 1 -E 'Command Line Tools' |
-        awk -F'*' '/^ *\*/ {print $2}' |
-        sed -e 's/^ *Label: //' -e 's/^ *//' |
-        sort -V |
-        tail -n1)
+    _info "Checking Apple software update catalog..."
+    local su_output clt_label
+    su_output=$(/usr/sbin/softwareupdate -l 2>&1)
+
+    # Apple changes the output format across macOS versions — try multiple patterns
+    # Pattern 1: "* Label: Command Line Tools for Xcode-16.0"
+    clt_label=$(echo "$su_output" | awk -F': ' '/Label:.*Command Line/{print $2}' | sort -V | tail -1)
+    # Pattern 2: "   * Command Line Tools for Xcode-16.0"
+    if [[ -z "$clt_label" ]]; then
+        clt_label=$(echo "$su_output" | awk -F'\\* ' '/\* .*Command Line/{print $2}' | sort -V | tail -1)
+    fi
+    # Pattern 3: Broadest grep
+    if [[ -z "$clt_label" ]]; then
+        clt_label=$(echo "$su_output" | grep -o 'Command Line Tools[^"]*' | sort -V | tail -1)
+    fi
 
     if [[ -n "${clt_label}" ]]; then
         _info "Found: ${clt_label}"
-        _info "Downloading and installing (this may take a few minutes)..."
+        _info "Downloading and installing (this takes a few minutes)..."
         sudo /usr/sbin/softwareupdate -i "${clt_label}" 2>&1 | tail -5
-        sudo /usr/bin/xcode-select --switch /Library/Developer/CommandLineTools 2>/dev/null
+        sudo /usr/bin/xcode-select --switch "$clt_dir" 2>/dev/null
+    else
+        _info "CLT not listed in software update catalog"
+        _log "softwareupdate output: $su_output"
     fi
 
     sudo rm -f "${clt_placeholder}" 2>/dev/null
 
     # Check if Tier 1 succeeded
-    if [[ -e /Library/Developer/CommandLineTools/usr/bin/git ]]; then
-        hash -r 2>/dev/null  # Refresh shell's command cache
+    if [[ -e "$clt_dir/usr/bin/git" ]]; then
+        hash -r 2>/dev/null
         _ok "Xcode Command Line Tools"
         return 0
     fi
 
-    # Tier 2: GUI fallback with automatic polling (only in interactive terminal)
+    # ── Tier 2: xcode-select --install (GUI, separate Apple infra) ──
+    # This uses Apple's developer tools servers, NOT the softwareupdate catalog.
+    # Works when softwareupdate fails. Requires an interactive session.
     if test -t 0; then
-        _info "Headless install failed — trying GUI installer..."
+        _info "Trying GUI installer (uses different Apple server)..."
         xcode-select --install 2>/dev/null
 
         if [[ $? -eq 0 ]]; then
-            _info "Waiting for installation to complete..."
+            _info "Installer launched — waiting for completion..."
             local elapsed=0
             while [[ ${elapsed} -lt 1800 ]]; do
-                if [[ -e /Library/Developer/CommandLineTools/usr/bin/git ]]; then
-                    sudo /usr/bin/xcode-select --switch /Library/Developer/CommandLineTools 2>/dev/null
+                if [[ -e "$clt_dir/usr/bin/git" ]]; then
+                    sudo /usr/bin/xcode-select --switch "$clt_dir" 2>/dev/null
                     hash -r 2>/dev/null
                     _ok "Xcode Command Line Tools"
                     return 0
@@ -469,7 +487,36 @@ prereq_xcode_clt() {
         fi
     fi
 
-    _die "Xcode Command Line Tools installation failed. Install manually: xcode-select --install"
+    # ── Tier 3: Remove broken state and retry ────────────────────
+    # Sometimes CLT is partially installed or the catalog is stale.
+    if [[ -d "$clt_dir" ]]; then
+        _info "Removing broken CLT installation and retrying..."
+        sudo rm -rf "$clt_dir"
+        sudo xcode-select --reset 2>/dev/null || true
+
+        sudo touch "${clt_placeholder}" 2>/dev/null
+        su_output=$(/usr/sbin/softwareupdate -l 2>&1)
+        clt_label=$(echo "$su_output" | awk -F': ' '/Label:.*Command Line/{print $2}' | sort -V | tail -1)
+        [[ -z "$clt_label" ]] && clt_label=$(echo "$su_output" | awk -F'\\* ' '/\* .*Command Line/{print $2}' | sort -V | tail -1)
+
+        if [[ -n "$clt_label" ]]; then
+            _info "Found after reset: $clt_label"
+            sudo /usr/sbin/softwareupdate -i "$clt_label" 2>&1 | tail -5
+            sudo /usr/bin/xcode-select --switch "$clt_dir" 2>/dev/null
+        fi
+        sudo rm -f "${clt_placeholder}" 2>/dev/null
+
+        if [[ -e "$clt_dir/usr/bin/git" ]]; then
+            hash -r 2>/dev/null
+            _ok "Xcode Command Line Tools"
+            return 0
+        fi
+    fi
+
+    _fail "Xcode CLT auto-install failed"
+    _warn "Download manually from: https://developer.apple.com/download/all/"
+    _warn "Search for 'Command Line Tools', install, then re-run this installer"
+    _die "Xcode Command Line Tools required"
 }
 
 prereq_git() {
