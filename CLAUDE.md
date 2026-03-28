@@ -95,6 +95,32 @@ core/infra/reconcile/
 - Skills are symlinked from `~/aos/.claude/skills/` — edits in framework propagate
 - Settings.json harness files need explicit `allow` permissions (bypassPermissions doesn't cover them)
 - Test with both Homebrew Python and system Python 3.9 (some users only have 3.9)
+- **Never hardcode lists the filesystem declares.** When checking for services, skills, agents, or LaunchAgents — discover from the filesystem. Lists drift. Directories don't. ship-check enforces this.
+- **Destructive operations require operator approval.** Any operation that deletes files, removes services, or drops data must present what it will do and get explicit approval. No auto-delete. No "cleanup on fix." Report, then ask.
+
+## Vault Structure
+
+Two top-level folders. No exceptions.
+
+```
+~/vault/
+├── log/              WHAT HAPPENED (temporal, append-only)
+│   ├── YYYY-MM-DD.md   dailies (auto-compiled, hijri dates, comms, journal)
+│   ├── YYYY-WNN.md     weekly reviews
+│   ├── sessions/       session exports
+│   └── friction/       friction reports
+│
+└── knowledge/        WHAT WE KNOW (permanent, pipeline-driven)
+    ├── captures/       stage 1-2: raw input (extracts, clips)
+    ├── research/       stage 3: investigated
+    ├── references/     no stage: stable lookups (specs, SOPs)
+    ├── synthesis/      stage 4: distilled insights
+    ├── decisions/      stage 5: locked, authoritative
+    ├── expertise/      stage 6: living patterns
+    └── initiatives/    lifecycle docs (status in frontmatter)
+```
+
+See `~/vault/SCHEMA.md` for frontmatter contracts per document type. Every file must have: title, type, date, tags, source_ref. Knowledge files carry a `stage` (1-6). `project` field for scoping.
 
 ## Key Specs
 
