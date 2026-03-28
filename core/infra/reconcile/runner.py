@@ -141,6 +141,8 @@ def run_all(dry_run: bool = False) -> list[CheckResult]:
         for r in needs_notify:
             emoji = "⚠️" if r.status == Status.NOTIFY else "❌"
             lines.append(f"  {emoji} {r.name}: {r.message}")
+            if r.detail:
+                lines.append(f"      {r.detail[:200]}")
         _notify_telegram("\n".join(lines))
 
     return results
@@ -160,6 +162,9 @@ def cmd_run():
             Status.ERROR: "✗",
         }.get(r.status, "?")
         print(f"  {icon} {r.name}: {r.message}")
+        if r.detail and r.status in (Status.NOTIFY, Status.ERROR):
+            for line in r.detail.split("; "):
+                print(f"      {line}")
 
     # Summary
     fixed = [r for r in results if r.status == Status.FIXED]

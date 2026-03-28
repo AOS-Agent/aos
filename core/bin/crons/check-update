@@ -212,27 +212,58 @@ apply() {
         launchctl kickstart -k "gui/$uid/com.aos.listen" 2>/dev/null
     fi
 
-    # Health check after update
-    sleep 3
-    local health_ok=true
-    for svc in bridge dashboard listen; do
-        if ! launchctl list 2>/dev/null | grep -q "com.aos.$svc"; then
-            log "WARN: $svc not running after update"
-            health_ok=false
+    # Health check after update — poll with retries
+    # Python services with venvs need time to import and initialize
+    local health_ok=false
+    local max_attempts=6
+    local attempt=0
+    while [[ $attempt -lt $max_attempts ]]; do
+        sleep 2
+        attempt=$((attempt + 1))
+        local all_up=true
+        for svc in bridge dashboard listen; do
+            if ! launchctl list 2>/dev/null | grep -q "com.aos.$svc"; then
+                all_up=false
+                break
+            fi
+        done
+        if [[ "$all_up" == true ]]; then
+            health_ok=true
+            break
         fi
+        [[ $attempt -lt $max_attempts ]] && log "Health check attempt $attempt/$max_attempts — waiting..."
     done
 
     if [[ "$health_ok" == false ]]; then
-        log "Health check failed — rolling back to $old_hash"
-        git checkout "$old_hash" 2>/dev/null
-        for la in com.aos.bridge com.aos.dashboard com.aos.listen; do
-            launchctl bootout "gui/$uid/$la" 2>/dev/null
-            launchctl bootstrap "gui/$uid" "$HOME/Library/LaunchAgents/${la}.plist" 2>/dev/null
-            launchctl kickstart -k "gui/$uid/$la" 2>/dev/null
+        # Log which services are actually down
+        for svc in bridge dashboard listen; do
+            if ! launchctl list 2>/dev/null | grep -q "com.aos.$svc"; then
+                log "WARN: $svc not running after update"
+            fi
         done
-        notify "⚠️ Update to $new_version rolled back — services were unhealthy. Developer notified."
-        bash "$AOS_DIR/core/bin/cli/feedback" --auto "Update rollback: $new_version → $old_version" "auto-update" 2>/dev/null || true
-        return 1
+    fi
+
+    if [[ "$health_ok" == false ]]; then
+        # Do NOT rollback code after migrations have run.
+        # Migrations may have changed data layout (vault, instance dirs, config).
+        # Rolling back code while data is in the new layout creates a worse state
+        # than having a service temporarily down.
+        log "Health check failed after update to $new_version — services may need manual restart"
+        log "NOT rolling back: migrations already applied to data layer"
+
+        # Try one more restart of failed services
+        for svc in bridge dashboard listen; do
+            if ! launchctl list 2>/dev/null | grep -q "com.aos.$svc"; then
+                log "Attempting restart of $svc..."
+                launchctl bootout "gui/$uid/com.aos.$svc" 2>/dev/null
+                launchctl bootstrap "gui/$uid" "$HOME/Library/LaunchAgents/com.aos.${svc}.plist" 2>/dev/null
+                launchctl kickstart -k "gui/$uid/com.aos.$svc" 2>/dev/null
+            fi
+        done
+
+        notify "⚠️ Update to $new_version applied but some services are unhealthy. Attempting restart. Check 'aos status' if issues persist."
+        bash "$AOS_DIR/core/bin/cli/feedback" --auto "Update $new_version: services unhealthy post-update" "auto-update" 2>/dev/null || true
+        # Don't return 1 — the update DID apply. Just services need attention.
     fi
 
     # Read release notes from CHANGELOG.md

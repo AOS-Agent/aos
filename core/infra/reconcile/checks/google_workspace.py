@@ -28,6 +28,7 @@ class GoogleWorkspaceCheck(ReconcileCheck):
     description = "Google Workspace MCP server is configured and healthy"
 
     CLAUDE_JSON = Path.home() / ".claude.json"
+    CLAUDE_MCP_JSON = Path.home() / ".claude" / "mcp.json"
     WRAPPER = Path.home() / "aos" / "core" / "bin" / "internal" / "google-workspace-mcp"
     AGENT_SECRET = Path.home() / "aos" / "core" / "bin" / "agent-secret"
     REQUIRED_SECRETS = [
@@ -35,13 +36,33 @@ class GoogleWorkspaceCheck(ReconcileCheck):
         "GOOGLE_OAUTH_CLIENT_SECRET",
         "GOOGLE_PRIMARY_EMAIL",
     ]
+    # Legacy server names to remove during migration
+    LEGACY_NAMES = ["mcp-gsuite", "mcp_gsuite", "gsuite"]
 
-    def _read_claude_json(self):
-        """Read ~/.claude.json safely."""
+    def _read_json(self, path: Path) -> dict:
+        """Read a JSON file safely."""
         try:
-            return json.loads(self.CLAUDE_JSON.read_text())
+            return json.loads(path.read_text())
         except Exception:
             return {}
+
+    def _write_json(self, path: Path, data: dict):
+        """Write a JSON file preserving formatting."""
+        path.write_text(json.dumps(data, indent=2) + "\n")
+
+    def _read_claude_json(self):
+        return self._read_json(self.CLAUDE_JSON)
+
+    def _legacy_registered(self) -> list[str]:
+        """Return list of legacy MCP server names still registered."""
+        found = []
+        for path in (self.CLAUDE_JSON, self.CLAUDE_MCP_JSON):
+            data = self._read_json(path)
+            servers = data.get("mcpServers", {})
+            for name in self.LEGACY_NAMES:
+                if name in servers:
+                    found.append(f"{name} in {path.name}")
+        return found
 
     def _mcp_registered(self) -> bool:
         """Check if google-workspace is registered in ~/.claude.json."""
@@ -55,6 +76,10 @@ class GoogleWorkspaceCheck(ReconcileCheck):
         return str(self.WRAPPER) in command or "google-workspace-mcp" in command
 
     def check(self) -> bool:
+        # 0. Legacy MCP servers must not be registered
+        if self._legacy_registered():
+            return False
+
         # 1. Wrapper script exists and is executable
         if not self.WRAPPER.exists() or not self.WRAPPER.stat().st_mode & 0o111:
             return False
@@ -100,6 +125,19 @@ class GoogleWorkspaceCheck(ReconcileCheck):
 
     def fix(self) -> CheckResult:
         issues = []
+
+        # Remove legacy mcp-gsuite registrations
+        for path in (self.CLAUDE_JSON, self.CLAUDE_MCP_JSON):
+            data = self._read_json(path)
+            servers = data.get("mcpServers", {})
+            removed = []
+            for name in self.LEGACY_NAMES:
+                if name in servers:
+                    del servers[name]
+                    removed.append(name)
+            if removed:
+                self._write_json(path, data)
+                issues.append(f"Removed legacy MCP servers ({', '.join(removed)}) from {path.name}")
 
         # Check wrapper
         if not self.WRAPPER.exists():
