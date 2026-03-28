@@ -403,17 +403,22 @@ prereq_qmd() {
     fi
 }
 
-prereq_git() {
-    # Check if git is already available (CLT, Xcode.app, or Homebrew)
-    if command -v git &>/dev/null; then
-        _skip "git"
+prereq_xcode_clt() {
+    # Xcode Command Line Tools provide: git, clang, make, headers.
+    # EVERYTHING depends on this — Homebrew, Python, native gems, etc.
+    # Must be first prereq. Must succeed before continuing.
+
+    # Check if CLT is already installed (the real check, not just git shim)
+    if [[ -e /Library/Developer/CommandLineTools/usr/bin/git ]]; then
+        _skip "Xcode Command Line Tools"
         return 0
     fi
 
-    _step "Installing Xcode Command Line Tools (includes git)..."
+    _step "Installing Xcode Command Line Tools (git, compiler, headers)..."
 
     # Tier 1: Headless install via softwareupdate (works over SSH, no GUI)
     # The placeholder file makes softwareupdate list CLT as available
+    # This is the same method Homebrew uses.
     local clt_placeholder="/tmp/.com.apple.dt.CommandLineTools.installondemand.in-progress"
     sudo touch "${clt_placeholder}" 2>/dev/null
 
@@ -428,43 +433,59 @@ prereq_git() {
     if [[ -n "${clt_label}" ]]; then
         _info "Found: ${clt_label}"
         _info "Downloading and installing (this may take a few minutes)..."
-        if sudo /usr/sbin/softwareupdate -i "${clt_label}" 2>&1 | tail -3; then
-            sudo /usr/bin/xcode-select --switch /Library/Developer/CommandLineTools 2>/dev/null
-        fi
+        sudo /usr/sbin/softwareupdate -i "${clt_label}" 2>&1 | tail -5
+        sudo /usr/bin/xcode-select --switch /Library/Developer/CommandLineTools 2>/dev/null
     fi
 
     sudo rm -f "${clt_placeholder}" 2>/dev/null
 
     # Check if Tier 1 succeeded
-    if command -v git &>/dev/null; then
-        _ok "git (via Xcode Command Line Tools)"
+    if [[ -e /Library/Developer/CommandLineTools/usr/bin/git ]]; then
+        hash -r 2>/dev/null  # Refresh shell's command cache
+        _ok "Xcode Command Line Tools"
         return 0
     fi
 
-    # Tier 2: GUI fallback with polling (only in interactive terminal)
+    # Tier 2: GUI fallback with automatic polling (only in interactive terminal)
     if test -t 0; then
-        _info "Trying GUI installer..."
+        _info "Headless install failed — trying GUI installer..."
         xcode-select --install 2>/dev/null
 
-        _info "Waiting for installation to complete..."
-        local elapsed=0
-        while [[ ${elapsed} -lt 1800 ]]; do
-            if command -v git &>/dev/null; then
-                sudo /usr/bin/xcode-select --switch /Library/Developer/CommandLineTools 2>/dev/null
-                _ok "git (via Xcode Command Line Tools)"
-                return 0
-            fi
-            sleep 5
-            elapsed=$((elapsed + 5))
-            (( elapsed % 30 == 0 )) && printf "."
-        done
-        echo ""
+        if [[ $? -eq 0 ]]; then
+            _info "Waiting for installation to complete..."
+            local elapsed=0
+            while [[ ${elapsed} -lt 1800 ]]; do
+                if [[ -e /Library/Developer/CommandLineTools/usr/bin/git ]]; then
+                    sudo /usr/bin/xcode-select --switch /Library/Developer/CommandLineTools 2>/dev/null
+                    hash -r 2>/dev/null
+                    _ok "Xcode Command Line Tools"
+                    return 0
+                fi
+                sleep 5
+                elapsed=$((elapsed + 5))
+                (( elapsed % 30 == 0 )) && printf "."
+            done
+            echo ""
+        fi
     fi
 
-    _fail "git not available after CLT install"
-    _warn "Install manually: xcode-select --install"
-    _warn "Then re-run this installer"
-    return 1
+    _die "Xcode Command Line Tools installation failed. Install manually: xcode-select --install"
+}
+
+prereq_git() {
+    # After CLT install, git should be available. Just verify.
+    if command -v git &>/dev/null; then
+        _skip "git"
+        return 0
+    fi
+    # CLT is installed but git not on PATH — add it
+    if [[ -e /Library/Developer/CommandLineTools/usr/bin/git ]]; then
+        export PATH="/Library/Developer/CommandLineTools/usr/bin:$PATH"
+        hash -r 2>/dev/null
+        _ok "git (from CLT, added to PATH)"
+        return 0
+    fi
+    _die "git not found — Xcode CLT may need reinstalling: xcode-select --install"
 }
 
 prereq_gh() {
@@ -804,6 +825,7 @@ prereq_claude_remote() {
 }
 
 run_prereqs() {
+    prereq_xcode_clt
     prereq_git
     prereq_homebrew
     prereq_python3
