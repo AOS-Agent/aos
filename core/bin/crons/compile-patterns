@@ -7,12 +7,12 @@ The idea: when agents do the same thing 3+ times successfully, extract the
 pattern and make it a script. Next time, no LLM reasoning needed.
 
 Data sources:
-  1. Session exports in ~/vault/ops/sessions/*.md (rich: tools, files, summary)
+  1. Session exports in ~/vault/log/sessions/*.md (rich: tools, files, summary)
   2. Execution logs in ~/.aos/logs/execution/*.jsonl (structured: task, approach, commands)
 
 Output:
   - Shell scripts in ~/.aos/patterns/{hash}.sh
-  - Pattern docs in ~/vault/ops/patterns/{hash}.md
+  - Pattern docs in ~/vault/knowledge/expertise/{hash}.md
   - Registry in ~/.aos/config/patterns.yaml
   - Telegram notification when new patterns compiled
 
@@ -45,11 +45,11 @@ for i, arg in enumerate(sys.argv):
     if arg == "--threshold" and i + 1 < len(sys.argv):
         THRESHOLD = int(sys.argv[i + 1])
 
-VAULT_SESSIONS = Path.home() / "vault" / "ops" / "sessions"
+VAULT_SESSIONS = Path.home() / "vault" / "log" / "sessions"
 EXEC_LOGS = Path.home() / ".aos" / "logs" / "execution"
 PATTERNS_DIR = Path.home() / ".aos" / "patterns"
 PATTERNS_YAML = Path.home() / ".aos" / "config" / "patterns.yaml"
-VAULT_PATTERNS = Path.home() / "vault" / "ops" / "patterns"
+VAULT_PATTERNS = Path.home() / "vault" / "knowledge" / "expertise"
 AGENT_SECRET = Path.home() / "aos" / "core" / "bin" / "agent-secret"
 
 

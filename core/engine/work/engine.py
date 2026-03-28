@@ -58,6 +58,8 @@ def _save(data: dict) -> None:
             try:
                 with os.fdopen(fd, "w") as f:
                     yaml.dump(data, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+                    f.flush()
+                    os.fsync(f.fileno())
                 os.replace(tmp_path, str(WORK_FILE))
             except Exception:
                 os.unlink(tmp_path)
@@ -312,6 +314,8 @@ def _log_activity(action: str, task_id: str = None, title: str = None,
                 try:
                     with os.fdopen(fd, "w") as f:
                         yaml.dump(events, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+                        f.flush()
+                        os.fsync(f.fileno())
                     os.replace(tmp, str(ACTIVITY_FILE))
                 except Exception:
                     os.unlink(tmp)

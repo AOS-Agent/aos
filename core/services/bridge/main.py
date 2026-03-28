@@ -5,7 +5,6 @@ import setproctitle; setproctitle.setproctitle("aos-bridge")
 import atexit
 import glob as _glob
 import logging
-import logging.handlers
 import os
 import signal
 import subprocess
@@ -23,28 +22,18 @@ RUNTIME_DIR = Path.home() / ".aos" / "services" / "bridge"
 LOG_DIR = Path.home() / ".aos" / "logs"
 PID_FILE = RUNTIME_DIR / "bridge.pid"
 
-# ── Log rotation — 5MB max, keep 3 backups ─────────────────────────────────
-LOG_DIR.mkdir(parents=True, exist_ok=True)
+# ── Structured JSON logging via shared lib ──────────────────────────────────
+_lib_path = str(Path.home() / "aos" / "core" / "lib")
+if _lib_path not in sys.path:
+    sys.path.insert(0, _lib_path)
 
-_formatter = logging.Formatter("%(asctime)s [%(name)s] %(levelname)s: %(message)s")
-
-# Rotating file handler (replaces unbounded stderr writes)
-_file_handler = logging.handlers.RotatingFileHandler(
-    LOG_DIR / "bridge.log",
-    maxBytes=5 * 1024 * 1024,  # 5MB
-    backupCount=3,
+from lib.log import get_logger  # noqa: E402
+logger = get_logger(
+    "bridge",
+    log_file="~/.aos/logs/bridge.log",
+    max_bytes=5 * 1024 * 1024,  # 5MB
+    backup_count=3,
 )
-_file_handler.setFormatter(_formatter)
-
-# Still log to stderr for launchd visibility
-_stderr_handler = logging.StreamHandler()
-_stderr_handler.setFormatter(_formatter)
-
-logging.basicConfig(
-    level=logging.INFO,
-    handlers=[_file_handler, _stderr_handler],
-)
-logger = logging.getLogger("bridge")
 
 # Suppress httpx polling noise
 logging.getLogger("httpx").setLevel(logging.WARNING)

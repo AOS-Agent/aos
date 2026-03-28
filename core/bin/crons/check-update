@@ -171,9 +171,9 @@ apply() {
     bash "$AOS_DIR/core/bin/aos" sync-rules 2>/dev/null || true
     bash "$AOS_DIR/core/bin/aos" sync-mcp 2>/dev/null || true
 
-    # Check if any pyproject.toml changed — rebuild affected venvs
+    # Check if any pyproject.toml or requirements.lock changed — rebuild affected venvs
     local changed_services
-    changed_services=$(git diff --name-only "$old_hash..HEAD" 2>/dev/null | grep "core/services/.*/pyproject.toml" | sed 's|core/services/\(.*\)/pyproject.toml|\1|' || true)
+    changed_services=$(git diff --name-only "$old_hash..HEAD" 2>/dev/null | grep -E "core/services/.*/(pyproject\.toml|requirements\.lock)" | sed 's|core/services/\([^/]*\)/.*|\1|' | sort -u || true)
     if [[ -n "$changed_services" ]]; then
         log "Dependencies changed in: $changed_services"
         for svc in $changed_services; do

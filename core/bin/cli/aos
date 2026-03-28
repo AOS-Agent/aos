@@ -385,6 +385,31 @@ except py_compile.PyCompileError as e:
             echo "  ~ Version tracking not initialized"
         fi
 
+        # Validate config files
+        validate_output=$(python3 -c "
+import sys
+sys.path.insert(0, '$AOS_DIR/core')
+from lib.validate import validate_all_configs
+results = validate_all_configs()
+errors = [r for r in results if r.level == 'error']
+warnings = [r for r in results if r.level == 'warning']
+for r in errors:
+    print(f'  ✗ Config error: {r.message}  ({r.path})')
+for r in warnings:
+    print(f'  ~ Config warning: {r.message}  ({r.path})')
+if errors:
+    sys.exit(1)
+" 2>&1)
+        validate_exit=$?
+        if [ -n "$validate_output" ]; then
+            echo "$validate_output"
+        fi
+        if [ "$validate_exit" -eq 0 ]; then
+            echo "  ✓ Config validation passed"
+        else
+            ((errors++))
+        fi
+
         echo ""
         if [ "$errors" -eq 0 ]; then
             echo "  ✓ All checks passed"
@@ -535,9 +560,19 @@ TASKS
                 fi
             fi
 
-            # Extract deps from pyproject.toml
-            local deps
-            deps=$(python3 -c "
+            # Install deps — prefer requirements.lock (pinned) over pyproject.toml (unpinned)
+            local lockfile="$src/requirements.lock"
+            if [[ -f "$lockfile" ]]; then
+                echo "    Installing from requirements.lock (pinned versions)..."
+                if ! uv pip install -p "$dst/.venv/bin/python" -r "$lockfile" 2>&1 | tail -5; then
+                    echo "  ✗ $name: pip install from lock file failed"
+                    return 1
+                fi
+            else
+                # Fallback: extract deps from pyproject.toml (unpinned)
+                echo "    WARNING: No requirements.lock — installing unpinned from pyproject.toml"
+                local deps
+                deps=$(python3 -c "
 try:
     import tomllib
 except ImportError:
@@ -561,16 +596,16 @@ with open('$src/pyproject.toml', 'rb') as f:
 print('\n'.join(deps))
 " 2>/dev/null)
 
-            if [[ -z "$deps" ]]; then
-                echo "  ✗ $name: could not read dependencies"
-                return 1
-            fi
+                if [[ -z "$deps" ]]; then
+                    echo "  ✗ $name: could not read dependencies"
+                    return 1
+                fi
 
-            # Install deps — show output so failures are visible
-            echo "    Installing: $(echo "$deps" | tr '\n' ' ')"
-            if ! echo "$deps" | uv pip install -p "$dst/.venv/bin/python" -r - 2>&1 | tail -5; then
-                echo "  ✗ $name: pip install failed"
-                return 1
+                echo "    Installing: $(echo "$deps" | tr '\n' ' ')"
+                if ! echo "$deps" | uv pip install -p "$dst/.venv/bin/python" -r - 2>&1 | tail -5; then
+                    echo "  ✗ $name: pip install failed"
+                    return 1
+                fi
             fi
 
             # Verify critical imports work

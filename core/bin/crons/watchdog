@@ -119,7 +119,7 @@ You are the system technician. Service '${name}' has been flagged by the watchdo
 1. Read the relevant logs
 2. Diagnose the root cause
 3. Attempt a fix
-4. Write a brief vault note at ~/vault/ops/watchdog-escalation-$(date '+%Y-%m-%d')-${name}.md
+4. Write a brief vault note at ~/vault/log/watchdog-escalation-$(date '+%Y-%m-%d')-${name}.md
 5. Send a Telegram message reporting what you found and what you did"
 
     local escaped_prompt

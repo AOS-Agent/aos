@@ -239,7 +239,7 @@ If custom: `~/aos/core/bin/aos rename-agent {name}`
 **Daily note:**
 Save their ramble transcript as their first daily note:
 ```bash
-# Write to ~/vault/daily/YYYY-MM-DD.md
+# Write to ~/vault/log/YYYY-MM-DD.md
 ```
 
 This is their first entry in the knowledge vault. Explain:

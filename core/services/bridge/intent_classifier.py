@@ -838,7 +838,7 @@ def handle_trust(text: str) -> str:
     import yaml
     from pathlib import Path
 
-    people_db_path = Path.home() / "vault" / "people" / "people.db"
+    people_db_path = Path.home() / ".aos" / "data" / "people.db"
     trust_path = Path.home() / ".aos" / "config" / "trust.yaml"
 
     try:

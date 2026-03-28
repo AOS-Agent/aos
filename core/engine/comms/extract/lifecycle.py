@@ -27,7 +27,7 @@ from pathlib import Path
 log = logging.getLogger(__name__)
 
 STATE_FILE = Path.home() / ".aos" / "data" / ".extraction-state.json"
-PEOPLE_DB = Path.home() / "vault" / "people" / "people.db"
+PEOPLE_DB = Path.home() / ".aos" / "data" / "people.db"
 
 
 def _load_state() -> dict:

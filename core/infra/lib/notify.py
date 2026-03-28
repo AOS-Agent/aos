@@ -18,7 +18,12 @@ import urllib.request
 import urllib.error
 import json
 
+from lib.rate_limit import RateLimiter
+
 logger = logging.getLogger(__name__)
+
+# Enforce Telegram's recommended max of 1 message/second per bot.
+_RATE_LIMITER = RateLimiter(max_per_second=1.0)
 
 TELEGRAM_MSG_LIMIT = 4096
 MAX_RETRIES = 3
@@ -124,6 +129,7 @@ def send_telegram(
 
 def _send_with_retry(bot_token: str, payload: dict) -> bool:
     """Send a single Telegram API request with exponential backoff."""
+    _RATE_LIMITER.wait()
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
     data = json.dumps(payload).encode("utf-8")
 

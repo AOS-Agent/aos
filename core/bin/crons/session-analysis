@@ -5,7 +5,7 @@ Scans JSONL session files for REAL user corrections, frustration, and
 repeated mistakes. Filters out system noise (XML caveats, task notifications,
 session continuations) before pattern matching.
 
-Outputs a friction report to ~/vault/ops/friction/ with categorized
+Outputs a friction report to ~/vault/log/friction/ with categorized
 patterns and a synthesis section identifying actionable improvements.
 
 Run weekly via cron (Sunday 22:00) or manually:
@@ -21,7 +21,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 CLAUDE_PROJECTS = Path.home() / ".claude" / "projects"
-VAULT_FRICTION = Path.home() / "vault" / "ops" / "friction"
+VAULT_FRICTION = Path.home() / "vault" / "log" / "friction"
 
 # Messages to skip entirely — system noise
 SKIP_PATTERNS = re.compile(

@@ -2,7 +2,7 @@
 """Export Claude Code session transcripts to vault as searchable markdown notes.
 
 Reads JSONL session files from ~/.claude/projects/ and writes clean,
-structured summaries to ~/vault/ops/sessions/.
+structured summaries to ~/vault/log/sessions/.
 
 The 10x version: uses session structure (timestamps, tools, file paths)
 to generate real summaries, not raw message dumps.
@@ -20,7 +20,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
-VAULT_SESSIONS = Path.home() / "vault" / "ops" / "sessions"
+VAULT_SESSIONS = Path.home() / "vault" / "log" / "sessions"
 CLAUDE_PROJECTS = Path.home() / ".claude" / "projects"
 EXPORTED_TRACKER = Path.home() / ".aos" / "logs" / "exported-sessions.json"
 

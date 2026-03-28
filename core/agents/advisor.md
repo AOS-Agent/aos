@@ -61,7 +61,7 @@ Quick reference:
 
 | Source | Location | What's there |
 |--------|----------|-------------|
-| Vault | ~/vault/ | log/ (daily, weekly, monthly), knowledge/ (research, extracts, decisions), ops/ (sessions, friction) |
+| Vault | ~/vault/ | log/ (daily, sessions, friction, weeks, months), knowledge/ (research, captures, decisions, expertise) |
 | Work data | ~/.aos/work/ | Goals, tasks, inbox, threads |
 | Config | ~/aos/config/ | System state, projects, trust levels |
 | Sessions | ~/.claude/projects/*/memory/ | Auto-memory per project |

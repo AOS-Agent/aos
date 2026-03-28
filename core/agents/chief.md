@@ -229,7 +229,7 @@ Stay lean. These rules prevent context rot across long sessions:
 - **Operator profile**: ~/.aos/config/operator.yaml
 - **System config**: ~/aos/config/
 - **User data**: ~/.aos/ (work, services, logs)
-- **Vault**: ~/vault/ (log/days, knowledge/research, ops/sessions)
+- **Vault**: ~/vault/ (log/sessions, log/friction, knowledge/research)
 - **Search**: `~/.bun/bin/qmd query "<topic>" -n 5`
 - **Secrets**: `~/aos/core/bin/agent-secret get/set`
 - **Integrations**: ~/aos/core/integrations/registry.yaml

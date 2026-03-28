@@ -16,7 +16,7 @@ Run the analysis script:
 python3 ~/aos/bin/session-analysis --days 7
 ```
 
-This scans all JSONL session files from the last 7 days and writes a categorized report to `~/vault/reviews/session-friction-{date}.md`.
+This scans all JSONL session files from the last 7 days and writes a categorized report to `~/vault/log/friction/session-friction-{date}.md`.
 
 ## Step 2: Read the report
 

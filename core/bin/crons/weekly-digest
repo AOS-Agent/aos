@@ -11,7 +11,7 @@ Runs every Sunday at 20:00. Aggregates:
   - Week-over-week trends
 
 Output:
-  - Vault note: ~/vault/reviews/weekly-{date}.md
+  - Vault note: ~/vault/log/weeks/weekly-{date}.md
   - Telegram message: summary with focus items
   - Previous week comparison for trends
 

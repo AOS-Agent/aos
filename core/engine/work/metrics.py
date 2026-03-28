@@ -5,6 +5,7 @@ Provides: throughput, cycle time, lead time, WIP, capture sources, goal health.
 All functions are pure — they take data in, return metrics out. No I/O.
 """
 
+import os
 from datetime import datetime, date, timedelta
 from pathlib import Path
 import yaml
@@ -212,8 +213,21 @@ def save_weekly_snapshot(metrics: dict, metrics_dir: Path = None):
     # Add generation timestamp
     metrics["generated"] = datetime.now().isoformat(timespec="seconds")
 
-    with open(filepath, "w") as f:
-        yaml.dump(metrics, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+    # Atomic write: temp file + rename prevents corruption on crash
+    import tempfile
+    fd, tmp_path = tempfile.mkstemp(dir=str(metrics_dir), suffix=".yaml.tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            yaml.dump(metrics, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, str(filepath))
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
 
     return filepath
 
