@@ -508,6 +508,132 @@ fi
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 7. INSTANCE IMPACT — changes that affect running machines need migrations
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+echo ""
+echo "Instance Impact"
+echo "───────────────"
+
+if [[ "${1:-}" != "--all" ]]; then
+    diff_files=$(git diff origin/main --name-only --diff-filter=ACMRD 2>/dev/null || true)
+
+    # Paths that signal instance-layer impact when changed
+    instance_impact=0
+    instance_signals=""
+
+    # Integration wrappers — swapping or adding MCPs affects ~/.claude.json
+    if echo "$diff_files" | grep -qE 'core/bin/internal/|core/infra/integrations/.*/(setup\.sh|manifest\.yaml)'; then
+        instance_impact=1
+        instance_signals="${instance_signals}\n    Integration wrapper or manifest changed"
+    fi
+
+    # Service restructuring — moving services affects LaunchAgents and venvs
+    if echo "$diff_files" | grep -qE 'config/preserved-services\.yaml|config/launchagents/'; then
+        instance_impact=1
+        instance_signals="${instance_signals}\n    Service config or LaunchAgent templates changed"
+    fi
+
+    # Account/config schema — affects ~/.aos/config/
+    if echo "$diff_files" | grep -qE 'config/defaults/.*\.yaml'; then
+        instance_impact=1
+        instance_signals="${instance_signals}\n    Config defaults changed (instance copies may need update)"
+    fi
+
+    # Symlink targets — agents, skills, rules restructuring
+    if echo "$diff_files" | grep -qE '^core/agents/.*\.md$|^\.claude/skills/.*/SKILL\.md$|^\.claude/rules/'; then
+        # Only flag if files were DELETED or RENAMED (additions are fine)
+        deleted_or_renamed=$(git diff origin/main --name-only --diff-filter=DR 2>/dev/null \
+            | grep -cE '^core/agents/|^\.claude/skills/|^\.claude/rules/' || true)
+        deleted_or_renamed=${deleted_or_renamed:-0}
+        if [[ "$deleted_or_renamed" -gt 0 ]]; then
+            instance_impact=1
+            instance_signals="${instance_signals}\n    Agent/skill/rule deleted or renamed (symlinks need update)"
+        fi
+    fi
+
+    # sys.path or import path changes — moving Python modules that instance code imports
+    # Only flag if a NEW path appears (not if an existing wrong path is being corrected)
+    if [[ -n "$diff_files" ]]; then
+        path_const_changes=$(echo "$diff_files" | grep '\.py$' | while IFS= read -r f; do
+            [[ -z "$f" || ! -f "$f" ]] && continue
+            # Look for lines where the NEW version introduces a different .aos path
+            # Compare removed (-) and added (+) lines — only flag if the destination changed
+            diff_output=$(git diff origin/main -- "$f" 2>/dev/null)
+            old_paths=$(echo "$diff_output" | grep -E '^\-.*_SERVICE\s*=.*\.aos' | grep -oE '\.aos/[^"'"'"']+' || true)
+            new_paths=$(echo "$diff_output" | grep -E '^\+.*_SERVICE\s*=.*\.aos' | grep -oE '\.aos/[^"'"'"']+' || true)
+            # If a path moved to a new location (not just added or fixed), flag it
+            if [[ -n "$old_paths" && -n "$new_paths" && "$old_paths" != "$new_paths" ]]; then
+                echo "MOVED: $f ($old_paths → $new_paths)"
+            fi
+        done)
+        if [[ -n "$path_const_changes" ]]; then
+            instance_impact=1
+            instance_signals="${instance_signals}\n    Instance path relocated in code — verify instance data was also moved:"
+            instance_signals="${instance_signals}\n    $path_const_changes"
+        fi
+    fi
+
+    # Check if a migration exists in the same diff
+    has_new_migration=$(echo "$diff_files" | grep -c 'core/infra/migrations/[0-9]' || true)
+    has_new_migration=${has_new_migration:-0}
+
+    if [[ "$instance_impact" -gt 0 && "$has_new_migration" -eq 0 ]]; then
+        fail "Instance-impacting changes detected without a migration:"
+        printf "$instance_signals\n"
+        echo "    → Add a migration in core/infra/migrations/ in the same commit"
+    elif [[ "$instance_impact" -gt 0 && "$has_new_migration" -gt 0 ]]; then
+        pass "Instance-impacting changes have accompanying migration"
+    else
+        pass "No instance-impacting changes detected"
+    fi
+fi
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 8. IMPORT HEALTH — critical modules must import cleanly
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+echo ""
+echo "Import Health"
+echo "─────────────"
+
+# Smoke-test that key engine modules can be imported without crashing
+# This catches broken sys.path references, missing db modules, etc.
+import_smoke_errors=0
+for entry in \
+    "core.engine.comms.resolver:Comms resolver" \
+    "core.engine.comms.orchestrator:Comms orchestrator" \
+    "core.engine.comms.consumers.people_intel:People intelligence consumer" \
+    "core.engine.work.cli:Work CLI" \
+    "core.engine.work.inject_context:Context injection"; do
+    mod="${entry%%:*}"
+    label="${entry##*:}"
+    mod_path=$(echo "$mod" | tr '.' '/')
+    # Only test if the file exists in dev workspace
+    if [[ -f "$DEV/${mod_path}.py" ]]; then
+        err=$(python3 -c "
+import sys, os
+sys.path.insert(0, '$DEV')
+os.chdir('$DEV')
+try:
+    __import__('${mod}')
+except ImportError as e:
+    print(f'ImportError: {e}')
+    sys.exit(1)
+except Exception:
+    pass  # Non-import errors are OK (missing runtime deps, etc.)
+" 2>&1)
+        if [[ $? -ne 0 ]]; then
+            fail "$label: $err"
+            import_smoke_errors=$((import_smoke_errors + 1))
+        fi
+    fi
+done
+if [[ $import_smoke_errors -eq 0 ]]; then
+    pass "Critical module imports OK"
+fi
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Summary
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 echo ""
