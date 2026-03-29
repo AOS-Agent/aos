@@ -385,22 +385,100 @@ def run_job(name: str, job: dict, status: dict):
     entry["duration_s"]  = duration
     entry["run_count"]   = entry.get("run_count", 0) + 1
 
-    if exit_code != 0:
+    # Determine success — check success_codes in job config (default: [0])
+    success_codes = job.get("success_codes", [0])
+    if not isinstance(success_codes, list):
+        success_codes = [0]
+    is_success = exit_code in success_codes
+
+    if not is_success:
         entry["last_failure"] = run_ts
+        entry["consecutive_failures"] = entry.get("consecutive_failures", 0) + 1
+        # Alert on 3 consecutive failures (max once per day per job)
+        _maybe_alert_failure(name, entry, log_file)
     else:
         if "last_failure" not in entry:
             entry["last_failure"] = None
+        entry["consecutive_failures"] = 0
 
     log(f"{name}: done (exit: {exit_code}, duration: {duration}s)")
 
     # Ping healthchecks.io on success
-    if exit_code == 0 and "ping" in job:
+    if is_success and "ping" in job:
         _ping_url = str(job["ping"]).strip()
         try:
             urllib.request.urlopen(_ping_url, timeout=10)
             log(f"{name}: pinged {_ping_url}")
         except Exception as exc:
             log(f"{name}: WARNING — ping failed ({exc})")
+
+# ── Failure alerting ─────────────────────────────────────────────────────────
+
+def _maybe_alert_failure(name: str, entry: dict, log_file: Path):
+    """Send Telegram alert after 3 consecutive failures. Max once per day per job."""
+    consecutive = entry.get("consecutive_failures", 0)
+    if consecutive < 3:
+        return
+
+    # Throttle: max once per day per job
+    last_alert = entry.get("last_alert")
+    if last_alert:
+        try:
+            last_dt = datetime.fromisoformat(last_alert)
+            if (datetime.now() - last_dt).total_seconds() < 86400:
+                return
+        except ValueError:
+            pass
+
+    # Get last line of log for context
+    last_line = ""
+    try:
+        with open(log_file) as f:
+            lines = f.readlines()
+            for line in reversed(lines):
+                stripped = line.strip()
+                if stripped and not stripped.startswith("---"):
+                    last_line = stripped[:200]
+                    break
+    except Exception:
+        pass
+
+    msg = (
+        f"⚠ Cron '{name}' has failed {consecutive} times in a row.\n"
+        f"Last error: {last_line}"
+    )
+
+    try:
+        agent_secret = HOME / "aos" / "core" / "bin" / "agent-secret"
+        token = subprocess.run(
+            [str(agent_secret), "get", "TELEGRAM_BOT_TOKEN"],
+            capture_output=True, text=True, timeout=5,
+        ).stdout.strip()
+        chat_id = subprocess.run(
+            [str(agent_secret), "get", "TELEGRAM_CHAT_ID"],
+            capture_output=True, text=True, timeout=5,
+        ).stdout.strip()
+        if token and chat_id:
+            data = json.dumps({"chat_id": chat_id, "text": msg}).encode()
+            req = urllib.request.Request(
+                f"https://api.telegram.org/bot{token}/sendMessage",
+                data=data, headers={"Content-Type": "application/json"}, method="POST",
+            )
+            urllib.request.urlopen(req, timeout=10)
+            entry["last_alert"] = ts()
+            log(f"{name}: sent failure alert (consecutive: {consecutive})")
+    except Exception as e:
+        log(f"{name}: alert send failed — {e}")
+
+
+def prune_ghost_jobs(jobs: dict, status: dict):
+    """Remove status entries for jobs no longer in crons.yaml."""
+    ghosts = [name for name in status if name not in jobs]
+    for name in ghosts:
+        del status[name]
+        log(f"Pruned ghost job '{name}' from status.json")
+    return len(ghosts)
+
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
@@ -441,6 +519,11 @@ def main():
     jobs   = load_crons()
     status = load_status()
     now    = datetime.now()
+
+    # Prune status entries for jobs removed from crons.yaml
+    pruned = prune_ghost_jobs(jobs, status)
+    if pruned:
+        save_status(status)
 
     log(f"scheduler tick — {len(jobs)} jobs defined")
 

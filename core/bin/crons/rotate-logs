@@ -89,3 +89,5 @@ else
     [[ "$count" -gt 0 ]] && echo "Rotated $count log file(s)."
     [[ "$jsonl_count" -gt 0 ]] && echo "Compressed $jsonl_count old trust log(s)."
 fi
+
+exit 0

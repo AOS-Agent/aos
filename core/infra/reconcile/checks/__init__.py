@@ -12,6 +12,7 @@ from .context_freshness import ContextFreshnessCheck
 from .claude_defaults import ClaudeDefaultsCheck
 from .dead_code import DeadCodeCheck
 from .runtime_protection import RuntimeProtectionCheck
+from .deployment_health import DeploymentHealthCheck
 from .instance_hygiene import InstanceHygieneCheck
 
 # Add new checks here — they run in this order on every update cycle.
@@ -59,6 +60,10 @@ ALL_CHECKS = [
 
     # Hygiene — detect orphaned scripts and stale module refs
     DeadCodeCheck,
+
+    # Deployment health — verify shipped components are actually deployed
+    # (venvs exist, cron scripts exist, git hooks installed, QMD collections up)
+    DeploymentHealthCheck,
 
     # Instance hygiene — diff framework declarations against instance state,
     # clean orphaned service venvs, stale LaunchAgents, broken symlinks,
