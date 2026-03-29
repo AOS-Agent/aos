@@ -27,9 +27,14 @@ from __future__ import annotations
 import argparse
 import json
 import sqlite3
+import sys
 import time
 from pathlib import Path
 from typing import Optional
+
+_PEOPLE_SERVICE = Path.home() / ".aos" / "services" / "people"
+if str(_PEOPLE_SERVICE) not in sys.path:
+    sys.path.insert(0, str(_PEOPLE_SERVICE))
 
 from db import connect, now_ts
 
