@@ -2,7 +2,7 @@
 
 Fallback chain:
   1. YouTube captions API (free, instant — YouTube only)
-  2. AOS Transcriber service at localhost:7601 (shared Whisper Large V3 Turbo)
+  2. AOS Transcriber service at localhost:7602 (shared Whisper Large V3 Turbo)
   3. mlx-whisper local (Apple Silicon, if service is down)
   4. openai-whisper CLI (last resort)
 
@@ -19,7 +19,7 @@ import urllib.error
 from pathlib import Path
 
 
-TRANSCRIBER_URL = os.environ.get("TRANSCRIBER_URL", "http://127.0.0.1:7601")
+TRANSCRIBER_URL = os.environ.get("TRANSCRIBER_URL", "http://127.0.0.1:7602")
 
 
 def get_youtube_captions(video_id: str) -> str | None:
@@ -70,7 +70,7 @@ def download_audio(url: str, output_dir: str) -> str | None:
 
 
 def _transcribe_service(audio_path: str) -> str | None:
-    """Transcribe via the AOS Transcriber service (localhost:7601)."""
+    """Transcribe via the AOS Transcriber service (localhost:7602)."""
     try:
         payload = json.dumps({
             "audio_path": audio_path,
