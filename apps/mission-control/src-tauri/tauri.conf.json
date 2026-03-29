@@ -25,6 +25,8 @@
           "x": 16,
           "y": 16
         },
+        "resizable": true,
+        "zoomHotkeysEnabled": true,
         "decorations": true,
         "transparent": false
       }
@@ -35,7 +37,7 @@
       "iconAsTemplate": true
     },
     "security": {
-      "csp": "default-src 'self'; connect-src 'self' http://localhost:4096 http://localhost:4097; img-src 'self' asset: https://asset.localhost; style-src 'self' 'unsafe-inline'"
+      "csp": "default-src 'self'; connect-src 'self' http://localhost:4096 http://localhost:4097 http://localhost:4098 http://127.0.0.1:4098; img-src 'self' asset: https://asset.localhost; style-src 'self' 'unsafe-inline'"
     }
   },
   "bundle": {

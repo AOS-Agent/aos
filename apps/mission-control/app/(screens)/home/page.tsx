@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { CheckSquare, Clock, Inbox, Activity, CheckCircle2 } from 'lucide-react';
 import { useWork } from '@/hooks/useWork';
 import { useServices } from '@/hooks/useServices';
@@ -64,21 +64,25 @@ export default function HomePage() {
     setDateStr(new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }));
   }, []);
 
-  // Top tasks: active first, then todo sorted by priority, cap at 8
   const allTasks = data?.tasks ?? [];
-  const activeTasks = allTasks.filter(t => t.status === 'active' || t.status === 'waiting');
-  const todoTasks = allTasks
-    .filter(t => t.status === 'todo')
-    .sort((a, b) => a.priority - b.priority);
-  const topTasks = [...activeTasks, ...todoTasks].slice(0, 8);
-
-  // Recently completed (last 5, most recent first)
-  const recentDone = allTasks
-    .filter(t => t.status === 'done' && t.completed)
-    .sort((a, b) => new Date(b.completed!).getTime() - new Date(a.completed!).getTime())
-    .slice(0, 5);
-
   const inbox = data?.inbox ?? [];
+
+  const { topTasks, activeTasks, todoTasks, recentDone } = useMemo(() => {
+    const active = allTasks.filter(t => t.status === 'active' || t.status === 'waiting');
+    const todo = allTasks
+      .filter(t => t.status === 'todo')
+      .sort((a, b) => a.priority - b.priority);
+    const done = allTasks
+      .filter(t => t.status === 'done' && t.completed)
+      .sort((a, b) => new Date(b.completed!).getTime() - new Date(a.completed!).getTime())
+      .slice(0, 5);
+    return {
+      topTasks: [...active, ...todo].slice(0, 8),
+      activeTasks: active,
+      todoTasks: todo,
+      recentDone: done,
+    };
+  }, [allTasks]);
 
   return (
     <div>

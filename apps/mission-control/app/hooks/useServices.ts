@@ -2,7 +2,7 @@
 
 import { useQuery } from '@tanstack/react-query';
 
-const API = '/api';
+const API = 'http://localhost:4096/api';
 
 export interface ServiceStatus {
   status: 'online' | 'offline' | 'unknown';

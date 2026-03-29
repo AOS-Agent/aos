@@ -2,7 +2,7 @@
 
 import { useQuery } from '@tanstack/react-query';
 
-const API = '/api';
+const API = 'http://localhost:4096/api';
 
 export interface CronJob {
   name: string;
@@ -26,7 +26,7 @@ export function useCrons() {
   const { data, ...rest } = useQuery({
     queryKey: ['crons'],
     queryFn: fetchCrons,
-    refetchInterval: 30_000,
+    refetchInterval: 120_000,
   });
   return { crons: data?.jobs ?? [], ...rest };
 }

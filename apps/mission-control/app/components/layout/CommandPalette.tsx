@@ -111,17 +111,25 @@ export default function CommandPalette() {
     const timer = setTimeout(async () => {
       setSearching(true);
       try {
-        const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
-        if (res.ok) {
-          const results = await res.json();
-          setVaultResults(results.slice(0, 5));
+        const { Command } = await import('@tauri-apps/plugin-shell');
+        const output = await Command.create('qmd', ['query', q, '-n', '8', '--json']).execute();
+        if (output.code === 0 && output.stdout) {
+          const parsed = JSON.parse(output.stdout);
+          const results = Array.isArray(parsed) ? parsed : parsed.results || [];
+          setVaultResults(results.slice(0, 5).map((r: Record<string, unknown>) => ({
+            title: r.title || r.path || 'Untitled',
+            path: r.path || '',
+            collection: r.collection || '',
+            snippet: r.snippet || r.context || '',
+            score: r.score || 0,
+          })));
         }
       } catch {
         // QMD unavailable
       } finally {
         setSearching(false);
       }
-    }, 300);
+    }, 500);
 
     return () => clearTimeout(timer);
   }, [q, open]);
@@ -191,7 +199,7 @@ export default function CommandPalette() {
 
   return (
     <div
-      className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-start justify-center pt-[18vh]"
+      className="fixed inset-0 bg-black/50 z-50 flex items-start justify-center pt-[18vh]"
       onClick={(e) => { if (e.target === e.currentTarget) setOpen(false); }}
     >
       <div className="max-w-[640px] w-full mx-4 bg-bg-secondary border border-border-secondary rounded-[10px] shadow-high overflow-hidden">

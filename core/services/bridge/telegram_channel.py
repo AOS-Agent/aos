@@ -1718,6 +1718,16 @@ class TelegramChannel:
             except Exception as e:
                 logger.warning(f"Bridge API failed to start: {e}", exc_info=True)
 
+        # ── Auto-warm persistent session so Mission Control works immediately ──
+        try:
+            from session_manager import get_persistent_session
+            session = get_persistent_session()
+            if not session.alive:
+                asyncio.create_task(session.start())
+                logger.info("Persistent session warming started")
+        except Exception as e:
+            logger.warning(f"Failed to auto-warm persistent session: {e}")
+
         # ── Replay in-flight message from crash ──
         pending = _load_inflight()
         if not pending or not pending.get("text"):

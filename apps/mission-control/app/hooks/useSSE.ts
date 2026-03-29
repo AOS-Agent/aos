@@ -4,7 +4,7 @@ import { useEffect, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useRealtimeStore } from '@/store/realtime';
 
-const SSE_URL = '/api/stream';
+const SSE_URL = 'http://localhost:4096/api/stream';
 
 /**
  * Connects to the dashboard SSE stream and invalidates
@@ -45,16 +45,29 @@ export function useSSE() {
       es.addEventListener('activity', (e) => {
         try {
           const data = JSON.parse(e.data);
-          addEvent({ type: 'activity', data, timestamp: Date.now() });
+          addEvent({
+            id: data.id ?? crypto.randomUUID(),
+            type: 'activity',
+            source: data.source ?? 'sse',
+            message: data.message ?? '',
+            data,
+            timestamp: data.timestamp ?? new Date().toISOString(),
+          });
         } catch {}
       });
 
       es.addEventListener('work_update', (e) => {
-        // Invalidate work queries — tasks, projects, inbox will refetch
         queryClient.invalidateQueries({ queryKey: ['work'] });
         try {
           const data = JSON.parse(e.data);
-          addEvent({ type: 'work_update', data, timestamp: Date.now() });
+          addEvent({
+            id: data.id ?? crypto.randomUUID(),
+            type: 'work_update',
+            source: data.source ?? 'work',
+            message: data.message ?? '',
+            data,
+            timestamp: data.timestamp ?? new Date().toISOString(),
+          });
         } catch {}
       });
 
@@ -62,7 +75,14 @@ export function useSSE() {
         queryClient.invalidateQueries({ queryKey: ['services'] });
         try {
           const data = JSON.parse(e.data);
-          addEvent({ type: 'health', data, timestamp: Date.now() });
+          addEvent({
+            id: data.id ?? crypto.randomUUID(),
+            type: 'health',
+            source: data.source ?? 'health',
+            message: data.message ?? '',
+            data,
+            timestamp: data.timestamp ?? new Date().toISOString(),
+          });
         } catch {}
       });
 

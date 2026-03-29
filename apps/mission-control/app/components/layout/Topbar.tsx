@@ -4,15 +4,14 @@ import { usePathname } from 'next/navigation';
 import {
   Menu,
   Search,
-  Pause,
-  Send,
   Settings,
   RefreshCw,
   Sun,
   Moon,
 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useUIStore } from '@/store/ui';
 
 /** Map pathname segments to display names. */
@@ -51,6 +50,14 @@ export default function Topbar() {
 
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
 
+  const handleDrag = useCallback((e: React.MouseEvent) => {
+    // Only drag from the header itself or spacer, not from buttons
+    const target = e.target as HTMLElement;
+    if (target.closest('button') || target.closest('input') || target.closest('kbd')) return;
+    e.preventDefault();
+    getCurrentWindow().startDragging();
+  }, []);
+
   useEffect(() => {
     const saved = localStorage.getItem('mc-theme') as 'dark' | 'light' | null;
     if (saved) {
@@ -69,8 +76,12 @@ export default function Topbar() {
   }
 
   return (
-    <header className="h-12 shrink-0 flex items-center px-4 gap-3 bg-bg border-b border-border">
-      {/* Left section */}
+    <header
+      className="h-12 shrink-0 flex items-center px-4 gap-3 bg-bg border-b border-border select-none"
+      onMouseDown={handleDrag}
+    >
+      {/* Left section — offset for traffic lights */}
+      <div className="w-[54px] shrink-0" />
       <button
         type="button"
         onClick={toggleSidebar}
@@ -99,24 +110,6 @@ export default function Topbar() {
           <kbd className="text-[11px] font-mono leading-none bg-bg-quaternary text-text-quaternary rounded-xs px-1.5 py-0.5">
             ⌘K
           </kbd>
-        </button>
-
-        {/* Pause */}
-        <button
-          type="button"
-          className="h-8 px-3 flex items-center gap-1.5 rounded-sm text-text-tertiary hover:text-text-secondary hover:bg-hover transition-colors duration-100"
-        >
-          <Pause className="w-4 h-4" />
-          <span className="text-xs font-medium">Pause</span>
-        </button>
-
-        {/* Ping */}
-        <button
-          type="button"
-          className="h-8 px-3 flex items-center gap-1.5 rounded-sm text-text-tertiary hover:text-text-secondary hover:bg-hover transition-colors duration-100"
-        >
-          <Send className="w-4 h-4" />
-          <span className="text-xs font-medium">Ping</span>
         </button>
 
         {/* Theme toggle */}

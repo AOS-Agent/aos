@@ -7,9 +7,11 @@ import Sidebar from "@/components/layout/Sidebar";
 import Topbar from "@/components/layout/Topbar";
 import CommandPalette from "@/components/layout/CommandPalette";
 import { useSSE } from "@/hooks/useSSE";
+import { useNotifications } from "@/hooks/useNotifications";
 
 function SSEProvider({ children }: { children: ReactNode }) {
   useSSE();
+  useNotifications();
   return <>{children}</>;
 }
 

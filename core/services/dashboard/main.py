@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo
 import httpx
 import yaml
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from starlette.responses import StreamingResponse
@@ -32,6 +33,17 @@ WORKSPACE = Path.home() / "aos"
 registry = AgentRegistry(WORKSPACE)
 
 app = FastAPI(title="AOS Dashboard")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:3000",     # Next.js dev server
+        "tauri://localhost",         # Tauri production webview
+        "https://tauri.localhost",   # Tauri v2 alternative origin
+    ],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 def _get_version() -> str:

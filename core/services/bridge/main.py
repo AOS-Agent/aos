@@ -262,6 +262,32 @@ def _load_operator_config() -> dict:
     return {}
 
 
+def _start_api_standalone():
+    """Start the Bridge API server without Telegram (fallback when creds missing).
+
+    Mission Control only needs the API server and persistent session —
+    Telegram is optional. This keeps MC working even during credential issues.
+    """
+    import asyncio
+
+    async def _run():
+        from api_server import start_api_server
+        await start_api_server()
+        logger.info("Bridge API started in standalone mode (no Telegram)")
+
+        # Auto-warm persistent session
+        from session_manager import get_persistent_session
+        session = get_persistent_session()
+        await session.start()
+        logger.info("Persistent session warmed (standalone mode)")
+
+        # Block forever — keep the API server running
+        while True:
+            await asyncio.sleep(3600)
+
+    asyncio.run(_run())
+
+
 def main():
     # ── PID lock — prevent duplicate instances ────────────────────────────────
     _acquire_pid_lock()
@@ -286,11 +312,12 @@ def main():
             time.sleep(RETRY_DELAY)
 
     if not bot_token or not chat_id_str:
-        logger.error(
+        logger.warning(
             "Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID in keychain after "
-            f"{MAX_RETRIES} attempts. Is onboarding complete?"
+            f"{MAX_RETRIES} attempts — starting API-only mode for Mission Control"
         )
-        sys.exit(1)
+        _start_api_standalone()
+        return
 
     chat_id = int(chat_id_str)
 

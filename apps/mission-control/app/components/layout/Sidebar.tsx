@@ -25,6 +25,7 @@ import {
 import { useUIStore } from '@/store/ui';
 import { useQueryClient } from '@tanstack/react-query';
 import { useCallback } from 'react';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 
 // Map routes to the query keys they need
 const PREFETCH_MAP: Record<string, string[]> = {
@@ -117,8 +118,11 @@ export default function Sidebar() {
         transition: 'width 220ms var(--ease-in-out)',
       }}
     >
-      {/* Traffic light padding */}
-      <div className="h-12 shrink-0" />
+      {/* Traffic light padding — draggable for window move */}
+      <div
+        className="h-12 shrink-0 select-none"
+        onMouseDown={(e) => { e.preventDefault(); getCurrentWindow().startDragging(); }}
+      />
 
       {/* Operator profile — doubles as Home button */}
       <Link
