@@ -543,7 +543,7 @@ prereq_gh() {
 
     _step "Installing GitHub CLI..."
     brew install gh 2>&1 | tail -1
-    command -v gh &>/dev/null || _die "GitHub CLI install failed"
+    command -v gh &>/dev/null || { _warn "GitHub CLI — install failed (install later: brew install gh)"; return 0; }
     _ok "GitHub CLI"
 }
 
@@ -710,7 +710,7 @@ prereq_jq() {
 
     _step "Installing jq..."
     brew install jq 2>&1 | tail -1
-    command -v jq &>/dev/null || _die "jq install failed"
+    command -v jq &>/dev/null || { _warn "jq — install failed (install later: brew install jq)"; return 0; }
     _ok "jq"
 }
 
@@ -722,7 +722,7 @@ prereq_ffmpeg() {
 
     _step "Installing ffmpeg..."
     brew install ffmpeg 2>&1 | tail -3
-    command -v ffmpeg &>/dev/null || _die "ffmpeg install failed"
+    command -v ffmpeg &>/dev/null || { _warn "ffmpeg — install failed (media features won't work until fixed: brew install ffmpeg)"; return 0; }
     _ok "ffmpeg"
 }
 
@@ -732,7 +732,7 @@ prereq_ytdlp() {
     else
         _step "Installing yt-dlp..."
         brew install yt-dlp 2>&1 | tail -1
-        command -v yt-dlp &>/dev/null || _die "yt-dlp install failed"
+        command -v yt-dlp &>/dev/null || { _warn "yt-dlp — install failed (YouTube downloads won't work until fixed: brew install yt-dlp)"; return 0; }
         _ok "yt-dlp"
     fi
 
@@ -779,7 +779,7 @@ prereq_surya_ocr() {
 
     _step "Installing surya-ocr + imagehash (video OCR)..."
     pip3 install --break-system-packages "surya-ocr" "imagehash" "transformers>=4.40,<5" 2>&1 | tail -1
-    python3 -c "from surya.recognition import RecognitionPredictor" &>/dev/null || _die "surya-ocr install failed"
+    python3 -c "from surya.recognition import RecognitionPredictor" &>/dev/null || { _warn "surya-ocr — install failed (video OCR won't work until fixed)"; return 0; }
     _ok "surya-ocr"
 }
 
