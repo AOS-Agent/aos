@@ -8,8 +8,10 @@ v2: Project-scoped IDs, fuzzy resolution, subtasks, handoff context.
 """
 
 import fcntl
+import logging
 import os
 import re
+import subprocess
 import tempfile
 import yaml
 import urllib.request
@@ -17,7 +19,79 @@ from datetime import datetime, date
 from pathlib import Path
 from difflib import SequenceMatcher
 
+_gh_log = logging.getLogger("work.github")
+
 DASHBOARD_URL = "http://127.0.0.1:4096"
+AOS_REPO = "hishamalhadi/aos"  # GitHub repo for issue sync
+
+
+# ── GitHub Issues sync (public roadmap) ────────────────────
+# Only syncs: title, priority label, open/closed status.
+# No handoff, notes, sessions, or personal data ever leaves the machine.
+
+def _gh_create_issue(task_id: str, title: str, priority: int = 3,
+                     subtask_titles: list[str] | None = None) -> str | None:
+    """Create a GitHub Issue. Returns the issue URL or None on failure."""
+    try:
+        labels = f"task,P{priority}"
+        body = f"**Task ID:** `{task_id}`"
+        if subtask_titles:
+            labels += ",initiative"
+            body += "\n\n## Subtasks\n\n"
+            body += "\n".join(f"- [ ] {st}" for st in subtask_titles)
+
+        result = subprocess.run(
+            ["gh", "issue", "create",
+             "--repo", AOS_REPO,
+             "--title", f"[{task_id}] {title}",
+             "--body", body,
+             "--label", labels],
+            capture_output=True, text=True, timeout=15,
+        )
+        if result.returncode == 0:
+            url = result.stdout.strip()
+            _gh_log.info(f"Created issue: {url}")
+            return url
+        _gh_log.warning(f"gh issue create failed: {result.stderr[:200]}")
+    except Exception as e:
+        _gh_log.debug(f"GitHub sync skipped: {e}")
+    return None
+
+
+def _gh_close_issue(task_id: str) -> bool:
+    """Close a GitHub Issue by searching for its task ID in the title."""
+    try:
+        # Find the issue number by searching
+        result = subprocess.run(
+            ["gh", "issue", "list",
+             "--repo", AOS_REPO,
+             "--search", f"[{task_id}] in:title",
+             "--state", "open",
+             "--json", "number",
+             "--limit", "1"],
+            capture_output=True, text=True, timeout=15,
+        )
+        if result.returncode != 0:
+            return False
+
+        import json
+        issues = json.loads(result.stdout)
+        if not issues:
+            return False
+
+        issue_num = issues[0]["number"]
+        close_result = subprocess.run(
+            ["gh", "issue", "close",
+             "--repo", AOS_REPO,
+             str(issue_num)],
+            capture_output=True, text=True, timeout=15,
+        )
+        if close_result.returncode == 0:
+            _gh_log.info(f"Closed issue #{issue_num} for {task_id}")
+            return True
+    except Exception as e:
+        _gh_log.debug(f"GitHub close skipped: {e}")
+    return False
 
 WORK_DIR = Path.home() / ".aos" / "work"
 WORK_FILE = WORK_DIR / "work.yaml"
@@ -491,6 +565,11 @@ def add_task(title: str, priority: int = 3, project: str = None,
         _log_activity("subtask_added", task["id"], title, project, detail=f"under {parent}")
     else:
         _log_activity("task_created", task["id"], title, project)
+
+        # Sync to GitHub Issues (aos project only, parent tasks only)
+        if project == "aos":
+            _gh_create_issue(task["id"], title, priority)
+
     return task
 
 
@@ -541,6 +620,10 @@ def complete_task(task_id: str) -> dict | None:
 
     _save(data)
     _log_activity("task_completed", task["id"], task.get("title"), task.get("project"))
+
+    # Sync to GitHub Issues (close the issue)
+    if task.get("project") == "aos":
+        _gh_close_issue(task["id"])
 
     # Clear live context if this was the active task
     clear_live_context(task["id"])
