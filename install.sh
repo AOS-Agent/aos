@@ -767,7 +767,7 @@ prereq_youtube_transcript_api() {
 
     _step "Installing youtube-transcript-api..."
     pip3 install --break-system-packages youtube-transcript-api 2>&1 | tail -1
-    python3 -c "import youtube_transcript_api" &>/dev/null || _die "youtube-transcript-api install failed"
+    python3 -c "import youtube_transcript_api" &>/dev/null || { _warn "youtube-transcript-api — install failed (YouTube captions won't work until fixed)"; return 0; }
     _ok "youtube-transcript-api"
 }
 
