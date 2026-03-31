@@ -1,145 +1,259 @@
 # AOS Design Language
 
-Read this file before building any UI — dashboard pages, mobile screens, or web interfaces.
+Read this file before building any UI. Follow it exactly unless explicitly told otherwise.
+
+Source of truth is this file. Implementation lives in `apps/mission-control/app/globals.css`.
 
 ## Philosophy
 
-Notion-inspired. Warm, not cold. Content-first. Minimal chrome.
-The interface should feel like a tool you already know how to use.
+Warm, content-first, minimal chrome. Dark mode default (Apple Messages-inspired: neutral near-black, barely warm). Light mode is warm paper (not white). Accent orange for intentional highlights only. The interface should feel like a tool you already know how to use.
 
-## Colors
+**Guiding principles:**
+- Warm over cold. When in doubt, warmer. Gray-beige over gray-blue.
+- Content-first. Generous whitespace, no decorative noise.
+- Hierarchy through opacity, not separate color values.
+- Minimal elevation. Borders over shadows. Shadows only for floating layers.
+- No pure black text in light mode. No pure white backgrounds in light mode.
 
-```css
-/* Backgrounds */
---bg-page:     #FFFFFF;          /* Main content */
---bg-sidebar:  #F7F6F3;          /* Sidebar, table headers */
---bg-hover:    rgba(55,53,47,0.04);
---bg-active:   rgba(55,53,47,0.08);
+## Color Tokens
 
-/* Text — warm brown-black, NOT pure black */
---text:        #37352F;           /* Primary */
---text-secondary: rgba(55,53,47,0.65);
---text-tertiary:  rgba(55,53,47,0.45);
---text-faint:     rgba(55,53,47,0.3);
+### Backgrounds
 
-/* Borders — barely visible */
---border:       #E9E9E7;
---border-light: rgba(55,53,47,0.09);
+| Token | Dark | Light | Usage |
+|-------|------|-------|-------|
+| `bg` | `#0A0A0A` | `#F7F4F0` | Page background |
+| `bg-panel` | `#141414` | `#EFEBE4` | Sidebar, panels |
+| `bg-secondary` | `#1C1C1E` | `#EAE5DD` | Input fields, cards |
+| `bg-tertiary` | `#2C2C2E` | `#E3DDD5` | Hover surfaces, code blocks |
+| `bg-quaternary` | `#3A3A3C` | `#DDD7CE` | Pressed states, badges |
 
-/* AOS accent */
---orange:    #D9730D;
---orange-bg: #FAEBDD;
+### Text
 
-/* Tag pairs (text / background) */
-Gray:   #787774 / #F1F1EF    Green:  #448361 / #EDF3EC
-Brown:  #9F6B53 / #F4EEEE    Blue:   #337EA9 / #E7F3F8
-Orange: #D9730D / #FAEBDD    Purple: #9065B0 / #F6F3F9
-Yellow: #CB912F / #FBF3DB    Pink:   #C14C8A / #FAF1F5
-Red:    #D44C47 / #FDEBEC
-```
+| Token | Dark | Light | Usage |
+|-------|------|-------|-------|
+| `text` | `#FFFFFF` | `#38322B` | Primary text, headings |
+| `text-secondary` | `#EBEBF5` | `#5C554C` | Body text, descriptions |
+| `text-tertiary` | `#8E8E93` | `#8A827A` | Metadata, timestamps |
+| `text-quaternary` | `#636366` | `#AEA69C` | Placeholders, disabled |
+
+### Borders
+
+| Token | Dark | Light | Usage |
+|-------|------|-------|-------|
+| `border` | `rgba(255,255,255,0.06)` | `rgba(56,50,43,0.07)` | Default dividers |
+| `border-secondary` | `rgba(255,255,255,0.10)` | `rgba(56,50,43,0.12)` | Input borders, cards |
+| `border-tertiary` | `rgba(255,255,255,0.15)` | `rgba(56,50,43,0.18)` | Strong emphasis |
+
+### Accent
+
+| Token | Value | Usage |
+|-------|-------|-------|
+| `accent` | `#D9730D` | Brand orange, links, active indicators |
+| `accent-hover` | `#E8842A` | Hover state for accent elements |
+| `accent-muted` | `#1F1510` | Subtle accent background (dark mode) |
+| `accent-subtle` | `rgba(217,115,13,0.15)` | Selection highlight, focus rings |
+
+### Interaction
+
+| Token | Dark | Light | Usage |
+|-------|------|-------|-------|
+| `hover` | `rgba(255,255,255,0.05)` | `rgba(56,50,43,0.04)` | Hover backgrounds |
+| `active` | `rgba(255,255,255,0.08)` | `rgba(56,50,43,0.08)` | Active/pressed states |
+| `selected` | `rgba(255,255,255,0.12)` | `rgba(56,50,43,0.12)` | Selected items |
+
+### Status Colors
+
+| Name | Dark | Dark Muted | Light | Light Muted |
+|------|------|------------|-------|-------------|
+| Green | `#30D158` | `#0D1F12` | `#2D8A50` | `#E8F5EE` |
+| Yellow | `#FFD60A` | `#1C1A08` | `#B8860E` | `#FBF5E0` |
+| Orange | `#FF9F0A` | `#1C1508` | `#D9730D` | `#FAE8D8` |
+| Red | `#FF453A` | `#1F0F0E` | `#B84840` | `#FCE8E7` |
+| Blue | `#0A84FF` | `#0A1520` | `#3372A0` | `#E0EEF6` |
+| Purple | `#BF5AF2` | `#1A1020` | `#7A58A8` | `#EEE8F5` |
+| Teal | `#64D2FF` | `#0A1A20` | `#308898` | `#E0F2F5` |
+| Pink | `#FF375F` | `#28101A` | `#A04878` | `#F5E5EE` |
+
+Use status color + muted background for tags: `<span class="bg-tag-green-bg text-tag-green">active</span>`
 
 ## Typography
 
-```css
-/* System font stack — no custom web fonts in content */
---font: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
---font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+### Font Stacks
+
+```
+Sans:  "Inter Variable", "SF Pro Text", -apple-system, BlinkMacSystemFont, sans-serif
+Mono:  "Berkeley Mono", "SF Mono", ui-monospace, Menlo, monospace
 ```
 
-| Element | Size | Weight | Line Height |
-|---------|------|--------|-------------|
-| Page title | 30px | 700 | 1.2 |
-| Section title | 20px | 600 | 1.3 |
-| Body text | 16px | 400 | 1.5 |
-| Nav items | 14px | 500 | 1.3 |
-| Small text | 14px | 400 | 1.5 |
-| Tags/badges | 12px | 400 | 1.2 |
-| Metadata/mono | 12px | 400 | 1.5 |
+Inter Variable is loaded via `@fontsource-variable/inter`. Use mono only for code, data, and metadata values.
 
-## Radius & Spacing
+### Type Scale
 
-- Border radius: `3px` everywhere (buttons, cards, tags, inputs)
-- Cards: `1px solid #E9E9E7`, no shadow (hover adds `background: rgba(55,53,47,0.02)`)
-- Tags: `padding: 0 6px; height: 20px; border-radius: 3px`
-- Buttons: `padding: 4px 12px; height: 28px; border-radius: 3px`
-- Page padding: `48px` sides (desktop), `20px` (mobile)
-- Content max-width: `900px`
+| Name | Size | Weight | Letter Spacing | Line Height | Usage |
+|------|------|--------|----------------|-------------|-------|
+| `type-title` | 22px | 680 | -0.025em | 1.15 | Page headings |
+| `type-heading` | 15px | 600 | -0.01em | 1.35 | Section headings, card titles |
+| `type-body` | 13px | 400 | -0.008em | 1.5 | Body text (default) |
+| `type-label` | 13px | 510 | -0.008em | 1.4 | Labels, nav items |
+| `type-caption` | 11px | 400 | 0 | 1.45 | Secondary info, help text |
+| `type-overline` | 10px | 590 | 0.06em | 1.2 | Section labels (uppercase) |
+| `type-tiny` | 10px | 510 | 0.04em | 1.2 | Timestamps, costs, badges |
 
-## Sidebar
+Base body: 13px, weight 400, line-height 1.5, letter-spacing -0.008em.
 
-- Width: `240px`, background: `#F7F6F3`
-- Items: `14px`, `500` weight, `5px 12px` padding, `3px` radius
-- Hover: `rgba(55,53,47,0.04)` background
-- Active: `rgba(55,53,47,0.08)` background
-- Icons: `18px`, color `rgba(55,53,47,0.4)`
-- Section labels: `12px`, `500` weight, `uppercase`, color `rgba(55,53,47,0.45)`
-- Mobile: slides in from left as overlay with `rgba(0,0,0,0.3)` backdrop
+## Spacing & Layout
 
-## Components
+Base unit: **4px**. Use multiples: 4, 8, 12, 16, 20, 24, 32, 48.
 
-**Status tags** — use the color pairs above:
+| Element | Value |
+|---------|-------|
+| Page padding (desktop) | `32px` (px-8) |
+| Page padding (mobile) | `20px` (px-5) |
+| Content area vertical padding | `24px` (py-6) |
+| Sidebar width (expanded) | `224px` |
+| Sidebar width (collapsed) | `52px` |
+| Topbar height | `48px` (h-12) |
+| Card gap | `12px` or `16px` |
+| Section gap | `24px` or `32px` |
+
+## Border Radius
+
+| Token | Value | Usage |
+|-------|-------|-------|
+| `radius-xs` | `3px` | Tags, inline code, small badges |
+| `radius-sm` | `5px` | Buttons, sidebar items, inputs |
+| `radius` | `7px` | Cards, panels, dropdowns |
+| `radius-lg` | `10px` | Modals, popovers, code blocks |
+| `radius-xl` | `14px` | Chat bubbles, input composer |
+| `radius-full` | `9999px` | Avatars, status dots, pills (sparingly) |
+
+Use `radius-xs` through `radius` for most UI. Reserve `radius-xl` for chat-style elements. `radius-full` for circular indicators only.
+
+## Elevation & Shadows
+
+| Level | Dark | Light | Usage |
+|-------|------|-------|-------|
+| Low | `none` | `0 1px 2px rgba(38,28,18,0.06), 0 0 0 1px rgba(38,28,18,0.04)` | Cards, subtle lift |
+| Medium | `0 4px 24px rgba(0,0,0,0.4), inset 0 0 0 1px rgba(255,255,255,0.06)` | `0 2px 8px rgba(38,28,18,0.09), 0 0 0 1px rgba(38,28,18,0.04)` | Dropdowns, popovers |
+| High | `0 8px 40px rgba(0,0,0,0.6), inset 0 0 0 1px rgba(255,255,255,0.08)` | `0 6px 20px rgba(38,28,18,0.12)` | Modals, command palette |
+
+Prefer borders over shadows for separation. Use shadows only on floating/overlay elements.
+
+## Motion
+
+| Token | Duration | Usage |
+|-------|----------|-------|
+| `duration-instant` | 80ms | Hover states, toggles |
+| `duration-fast` | 150ms | Focus rings, buttons, tabs |
+| `duration-normal` | 220ms | Sidebar expand/collapse, panels |
+| `duration-slow` | 350ms | Page transitions, modals |
+
+Easing curves:
+- `ease-out`: `cubic-bezier(0.25, 0.46, 0.45, 0.94)` -- most UI transitions
+- `ease-out-back`: `cubic-bezier(0.34, 1.56, 0.64, 1)` -- playful bounces
+- `ease-in-out`: `cubic-bezier(0.4, 0, 0.2, 1)` -- sidebar, layout shifts
+
+## Z-Index Scale
+
+| Token | Value | Usage |
+|-------|-------|-------|
+| `z-header` | 100 | Topbar |
+| `z-overlay` | 500 | Sidebar overlay (mobile) |
+| `z-popover` | 600 | Dropdowns, tooltips |
+| `z-command` | 650 | Command palette |
+| `z-dialog` | 700 | Modals, confirmations |
+| `z-toast` | 800 | Notifications |
+| `z-tooltip` | 1100 | Tooltips (above everything) |
+
+## Component Patterns
+
+### Sidebar
+
+- Background: `bg-panel`. Border-right: `border`.
+- Nav items: `type-label` weight, `h-7`, `radius-sm`, icon `14px` (w-3.5).
+- Active: `bg-active`, `font-[590]`. Hover: `bg-hover`.
+- Section labels: `type-overline`, `text-quaternary`.
+- Collapsed mode: icons only, `52px` wide.
+
+### Topbar
+
+- Height: `48px`. Background: `bg`. Border-bottom: `border`.
+- Title: `text-sm font-semibold`. Status dot with `animate-ping` when connected.
+- Actions: `w-8 h-8` icon buttons, `rounded-sm`.
+
+### Cards
+
+- Border: `border-secondary`, `radius` (7px). No shadow by default.
+- Hover: `bg-hover` or `bg-tertiary` at `0.02` opacity.
+- Title: `type-overline` or `type-heading`.
+
+### Tags / Badges
+
+- Use status color pairs: `text-tag-{color}` on `bg-tag-{color}-bg`.
+- Padding: `0 6px`, height: `20px`, `radius-xs` (3px).
+- Font: `type-tiny` or 11px/12px.
+
+### Buttons
+
+- Primary: `bg-accent`, `text-white`, `radius-sm`, `h-7` (28px).
+- Secondary: `bg-bg-secondary`, `border-secondary`, `text-text-secondary`.
+- Ghost: transparent, `text-text-tertiary`, `hover:bg-hover`.
+- Icon button: `w-7 h-7` or `w-8 h-8`, `rounded-sm`.
+
+### Input Fields
+
+- Background: `bg-secondary`. Border: `border-secondary`. `radius-sm`.
+- Focus: `border-accent/30`, `ring-1 ring-accent/10`.
+- Placeholder: `text-quaternary`.
+
+### Chat Messages (Chief)
+
+- User: right-aligned, `radius-xl` bubble, `bg-accent-muted`, left-border `accent`.
+- Assistant: left-aligned, no bubble, text flows on `bg`. Label with lightning icon + "CHIEF".
+- Tool calls: collapsible, `radius` (7px), `bg-tertiary/50`, `type-caption`.
+- Metadata: `type-tiny`, `text-quaternary` (timestamp, duration, cost).
+- Streaming cursor: `w-[2px] h-[13px] bg-accent`, blink animation.
+
+### Tables
+
+- Headers: `type-overline`, `text-quaternary`, `border-b border-tertiary`.
+- Cells: 12-13px, `text-secondary`, `border-b border`.
+- No zebra striping. No heavy borders.
+
+## Scrollbars
+
+- Width: `6px`. Track: transparent.
+- Thumb: `rgba(255,255,255,0.08)` dark, `rgba(56,50,43,0.10)` light.
+- Hover: double the opacity.
+- `border-radius: full`.
+
+## Focus & Accessibility
+
+- Focus ring: `2px solid accent`, `outline-offset: -2px`.
+- Touch targets: minimum `34px` (prefer `44px` on mobile).
+- All interactive elements: `-webkit-tap-highlight-color: transparent`.
+- Selection: `bg-accent-subtle`, `color-accent`.
+- Respect `prefers-reduced-motion` for animations.
+
+## Theme Implementation
+
+Dark is default. Light activates via `data-theme="light"` on `<html>`.
+Toggle persisted in `localStorage` key `mc-theme`.
+
 ```html
-<span class="tag tag-green">active</span>
-<span class="tag tag-yellow">stale</span>
-<span class="tag tag-red">failed</span>
+<html lang="en" class="dark">           <!-- default -->
+<html lang="en" data-theme="light">     <!-- light mode -->
 ```
 
-**Buttons** — minimal, no shadow:
-```html
-<button class="btn">Secondary</button>
-<button class="btn btn-primary">Primary</button>
-```
-
-**Cards** — barely-there container:
-```html
-<div class="card">
-    <div class="card-title">SECTION NAME</div>
-    <!-- content -->
-</div>
-```
-
-**Tables** — clean, no zebra striping:
-```html
-<table class="table">
-    <thead><tr><th>Name</th><th>Status</th></tr></thead>
-    <tbody><tr><td>Item</td><td><span class="tag tag-green">ok</span></td></tr></tbody>
-</table>
-```
+All semantic tokens remap automatically. Components should never hardcode hex values -- always use token references (`bg-bg`, `text-text-secondary`, `border-border`, etc.).
 
 ## Rules
 
-1. **No pure black.** Text is `#37352F`. Backgrounds are white or `#F7F6F3`.
-2. **No heavy shadows.** Use borders. If a shadow is needed, use `rgba(15,15,15,0.1) 0 0 0 1px`.
-3. **No pill-shaped elements.** Radius is `3px`, never `999px` or `50%`.
-4. **No custom fonts in content.** Use the system font stack. Mono for data only.
-5. **Opacity for hierarchy.** Use `rgba(55,53,47,X)` at 0.65/0.45/0.3 — not separate gray colors.
-6. **Touch targets minimum 34px.** Especially on mobile.
-7. **Content-first.** Max-width `900px`, centered, generous whitespace.
-8. **Warm over cold.** When in doubt, warmer. Gray-beige over gray-blue.
-
-## File Structure
-
-```
-static/
-├── style.css          ← Shared CSS (variables, sidebar, cards, tags, tables)
-├── app.js             ← Shared JS (SSE, utilities)
-└── {page}.css         ← Page-specific styles (optional)
-
-templates/
-├── base.html          ← Layout shell (sidebar + content area)
-├── dashboard.html     ← Command center
-├── work.html          ← Tasks, projects, goals
-├── agents.html        ← Agent cards
-├── sessions.html      ← Session history
-├── crons.html         ← Automations
-├── conversations.html ← Message logs
-└── logs.html          ← System logs
-```
-
-## Mobile
-
-- Sidebar collapses to overlay (hamburger toggle)
-- Grids collapse to single column at `768px`
-- Font sizes stay the same — trust the viewport
-- Side padding drops to `20px`
-- Touch targets: `44px` minimum height for buttons/links
+1. **No hardcoded colors.** Always reference design tokens. Never inline hex in components.
+2. **Warm over cold.** Brown-tinted grays, never blue-tinted.
+3. **Borders over shadows.** Use shadows only for floating layers (modals, popovers, command palette).
+4. **Opacity for hierarchy.** Text levels via `text`/`secondary`/`tertiary`/`quaternary`, not separate grays.
+5. **Content-first.** Generous whitespace. No decorative chrome.
+6. **Touch targets 34px+.** 44px on mobile.
+7. **No empty decorative states.** If nothing to show, say why. Guide the user.
+8. **Token names, not values.** Write `bg-bg-secondary`, not `#1C1C1E`. The theme layer handles the rest.

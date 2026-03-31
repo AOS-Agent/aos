@@ -1,0 +1,300 @@
+@import "tailwindcss";
+@import "@fontsource-variable/inter";
+
+/* ============================================================
+   AOS Design System — Clean Dark Design System
+
+   Philosophy: Clean, neutral dark — like Apple Messages dark
+   mode. Subtle warmth (2-3% saturation), never visibly tinted.
+   Accent orange for intentional highlights only.
+   ============================================================ */
+
+@theme {
+  /* === Backgrounds — neutral dark, Apple-style ===
+     Near-black to dark gray elevation steps.
+     Barely warm (hue ~20, sat ~3%) — looks neutral, not orange */
+  --color-bg:            #0A0A0A;
+  --color-bg-panel:      #141414;
+  --color-bg-secondary:  #1C1C1E;
+  --color-bg-tertiary:   #2C2C2E;
+  --color-bg-quaternary: #3A3A3C;
+
+  /* === Text — pure white, clean grays === */
+  --color-text:           #FFFFFF;
+  --color-text-secondary: #EBEBF5;
+  --color-text-tertiary:  #8E8E93;
+  --color-text-quaternary:#636366;
+
+  /* === Borders — neutral white opacity === */
+  --color-border:           rgba(255, 255, 255, 0.06);
+  --color-border-secondary: rgba(255, 255, 255, 0.10);
+  --color-border-tertiary:  rgba(255, 255, 255, 0.15);
+
+  /* === AOS Accent (orange) === */
+  --color-accent:       #D9730D;
+  --color-accent-hover: #E8842A;
+  --color-accent-muted: #1F1510;
+  --color-accent-subtle: rgba(217, 115, 13, 0.15);
+
+  /* === Status Colors === */
+  --color-green:        #30D158;
+  --color-green-muted:  #0D1F12;
+  --color-yellow:       #FFD60A;
+  --color-yellow-muted: #1C1A08;
+  --color-orange:       #FF9F0A;
+  --color-orange-muted: #1C1508;
+  --color-red:          #FF453A;
+  --color-red-muted:    #1F0F0E;
+  --color-blue:         #0A84FF;
+  --color-blue-muted:   #0A1520;
+  --color-purple:       #BF5AF2;
+  --color-purple-muted: #1A1020;
+  --color-teal:         #64D2FF;
+  --color-teal-muted:   #0A1A20;
+
+  /* === Tag Colors === */
+  --color-tag-gray:      #8E8E93;
+  --color-tag-gray-bg:   #2C2C2E;
+  --color-tag-green:     #30D158;
+  --color-tag-green-bg:  #12261A;
+  --color-tag-blue:      #0A84FF;
+  --color-tag-blue-bg:   #0F1A2E;
+  --color-tag-purple:    #BF5AF2;
+  --color-tag-purple-bg: #1E1228;
+  --color-tag-red:       #FF453A;
+  --color-tag-red-bg:    #2E1210;
+  --color-tag-yellow:    #FFD60A;
+  --color-tag-yellow-bg: #262010;
+  --color-tag-orange:    #FF9F0A;
+  --color-tag-orange-bg: #261A0A;
+  --color-tag-teal:      #64D2FF;
+  --color-tag-teal-bg:   #102228;
+  --color-tag-pink:      #FF375F;
+  --color-tag-pink-bg:   #28101A;
+
+  /* === Interaction — neutral white alpha === */
+  --color-hover:    rgba(255, 255, 255, 0.05);
+  --color-active:   rgba(255, 255, 255, 0.08);
+  --color-selected: rgba(255, 255, 255, 0.12);
+
+  /* === Border Radius === */
+  --radius-xs:   3px;
+  --radius-sm:   5px;
+  --radius:      7px;
+  --radius-lg:   10px;
+  --radius-xl:   14px;
+  --radius-full: 9999px;
+
+  /* === Shadows (dark: minimal, light: warm-tinted) === */
+  --shadow-low:    none;
+  --shadow-medium: 0 4px 24px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.06);
+  --shadow-high:   0 8px 40px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.08);
+
+  /* === Typography === */
+  --font-sans: "Inter Variable", "SF Pro Text", -apple-system,
+    BlinkMacSystemFont, sans-serif;
+  --font-mono: "Berkeley Mono", "SF Mono", ui-monospace, Menlo, monospace;
+
+  /* === Transitions === */
+  --duration-instant: 80ms;
+  --duration-fast:    150ms;
+  --duration-normal:  220ms;
+  --duration-slow:    350ms;
+  --ease-out:      cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  --ease-out-back: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-in-out:   cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* === Z-Index === */
+  --z-header:  100;
+  --z-overlay: 500;
+  --z-popover: 600;
+  --z-command: 650;
+  --z-dialog:  700;
+  --z-toast:   800;
+  --z-tooltip: 1100;
+}
+
+/* === Base Styles === */
+html {
+  scroll-behavior: smooth;
+  font-feature-settings: "calt";
+  font-variant-numeric: tabular-nums;
+}
+
+body {
+  color: var(--color-text);
+  background: var(--color-bg);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1.5;
+  letter-spacing: -0.008em;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* === Touch Interaction === */
+a, button, [role="button"], input, select, textarea, label {
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+::selection {
+  background: var(--color-accent-subtle);
+  color: var(--color-accent);
+}
+
+/* === Scrollbar — thin, neutral === */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-full);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+/* === Focus — invisible by default, subtle bg shift on keyboard nav === */
+*:focus {
+  outline: none;
+}
+*:focus-visible {
+  outline: none;
+}
+
+/* === Light Mode — warm paper === */
+[data-theme="light"] {
+  --color-bg:            #F7F4F0;
+  --color-bg-panel:      #EFEBE4;
+  --color-bg-secondary:  #EAE5DD;
+  --color-bg-tertiary:   #E3DDD5;
+  --color-bg-quaternary: #DDD7CE;
+
+  --color-text:           #38322B;
+  --color-text-secondary: #5C554C;
+  --color-text-tertiary:  #8A827A;
+  --color-text-quaternary:#AEA69C;
+
+  --color-border:           rgba(56, 50, 43, 0.07);
+  --color-border-secondary: rgba(56, 50, 43, 0.12);
+  --color-border-tertiary:  rgba(56, 50, 43, 0.18);
+
+  --color-hover:    rgba(56, 50, 43, 0.04);
+  --color-active:   rgba(56, 50, 43, 0.08);
+  --color-selected: rgba(56, 50, 43, 0.12);
+
+  --color-green:       #2D8A50;
+  --color-green-muted: #E8F5EE;
+  --color-yellow:      #B8860E;
+  --color-yellow-muted:#FBF5E0;
+  --color-red:         #B84840;
+  --color-red-muted:   #FCE8E7;
+
+  --color-tag-gray:      #7A7570;
+  --color-tag-gray-bg:   #EDEAE5;
+  --color-tag-green:     #3D7A54;
+  --color-tag-green-bg:  #E5F0E9;
+  --color-tag-orange:    #D9730D;
+  --color-tag-orange-bg: #FAE8D8;
+  --color-tag-red:       #C44040;
+  --color-tag-red-bg:    #FAE5E5;
+  --color-tag-yellow:    #B8860E;
+  --color-tag-yellow-bg: #F5EDD0;
+  --color-tag-blue:      #3372A0;
+  --color-tag-blue-bg:   #E0EEF6;
+  --color-tag-purple:    #7A58A8;
+  --color-tag-purple-bg: #EEE8F5;
+  --color-tag-teal:      #308898;
+  --color-tag-teal-bg:   #E0F2F5;
+  --color-tag-pink:      #A04878;
+  --color-tag-pink-bg:   #F5E5EE;
+
+  --shadow-low:    0px 1px 2px rgba(38, 28, 18, 0.06), 0px 0px 0px 1px rgba(38, 28, 18, 0.04);
+  --shadow-medium: 0px 2px 8px rgba(38, 28, 18, 0.09), 0px 0px 0px 1px rgba(38, 28, 18, 0.04);
+  --shadow-high:   0px 6px 20px rgba(38, 28, 18, 0.12);
+}
+
+[data-theme="light"] ::-webkit-scrollbar-thumb {
+  background: rgba(56, 50, 43, 0.10);
+}
+[data-theme="light"] ::-webkit-scrollbar-thumb:hover {
+  background: rgba(56, 50, 43, 0.20);
+}
+
+/* === Typography Utility Classes === */
+.type-title    { font-size: 22px; font-weight: 680; letter-spacing: -0.025em; line-height: 1.15; }
+.type-heading  { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; line-height: 1.35; }
+.type-body     { font-size: 13px; font-weight: 400; letter-spacing: -0.008em; line-height: 1.5; }
+.type-label    { font-size: 13px; font-weight: 510; letter-spacing: -0.008em; line-height: 1.4; }
+.type-caption  { font-size: 11px; font-weight: 400; letter-spacing: 0em; line-height: 1.45; }
+.type-overline { font-size: 10px; font-weight: 590; letter-spacing: 0.06em; line-height: 1.2; text-transform: uppercase; }
+.type-tiny     { font-size: 10px; font-weight: 510; letter-spacing: 0.04em; line-height: 1.2; }
+
+/* === Meeting prose — markdown rendering for meeting summaries === */
+.meeting-prose h1 { font-size: 18px; font-weight: 680; color: var(--color-text); margin: 24px 0 8px; letter-spacing: -0.025em; }
+.meeting-prose h2 { font-size: 15px; font-weight: 620; color: var(--color-text); margin: 20px 0 6px; letter-spacing: -0.01em; }
+.meeting-prose h3 { font-size: 13px; font-weight: 590; color: var(--color-text-secondary); margin: 16px 0 4px; }
+.meeting-prose p { font-size: 13px; color: var(--color-text-tertiary); line-height: 1.65; margin: 4px 0; }
+.meeting-prose strong { color: var(--color-text-secondary); font-weight: 590; }
+.meeting-prose em { color: var(--color-text-tertiary); }
+.meeting-prose ul, .meeting-prose ol { padding-left: 16px; margin: 4px 0; }
+.meeting-prose li { font-size: 13px; color: var(--color-text-tertiary); line-height: 1.65; margin: 2px 0; }
+.meeting-prose li::marker { color: var(--color-text-quaternary); }
+.meeting-prose blockquote { border-left: 2px solid var(--color-accent); padding: 4px 12px; margin: 8px 0; background: var(--color-accent-subtle); border-radius: 0 4px 4px 0; }
+.meeting-prose blockquote p { color: var(--color-text-secondary); font-style: italic; }
+.meeting-prose hr { border: none; border-top: 1px solid var(--color-border); margin: 16px 0; }
+.meeting-prose a { color: var(--color-accent); text-decoration: none; }
+.meeting-prose a:hover { text-decoration: underline; }
+.meeting-prose code { font-size: 12px; background: var(--color-bg-tertiary); padding: 1px 4px; border-radius: 3px; color: var(--color-text-secondary); }
+.meeting-prose table { width: 100%; border-collapse: collapse; margin: 8px 0; font-size: 12px; }
+.meeting-prose th { text-align: left; padding: 6px 8px; background: var(--color-bg-tertiary); color: var(--color-text-secondary); font-weight: 590; border-bottom: 1px solid var(--color-border-secondary); }
+.meeting-prose td { padding: 6px 8px; color: var(--color-text-tertiary); border-bottom: 1px solid var(--color-border); }
+.meeting-prose tr:last-child td { border-bottom: none; }
+
+/* Chief chat cursor blink */
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+/* View Transitions */
+::view-transition-old(root) {
+  animation: vt-fade-out 180ms cubic-bezier(0.25, 0, 0.6, 1);
+}
+::view-transition-new(root) {
+  animation: vt-fade-in 220ms cubic-bezier(0.25, 0, 0.6, 1);
+}
+
+@keyframes vt-fade-out {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+@keyframes vt-fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+::view-transition-old(sidebar-active),
+::view-transition-new(sidebar-active) {
+  animation-duration: 200ms;
+  animation-timing-function: cubic-bezier(0.25, 0.1, 0.25, 1);
+}
+
+::view-transition-old(page-title),
+::view-transition-new(page-title) {
+  animation-duration: 200ms;
+  animation-timing-function: cubic-bezier(0.25, 0.1, 0.25, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation-duration: 0.01ms !important;
+  }
+}

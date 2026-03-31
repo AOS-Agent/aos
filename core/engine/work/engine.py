@@ -1,16 +1,20 @@
 """
-AOS Work Engine — Read/write work files.
+AOS Work Engine — Read/write work data.
 
-Data lives at ~/.aos/work/work.yaml (small mode).
+Data lives in ~/.aos/data/qareen.db (SQLite, canonical store).
+Legacy backup at ~/.aos/work/work.yaml (read-only, not written to).
 This module handles CRUD for tasks, projects, goals, threads, and inbox.
 
+v3: SQLite backend via qareen.db. Same API as v2.
 v2: Project-scoped IDs, fuzzy resolution, subtasks, handoff context.
 """
 
 import fcntl
+import json
 import logging
 import os
 import re
+import sqlite3
 import subprocess
 import tempfile
 import yaml
@@ -74,7 +78,6 @@ def _gh_close_issue(task_id: str) -> bool:
         if result.returncode != 0:
             return False
 
-        import json
         issues = json.loads(result.stdout)
         if not issues:
             return False
@@ -99,57 +102,212 @@ ACTIVITY_FILE = WORK_DIR / "activity.yaml"
 LIVE_CONTEXT_FILE = WORK_DIR / ".live-context.json"
 MAX_ACTIVITY = 100  # Keep last N events
 
+DB_PATH = Path.home() / ".aos" / "data" / "qareen.db"
 
 LOCK_FILE = WORK_DIR / ".work.lock"
 
 
-def _load() -> dict:
-    """Load work.yaml with shared lock to prevent reading mid-write."""
-    if not WORK_FILE.exists():
-        return _empty_work()
-    WORK_DIR.mkdir(parents=True, exist_ok=True)
-    with open(LOCK_FILE, "a+") as lf:
-        fcntl.flock(lf, fcntl.LOCK_SH)
-        try:
-            with open(WORK_FILE, "r") as f:
-                data = yaml.safe_load(f) or {}
-        finally:
-            fcntl.flock(lf, fcntl.LOCK_UN)
-    # Ensure all top-level keys exist
-    for key in ("tasks", "projects", "goals", "threads", "inbox"):
-        if key not in data:
-            data[key] = []
-    return data
+# ── SQLite Connection ───────────────────────────────────
+
+_conn: sqlite3.Connection | None = None
 
 
-def _save(data: dict) -> None:
-    """Write work data atomically: lock, write to temp, rename over original."""
-    WORK_DIR.mkdir(parents=True, exist_ok=True)
-    with open(LOCK_FILE, "a+") as lf:
-        fcntl.flock(lf, fcntl.LOCK_EX)
-        try:
-            fd, tmp_path = tempfile.mkstemp(dir=str(WORK_DIR), suffix=".yaml.tmp")
-            try:
-                with os.fdopen(fd, "w") as f:
-                    yaml.dump(data, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
-                    f.flush()
-                    os.fsync(f.fileno())
-                os.replace(tmp_path, str(WORK_FILE))
-            except Exception:
-                os.unlink(tmp_path)
-                raise
-        finally:
-            fcntl.flock(lf, fcntl.LOCK_UN)
+def _db() -> sqlite3.Connection:
+    """Get or create a SQLite connection with WAL mode and foreign keys."""
+    global _conn
+    if _conn is not None:
+        return _conn
+    _conn = sqlite3.connect(str(DB_PATH))
+    _conn.execute("PRAGMA journal_mode=WAL")
+    _conn.execute("PRAGMA foreign_keys=ON")
+    _conn.row_factory = sqlite3.Row
+    return _conn
 
 
-def _empty_work() -> dict:
+def _json_loads(val: str | None, default=None):
+    """Safely parse a JSON string."""
+    if not val:
+        return default if default is not None else []
+    try:
+        return json.loads(val)
+    except (json.JSONDecodeError, TypeError):
+        return default if default is not None else []
+
+
+def _json_dumps(val: list | dict | None) -> str | None:
+    """Serialize to JSON string or return None."""
+    if val is None:
+        return None
+    if isinstance(val, list) and len(val) == 0:
+        return None
+    return json.dumps(val)
+
+
+def _row_to_task(row: sqlite3.Row) -> dict:
+    """Convert a tasks table row to a dict matching the YAML-era format.
+
+    This is the canonical mapping. Every consumer (cli.py, inject_context.py,
+    session_close.py, query.py) expects these exact keys.
+    """
+    task_id = row["id"]
+    tags = _json_loads(row["tags"])
+
+    task = {
+        "id": task_id,
+        "title": row["title"],
+        "status": row["status"] or "todo",
+        "priority": row["priority"] if row["priority"] is not None else 3,
+        "created": row["created_at"] or "",
+        "source": row["created_by"] or "manual",
+    }
+
+    if row["project_id"]:
+        task["project"] = row["project_id"]
+    if row["started_at"]:
+        task["started"] = row["started_at"]
+    if row["completed_at"]:
+        task["completed"] = row["completed_at"]
+    if row["due_at"]:
+        task["due"] = row["due_at"]
+    if row["parent_id"]:
+        task["parent"] = row["parent_id"]
+    if tags:
+        task["tags"] = tags
+    if row["description"]:
+        task["notes"] = row["description"]
+    if row["assigned_to"]:
+        task["assigned_to"] = row["assigned_to"]
+    if row["pipeline"]:
+        task["pipeline"] = row["pipeline"]
+    if row["recurrence"]:
+        task["recurrence"] = row["recurrence"]
+
+    # Load handoff from task_handoffs table
+    conn = _db()
+    ho_row = conn.execute(
+        "SELECT * FROM task_handoffs WHERE task_id = ?", (task_id,)
+    ).fetchone()
+    if ho_row:
+        handoff = {
+            "updated": ho_row["timestamp"] or "",
+            "state": ho_row["state"] or "",
+        }
+        if ho_row["next_step"]:
+            handoff["next_step"] = ho_row["next_step"]
+        files = _json_loads(ho_row["files"])
+        if files:
+            handoff["files_touched"] = files
+        decisions = _json_loads(ho_row["decisions"])
+        if decisions:
+            handoff["decisions"] = decisions
+        blockers = _json_loads(ho_row["blockers"])
+        if blockers:
+            handoff["blockers"] = blockers
+        task["handoff"] = handoff
+
+    # Load session links from session_tasks table
+    sess_rows = conn.execute(
+        "SELECT st.session_id, s.started_at, s.outcome "
+        "FROM session_tasks st "
+        "LEFT JOIN sessions s ON st.session_id = s.id "
+        "WHERE st.task_id = ?",
+        (task_id,)
+    ).fetchall()
+    if sess_rows:
+        sessions = []
+        for sr in sess_rows:
+            entry = {"id": sr["session_id"]}
+            if sr["started_at"]:
+                entry["date"] = sr["started_at"][:10]
+            if sr["outcome"]:
+                entry["outcome"] = sr["outcome"]
+            sessions.append(entry)
+        task["sessions"] = sessions
+
+    return task
+
+
+def _row_to_project(row: sqlite3.Row) -> dict:
+    """Convert a projects table row to a dict matching the YAML-era format."""
+    project = {
+        "id": row["id"],
+        "title": row["title"],
+        "status": row["status"] or "active",
+    }
+    if row["description"]:
+        project["description"] = row["description"]
+    if row["path"]:
+        project["path"] = row["path"]
+    if row["goal"]:
+        project["goal"] = row["goal"]
+    if row["done_when"]:
+        project["done_when"] = row["done_when"]
+    stages = _json_loads(row["stages"])
+    if stages:
+        project["stages"] = stages
+    if row["current_stage"]:
+        project["current_stage"] = row["current_stage"]
+    if row["telegram_bot_key"]:
+        project["telegram_bot_key"] = row["telegram_bot_key"]
+    if row["telegram_chat_key"]:
+        project["telegram_chat_key"] = row["telegram_chat_key"]
+    if row["telegram_forum_topic"]:
+        project["telegram_forum_topic"] = row["telegram_forum_topic"]
+    return project
+
+
+def _row_to_goal(row: sqlite3.Row) -> dict:
+    """Convert a goals table row to a dict matching the YAML-era format."""
+    goal = {
+        "id": row["id"],
+        "title": row["title"],
+        "status": "active",  # goals don't have status column, default active
+    }
+    if row["weight"]:
+        goal["weight"] = row["weight"]
+    if row["description"]:
+        goal["description"] = row["description"]
+    if row["project_id"]:
+        goal["project"] = row["project_id"]
+
+    # Load key results
+    conn = _db()
+    kr_rows = conn.execute(
+        "SELECT * FROM key_results WHERE goal_id = ?", (row["id"],)
+    ).fetchall()
+    if kr_rows:
+        goal["key_results"] = [
+            {
+                "title": kr["title"],
+                "progress": kr["progress"] or 0,
+                "target": kr["target"],
+            }
+            for kr in kr_rows
+        ]
+    return goal
+
+
+def _row_to_thread(row: sqlite3.Row) -> dict:
+    """Convert a threads table row to a dict matching the YAML-era format."""
+    thread = {
+        "id": row["id"],
+        "title": row["title"],
+        "status": row["status"] or "exploring",
+    }
+    if row["created_at"]:
+        thread["started"] = row["created_at"]
+    if row["project_id"]:
+        thread["project"] = row["project_id"]
+    return thread
+
+
+def _row_to_inbox(row: sqlite3.Row) -> dict:
+    """Convert an inbox table row to a dict matching the YAML-era format."""
     return {
-        "version": "2.0",
-        "tasks": [],
-        "projects": [],
-        "goals": [],
-        "threads": [],
-        "inbox": [],
+        "id": row["id"],
+        "text": row["text"],
+        "captured": row["captured_at"] or "",
+        "source": "manual",
     }
 
 
@@ -165,27 +323,29 @@ def _project_prefix(project_id: str | None) -> str:
     """
     if not project_id:
         return "t"
-    # Use the project's short_id if defined, otherwise derive
-    data = _load()
-    for p in data["projects"]:
-        if p["id"] == project_id:
-            if p.get("short_id"):
-                return p["short_id"]
-            break
+    # Check if the project has a custom short_id — not stored in DB currently
     # Derive: strip common suffixes, take first word
     clean = re.sub(r'[-_]v\d+$', '', project_id)  # aos-v2 -> aos
     return clean
 
 
-def _next_scoped_id(tasks: list, prefix: str) -> str:
-    """Generate next project-scoped ID: aos#1, aos#2, chief#1, t#1, etc."""
+def _next_scoped_id(prefix: str) -> str:
+    """Generate next project-scoped ID: aos#1, aos#2, chief#1, t#1, etc.
+
+    Reads from the database to find the maximum existing ID number.
+    """
+    conn = _db()
+    pattern = f"{prefix}#%"
+    rows = conn.execute(
+        "SELECT id FROM tasks WHERE id LIKE ?", (pattern,)
+    ).fetchall()
+
     max_num = 0
-    pattern = f"{prefix}#"
-    for task in tasks:
-        task_id = task.get("id", "")
-        if task_id.startswith(pattern):
-            # Extract the number part (before any .N subtask suffix)
-            rest = task_id[len(pattern):]
+    pat = f"{prefix}#"
+    for row in rows:
+        task_id = row["id"]
+        if task_id.startswith(pat):
+            rest = task_id[len(pat):]
             base_num = rest.split(".")[0]
             try:
                 num = int(base_num)
@@ -195,26 +355,45 @@ def _next_scoped_id(tasks: list, prefix: str) -> str:
     return f"{prefix}#{max_num + 1}"
 
 
-def _next_subtask_id(tasks: list, parent_id: str) -> str:
+def _next_subtask_id(parent_id: str) -> str:
     """Generate next subtask ID: aos#3.1, aos#3.2, etc."""
+    conn = _db()
+    pattern = f"{parent_id}.%"
+    rows = conn.execute(
+        "SELECT id FROM tasks WHERE id LIKE ?", (pattern,)
+    ).fetchall()
+
     max_num = 0
-    pattern = f"{parent_id}."
-    for task in tasks:
-        task_id = task.get("id", "")
-        if task_id.startswith(pattern):
+    pat = f"{parent_id}."
+    for row in rows:
+        task_id = row["id"]
+        if task_id.startswith(pat):
             try:
-                num = int(task_id[len(pattern):])
+                num = int(task_id[len(pat):])
                 max_num = max(max_num, num)
             except ValueError:
                 pass
     return f"{parent_id}.{max_num + 1}"
 
 
-def _next_id(items: list, prefix: str) -> str:
-    """Legacy ID generation for non-task entities (p1, g1, th1, i1)."""
+def _next_id(prefix: str) -> str:
+    """Legacy ID generation for non-task entities (p1, g1, th1, i1).
+
+    Reads from the appropriate table based on prefix.
+    """
+    conn = _db()
+    table_map = {
+        "p": "projects",
+        "g": "goals",
+        "th": "threads",
+        "i": "inbox",
+    }
+    table = table_map.get(prefix, "tasks")
+    rows = conn.execute(f"SELECT id FROM {table}").fetchall()
+
     max_num = 0
-    for item in items:
-        item_id = item.get("id", "")
+    for row in rows:
+        item_id = row["id"]
         if item_id.startswith(prefix):
             try:
                 num = int(item_id[len(prefix):])
@@ -238,7 +417,7 @@ def resolve_task(query_str: str, tasks: list = None) -> dict | None:
     Returns the best matching task or None.
     """
     if tasks is None:
-        tasks = _load()["tasks"]
+        tasks = get_all_tasks()
 
     if not query_str or not tasks:
         return None
@@ -299,7 +478,7 @@ def resolve_task(query_str: str, tasks: list = None) -> dict | None:
 
 def resolve_task_in_project(query_str: str, project_id: str = None) -> dict | None:
     """Resolve with project context. If query is just a number, scope to project."""
-    tasks = _load()["tasks"]
+    tasks = get_all_tasks()
 
     # If query is just a number and we have project context
     if query_str.isdigit() and project_id:
@@ -406,7 +585,6 @@ def _log_activity(action: str, task_id: str = None, title: str = None,
 def _notify_dashboard(event: dict) -> None:
     """POST work event to dashboard for instant SSE push. Best-effort."""
     try:
-        import json
         data = json.dumps(event).encode()
         req = urllib.request.Request(
             f"{DASHBOARD_URL}/api/work/notify",
@@ -516,31 +694,65 @@ def add_task(title: str, priority: int = 3, project: str = None,
              parent: str = None, source_ref: str = None,
              notes: str = None) -> dict:
     """Add a new task with project-scoped ID."""
-    data = _load()
+    conn = _db()
 
     # If parent specified, this is a subtask
     if parent:
         # Find parent task to inherit project
-        parent_task = None
-        for t in data["tasks"]:
-            if t["id"] == parent:
-                parent_task = t
-                break
+        parent_row = conn.execute(
+            "SELECT project_id FROM tasks WHERE id = ?", (parent,)
+        ).fetchone()
+        if parent_row and not project:
+            project = parent_row["project_id"]
 
-        if parent_task and not project:
-            project = parent_task.get("project")
-
-        task_id = _next_subtask_id(data["tasks"], parent)
+        task_id = _next_subtask_id(parent)
     else:
         prefix = _project_prefix(project)
-        task_id = _next_scoped_id(data["tasks"], prefix)
+        task_id = _next_scoped_id(prefix)
 
+    now = _now()
+
+    # Build description from notes + extra context
+    description = notes
+    # Store energy and context in description as metadata if present
+    # (DB doesn't have dedicated columns for these)
+    meta_parts = []
+    if energy:
+        meta_parts.append(f"energy:{energy}")
+    if context:
+        meta_parts.append(f"context:{context}")
+    if source_ref:
+        meta_parts.append(f"source_ref:{source_ref}")
+    if meta_parts and description:
+        description = description + "\n\n<!-- meta: " + ", ".join(meta_parts) + " -->"
+    elif meta_parts:
+        description = "<!-- meta: " + ", ".join(meta_parts) + " -->"
+
+    conn.execute(
+        "INSERT INTO tasks "
+        "(id, title, status, priority, project_id, description, "
+        " created_by, created_at, due_at, parent_id, tags, "
+        " version, modified_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)",
+        (
+            task_id, title, status, priority, project,
+            description, source, now, due, parent,
+            _json_dumps(tags), now,
+        ),
+    )
+
+    # FTS sync
+    _sync_fts(task_id, title, description)
+
+    conn.commit()
+
+    # Build the return dict to match YAML-era format
     task = {
         "id": task_id,
         "title": title,
         "status": status,
         "priority": priority,
-        "created": _today(),
+        "created": now,
         "source": source,
     }
     if project:
@@ -559,8 +771,7 @@ def add_task(title: str, priority: int = 3, project: str = None,
         task["source_ref"] = source_ref
     if notes:
         task["notes"] = notes
-    data["tasks"].append(task)
-    _save(data)
+
     if parent:
         _log_activity("subtask_added", task["id"], title, project, detail=f"under {parent}")
     else:
@@ -573,25 +784,49 @@ def add_task(title: str, priority: int = 3, project: str = None,
     return task
 
 
+def _sync_fts(task_id: str, title: str, description: str | None) -> None:
+    """Keep FTS index in sync."""
+    conn = _db()
+    row = conn.execute(
+        "SELECT rowid FROM tasks WHERE id = ?", (task_id,)
+    ).fetchone()
+    if row:
+        rowid = row[0]
+        try:
+            conn.execute(
+                "INSERT INTO tasks_fts(tasks_fts, rowid, title, description) "
+                "VALUES('delete', ?, ?, ?)",
+                (rowid, title, description or ""),
+            )
+        except sqlite3.OperationalError:
+            pass
+        try:
+            conn.execute(
+                "INSERT INTO tasks_fts(rowid, title, description) "
+                "VALUES(?, ?, ?)",
+                (rowid, title, description or ""),
+            )
+        except sqlite3.OperationalError:
+            pass
+
+
 def add_subtask(parent_id: str, title: str, priority: int = None,
                 status: str = "todo") -> dict | None:
     """Add a subtask to an existing task. Inherits project and priority from parent."""
-    data = _load()
-    parent = None
-    for t in data["tasks"]:
-        if t["id"] == parent_id:
-            parent = t
-            break
+    conn = _db()
+    parent = conn.execute(
+        "SELECT id, project_id, priority FROM tasks WHERE id = ?", (parent_id,)
+    ).fetchone()
     if not parent:
         return None
 
     if priority is None:
-        priority = parent.get("priority", 3)
+        priority = parent["priority"] if parent["priority"] is not None else 3
 
     return add_task(
         title=title,
         priority=priority,
-        project=parent.get("project"),
+        project=parent["project_id"],
         status=status,
         parent=parent_id,
         source="subtask",
@@ -601,24 +836,26 @@ def add_subtask(parent_id: str, title: str, priority: int = None,
 def complete_task(task_id: str) -> dict | None:
     """Mark a task as done. Auto-cascades parent if all siblings done.
     If task has source_ref pointing to an initiative, updates the checkbox."""
-    data = _load()
-    task = None
-    for t in data["tasks"]:
-        if t["id"] == task_id:
-            t["status"] = "done"
-            t["completed"] = _now()
-            task = t
-            break
+    conn = _db()
+    now = _now()
 
-    if not task:
+    row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    if not row:
         return None
 
-    # Cascade: check if parent should auto-complete
-    parent_id = task.get("parent")
-    if parent_id:
-        _cascade_parent(data, parent_id)
+    conn.execute(
+        "UPDATE tasks SET status = 'done', completed_at = ?, modified_at = ? WHERE id = ?",
+        (now, now, task_id),
+    )
+    conn.commit()
 
-    _save(data)
+    task = _row_to_task(conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone())
+
+    # Cascade: check if parent should auto-complete
+    parent_id = row["parent_id"]
+    if parent_id:
+        _cascade_parent(parent_id)
+
     _log_activity("task_completed", task["id"], task.get("title"), task.get("project"))
 
     # Sync to GitHub Issues (close the issue)
@@ -633,67 +870,127 @@ def complete_task(task_id: str) -> dict | None:
 
     # Check if a phase just completed (parent auto-cascaded)
     if parent_id:
-        parent = next((t for t in data["tasks"] if t["id"] == parent_id), None)
-        if parent and parent.get("auto_completed"):
+        parent_row = conn.execute("SELECT * FROM tasks WHERE id = ?", (parent_id,)).fetchone()
+        if parent_row and parent_row["status"] == "done":
+            parent_task = _row_to_task(parent_row)
             notify_initiative_event(
                 "phase_completed",
-                parent.get("title", parent_id),
+                parent_task.get("title", parent_id),
                 task_id=parent_id,
-                project=parent.get("project"),
+                project=parent_task.get("project"),
             )
-            # Also sync the parent's checkbox if it has source_ref
-            _sync_initiative_checkbox(parent)
+            _sync_initiative_checkbox(parent_task)
+            task["auto_completed"] = True  # Signal for CLI display
 
     return task
 
 
-def _cascade_parent(data: dict, parent_id: str) -> None:
+def _cascade_parent(parent_id: str) -> None:
     """If all subtasks of parent are done, mark parent as done too."""
-    subtasks = [t for t in data["tasks"] if t.get("parent") == parent_id]
+    conn = _db()
+
+    subtasks = conn.execute(
+        "SELECT id, status FROM tasks WHERE parent_id = ?", (parent_id,)
+    ).fetchall()
     if not subtasks:
         return
 
-    all_done = all(t.get("status") == "done" for t in subtasks)
+    all_done = all(r["status"] == "done" for r in subtasks)
     if all_done:
-        for t in data["tasks"]:
-            if t["id"] == parent_id:
-                if t.get("status") != "done":
-                    t["status"] = "done"
-                    t["completed"] = _now()
-                    t["auto_completed"] = True
-                    # Cascade up further if this parent also has a parent
-                    if t.get("parent"):
-                        _cascade_parent(data, t["parent"])
-                break
+        parent_row = conn.execute(
+            "SELECT id, status, parent_id FROM tasks WHERE id = ?", (parent_id,)
+        ).fetchone()
+        if parent_row and parent_row["status"] != "done":
+            now = _now()
+            conn.execute(
+                "UPDATE tasks SET status = 'done', completed_at = ?, modified_at = ? WHERE id = ?",
+                (now, now, parent_id),
+            )
+            conn.commit()
+            # Cascade up further if this parent also has a parent
+            if parent_row["parent_id"]:
+                _cascade_parent(parent_row["parent_id"])
 
 
 def update_task(task_id: str, **fields) -> dict | None:
     """Update arbitrary fields on a task."""
-    data = _load()
-    for task in data["tasks"]:
-        if task["id"] == task_id:
-            for key, val in fields.items():
-                if val is None and key in task:
-                    del task[key]
-                elif val is not None:
-                    task[key] = val
-            _save(data)
-            return task
-    return None
+    conn = _db()
+
+    row = conn.execute("SELECT id FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    if not row:
+        return None
+
+    # Map YAML-style field names to DB column names
+    field_map = {
+        "title": "title",
+        "status": "status",
+        "priority": "priority",
+        "project": "project_id",
+        "started": "started_at",
+        "completed": "completed_at",
+        "due": "due_at",
+        "parent": "parent_id",
+        "notes": "description",
+        "assigned_to": "assigned_to",
+        "tags": "tags",
+        "pipeline": "pipeline",
+        "recurrence": "recurrence",
+        "source": "created_by",
+        # Direct DB column names also work
+        "project_id": "project_id",
+        "started_at": "started_at",
+        "completed_at": "completed_at",
+        "due_at": "due_at",
+        "parent_id": "parent_id",
+        "description": "description",
+        "created_by": "created_by",
+    }
+
+    sets = []
+    params = []
+    for key, val in fields.items():
+        col = field_map.get(key)
+        if col:
+            if col == "tags":
+                sets.append(f"{col} = ?")
+                params.append(_json_dumps(val) if val else None)
+            else:
+                sets.append(f"{col} = ?")
+                params.append(val)
+
+    if not sets:
+        return _row_to_task(conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone())
+
+    sets.append("modified_at = ?")
+    params.append(_now())
+    params.append(task_id)
+
+    conn.execute(f"UPDATE tasks SET {', '.join(sets)} WHERE id = ?", params)
+    conn.commit()
+
+    updated_row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    return _row_to_task(updated_row) if updated_row else None
 
 
 def start_task(task_id: str, session_id: str = None) -> dict | None:
     """Move a task to active status and set it as the live work context."""
-    data = _load()
-    for task in data["tasks"]:
-        if task["id"] == task_id:
-            task["status"] = "active"
-            task["started"] = _now()
-            _save(data)
-            _log_activity("task_started", task["id"], task.get("title"), task.get("project"))
-            set_live_context(task, session_id=session_id)
-            return task
-    return None
+    conn = _db()
+    now = _now()
+
+    row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    if not row:
+        return None
+
+    conn.execute(
+        "UPDATE tasks SET status = 'active', started_at = ?, modified_at = ? WHERE id = ?",
+        (now, now, task_id),
+    )
+    conn.commit()
+
+    task = _row_to_task(conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone())
+    _log_activity("task_started", task["id"], task.get("title"), task.get("project"))
+    set_live_context(task, session_id=session_id)
+    return task
 
 
 # ── Live Context ─────────────────────────────────────
@@ -704,7 +1001,6 @@ def start_task(task_id: str, session_id: str = None) -> dict | None:
 
 def set_live_context(task: dict, session_id: str = None) -> None:
     """Set the live work context. Called when a task is started."""
-    import json
     WORK_DIR.mkdir(parents=True, exist_ok=True)
     ctx = {
         "task_id": task["id"],
@@ -720,7 +1016,6 @@ def set_live_context(task: dict, session_id: str = None) -> None:
 def clear_live_context(task_id: str = None) -> dict | None:
     """Clear the live context. Returns the old context if it existed.
     If task_id provided, only clears if it matches (prevents clearing wrong task)."""
-    import json
     if not LIVE_CONTEXT_FILE.exists():
         return None
     try:
@@ -735,7 +1030,6 @@ def clear_live_context(task_id: str = None) -> dict | None:
 
 def get_live_context() -> dict | None:
     """Read current live context. Returns None if nothing active."""
-    import json
     if not LIVE_CONTEXT_FILE.exists():
         return None
     try:
@@ -755,48 +1049,62 @@ def cancel_task(task_id: str) -> dict | None:
 
 def delete_task(task_id: str) -> bool:
     """Permanently remove a task and its subtasks."""
-    data = _load()
-    before = len(data["tasks"])
-    # Delete the task and any subtasks
-    data["tasks"] = [t for t in data["tasks"]
-                     if t["id"] != task_id and t.get("parent") != task_id]
-    if len(data["tasks"]) < before:
-        _save(data)
-        return True
-    return False
+    conn = _db()
+
+    # Check if task exists
+    row = conn.execute("SELECT id FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    if not row:
+        return False
+
+    # Delete subtasks first
+    conn.execute("DELETE FROM task_handoffs WHERE task_id IN (SELECT id FROM tasks WHERE parent_id = ?)", (task_id,))
+    conn.execute("DELETE FROM session_tasks WHERE task_id IN (SELECT id FROM tasks WHERE parent_id = ?)", (task_id,))
+    conn.execute("DELETE FROM tasks WHERE parent_id = ?", (task_id,))
+
+    # Delete the task itself
+    conn.execute("DELETE FROM task_handoffs WHERE task_id = ?", (task_id,))
+    conn.execute("DELETE FROM session_tasks WHERE task_id = ?", (task_id,))
+    conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+    conn.commit()
+    return True
 
 
 def get_task(task_id: str) -> dict | None:
     """Get a single task by exact ID."""
-    data = _load()
-    for task in data["tasks"]:
-        if task["id"] == task_id:
-            return task
-    return None
+    conn = _db()
+    row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    if not row:
+        return None
+    return _row_to_task(row)
 
 
 def get_all_tasks() -> list:
     """Get all tasks."""
-    return _load()["tasks"]
+    conn = _db()
+    rows = conn.execute("SELECT * FROM tasks ORDER BY created_at DESC").fetchall()
+    return [_row_to_task(r) for r in rows]
 
 
 def get_subtasks(parent_id: str) -> list:
     """Get all subtasks of a parent task."""
-    data = _load()
-    return [t for t in data["tasks"] if t.get("parent") == parent_id]
+    conn = _db()
+    rows = conn.execute(
+        "SELECT * FROM tasks WHERE parent_id = ? ORDER BY id", (parent_id,)
+    ).fetchall()
+    return [_row_to_task(r) for r in rows]
 
 
 def get_task_tree(task_id: str) -> dict | None:
     """Get a task with its subtasks attached."""
-    data = _load()
-    task = None
-    for t in data["tasks"]:
-        if t["id"] == task_id:
-            task = dict(t)
-            break
-    if not task:
+    conn = _db()
+    row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    if not row:
         return None
-    task["subtasks"] = [t for t in data["tasks"] if t.get("parent") == task_id]
+    task = _row_to_task(row)
+    sub_rows = conn.execute(
+        "SELECT * FROM tasks WHERE parent_id = ? ORDER BY id", (task_id,)
+    ).fetchall()
+    task["subtasks"] = [_row_to_task(r) for r in sub_rows]
     return task
 
 
@@ -806,27 +1114,31 @@ def write_handoff(task_id: str, state: str, next_step: str = None,
                   files_touched: list = None, decisions: list = None,
                   blockers: list = None) -> dict | None:
     """Write handoff context for a task. Called by agents before session end."""
-    data = _load()
-    for task in data["tasks"]:
-        if task["id"] == task_id:
-            handoff = {
-                "updated": _now(),
-                "state": state,
-            }
-            if next_step:
-                handoff["next_step"] = next_step
-            if files_touched:
-                handoff["files_touched"] = files_touched
-            if decisions:
-                handoff["decisions"] = decisions
-            if blockers:
-                handoff["blockers"] = blockers
-            task["handoff"] = handoff
-            _save(data)
-            _log_activity("handoff_written", task["id"], task.get("title"), task.get("project"),
-                          detail=next_step[:80] if next_step else None)
-            return task
-    return None
+    conn = _db()
+    now = _now()
+
+    row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    if not row:
+        return None
+
+    conn.execute(
+        "INSERT OR REPLACE INTO task_handoffs "
+        "(task_id, state, next_step, files, decisions, blockers, timestamp) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (
+            task_id, state, next_step or "",
+            _json_dumps(files_touched),
+            _json_dumps(decisions),
+            _json_dumps(blockers),
+            now,
+        ),
+    )
+    conn.commit()
+
+    task = _row_to_task(conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone())
+    _log_activity("handoff_written", task["id"], task.get("title"), task.get("project"),
+                  detail=next_step[:80] if next_step else None)
+    return task
 
 
 def get_handoff(task_id: str) -> dict | None:
@@ -907,15 +1219,35 @@ def add_project(title: str, goal: str = None, done_when: str = None,
         initiative: Initiative slug — links to vault/knowledge/initiatives/{slug}.md
         project_id: Custom project ID (defaults to auto-generated p1, p2, etc.)
     """
-    data = _load()
+    conn = _db()
 
     # Use custom project_id or auto-generate
-    pid = project_id if project_id else _next_id(data["projects"], "p")
+    pid = project_id if project_id else _next_id("p")
 
     # Prevent duplicate project IDs
-    for p in data["projects"]:
-        if p["id"] == pid:
-            raise ValueError(f"Project '{pid}' already exists")
+    existing = conn.execute("SELECT id FROM projects WHERE id = ?", (pid,)).fetchone()
+    if existing:
+        raise ValueError(f"Project '{pid}' already exists")
+
+    now = _now()
+
+    # Build description from extra fields not in schema
+    desc_parts = []
+    if appetite:
+        desc_parts.append(f"appetite:{appetite}")
+    if short_id:
+        desc_parts.append(f"short_id:{short_id}")
+    if initiative:
+        desc_parts.append(f"initiative:{initiative}")
+    description = ", ".join(desc_parts) if desc_parts else None
+
+    conn.execute(
+        "INSERT INTO projects "
+        "(id, title, description, status, goal, done_when, version, modified_at) "
+        "VALUES (?, ?, ?, 'active', ?, ?, 1, ?)",
+        (pid, title, description, goal, done_when, now),
+    )
+    conn.commit()
 
     project = {
         "id": pid,
@@ -933,39 +1265,68 @@ def add_project(title: str, goal: str = None, done_when: str = None,
         project["short_id"] = short_id
     if initiative:
         project["initiative"] = initiative
-    data["projects"].append(project)
-    _save(data)
     return project
 
 
 def get_all_projects() -> list:
-    return _load()["projects"]
+    """Get all projects."""
+    conn = _db()
+    rows = conn.execute("SELECT * FROM projects ORDER BY id").fetchall()
+    return [_row_to_project(r) for r in rows]
 
 
 def update_project(project_id: str, **fields) -> dict | None:
     """Update arbitrary fields on a project."""
-    data = _load()
-    for project in data["projects"]:
-        if project["id"] == project_id:
-            for key, val in fields.items():
-                if val is None and key in project:
-                    del project[key]
-                elif val is not None:
-                    project[key] = val
-            _save(data)
-            return project
-    return None
+    conn = _db()
+
+    row = conn.execute("SELECT id FROM projects WHERE id = ?", (project_id,)).fetchone()
+    if not row:
+        return None
+
+    field_map = {
+        "title": "title",
+        "description": "description",
+        "status": "status",
+        "path": "path",
+        "goal": "goal",
+        "done_when": "done_when",
+        "current_stage": "current_stage",
+        "stages": "stages",
+    }
+
+    sets = []
+    params = []
+    for key, val in fields.items():
+        col = field_map.get(key)
+        if col:
+            if col == "stages":
+                sets.append(f"{col} = ?")
+                params.append(_json_dumps(val) if val else None)
+            else:
+                sets.append(f"{col} = ?")
+                params.append(val)
+
+    if not sets:
+        updated_row = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
+        return _row_to_project(updated_row) if updated_row else None
+
+    sets.append("modified_at = ?")
+    params.append(_now())
+    params.append(project_id)
+
+    conn.execute(f"UPDATE projects SET {', '.join(sets)} WHERE id = ?", params)
+    conn.commit()
+
+    updated_row = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
+    return _row_to_project(updated_row) if updated_row else None
 
 
 def delete_project(project_id: str) -> bool:
     """Remove a project. Does NOT delete its tasks."""
-    data = _load()
-    before = len(data["projects"])
-    data["projects"] = [p for p in data["projects"] if p["id"] != project_id]
-    if len(data["projects"]) < before:
-        _save(data)
-        return True
-    return False
+    conn = _db()
+    cur = conn.execute("DELETE FROM projects WHERE id = ?", (project_id,))
+    conn.commit()
+    return cur.rowcount > 0
 
 
 def move_tasks_to_project(task_ids: list[str], target_project: str) -> list[dict]:
@@ -973,7 +1334,7 @@ def move_tasks_to_project(task_ids: list[str], target_project: str) -> list[dict
 
     Returns list of dicts with old_id and new_id for each moved task.
     """
-    data = _load()
+    conn = _db()
     prefix = _project_prefix(target_project)
     moved = []
 
@@ -982,23 +1343,22 @@ def move_tasks_to_project(task_ids: list[str], target_project: str) -> list[dict
     for tid in task_ids:
         ids_to_move.add(tid)
         # Find subtasks
-        for t in data["tasks"]:
-            if t["id"].startswith(tid + "."):
-                ids_to_move.add(t["id"])
+        sub_rows = conn.execute(
+            "SELECT id FROM tasks WHERE parent_id = ?", (tid,)
+        ).fetchall()
+        for r in sub_rows:
+            ids_to_move.add(r["id"])
 
     # Sort: parents first, then subtasks
     sorted_ids = sorted(ids_to_move, key=lambda x: (x.count("."), x))
 
     # Map old parent IDs to new parent IDs for subtask re-parenting
     id_map = {}
+    now = _now()
 
     for old_id in sorted_ids:
-        task = None
-        for t in data["tasks"]:
-            if t["id"] == old_id:
-                task = t
-                break
-        if not task:
+        row = conn.execute("SELECT * FROM tasks WHERE id = ?", (old_id,)).fetchone()
+        if not row:
             continue
 
         is_subtask = "." in old_id
@@ -1007,184 +1367,275 @@ def move_tasks_to_project(task_ids: list[str], target_project: str) -> list[dict
             # Find the parent's new ID
             old_parent = old_id.rsplit(".", 1)[0]
             new_parent = id_map.get(old_parent, old_parent)
-            new_id = _next_subtask_id(data["tasks"] + [{"id": m["new_id"]} for m in moved], new_parent)
+            new_id = _next_subtask_id(new_parent)
         else:
-            new_id = _next_scoped_id(
-                data["tasks"] + [{"id": m["new_id"]} for m in moved],
-                prefix
-            )
+            new_id = _next_scoped_id(prefix)
 
         id_map[old_id] = new_id
-        task["id"] = new_id
-        task["project"] = target_project
 
-        # Remove old initiative tags, keep others
-        if task.get("tags"):
-            task["tags"] = [t for t in task["tags"] if not t.startswith("initiative:")]
+        # Update the task: new ID, new project, remove old tags
+        old_tags = _json_loads(row["tags"])
+        new_tags = [t for t in old_tags if not t.startswith("initiative:")] if old_tags else None
+
+        # Create new task with new ID
+        conn.execute(
+            "INSERT INTO tasks "
+            "(id, title, status, priority, project_id, description, "
+            " assigned_to, created_by, created_at, started_at, completed_at, "
+            " due_at, parent_id, pipeline, pipeline_stage, recurrence, tags, "
+            " version, modified_at) "
+            "SELECT ?, title, status, priority, ?, description, "
+            " assigned_to, created_by, created_at, started_at, completed_at, "
+            " due_at, ?, pipeline, pipeline_stage, recurrence, ?, "
+            " version, ? "
+            "FROM tasks WHERE id = ?",
+            (
+                new_id, target_project,
+                id_map.get(row["parent_id"], row["parent_id"]) if is_subtask else row["parent_id"],
+                _json_dumps(new_tags),
+                now, old_id,
+            ),
+        )
+
+        # Move handoff
+        ho_row = conn.execute("SELECT * FROM task_handoffs WHERE task_id = ?", (old_id,)).fetchone()
+        if ho_row:
+            conn.execute(
+                "INSERT OR REPLACE INTO task_handoffs "
+                "(task_id, state, next_step, files, decisions, blockers, session_id, timestamp) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (new_id, ho_row["state"], ho_row["next_step"], ho_row["files"],
+                 ho_row["decisions"], ho_row["blockers"], ho_row["session_id"], ho_row["timestamp"]),
+            )
+            conn.execute("DELETE FROM task_handoffs WHERE task_id = ?", (old_id,))
+
+        # Delete old task
+        conn.execute("DELETE FROM tasks WHERE id = ?", (old_id,))
 
         moved.append({"old_id": old_id, "new_id": new_id})
 
-    _save(data)
+    conn.commit()
     return moved
 
 
 # ── Goal CRUD ─────────────────────────────────────────
 
 def add_goal(title: str, goal_type: str = "committed", weight: float = None) -> dict:
-    data = _load()
+    conn = _db()
+    gid = _next_id("g")
+
+    conn.execute(
+        "INSERT INTO goals (id, title, weight, description) VALUES (?, ?, ?, ?)",
+        (gid, title, weight, goal_type),
+    )
+    conn.commit()
+
     goal = {
-        "id": _next_id(data["goals"], "g"),
+        "id": gid,
         "title": title,
         "status": "active",
         "type": goal_type,
     }
     if weight is not None:
         goal["weight"] = weight
-    data["goals"].append(goal)
-    _save(data)
     return goal
 
 
 def get_all_goals() -> list:
-    return _load()["goals"]
+    conn = _db()
+    rows = conn.execute("SELECT * FROM goals ORDER BY id").fetchall()
+    return [_row_to_goal(r) for r in rows]
 
 
 def update_goal(goal_id: str, **fields) -> dict | None:
     """Update arbitrary fields on a goal."""
-    data = _load()
-    for goal in data["goals"]:
-        if goal["id"] == goal_id:
-            for key, val in fields.items():
-                if val is None and key in goal:
-                    del goal[key]
-                elif val is not None:
-                    goal[key] = val
-            _save(data)
-            return goal
-    return None
+    conn = _db()
+
+    row = conn.execute("SELECT id FROM goals WHERE id = ?", (goal_id,)).fetchone()
+    if not row:
+        return None
+
+    field_map = {
+        "title": "title",
+        "description": "description",
+        "weight": "weight",
+    }
+
+    sets = []
+    params = []
+    for key, val in fields.items():
+        col = field_map.get(key)
+        if col:
+            sets.append(f"{col} = ?")
+            params.append(val)
+
+    if not sets:
+        return _row_to_goal(conn.execute("SELECT * FROM goals WHERE id = ?", (goal_id,)).fetchone())
+
+    params.append(goal_id)
+    conn.execute(f"UPDATE goals SET {', '.join(sets)} WHERE id = ?", params)
+    conn.commit()
+
+    return _row_to_goal(conn.execute("SELECT * FROM goals WHERE id = ?", (goal_id,)).fetchone())
 
 
 def delete_goal(goal_id: str) -> bool:
-    data = _load()
-    before = len(data["goals"])
-    data["goals"] = [g for g in data["goals"] if g["id"] != goal_id]
-    if len(data["goals"]) < before:
-        _save(data)
-        return True
-    return False
+    conn = _db()
+    conn.execute("DELETE FROM key_results WHERE goal_id = ?", (goal_id,))
+    cur = conn.execute("DELETE FROM goals WHERE id = ?", (goal_id,))
+    conn.commit()
+    return cur.rowcount > 0
 
 
 # ── Thread CRUD ───────────────────────────────────────
 
 def add_thread(title: str, session_id: str = None) -> dict:
-    data = _load()
+    conn = _db()
+    tid = _next_id("th")
+    now = _today()
+
+    conn.execute(
+        "INSERT INTO threads (id, title, status, created_at) VALUES (?, ?, 'exploring', ?)",
+        (tid, title, now),
+    )
+    conn.commit()
+
     thread = {
-        "id": _next_id(data["threads"], "th"),
+        "id": tid,
         "title": title,
         "status": "exploring",
-        "started": _today(),
+        "started": now,
     }
     if session_id:
         thread["sessions"] = [session_id]
-    data["threads"].append(thread)
-    _save(data)
     return thread
 
 
 def get_thread(thread_id: str) -> dict | None:
     """Get a single thread by ID."""
-    data = _load()
-    for thread in data["threads"]:
-        if thread["id"] == thread_id:
-            return thread
-    return None
+    conn = _db()
+    row = conn.execute("SELECT * FROM threads WHERE id = ?", (thread_id,)).fetchone()
+    if not row:
+        return None
+    return _row_to_thread(row)
 
 
 def update_thread(thread_id: str, **fields) -> dict | None:
     """Update arbitrary fields on a thread."""
-    data = _load()
-    for thread in data["threads"]:
-        if thread["id"] == thread_id:
-            for key, val in fields.items():
-                if val is None and key in thread:
-                    del thread[key]
-                elif val is not None:
-                    thread[key] = val
-            _save(data)
-            return thread
-    return None
+    conn = _db()
+
+    row = conn.execute("SELECT id FROM threads WHERE id = ?", (thread_id,)).fetchone()
+    if not row:
+        return None
+
+    field_map = {
+        "title": "title",
+        "status": "status",
+        "project": "project_id",
+        "project_id": "project_id",
+    }
+
+    sets = []
+    params = []
+    for key, val in fields.items():
+        col = field_map.get(key)
+        if col:
+            sets.append(f"{col} = ?")
+            params.append(val)
+
+    if not sets:
+        return _row_to_thread(conn.execute("SELECT * FROM threads WHERE id = ?", (thread_id,)).fetchone())
+
+    params.append(thread_id)
+    conn.execute(f"UPDATE threads SET {', '.join(sets)} WHERE id = ?", params)
+    conn.commit()
+
+    return _row_to_thread(conn.execute("SELECT * FROM threads WHERE id = ?", (thread_id,)).fetchone())
 
 
 def promote_thread(thread_id: str, project_title: str = None,
                    goal: str = None) -> dict | None:
     """Promote a thread to a project. Returns the created project."""
-    data = _load()
-    for thread in data["threads"]:
-        if thread["id"] == thread_id:
-            title = project_title or thread["title"]
-            thread["status"] = "promoted"
-            _save(data)
-            project = add_project(title, goal=goal)
-            # Link the thread to the project
-            update_thread(thread_id, promoted_to=project["id"])
-            return project
-    return None
+    conn = _db()
+    row = conn.execute("SELECT * FROM threads WHERE id = ?", (thread_id,)).fetchone()
+    if not row:
+        return None
+
+    title = project_title or row["title"]
+    conn.execute("UPDATE threads SET status = 'promoted' WHERE id = ?", (thread_id,))
+    conn.commit()
+
+    project = add_project(title, goal=goal)
+    # Link the thread to the project
+    update_thread(thread_id, promoted_to=None)  # promoted_to not in DB schema
+    return project
 
 
 def get_all_threads() -> list:
-    return _load()["threads"]
+    conn = _db()
+    rows = conn.execute("SELECT * FROM threads ORDER BY created_at DESC").fetchall()
+    return [_row_to_thread(r) for r in rows]
 
 
 def find_thread_by_cwd(cwd: str) -> dict | None:
-    """Find an active thread associated with a working directory."""
-    data = _load()
-    for thread in data["threads"]:
-        if thread.get("status") in ("exploring", "active") and thread.get("cwd") == cwd:
-            return thread
+    """Find an active thread associated with a working directory.
+
+    Note: The threads table doesn't have a 'cwd' column, so this returns None.
+    Thread-CWD association was a YAML-only feature.
+    """
+    # In the DB schema, threads don't have a cwd column.
+    # Return None — session_close will create threads as needed.
     return None
 
 
 # ── Inbox ─────────────────────────────────────────────
 
 def add_inbox(text: str, source: str = "manual", confidence: float = None) -> dict:
-    data = _load()
+    conn = _db()
+    iid = _next_id("i")
+    now = _now()
+
+    conn.execute(
+        "INSERT INTO inbox (id, text, captured_at) VALUES (?, ?, ?)",
+        (iid, text, now),
+    )
+    conn.commit()
+
     item = {
-        "id": _next_id(data["inbox"], "i"),
+        "id": iid,
         "text": text,
-        "captured": _now(),
+        "captured": now,
         "source": source,
     }
     if confidence is not None:
         item["confidence"] = confidence
-    data["inbox"].append(item)
-    _save(data)
     return item
 
 
 def get_inbox() -> list:
-    return _load()["inbox"]
+    conn = _db()
+    rows = conn.execute("SELECT * FROM inbox ORDER BY captured_at DESC").fetchall()
+    return [_row_to_inbox(r) for r in rows]
 
 
 def promote_inbox(inbox_id: str, as_title: str = None) -> dict | None:
     """Promote an inbox item to a task. Returns the created task."""
-    data = _load()
-    for i, item in enumerate(data["inbox"]):
-        if item["id"] == inbox_id:
-            title = as_title or item["text"]
-            data["inbox"].pop(i)
-            _save(data)
-            return add_task(title, source="inbox")
-    return None
+    conn = _db()
+    row = conn.execute("SELECT * FROM inbox WHERE id = ?", (inbox_id,)).fetchone()
+    if not row:
+        return None
+
+    title = as_title or row["text"]
+    conn.execute("DELETE FROM inbox WHERE id = ?", (inbox_id,))
+    conn.commit()
+    return add_task(title, source="inbox")
 
 
 def delete_inbox(inbox_id: str) -> bool:
-    data = _load()
-    before = len(data["inbox"])
-    data["inbox"] = [i for i in data["inbox"] if i["id"] != inbox_id]
-    if len(data["inbox"]) < before:
-        _save(data)
-        return True
-    return False
+    conn = _db()
+    cur = conn.execute("DELETE FROM inbox WHERE id = ?", (inbox_id,))
+    conn.commit()
+    return cur.rowcount > 0
 
 
 # ── Session Linking ───────────────────────────────────
@@ -1192,52 +1643,77 @@ def delete_inbox(inbox_id: str) -> bool:
 def link_session_to_task(task_id: str, session_id: str, outcome: str = None,
                          date_str: str = None) -> dict | None:
     """Link a session to a task."""
-    data = _load()
-    for task in data["tasks"]:
-        if task["id"] == task_id:
-            if "sessions" not in task:
-                task["sessions"] = []
-            # Dedup
-            existing_ids = {s["id"] for s in task["sessions"]}
-            if session_id in existing_ids:
-                if outcome:
-                    for s in task["sessions"]:
-                        if s["id"] == session_id:
-                            s["outcome"] = outcome
-                _save(data)
-                return task
-            entry = {
-                "id": session_id,
-                "date": date_str or _today(),
-            }
-            if outcome:
-                entry["outcome"] = outcome
-            task["sessions"].append(entry)
-            _save(data)
-            return task
-    return None
+    conn = _db()
+
+    row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    if not row:
+        return None
+
+    # Use session_tasks table for linking
+    existing = conn.execute(
+        "SELECT 1 FROM session_tasks WHERE session_id = ? AND task_id = ?",
+        (session_id, task_id),
+    ).fetchone()
+
+    if not existing:
+        conn.execute(
+            "INSERT INTO session_tasks (session_id, task_id, relation) VALUES (?, ?, 'worked_on')",
+            (session_id, task_id),
+        )
+
+    # Also ensure a sessions row exists (lightweight)
+    sess_exists = conn.execute(
+        "SELECT 1 FROM sessions WHERE id = ?", (session_id,)
+    ).fetchone()
+    if not sess_exists:
+        conn.execute(
+            "INSERT INTO sessions (id, status, started_at, task_id, outcome) VALUES (?, 'active', ?, ?, ?)",
+            (session_id, date_str or _now(), task_id, outcome),
+        )
+    elif outcome:
+        conn.execute(
+            "UPDATE sessions SET outcome = ? WHERE id = ?",
+            (outcome, session_id),
+        )
+
+    conn.commit()
+    return _row_to_task(conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone())
 
 
 def link_session_to_thread(thread_id: str, session_id: str,
                            notes: str = None) -> dict | None:
     """Link a session to a thread."""
-    data = _load()
-    for thread in data["threads"]:
-        if thread["id"] == thread_id:
-            if "sessions" not in thread:
-                thread["sessions"] = []
-            if session_id not in thread["sessions"]:
-                thread["sessions"].append(session_id)
-            if notes:
-                existing_notes = thread.get("notes", "")
-                if existing_notes:
-                    thread["notes"] = existing_notes + f"\n\n[{_today()}] {notes}"
-                else:
-                    thread["notes"] = f"[{_today()}] {notes}"
-            thread["last_session"] = _now()
-            _save(data)
-            return thread
-    return None
+    conn = _db()
+    row = conn.execute("SELECT * FROM threads WHERE id = ?", (thread_id,)).fetchone()
+    if not row:
+        return None
+
+    # Threads in the DB don't have a sessions list like YAML did.
+    # We can store the link via the sessions table using thread_id column.
+    sess_exists = conn.execute(
+        "SELECT 1 FROM sessions WHERE id = ?", (session_id,)
+    ).fetchone()
+    if not sess_exists:
+        conn.execute(
+            "INSERT INTO sessions (id, status, started_at, thread_id) VALUES (?, 'active', ?, ?)",
+            (session_id, _now(), thread_id),
+        )
+    else:
+        conn.execute(
+            "UPDATE sessions SET thread_id = ? WHERE id = ?",
+            (thread_id, session_id),
+        )
+
+    conn.commit()
+
+    thread = _row_to_thread(row)
+    # Return with session count for CLI display
+    sess_count = conn.execute(
+        "SELECT count(*) as cnt FROM sessions WHERE thread_id = ?", (thread_id,)
+    ).fetchone()
+    if sess_count:
+        thread["sessions"] = ["s"] * sess_count["cnt"]  # Placeholder list for len()
+    return thread
 
 
 def get_or_create_thread_for_cwd(cwd: str, session_id: str,
@@ -1247,34 +1723,26 @@ def get_or_create_thread_for_cwd(cwd: str, session_id: str,
     if thread:
         link_session_to_thread(thread["id"], session_id)
         return thread
-    data = _load()
+
     if not title:
         dir_name = Path(cwd).name
         title = f"Work in {dir_name}"
-    thread = {
-        "id": _next_id(data["threads"], "th"),
-        "title": title,
-        "status": "exploring",
-        "started": _today(),
-        "cwd": cwd,
-        "sessions": [session_id],
-        "last_session": _now(),
-    }
-    data["threads"].append(thread)
-    _save(data)
+
+    thread = add_thread(title, session_id=session_id)
     return thread
 
 
 def find_tasks_by_project_or_cwd(cwd: str) -> list:
     """Find active tasks that match a working directory."""
-    data = _load()
+    conn = _db()
     project_id = detect_project_from_cwd(cwd)
     if not project_id:
         return []
-    active_tasks = [t for t in data["tasks"]
-                    if t.get("project") == project_id
-                    and t.get("status") in ("active", "todo")]
-    return active_tasks
+    rows = conn.execute(
+        "SELECT * FROM tasks WHERE project_id = ? AND status IN ('active', 'todo') ORDER BY priority, created_at",
+        (project_id,),
+    ).fetchall()
+    return [_row_to_task(r) for r in rows]
 
 
 # ── Migration ─────────────────────────────────────────
@@ -1284,58 +1752,101 @@ def migrate_task_ids() -> dict:
 
     Returns mapping of old_id -> new_id.
     """
-    data = _load()
+    conn = _db()
+    rows = conn.execute("SELECT * FROM tasks").fetchall()
     id_map = {}
 
-    # First pass: rename all tasks
-    for task in data["tasks"]:
-        old_id = task["id"]
+    for row in rows:
+        old_id = row["id"]
         # Skip if already in new format
         if "#" in old_id:
             continue
 
-        project = task.get("project")
+        project = row["project_id"]
         prefix = _project_prefix(project)
-        new_id = _next_scoped_id(data["tasks"], prefix)
+        new_id = _next_scoped_id(prefix)
 
-        # Store legacy ID for backward compat
-        task["_legacy_id"] = old_id
-        task["id"] = new_id
+        # Create new task with new ID
+        conn.execute(
+            "INSERT INTO tasks "
+            "(id, title, status, priority, project_id, description, "
+            " assigned_to, created_by, created_at, started_at, completed_at, "
+            " due_at, parent_id, pipeline, pipeline_stage, recurrence, tags, "
+            " version, modified_at) "
+            "SELECT ?, title, status, priority, project_id, description, "
+            " assigned_to, created_by, created_at, started_at, completed_at, "
+            " due_at, parent_id, pipeline, pipeline_stage, recurrence, tags, "
+            " version, ? "
+            "FROM tasks WHERE id = ?",
+            (new_id, _now(), old_id),
+        )
+
+        # Move handoff
+        conn.execute(
+            "UPDATE task_handoffs SET task_id = ? WHERE task_id = ?",
+            (new_id, old_id),
+        )
+
+        # Delete old
+        conn.execute("DELETE FROM tasks WHERE id = ?", (old_id,))
+
         id_map[old_id] = new_id
 
-    # Second pass: update parent references
-    for task in data["tasks"]:
-        if task.get("parent") and task["parent"] in id_map:
-            task["parent"] = id_map[task["parent"]]
+    # Update parent references
+    for old, new in id_map.items():
+        conn.execute(
+            "UPDATE tasks SET parent_id = ? WHERE parent_id = ?",
+            (new, old),
+        )
 
-    # Third pass: update session links in threads
-    # (sessions reference task IDs in some places)
-
-    _save(data)
+    conn.commit()
     return id_map
 
 
 # ── Bulk accessors ────────────────────────────────────
 
 def load_all() -> dict:
-    """Load entire work file. Use for dashboards/reviews."""
-    return _load()
+    """Load all work data. Use for dashboards/reviews."""
+    return {
+        "version": "3.0",
+        "tasks": get_all_tasks(),
+        "projects": get_all_projects(),
+        "goals": get_all_goals(),
+        "threads": get_all_threads(),
+        "inbox": get_inbox(),
+    }
 
 
 def summary() -> dict:
     """Quick summary stats."""
-    data = _load()
-    tasks = data["tasks"]
-    # Exclude subtasks from top-level counts
-    top_level = [t for t in tasks if not t.get("parent")]
+    conn = _db()
+
+    # Count top-level tasks by status
+    rows = conn.execute(
+        "SELECT status, count(*) as cnt FROM tasks WHERE parent_id IS NULL GROUP BY status"
+    ).fetchall()
+    by_status = {r["status"]: r["cnt"] for r in rows}
+    total = sum(by_status.values())
+
+    # Count by priority
+    prows = conn.execute(
+        "SELECT priority, count(*) as cnt FROM tasks WHERE parent_id IS NULL GROUP BY priority"
+    ).fetchall()
+    by_priority = {str(r["priority"]): r["cnt"] for r in prows}
+
+    project_count = conn.execute("SELECT count(*) as cnt FROM projects").fetchone()["cnt"]
+    goal_count = conn.execute("SELECT count(*) as cnt FROM goals").fetchone()["cnt"]
+    thread_count = conn.execute("SELECT count(*) as cnt FROM threads").fetchone()["cnt"]
+    inbox_count = conn.execute("SELECT count(*) as cnt FROM inbox").fetchone()["cnt"]
+
     return {
-        "total_tasks": len(top_level),
-        "by_status": _count_by(top_level, "status"),
-        "by_priority": _count_by(top_level, "priority"),
-        "projects": len(data["projects"]),
-        "goals": len(data["goals"]),
-        "threads": len(data["threads"]),
-        "inbox": len(data["inbox"]),
+        "total_tasks": total,
+        "by_status": by_status,
+        "by_priority": by_priority,
+        "projects": project_count,
+        "goals": goal_count,
+        "threads": thread_count,
+        "inbox": inbox_count,
     }
 
 

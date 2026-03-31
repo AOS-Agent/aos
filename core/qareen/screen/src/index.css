@@ -1,0 +1,13 @@
+/* Qareen — minimal entry CSS. Full design system is in globals.css. */
+
+#root {
+  width: 100%;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+body {
+  margin: 0;
+}
