@@ -272,6 +272,57 @@ class Ontology:
         # Implementation reads from trust.yaml or trust table
         raise NotImplementedError
 
+    # -- Write operations -------------------------------------------------
+
+    def create(self, object_type: ObjectType, obj: Any) -> Any:
+        """Create a new object through the appropriate adapter."""
+        adapter = self._adapters.get(object_type)
+        if not adapter:
+            return None
+        return adapter.create(obj)
+
+    def update(self, object_type: ObjectType, object_id: str, fields: dict) -> Any:
+        """Update an object's fields through the appropriate adapter."""
+        adapter = self._adapters.get(object_type)
+        if not adapter:
+            return None
+        return adapter.update(object_id, fields)
+
+    def delete(self, object_type: ObjectType, object_id: str) -> bool:
+        """Delete an object through the appropriate adapter."""
+        adapter = self._adapters.get(object_type)
+        if not adapter:
+            return False
+        return adapter.delete(object_id)
+
+    # -- Lifecycle --------------------------------------------------------
+
+    def close(self) -> None:
+        """Close all adapter connections. Call on shutdown."""
+        closed = set()
+        for adapter in self._adapters.values():
+            aid = id(adapter)
+            if aid not in closed:
+                closed.add(aid)
+                if hasattr(adapter, 'close'):
+                    adapter.close()
+
+    # -- Convenience wrappers ---------------------------------------------
+
+    def resolve_channel(self, person_name: str) -> dict | None:
+        """Resolve a person's best messaging channel. Convenience wrapper."""
+        adapter = self._adapters.get(ObjectType.PERSON)
+        if adapter and hasattr(adapter, 'resolve_channel'):
+            return adapter.resolve_channel(person_name)
+        return None
+
+    def write_handoff(self, task_id: str, **kwargs) -> Any:
+        """Write handoff context for a task. Convenience wrapper."""
+        adapter = self._adapters.get(ObjectType.TASK)
+        if adapter and hasattr(adapter, 'write_handoff'):
+            return adapter.write_handoff(task_id, **kwargs)
+        return None
+
     # -- Internal helpers --------------------------------------------------
 
     def _object_type_of(self, obj: OntologyObject) -> ObjectType:

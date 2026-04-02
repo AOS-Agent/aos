@@ -163,10 +163,9 @@ async def get_work(request: Request) -> WorkResponse:
     )
 
     # Inbox
-    adapter = ontology._adapters.get(ObjectType.TASK)
     inbox_items: list[InboxItemResponse] = []
-    if adapter:
-        raw_inbox = adapter.list(filters={"_type": "inbox"}, limit=50, offset=0)
+    raw_inbox = ontology.list(ObjectType.TASK, filters={"_type": "inbox"}, limit=50)
+    if raw_inbox:
         for item in raw_inbox:
             if isinstance(item, dict):
                 inbox_items.append(InboxItemResponse(
@@ -265,9 +264,7 @@ async def update_task(
     if not result.get("success"):
         return JSONResponse({"error": result.get("error", "Unknown error")}, status_code=400)
 
-    # Specifically get as task (not via generic ontology.get which might match a project)
-    adapter = ontology._adapters.get(ObjectType.TASK)
-    task = adapter._get_task(task_id) if adapter else None
+    task = ontology.get(ObjectType.TASK, task_id)
     if task:
         return _task_to_response(task)
     return JSONResponse({"error": "Task not found after update"}, status_code=404)

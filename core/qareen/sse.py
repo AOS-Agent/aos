@@ -207,6 +207,9 @@ async def _event_stream(conn: SSEConnection, request: Request) -> AsyncGenerator
 
     The generator exits when the client disconnects.
     """
+    # Send an immediate comment to flush proxy buffers and signal connection
+    yield f": connected {conn.id}\n\n"
+
     try:
         while True:
             # Check if client disconnected

@@ -1,0 +1,22 @@
+name: task_lifecycle
+description: "When a task is completed, update project stats, check goal progress, and notify"
+trigger:
+  event_type: "task.completed"
+  conditions: {}
+stages:
+  - name: update_project_stats
+    action: update_project_stats
+    params: {}
+    on_failure: skip
+    timeout_seconds: 10
+  - name: check_goal_progress
+    action: check_goal_progress
+    params: {}
+    on_failure: skip
+    timeout_seconds: 10
+  - name: notify
+    action: notify
+    params:
+      channel: operator
+    on_failure: skip
+    timeout_seconds: 5

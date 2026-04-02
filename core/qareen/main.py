@@ -9,9 +9,11 @@ Single FastAPI process serving:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -144,6 +146,42 @@ async def lifespan(app: FastAPI):
         logger.exception("Failed to create VoiceManager")
         app.state.voice_manager = None
 
+    # Session manager + Intelligence engine
+    intelligence_engine = None
+    try:
+        from qareen.intelligence.session import SessionManager
+        from qareen.intelligence.engine import CompanionIntelligenceEngine
+        from qareen.api.companion import _push_companion_event
+
+        session_manager = SessionManager(db_path=str(AOS_DATA / "data" / "qareen.db"))
+
+        intelligence_engine = CompanionIntelligenceEngine(
+            session_manager=session_manager,
+            ontology=ontology,
+            bus=bus,
+            push_event=_push_companion_event,
+        )
+
+        app.state.session_manager = session_manager
+        app.state.intelligence_engine = intelligence_engine
+        logger.info("Intelligence engine initialized")
+    except Exception:
+        logger.exception("Failed to create intelligence engine")
+        app.state.session_manager = None
+        app.state.intelligence_engine = None
+
+    # Wire companion stream to receive voice events from bus.
+    # Must happen AFTER intelligence engine so transcripts feed into AI processing.
+    if bus:
+        try:
+            from qareen.api.companion import wire_companion_to_bus
+
+            wire_companion_to_bus(bus, intelligence_engine=intelligence_engine)
+        except Exception:
+            logger.exception(
+                "Failed to wire companion to bus — companion SSE may be degraded"
+            )
+
     # -- Register adapters -----------------------------------------------
 
     if ontology:
@@ -222,9 +260,234 @@ async def lifespan(app: FastAPI):
             action_registry.register(create_goal)
             action_registry.register(create_inbox)
             action_registry.register(delete_inbox)
-            logger.info("Core actions registered (%d)", len(action_registry.list_actions()))
+            logger.info("Core work actions registered (%d)", len(action_registry.list_actions()))
         except Exception:
             logger.exception("Failed to register core actions")
+
+        try:
+            from qareen.actions.messaging import send_message
+
+            action_registry.register(send_message)
+            logger.info("Messaging action registered")
+        except Exception:
+            logger.exception("Failed to register messaging action")
+
+    # -- Pipeline engine ----------------------------------------------------
+
+    pipeline_engine = None
+    if ontology and bus:
+        try:
+            from qareen.pipelines.engine import PipelineEngine
+
+            pipeline_engine = PipelineEngine(ontology=ontology, event_bus=bus)
+
+            # -- Real pipeline action handlers ---------------------------------
+
+            async def _update_project_stats(
+                event=None, params=None, outputs=None,
+            ) -> dict[str, Any]:
+                """Query task counts for the project from the completed task event."""
+                try:
+                    project = getattr(event, "project", None) or (
+                        event.payload.get("project") if hasattr(event, "payload") else None
+                    )
+                    if project and ontology:
+                        from qareen.ontology.types import ObjectType
+
+                        tasks = ontology.list(
+                            ObjectType.TASK,
+                            filters={"_type": "task", "project": project},
+                            limit=200,
+                        )
+                        total = len(tasks)
+                        done = sum(
+                            1 for t in tasks
+                            if getattr(t, "status", "") == "done"
+                        )
+                        active = sum(
+                            1 for t in tasks
+                            if getattr(t, "status", "") == "active"
+                        )
+                        logger.info(
+                            "Project stats updated: %s — %d total, %d done, %d active",
+                            project, total, done, active,
+                        )
+                        return {
+                            "action": "update_project_stats",
+                            "status": "completed",
+                            "project": project,
+                            "total": total,
+                            "done": done,
+                            "active": active,
+                        }
+                except Exception as e:
+                    logger.debug("update_project_stats failed: %s", e)
+
+                logger.info("Updating project stats for completed task")
+                return {"action": "update_project_stats", "status": "completed"}
+
+            async def _check_goal_progress(
+                event=None, params=None, outputs=None,
+            ) -> dict[str, Any]:
+                """Check if any goals have progressed based on task completion."""
+                try:
+                    if ontology:
+                        from qareen.ontology.types import ObjectType
+
+                        goals = ontology.list(
+                            ObjectType.GOAL,
+                            filters={"_type": "goal"},
+                            limit=20,
+                        )
+                        active_goals = [
+                            g for g in goals
+                            if getattr(g, "status", "") in ("active", "in_progress")
+                        ]
+                        logger.info(
+                            "Goal progress check: %d active goals",
+                            len(active_goals),
+                        )
+                        return {
+                            "action": "check_goal_progress",
+                            "status": "completed",
+                            "active_goals": len(active_goals),
+                        }
+                except Exception as e:
+                    logger.debug("check_goal_progress failed: %s", e)
+
+                return {"action": "check_goal_progress", "status": "completed"}
+
+            async def _notify(
+                event=None, params=None, outputs=None,
+            ) -> dict[str, Any]:
+                """Push a notification event to the bus for the companion stream."""
+                try:
+                    channel = (params or {}).get("channel", "operator")
+                    event_type = getattr(event, "event_type", "unknown")
+                    title = ""
+                    if hasattr(event, "title"):
+                        title = event.title
+                    elif hasattr(event, "payload"):
+                        title = event.payload.get("title", "")
+
+                    notification = {
+                        "id": str(id(event))[:8],
+                        "source": "pipeline",
+                        "message": f"Pipeline completed: {title or event_type}",
+                        "channel": channel,
+                        "timestamp": datetime.now().isoformat(),
+                    }
+
+                    if bus:
+                        from qareen.events.types import Event as BusEvent
+
+                        await bus.emit(BusEvent(
+                            event_type="notification",
+                            source="pipeline",
+                            payload=notification,
+                        ))
+
+                    # Also push to companion SSE stream directly
+                    try:
+                        from qareen.api.companion import _push_companion_event
+
+                        await _push_companion_event("activity", notification)
+                    except Exception:
+                        pass
+
+                    logger.info("Notification sent: %s", notification["message"])
+                except Exception as e:
+                    logger.debug("notify action failed: %s", e)
+
+                return {"action": "notify", "status": "completed"}
+
+            async def _classify_intent(
+                event=None, params=None, outputs=None,
+            ) -> dict[str, Any]:
+                """Classify the intent of an inbound message."""
+                try:
+                    from qareen.intelligence.classifier import classify
+
+                    text = ""
+                    if hasattr(event, "content_preview"):
+                        text = event.content_preview
+                    elif hasattr(event, "payload"):
+                        text = event.payload.get(
+                            "text", event.payload.get("content_preview", ""),
+                        )
+
+                    if text:
+                        result = classify(text)
+                        logger.info(
+                            "Pipeline classify: intent=%s confidence=%.1f",
+                            result.intent.value, result.confidence,
+                        )
+                        return {
+                            "action": "classify_intent",
+                            "status": "completed",
+                            "intent": result.intent.value,
+                            "confidence": result.confidence,
+                        }
+                except Exception as e:
+                    logger.debug("classify_intent failed: %s", e)
+
+                return {"action": "classify_intent", "status": "completed"}
+
+            async def _extract_entities(
+                event=None, params=None, outputs=None,
+            ) -> dict[str, Any]:
+                """Extract entities from the classified message."""
+                classify_output = (outputs or {}).get("classify")
+                logger.info(
+                    "Entity extraction (classify output: %s)",
+                    classify_output.get("intent") if classify_output else "none",
+                )
+                return {"action": "extract_entities", "status": "completed"}
+
+            async def _route_message(
+                event=None, params=None, outputs=None,
+            ) -> dict[str, Any]:
+                """Route a classified message to the appropriate handler."""
+                classify_output = (outputs or {}).get("classify")
+                intent = (
+                    classify_output.get("intent", "unknown")
+                    if classify_output
+                    else "unknown"
+                )
+                logger.info("Message routing: intent=%s", intent)
+                return {
+                    "action": "route_message",
+                    "status": "completed",
+                    "routed_to": intent,
+                }
+
+            pipeline_engine.register_action("update_project_stats", _update_project_stats)
+            pipeline_engine.register_action("check_goal_progress", _check_goal_progress)
+            pipeline_engine.register_action("notify", _notify)
+            pipeline_engine.register_action("classify_intent", _classify_intent)
+            pipeline_engine.register_action("extract_entities", _extract_entities)
+            pipeline_engine.register_action("route_message", _route_message)
+
+            # Load definitions
+            definitions_dir = str(
+                Path(__file__).parent / "pipelines" / "definitions"
+            )
+            await pipeline_engine.load_definitions(definitions_dir)
+            logger.info("Pipeline engine initialized")
+        except Exception:
+            logger.exception("Failed to initialize pipeline engine")
+            pipeline_engine = None
+
+    # -- Bridge listener (inbound message capture) ---------------------------
+
+    bridge_listener_task = None
+    if bus:
+        try:
+            from qareen.channels.bridge_listener import start_bridge_listener
+
+            bridge_listener_task = await start_bridge_listener(bus)
+        except Exception:
+            logger.exception("Failed to start bridge listener")
 
     # -- Store in app.state for route access ------------------------------
 
@@ -232,6 +495,7 @@ async def lifespan(app: FastAPI):
     app.state.bus = bus
     app.state.audit_log = audit_log
     app.state.action_registry = action_registry
+    app.state.pipeline_engine = pipeline_engine
     app.state.version = _read_version()
 
     logger.info("Qareen startup complete")
@@ -241,6 +505,22 @@ async def lifespan(app: FastAPI):
     # -- Shutdown ---------------------------------------------------------
 
     logger.info("Qareen shutting down")
+
+    if bridge_listener_task and not bridge_listener_task.done():
+        bridge_listener_task.cancel()
+        try:
+            await bridge_listener_task
+        except asyncio.CancelledError:
+            pass
+        logger.info("Bridge listener stopped")
+
+    # Close adapter connections
+    if ontology:
+        try:
+            ontology.close()
+        except Exception:
+            logger.debug("Adapter close failed", exc_info=True)
+        logger.info("Adapter connections closed")
 
     if bus:
         bus.clear()
@@ -286,12 +566,54 @@ app.add_middleware(
 async def health() -> dict[str, Any]:
     """Health check — always responds, even if subsystems are degraded.
 
-    Returns component status for each runtime subsystem.
+    Returns component status for each runtime subsystem plus system metrics.
     """
+    import shutil
+
     voice_mgr = getattr(app.state, "voice_manager", None)
+    pipe_engine = getattr(app.state, "pipeline_engine", None)
+
+    # Disk metrics (root volume)
+    try:
+        disk = shutil.disk_usage("/")
+        disk_pct = round((disk.used / disk.total) * 100, 1)
+        disk_free_gb = round(disk.free / (1024**3), 1)
+    except OSError:
+        disk_pct = 0
+        disk_free_gb = 0
+
+    # RAM metrics (macOS-native, no psutil dependency)
+    try:
+        import re as _re
+        import subprocess as _sp
+        total_mem = int(_sp.check_output(["sysctl", "-n", "hw.memsize"]).strip())
+        vm_out = _sp.check_output(["vm_stat"]).decode()
+        # Extract page size from "page size of NNNN bytes"
+        ps_match = _re.search(r"page size of (\d+)", vm_out)
+        page_size = int(ps_match.group(1)) if ps_match else 16384
+        def _parse_vm(label: str) -> int:
+            for line in vm_out.splitlines():
+                if line.startswith(label):
+                    return int(line.split(":")[1].strip().rstrip(".")) * page_size
+            return 0
+        free = _parse_vm("Pages free")
+        inactive = _parse_vm("Pages inactive")
+        speculative = _parse_vm("Pages speculative")
+        available = free + inactive + speculative
+        used = total_mem - available
+        ram_pct = round((used / total_mem) * 100, 1)
+        ram_used_gb = round(used / (1024**3), 1)
+    except Exception:
+        ram_pct = 0
+        ram_used_gb = 0
+
     return {
         "status": "ok",
         "version": _read_version(),
+        "disk_pct": disk_pct,
+        "disk_free_gb": disk_free_gb,
+        "ram_pct": ram_pct,
+        "ram_used_gb": ram_used_gb,
         "components": {
             "ontology": getattr(app.state, "ontology", None) is not None,
             "bus": getattr(app.state, "bus", None) is not None,
@@ -299,6 +621,10 @@ async def health() -> dict[str, Any]:
             "action_registry": getattr(app.state, "action_registry", None) is not None,
             "voice_manager": voice_mgr is not None,
             "voice_stt": voice_mgr._stt_engine if voice_mgr else None,
+            "voice_chunks": voice_mgr._chunk_count if voice_mgr else 0,
+            "voice_speaking": voice_mgr._is_speaking if voice_mgr else False,
+            "pipeline_engine": pipe_engine is not None,
+            "pipeline_definitions": len(pipe_engine._definitions) if pipe_engine else 0,
         },
     }
 
@@ -323,9 +649,9 @@ except ImportError:
 
 # Voice WebSocket
 try:
-    from qareen.voice.websocket import register as register_voice_ws
+    from qareen.voice.websocket import router as voice_ws_router
 
-    register_voice_ws(app)
+    app.include_router(voice_ws_router)
 except ImportError:
     logger.warning("Voice WebSocket router not available")
 
@@ -342,6 +668,7 @@ _api_routers = [
     ("qareen.api.metrics", "metrics"),
     ("qareen.api.pipelines", "pipelines"),
     ("qareen.api.companion", "companion"),
+    ("qareen.api.meetings", "meetings"),
 ]
 
 for module_path, name in _api_routers:

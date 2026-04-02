@@ -125,7 +125,33 @@ def _get_pipeline_runs(pipeline_name: str | None = None) -> list[dict[str, Any]]
 
 @router.get("", response_model=PipelineListResponse)
 async def list_pipelines(request: Request) -> PipelineListResponse:
-    """List all pipeline definitions."""
+    """List all pipeline definitions.
+
+    Reads from the pipeline engine's loaded definitions first,
+    falls back to the static config file.
+    """
+    # Try engine definitions first (runtime source of truth)
+    engine = getattr(request.app.state, "pipeline_engine", None)
+    if engine and hasattr(engine, "_definitions") and engine._definitions:
+        pipelines = []
+        for name, defn in engine._definitions.items():
+            stages = [
+                PipelineStageSchema(
+                    name=s.name,
+                    handler=s.action,
+                    timeout_seconds=s.timeout_seconds,
+                )
+                for s in defn.stages
+            ]
+            pipelines.append(PipelineDefinition(
+                name=defn.name,
+                description=defn.description,
+                stages=stages,
+                is_active=True,
+            ))
+        return PipelineListResponse(pipelines=pipelines, total=len(pipelines))
+
+    # Fallback to static config
     pipelines = _get_pipeline_definitions()
     return PipelineListResponse(
         pipelines=pipelines,

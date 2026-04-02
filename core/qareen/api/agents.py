@@ -114,6 +114,9 @@ def _discover_agents(directory: Path) -> list[dict[str, Any]]:
 
     for entry in directory.iterdir():
         if entry.suffix == ".md" and entry.is_file():
+            # Skip files with invalid agent names (e.g. --help.md)
+            if entry.stem.startswith("-") or entry.stem.startswith("."):
+                continue
             parsed = _parse_agent_md(entry)
             if parsed:
                 agents.append(parsed)

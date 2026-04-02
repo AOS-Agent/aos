@@ -43,6 +43,7 @@ _TYPE_TO_SUBDIR: dict[str, str] = {
     "expertise": "knowledge/expertise",
     "initiative": "knowledge/initiatives",
     "spec": "knowledge/specs",
+    "procedure": "knowledge/procedures",
     # Log-side types
     "daily": "log",
     "session": "log/sessions",
@@ -60,6 +61,7 @@ _SUBDIR_TO_TYPE: dict[str, str] = {
     "expertise": "expertise",
     "initiatives": "initiative",
     "specs": "spec",
+    "procedures": "procedure",
     "sessions": "session",
     "friction": "friction",
 }

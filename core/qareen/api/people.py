@@ -84,14 +84,10 @@ async def list_people(
     if not ontology:
         return PersonListResponse()
 
-    adapter = ontology._adapters.get(ObjectType.PERSON)
-    if not adapter:
-        return PersonListResponse()
-
     # If a search query is provided, use the search method
     if q:
-        results = adapter.search(q, limit=per_page)
-        people = [_person_to_response(r.person if hasattr(r, "person") else r) for r in results]
+        results = ontology.search(q, types=[ObjectType.PERSON], limit=per_page)
+        people = [_person_to_response(r.obj if r.obj else r) for r in results]
         return PersonListResponse(
             people=people,
             total=len(people),
@@ -110,8 +106,8 @@ async def list_people(
         filters["importance"] = {"max": importance_max}
 
     offset = (page - 1) * per_page
-    people_objs = adapter.list(filters=filters, limit=per_page, offset=offset)
-    total = adapter.count(filters=filters)
+    people_objs = ontology.list(ObjectType.PERSON, filters=filters, limit=per_page, offset=offset)
+    total = ontology.count(ObjectType.PERSON, filters=filters)
 
     people = [_person_to_response(p) for p in people_objs]
     has_more = (offset + per_page) < total
@@ -132,16 +128,13 @@ async def get_surfaces(request: Request) -> PersonSurfaceResponse:
     if not ontology:
         return PersonSurfaceResponse()
 
-    adapter = ontology._adapters.get(ObjectType.PERSON)
-    if not adapter:
-        return PersonSurfaceResponse()
-
     # Find people with high importance who haven't been contacted recently
     surfaces: list[PersonSurfaceItem] = []
 
     # Get important people (importance 1-2) with drifting contact
     try:
-        important = adapter.list(
+        important = ontology.list(
+            ObjectType.PERSON,
             filters={"importance": {"max": 2}},
             limit=20,
         )
@@ -198,12 +191,8 @@ async def update_person(
     if not ontology:
         return JSONResponse({"error": "System starting up"}, status_code=503)
 
-    adapter = ontology._adapters.get(ObjectType.PERSON)
-    if not adapter:
-        return JSONResponse({"error": "People adapter not available"}, status_code=503)
-
     fields = body.model_dump(exclude_none=True)
-    updated = adapter.update(person_id, fields)
+    updated = ontology.update(ObjectType.PERSON, person_id, fields)
     if not updated:
         return JSONResponse({"error": f"Person not found: {person_id}"}, status_code=404)
 

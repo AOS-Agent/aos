@@ -1,0 +1,21 @@
+name: message_inbound
+description: "Process incoming messages through classification and routing"
+trigger:
+  event_type: "message.received"
+  conditions: {}
+stages:
+  - name: classify
+    action: classify_intent
+    params: {}
+    on_failure: skip
+    timeout_seconds: 10
+  - name: extract_entities
+    action: extract_entities
+    params: {}
+    on_failure: skip
+    timeout_seconds: 10
+  - name: route
+    action: route_message
+    params: {}
+    on_failure: escalate
+    timeout_seconds: 15

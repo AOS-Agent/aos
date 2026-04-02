@@ -147,6 +147,80 @@ async def search_vault(
     )
 
 
+@router.get("/tree")
+async def vault_tree(
+    request: Request,
+    root: str = Query("", description="Subdirectory within vault to list"),
+) -> list[dict[str, Any]]:
+    """Return a recursive tree of vault files/folders for the sidebar."""
+    base = VAULT_DIR / root if root else VAULT_DIR
+    if not base.is_dir():
+        return []
+
+    def _build_tree(directory: Path, rel: str = "") -> list[dict[str, Any]]:
+        nodes: list[dict[str, Any]] = []
+        try:
+            entries = sorted(directory.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower()))
+        except OSError:
+            return nodes
+        for entry in entries:
+            if entry.name.startswith(".") or entry.name.startswith("__"):
+                continue
+            rel_path = f"{rel}/{entry.name}" if rel else entry.name
+            if entry.is_dir():
+                children = _build_tree(entry, rel_path)
+                count = sum(1 for c in children if c["type"] == "file") + sum(
+                    c.get("count", 0) for c in children if c["type"] == "folder"
+                )
+                nodes.append({
+                    "name": entry.name,
+                    "path": rel_path,
+                    "type": "folder",
+                    "children": children,
+                    "count": count,
+                })
+            elif entry.suffix == ".md":
+                nodes.append({
+                    "name": entry.name,
+                    "path": rel_path,
+                    "type": "file",
+                })
+        return nodes
+
+    return _build_tree(base, root)
+
+
+@router.get("/logs")
+async def vault_logs(
+    request: Request,
+) -> list[dict[str, Any]]:
+    """Return a list of daily log files with date and title metadata."""
+    log_dir = VAULT_DIR / "log"
+    if not log_dir.is_dir():
+        return []
+
+    results: list[dict[str, Any]] = []
+    for entry in sorted(log_dir.iterdir(), reverse=True):
+        if not entry.is_file() or entry.suffix != ".md":
+            continue
+        # Extract date from filename (YYYY-MM-DD.md)
+        date_str = entry.stem
+        title = date_str
+        try:
+            content = entry.read_text(encoding="utf-8", errors="replace")
+            fm, _ = _parse_frontmatter(content)
+            if fm.get("title"):
+                title = str(fm["title"])
+        except OSError:
+            pass
+        results.append({
+            "date": date_str,
+            "title": title,
+            "path": f"log/{entry.name}",
+        })
+    return results
+
+
 @router.get("/file/{path:path}", response_model=VaultFileResponse)
 async def get_file(
     request: Request,

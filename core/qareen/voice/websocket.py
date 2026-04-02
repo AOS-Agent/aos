@@ -6,20 +6,22 @@ import logging
 import struct
 
 import numpy as np
-from starlette.websockets import WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 logger = logging.getLogger(__name__)
 
 HEADER_SIZE = 8
 
+router = APIRouter()
 
+
+@router.websocket("/ws/audio")
 async def audio_stream(websocket: WebSocket):
     """Receive audio from browser, process through voice pipeline."""
     await websocket.accept()
     logger.info("Audio WebSocket connected")
 
-    app = websocket.app
-    voice_manager = getattr(app.state, "voice_manager", None)
+    voice_manager = getattr(websocket.app.state, "voice_manager", None)
 
     if not voice_manager:
         logger.warning("No voice manager — closing")
@@ -28,7 +30,8 @@ async def audio_stream(websocket: WebSocket):
 
     chunks = 0
     try:
-        async for raw in websocket.iter_bytes():
+        while True:
+            raw = await websocket.receive_bytes()
             chunks += 1
             if chunks <= 3 or chunks % 50 == 0:
                 logger.info("Audio chunk #%d: %d bytes", chunks, len(raw))
@@ -45,7 +48,7 @@ async def audio_stream(websocket: WebSocket):
             audio = np.frombuffer(
                 raw[HEADER_SIZE : HEADER_SIZE + num_samples * 4],
                 dtype=np.float32,
-            )
+            ).copy()
             await voice_manager.process_chunk(audio)
 
     except WebSocketDisconnect:
@@ -56,8 +59,3 @@ async def audio_stream(websocket: WebSocket):
         if voice_manager:
             await voice_manager.on_disconnect()
         logger.info("Audio WebSocket cleanup complete")
-
-
-def register(app):
-    """Register the WebSocket route on the app."""
-    app.add_websocket_route("/ws/audio", audio_stream)

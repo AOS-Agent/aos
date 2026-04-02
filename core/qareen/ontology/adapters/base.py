@@ -16,12 +16,10 @@ from ..types import (
     ContextCard, Link, LinkType, ObjectType,
 )
 
-# Forward reference to avoid circular import — these are defined in model.py
-# Adapters use Any for Any and Any in the base class.
-# Concrete adapters import the specific types they return.
+# Forward reference to avoid circular import — Ontology is defined in model.py
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
-    from ..model import Any, Any
+    from ..model import Ontology
 
 
 class Adapter(ABC):

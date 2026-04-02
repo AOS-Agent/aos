@@ -19,22 +19,29 @@ from .types import ExtractedEntity, Intent, IntentResult
 # ---------------------------------------------------------------------------
 
 PATTERNS: list[tuple[re.Pattern[str], Intent]] = [
-    # Task creation
+    # Task creation — explicit prefix
     (re.compile(r"(?:add|create|new)\s+task[:\s]+(.+)", re.IGNORECASE), Intent.TASK_CREATE),
     (re.compile(r"(?:todo|to-do|to do)[:\s]+(.+)", re.IGNORECASE), Intent.TASK_CREATE),
+    # Task creation — natural language
+    (re.compile(r"(?:add|create)\s+(?:a\s+)?task\s+(?:to|for|about)\s+(.+)", re.IGNORECASE), Intent.TASK_CREATE),
+    (re.compile(r"(?:i need to|i have to|i should|remind me to|don't forget to)\s+(.+)", re.IGNORECASE), Intent.TASK_CREATE),
+    (re.compile(r"(?:can you|please)\s+(?:add|create)\s+(?:a\s+)?(?:task|todo)\s+(?:to|for|about)?\s*(.+)", re.IGNORECASE), Intent.TASK_CREATE),
 
     # Task completion / update
     (re.compile(r"(?:done|complete|finish|mark done)[:\s]+(.+)", re.IGNORECASE), Intent.TASK_UPDATE),
+    (re.compile(r"(?:i (?:just )?(?:finished|completed|did)|that's done)[:\s]*(.+)", re.IGNORECASE), Intent.TASK_UPDATE),
 
     # Recall / search — must come before decision to avoid "recall: what did we decide"
     # being caught by the decision pattern
     (re.compile(r"(?:recall|remember|what did|find|search|look up)[:\s]+(.+)", re.IGNORECASE), Intent.RECALL),
+    (re.compile(r"(?:what do (?:we|i) know about|show me|pull up)\s+(.+)", re.IGNORECASE), Intent.RECALL),
 
     # Decision — anchored to start of utterance to avoid mid-sentence matches
     (re.compile(r"^(?:decide|decision|lock in|we decided|decided)[:\s]+(.+)", re.IGNORECASE), Intent.DECISION),
 
     # Message / reply  — "message hisham: hey" or "reply to hisham: thanks"
     (re.compile(r"(?:message|reply|respond|text|email|send)\s+(?:to\s+)?(\w+)[:\s]+(.+)", re.IGNORECASE), Intent.MESSAGE_SEND),
+    (re.compile(r"(?:tell|ask)\s+(\w+)\s+(?:to|that|about)\s+(.+)", re.IGNORECASE), Intent.MESSAGE_SEND),
 
     # Vault capture
     (re.compile(r"(?:note|capture|save|log|write down)[:\s]+(.+)", re.IGNORECASE), Intent.VAULT_CAPTURE),

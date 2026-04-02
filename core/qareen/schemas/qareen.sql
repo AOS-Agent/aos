@@ -602,6 +602,36 @@ CREATE INDEX IF NOT EXISTS idx_briefs_project ON intelligence_briefs(project_id)
 CREATE INDEX IF NOT EXISTS idx_briefs_unsurfaced ON intelligence_briefs(surfaced) WHERE surfaced = 0;
 
 -- ============================================================
+-- COMPANION SESSIONS (intelligence engine state)
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS companion_sessions (
+    id              TEXT PRIMARY KEY,
+    status          TEXT NOT NULL DEFAULT 'active',
+    started_at      TEXT NOT NULL,
+    ended_at        TEXT,
+    title           TEXT,
+    transcript_json TEXT DEFAULT '[]',
+    notes_json      TEXT DEFAULT '{}',
+    research_json   TEXT DEFAULT '[]',
+    cards_json      TEXT DEFAULT '[]',
+    context_json    TEXT DEFAULT '{}',
+    last_processed_index INTEGER DEFAULT 0,
+    utterance_count INTEGER DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS companion_session_events (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id      TEXT NOT NULL,
+    event_type      TEXT NOT NULL,
+    event_data      TEXT NOT NULL,
+    created_at      TEXT NOT NULL,
+    sequence_num    INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_cse_session ON companion_session_events(session_id, sequence_num);
+
+-- ============================================================
 -- FULL-TEXT SEARCH
 -- ============================================================
 

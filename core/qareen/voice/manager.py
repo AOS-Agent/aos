@@ -58,6 +58,11 @@ class VoiceManager:
         self._silence_threshold = 30  # ~30 chunks of silence = end of utterance
         self._min_speech_frames = 5   # need 5 frames of speech to trigger
 
+        # Streaming partial transcription — transcribe every N seconds during speech
+        self._partial_interval_samples = int(sample_rate * 2.5)  # every 2.5s
+        self._samples_since_partial = 0
+        self._partial_id: str | None = None  # track the provisional segment ID
+
         # Silero VAD (preferred if available)
         self._silero_vad = None
         self._vad_frame_buffer = np.array([], dtype=np.float32)
@@ -66,6 +71,12 @@ class VoiceManager:
         self._stt_engine: str = "none"  # "parakeet", "whisper", or "none"
         self._stt_model = None
         self._stt_streamer = None
+
+        # Audio recording to session WAV file
+        self._recording = False
+        self._wav_file = None
+        self._recording_path: str | None = None
+        self._recording_samples: int = 0
 
         # Init subsystems
         self._init_vad()
@@ -133,6 +144,15 @@ class VoiceManager:
                        self._chunk_count, len(audio), energy, self._is_speaking)
         self._chunk_count += 1
 
+        # Write to session WAV if recording
+        if self._recording and self._wav_file:
+            try:
+                pcm16 = (audio * 32767).astype(np.int16)
+                self._wav_file.writeframes(pcm16.tobytes())
+                self._recording_samples += len(audio)
+            except Exception as e:
+                logger.debug("WAV write failed: %s", e)
+
         if self._silero_vad:
             await self._process_chunk_silero(audio)
         else:
@@ -148,11 +168,19 @@ class VoiceManager:
 
             if not self._is_speaking and self._speech_frames >= self._min_speech_frames:
                 self._is_speaking = True
+                self._samples_since_partial = 0
+                self._partial_id = None
                 await self._on_speech_start()
 
             if self._is_speaking:
                 self._buffer.append(audio)
                 self._buffer_samples += len(audio)
+                self._samples_since_partial += len(audio)
+
+                # Streaming partial: transcribe every 2.5s during speech
+                if self._samples_since_partial >= self._partial_interval_samples:
+                    self._samples_since_partial = 0
+                    asyncio.create_task(self._emit_partial_transcript())
         else:
             self._silence_frames += 1
 
@@ -196,11 +224,45 @@ class VoiceManager:
 
     async def _on_speech_start(self):
         """Called when speech begins."""
-        logger.debug("Speech started")
+        logger.info("Speech started")
+        self._partial_id = str(id(self._buffer))[:8]
         await self._emit_voice_state("listening")
 
+    async def _emit_partial_transcript(self):
+        """Transcribe the buffer so far and emit a provisional transcript.
+
+        This gives the user live feedback while they're still speaking.
+        The partial is marked as provisional — the frontend should update
+        the same segment (by ID) rather than appending a new one.
+        """
+        if not self._buffer:
+            return
+
+        try:
+            audio_so_far = np.concatenate(self._buffer)
+            min_samples = int(self._sample_rate * 0.5)
+            if len(audio_so_far) < min_samples:
+                return
+
+            text = ""
+            if self._stt_engine == "whisper":
+                text = await self._transcribe_whisper(audio_so_far)
+            elif self._stt_engine == "parakeet":
+                text = await self._transcribe_parakeet(audio_so_far)
+
+            if text:
+                duration = len(audio_so_far) / self._sample_rate
+                logger.info("Partial transcript (%.1fs): %s", duration, text[:60])
+                await self._emit_transcript(
+                    text, duration,
+                    is_provisional=True,
+                    segment_id=self._partial_id,
+                )
+        except Exception as e:
+            logger.debug("Partial transcription failed: %s", e)
+
     async def _on_speech_end(self):
-        """Called when speech ends. Triggers transcription."""
+        """Called when speech ends. Triggers final transcription."""
         self._is_speaking = False
         self._speech_frames = 0
 
@@ -212,6 +274,7 @@ class VoiceManager:
 
         self._buffer.clear()
         self._buffer_samples = 0
+        self._samples_since_partial = 0
 
         # Reset Silero VAD state between utterances
         if self._silero_vad:
@@ -224,6 +287,7 @@ class VoiceManager:
             await self._emit_voice_state("processing")
             await self._transcribe(audio_data)
 
+        self._partial_id = None
         await self._emit_voice_state("idle")
 
     # ------------------------------------------------------------------
@@ -235,18 +299,26 @@ class VoiceManager:
         text = ""
         duration = len(audio) / self._sample_rate
 
-        if self._stt_engine == "parakeet":
-            text = await self._transcribe_parakeet(audio)
-        elif self._stt_engine == "whisper":
-            text = await self._transcribe_whisper(audio)
+        try:
+            if self._stt_engine == "parakeet":
+                text = await asyncio.wait_for(self._transcribe_parakeet(audio), timeout=15.0)
+            elif self._stt_engine == "whisper":
+                text = await asyncio.wait_for(self._transcribe_whisper(audio), timeout=15.0)
+        except asyncio.TimeoutError:
+            logger.warning("STT timed out after 15s")
+            text = ""
 
         if not text:
             # Echo mode -- signal speech detected without transcription
             text = f"[Speech detected: {duration:.1f}s]"
             logger.info("Echo mode: %.1fs of speech", duration)
 
-        # Emit transcript event
-        await self._emit_transcript(text, duration)
+        # Emit FINAL transcript (replaces any provisional partial)
+        await self._emit_transcript(
+            text, duration,
+            is_provisional=False,
+            segment_id=self._partial_id,
+        )
 
         # Run through intelligence engine (non-blocking)
         if not text.startswith("["):
@@ -321,19 +393,34 @@ class VoiceManager:
     # ------------------------------------------------------------------
 
     async def _process_intelligence(self, text: str):
-        """Run transcribed text through the intelligence engine.
+        """Signal the intelligence engine to process a voice transcript.
 
-        Non-blocking -- failures are logged but don't affect the voice pipeline.
+        The intelligence engine subscribes to transcript events on the
+        EventBus and handles classification, card generation, and context
+        assembly. This method emits a dedicated intelligence event so the
+        engine can pick it up. If the engine isn't available, this is a
+        harmless no-op — the transcript event already went out via
+        _emit_transcript, so the data is captured regardless.
         """
-        try:
-            from qareen.intelligence.engine import IntelligenceEngine
+        if not self._bus:
+            return
 
-            # The engine is available on app state via ontology, but we
-            # don't have direct access here. For now, emit a raw transcript
-            # event and let any bus subscribers handle intelligence processing.
-            logger.debug("Transcript for intelligence: %s", text[:80])
+        try:
+            from qareen.events.types import Event
+
+            await self._bus.emit(Event(
+                event_type="voice.intelligence_request",
+                source="voice",
+                payload={
+                    "text": text,
+                    "speaker": "operator",
+                    "timestamp": datetime.now().isoformat(),
+                    "is_final": True,
+                },
+            ))
+            logger.debug("Intelligence request emitted for voice transcript")
         except Exception as e:
-            logger.debug("Intelligence processing skipped: %s", e)
+            logger.debug("Intelligence event emission failed: %s", e)
 
     # ------------------------------------------------------------------
     # Event emission
@@ -352,8 +439,23 @@ class VoiceManager:
             payload={"state": state},
         ))
 
-    async def _emit_transcript(self, text: str, duration: float):
-        """Emit a transcript event via EventBus -> SSE -> frontend."""
+    async def _emit_transcript(
+        self,
+        text: str,
+        duration: float,
+        is_provisional: bool = False,
+        segment_id: str | None = None,
+    ):
+        """Emit a transcript event via EventBus -> SSE -> frontend.
+
+        Args:
+            text: The transcribed text.
+            duration: Audio duration in seconds.
+            is_provisional: If True, this is a streaming partial that may
+                be updated. The frontend should replace the existing segment.
+            segment_id: If provided, the frontend uses this to update an
+                existing segment rather than creating a new one.
+        """
         if not self._bus:
             return
 
@@ -363,13 +465,83 @@ class VoiceManager:
             event_type="transcript",
             source="voice",
             payload={
+                "id": segment_id or str(id(text))[:8],
                 "text": text,
                 "speaker": "operator",
                 "timestamp": datetime.now().isoformat(),
-                "is_final": True,
+                "is_final": not is_provisional,
+                "is_provisional": is_provisional,
+                "is_update": is_provisional and segment_id is not None,
                 "duration": round(duration, 2),
             },
         ))
+
+    # ------------------------------------------------------------------
+    # Audio recording to session WAV
+    # ------------------------------------------------------------------
+
+    def start_recording(self, audio_path: str) -> bool:
+        """Start recording audio to a WAV file.
+
+        Args:
+            audio_path: Full path to the WAV file to write.
+
+        Returns:
+            True if recording started successfully.
+        """
+        if self._recording:
+            logger.warning("Already recording to %s", self._recording_path)
+            return False
+
+        try:
+            import wave
+
+            # Ensure parent directory exists
+            Path(audio_path).parent.mkdir(parents=True, exist_ok=True)
+
+            wf = wave.open(audio_path, "wb")
+            wf.setnchannels(1)
+            wf.setsampwidth(2)  # 16-bit PCM
+            wf.setframerate(self._sample_rate)
+
+            self._wav_file = wf
+            self._recording_path = audio_path
+            self._recording_samples = 0
+            self._recording = True
+            logger.info("Audio recording started: %s", audio_path)
+            return True
+        except Exception as e:
+            logger.error("Failed to start recording: %s", e)
+            return False
+
+    def stop_recording(self) -> tuple[str | None, float]:
+        """Stop recording and close the WAV file.
+
+        Returns:
+            Tuple of (audio_path, duration_seconds). Path is None on failure.
+        """
+        if not self._recording:
+            return None, 0.0
+
+        self._recording = False
+        audio_path = self._recording_path
+        duration = self._recording_samples / self._sample_rate if self._recording_samples > 0 else 0.0
+
+        try:
+            if self._wav_file:
+                self._wav_file.close()
+                self._wav_file = None
+            logger.info(
+                "Audio recording stopped: %s (%.1fs, %d samples)",
+                audio_path, duration, self._recording_samples,
+            )
+        except Exception as e:
+            logger.error("Error closing WAV file: %s", e)
+            audio_path = None
+
+        self._recording_path = None
+        self._recording_samples = 0
+        return audio_path, duration
 
     # ------------------------------------------------------------------
     # Lifecycle

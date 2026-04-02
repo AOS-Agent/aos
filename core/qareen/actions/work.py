@@ -17,7 +17,6 @@ from qareen.ontology.types import (
     ObjectType,
     Project,
     Task,
-    TaskHandoff,
     TaskPriority,
     TaskStatus,
 )
@@ -56,10 +55,9 @@ async def create_task(
         except ValueError:
             pass
 
-    adapter = ontology._adapters.get(ObjectType.TASK)
-    if not adapter:
+    created = ontology.create(ObjectType.TASK, task)
+    if not created:
         raise RuntimeError("Work adapter not available")
-    created = adapter.create(task)
     return {
         "task_id": created.id,
         "title": created.title,
@@ -71,14 +69,11 @@ async def create_task(
 @action("update_task", emits="task.updated")
 async def update_task(ontology, task_id: str, **fields) -> dict:
     """Update task fields."""
-    adapter = ontology._adapters.get(ObjectType.TASK)
-    if not adapter:
-        raise RuntimeError("Work adapter not available")
     # Filter out non-task fields
     allowed = {"title", "status", "priority", "project", "tags",
                "description", "assigned_to", "due", "started", "completed"}
     task_fields = {k: v for k, v in fields.items() if k in allowed}
-    updated = adapter.update(task_id, task_fields)
+    updated = ontology.update(ObjectType.TASK, task_id, task_fields)
     if updated is None:
         raise ValueError(f"Task not found: {task_id}")
     return {"task_id": task_id, "updated_fields": list(task_fields.keys())}
@@ -87,11 +82,8 @@ async def update_task(ontology, task_id: str, **fields) -> dict:
 @action("complete_task", emits="task.completed")
 async def complete_task(ontology, task_id: str, **kwargs) -> dict:
     """Mark a task as done."""
-    adapter = ontology._adapters.get(ObjectType.TASK)
-    if not adapter:
-        raise RuntimeError("Work adapter not available")
-    updated = adapter.update(
-        task_id,
+    updated = ontology.update(
+        ObjectType.TASK, task_id,
         {"status": "done", "completed": datetime.datetime.now().isoformat()},
     )
     if updated is None:
@@ -102,10 +94,7 @@ async def complete_task(ontology, task_id: str, **kwargs) -> dict:
 @action("delete_task", emits="task.deleted")
 async def delete_task(ontology, task_id: str, **kwargs) -> dict:
     """Delete a task."""
-    adapter = ontology._adapters.get(ObjectType.TASK)
-    if not adapter:
-        raise RuntimeError("Work adapter not available")
-    deleted = adapter.delete(task_id)
+    deleted = ontology.delete(ObjectType.TASK, task_id)
     if not deleted:
         raise ValueError(f"Task not found: {task_id}")
     return {"task_id": task_id, "deleted": True}
@@ -124,23 +113,17 @@ async def write_handoff(
     **kwargs,
 ) -> dict:
     """Write or update a task's handoff context."""
-    adapter = ontology._adapters.get(ObjectType.TASK)
-    if not adapter:
-        raise RuntimeError("Work adapter not available")
-    task = adapter.get(task_id)
+    task = ontology.get(ObjectType.TASK, task_id)
     if task is None:
         raise ValueError(f"Task not found: {task_id}")
-    handoff = TaskHandoff(
+    ontology.write_handoff(
+        task_id,
         state=state,
         next_step=next_step,
-        files=files or [],
+        files_touched=files or [],
         decisions=decisions or [],
         blockers=blockers or [],
-        session_id=session_id,
-        timestamp=datetime.datetime.now(),
     )
-    adapter._upsert_handoff(task_id, handoff)
-    adapter._conn.commit()
     return {"task_id": task_id, "handoff_written": True}
 
 
@@ -165,20 +148,16 @@ async def create_project(
         goal=goal,
         done_when=done_when,
     )
-    adapter = ontology._adapters.get(ObjectType.PROJECT)
-    if not adapter:
+    created = ontology.create(ObjectType.PROJECT, project)
+    if not created:
         raise RuntimeError("Work adapter not available")
-    created = adapter.create(project)
     return {"project_id": created.id, "title": created.title}
 
 
 @action("delete_project", emits="project.deleted")
 async def delete_project(ontology, project_id: str, **kwargs) -> dict:
     """Delete a project."""
-    adapter = ontology._adapters.get(ObjectType.PROJECT)
-    if not adapter:
-        raise RuntimeError("Work adapter not available")
-    deleted = adapter.delete(project_id)
+    deleted = ontology.delete(ObjectType.PROJECT, project_id)
     if not deleted:
         raise ValueError(f"Project not found: {project_id}")
     return {"project_id": project_id, "deleted": True}
@@ -212,10 +191,9 @@ async def create_goal(
         key_results=kr_list,
         project=project,
     )
-    adapter = ontology._adapters.get(ObjectType.GOAL)
-    if not adapter:
+    created = ontology.create(ObjectType.GOAL, goal)
+    if not created:
         raise RuntimeError("Work adapter not available")
-    created = adapter.create(goal)
     return {"goal_id": created.id, "title": created.title}
 
 
@@ -227,27 +205,16 @@ async def create_inbox(
     **kwargs,
 ) -> dict:
     """Add an item to the inbox."""
-    adapter = ontology._adapters.get(ObjectType.TASK)
-    if not adapter:
+    item = ontology.create(ObjectType.TASK, {"text": content, "source": source or "manual"})
+    if not item:
         raise RuntimeError("Work adapter not available")
-    inbox_id = f"in_{uuid.uuid4().hex[:8]}"
-    now = datetime.datetime.now().isoformat()
-    adapter._conn.execute(
-        "INSERT INTO inbox (id, text, captured_at) VALUES (?, ?, ?)",
-        (inbox_id, content, now),
-    )
-    adapter._conn.commit()
-    return {"inbox_id": inbox_id, "content": content}
+    return {"inbox_id": item["id"], "content": content}
 
 
 @action("delete_inbox", emits="inbox.deleted")
 async def delete_inbox(ontology, inbox_id: str, **kwargs) -> dict:
     """Delete an inbox item."""
-    adapter = ontology._adapters.get(ObjectType.TASK)
-    if not adapter:
-        raise RuntimeError("Work adapter not available")
-    cur = adapter._conn.execute("DELETE FROM inbox WHERE id = ?", (inbox_id,))
-    adapter._conn.commit()
-    if cur.rowcount == 0:
+    deleted = ontology.delete(ObjectType.TASK, inbox_id)
+    if not deleted:
         raise ValueError(f"Inbox item not found: {inbox_id}")
     return {"inbox_id": inbox_id, "deleted": True}

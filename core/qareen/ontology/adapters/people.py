@@ -18,6 +18,7 @@ import sqlite3
 from datetime import datetime
 from typing import Any
 
+from ..model import SearchResult
 from ..types import (
     ContextCard,
     Link,
@@ -45,25 +46,6 @@ def _epoch_to_dt(epoch: int | None) -> datetime | None:
 def _row_dict(cursor: sqlite3.Cursor, row: sqlite3.Row) -> dict:
     """Row factory that returns dicts."""
     return {col[0]: row[idx] for idx, col in enumerate(cursor.description)}
-
-
-# ---------------------------------------------------------------------------
-# Search result wrapper (matches base.search return contract)
-# ---------------------------------------------------------------------------
-
-class SearchResult:
-    """Lightweight wrapper returned by search()."""
-
-    def __init__(self, person: Person, score: float = 0.0, snippet: str = ""):
-        self.person = person
-        self.score = score
-        self.snippet = snippet
-        # Delegate common Person attributes for convenience
-        self.id = person.id
-        self.name = person.name
-
-    def __repr__(self) -> str:
-        return f"<SearchResult person={self.name!r} score={self.score:.2f}>"
 
 
 # ---------------------------------------------------------------------------
@@ -207,6 +189,67 @@ class PeopleAdapter(Adapter):
             "Archive people via the comms system instead."
         )
 
+    # -- Channel resolution --------------------------------------------------
+
+    def resolve_channel(self, person_name: str) -> dict | None:
+        """Look up a person by name and return their best channel for messaging.
+
+        Searches people.db for the person, then queries person_identifiers
+        for available channels. Returns the best channel by priority:
+        whatsapp > email.
+
+        Returns:
+            Dict with person_id, person_name, channel, channel_id.
+            None if person not found or no messaging channel available.
+        """
+        results = self.search(person_name, limit=5)
+        if not results:
+            return None
+
+        person = results[0].obj
+
+        # Query all identifiers for this person
+        idents = self._people_conn.execute(
+            """SELECT type, value, is_primary
+               FROM person_identifiers
+               WHERE person_id = ?
+               ORDER BY is_primary DESC, rowid ASC""",
+            (person.id,),
+        ).fetchall()
+
+        # Priority: wa_jid > email (telegram not yet in identifier store)
+        channel_priority = [
+            ("wa_jid", "whatsapp"),
+            ("email", "email"),
+        ]
+
+        for ident_type, channel_name in channel_priority:
+            for ident in idents:
+                if ident["type"] == ident_type:
+                    return {
+                        "person_id": person.id,
+                        "person_name": person.name,
+                        "channel": channel_name,
+                        "channel_id": ident["value"],
+                    }
+
+        # Fall back to phone number (can be used for WhatsApp)
+        for ident in idents:
+            if ident["type"] == "phone":
+                # Normalize phone to WhatsApp JID format
+                normalized = ident.get("normalized") or ident["value"]
+                # Strip leading + and non-digit chars
+                digits = "".join(c for c in normalized if c.isdigit())
+                if digits:
+                    return {
+                        "person_id": person.id,
+                        "person_name": person.name,
+                        "channel": "whatsapp",
+                        "channel_id": f"{digits}@s.whatsapp.net",
+                    }
+
+        return None
+
     # -- Search --------------------------------------------------------------
 
     def search(self, query: str, limit: int = 20) -> list[SearchResult]:
@@ -247,7 +290,14 @@ class PeopleAdapter(Adapter):
             else:
                 # Matched on org/role/alias
                 score = 0.4
-            results.append(SearchResult(person=person, score=score, snippet=person.name))
+            results.append(SearchResult(
+                object_type=ObjectType.PERSON,
+                object_id=person.id,
+                title=person.name,
+                snippet=person.name,
+                score=score,
+                obj=person,
+            ))
         return results
 
     # -- Links ---------------------------------------------------------------
