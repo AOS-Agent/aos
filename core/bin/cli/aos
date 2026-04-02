@@ -6,7 +6,9 @@
 #   aos migrate         Run pending migrations
 #   aos status          Show migration version + pending
 #   aos discover        Scan machine for existing setup
-#   aos update          Pull latest + run migrations
+#   aos update          Create + activate release from origin/main
+#   aos rollback        Switch to previous release
+#   aos releases        List all releases
 #   aos version         Show current version
 #   aos self-test       Validate system health
 #   aos deploy [svc]    Deploy service venv (all or specific)
@@ -44,6 +46,19 @@ case "${1:-help}" in
 
     check-update)
         bash "$AOS_DIR/core/bin/crons/check-update" "${2:---status}"
+        ;;
+
+    rollback)
+        bash "$AOS_DIR/core/bin/internal/release-manager" rollback
+        # Re-run sync after rollback
+        for cmd in sync-skills sync-agents sync-rules sync-mcp; do
+            bash "$0" "$cmd" 2>/dev/null || true
+        done
+        echo "  Rolled back. Run 'aos self-test' to verify."
+        ;;
+
+    releases)
+        bash "$AOS_DIR/core/bin/internal/release-manager" list
         ;;
 
     reconcile)

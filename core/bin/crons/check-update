@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
-# check-update — two-phase update system for AOS
+# check-update — release-based update system for AOS
 #
 # Usage:
-#   check-update              — check and notify if update available
+#   check-update              — check if update available
 #   check-update --apply      — check and auto-apply if available
-#   check-update --continue   — phase 2: deploy after code pull (called via exec)
-#   check-update --status     — just print current vs remote version
+#   check-update --continue   — phase 2: post-activation deploy (called via exec)
+#   check-update --status     — print current vs remote version
 #
 # Architecture:
-#   Phase 1 (--apply): git pull only, then exec this script with --continue.
-#   Phase 2 (--continue): runs from the NEW code on disk. Reconcile, migrate,
-#   rebuild venvs, restart services, health check.
+#   Uses release-manager for immutable versioned releases.
+#   ~/project/aos/ is the single git clone. ~/aos is a symlink to a release.
 #
-#   This solves the bootstrapping problem: the old script never drives deployment.
-#   After pull, the process is replaced by the new script via exec.
+#   Phase 1 (--apply): create release + activate (symlink switch)
+#   Phase 2 (--continue): runs from the NEW release. Reconcile, migrate,
+#   rebuild venvs, restart services, health check.
 #
 # Called by:
 #   - Scheduler (crons.yaml) every 2 hours
@@ -23,15 +23,18 @@
 set +e
 
 AOS_DIR="$HOME/aos"
+DEV_REPO="$HOME/project/aos"
 STATE_FILE="$HOME/.aos/data/update-state.json"
 HANDOFF_FILE="$HOME/.aos/data/update-handoff.json"
+HASH_FILE="$HOME/.aos/data/deployed-hash"
+RELEASE_MGR="$AOS_DIR/core/bin/internal/release-manager"
 LOG_PREFIX="[$(date '+%Y-%m-%d %H:%M:%S')]"
 
 mkdir -p "$(dirname "$STATE_FILE")"
 
 log() { echo "$LOG_PREFIX $*"; }
 
-# ── Telegram notification (best-effort) ──────────────────────────────────────
+# ── Telegram notification (best-effort) ───────────���──────────────────────────
 
 notify() {
     local msg="$1"
@@ -46,42 +49,34 @@ notify() {
         > /dev/null 2>&1 || true
 }
 
-# ── Check for updates ────────────────────────────────────────────────────────
+# ── Check for updates ───────────────��────────────────────────────────────────
 
 check() {
-    cd "$AOS_DIR" || { log "ERROR: AOS dir not found"; exit 1; }
-
-    local remote
-    remote=$(git remote 2>/dev/null | head -1)
-    if [[ -z "$remote" ]]; then
-        log "No git remote configured — skipping update check"
+    if [ ! -d "$DEV_REPO/.git" ]; then
+        log "ERROR: Dev repo not found at $DEV_REPO"
         return 1
     fi
 
-    git fetch "$remote" --quiet 2>/dev/null || {
+    cd "$DEV_REPO" || { log "ERROR: Cannot cd to dev repo"; return 1; }
+
+    git fetch origin main --quiet 2>/dev/null || {
         log "WARN: git fetch failed (network?)"
         return 1
     }
 
-    local branch
-    branch=$(git branch --show-current 2>/dev/null || echo "main")
-    local local_hash remote_hash
-    local_hash=$(git rev-parse HEAD 2>/dev/null)
-    remote_hash=$(git rev-parse "$remote/$branch" 2>/dev/null)
+    local remote_hash
+    remote_hash=$(git rev-parse origin/main 2>/dev/null)
+    local deployed_hash
+    deployed_hash=$(cat "$HASH_FILE" 2>/dev/null || echo "none")
 
-    if [[ -z "$remote_hash" ]]; then
-        log "WARN: could not resolve remote branch"
-        return 1
-    fi
-
-    if [[ "$local_hash" == "$remote_hash" ]]; then
+    if [[ "$remote_hash" == "$deployed_hash" ]]; then
         log "Up to date"
         python3 -c "
 import json, datetime
 state = {
     'last_check': datetime.datetime.now().isoformat(),
     'status': 'up_to_date',
-    'local': '$local_hash',
+    'deployed': '$deployed_hash',
     'remote': '$remote_hash',
 }
 with open('$STATE_FILE', 'w') as f:
@@ -90,12 +85,10 @@ with open('$STATE_FILE', 'w') as f:
         return 0
     fi
 
-    local ahead behind
-    ahead=$(git rev-list --count "$remote/$branch..HEAD" 2>/dev/null || echo 0)
-    behind=$(git rev-list --count "HEAD..$remote/$branch" 2>/dev/null || echo 0)
-
+    local behind
+    behind=$(git rev-list --count "$deployed_hash..$remote_hash" 2>/dev/null || echo "?")
     local changes
-    changes=$(git log --oneline "HEAD..$remote/$branch" 2>/dev/null | head -5)
+    changes=$(git log --oneline "$deployed_hash..$remote_hash" 2>/dev/null | head -5)
 
     log "Update available: $behind new commit(s)"
 
@@ -104,51 +97,56 @@ import json, datetime
 state = {
     'last_check': datetime.datetime.now().isoformat(),
     'status': 'update_available',
-    'local': '$local_hash',
+    'deployed': '$deployed_hash',
     'remote': '$remote_hash',
-    'behind': $behind,
-    'ahead': $ahead,
+    'behind': '$behind',
     'changes': '''$changes'''.strip().split('\n'),
 }
 with open('$STATE_FILE', 'w') as f:
     json.dump(state, f, indent=2)
 "
 
-    return 0  # update available — not a failure (status written to state file)
+    return 0
 }
 
-# ── Phase 1: Pull code and hand off to new script ───────────────────────────
-#
-# This function does the MINIMUM possible work with the old code:
-# 1. git pull
-# 2. Write a handoff file with context for phase 2
-# 3. exec the NEW version of this script with --continue
-#
-# After exec, the old code is gone. Phase 2 runs entirely from disk.
+# ── Phase 1: Create release and activate ─────��────────────────────────────
 
 apply() {
-    log "Phase 1: pulling code..."
+    log "Phase 1: creating release..."
 
-    cd "$AOS_DIR" || exit 1
-
-    local old_hash old_version
-    old_hash=$(git rev-parse HEAD 2>/dev/null)
+    local old_version
     old_version=$(cat "$AOS_DIR/VERSION" 2>/dev/null || echo "unknown")
 
-    local pull_output
-    pull_output=$(git pull --ff-only origin main 2>&1)
-    local pull_status=$?
+    # Create a new release from origin/main
+    local release_name
+    release_name=$(bash "$RELEASE_MGR" create)
+    local create_status=$?
 
-    if [[ $pull_status -ne 0 ]]; then
-        log "git pull failed — clearing dirty state and retrying"
-        git checkout -- . 2>/dev/null
-        pull_output=$(git pull --ff-only origin main 2>&1)
-        pull_status=$?
-        if [[ $pull_status -ne 0 ]]; then
-            log "ERROR: git pull failed after reset"
-            notify "⚠️ System update failed (git pull). Will retry next cycle."
-            return 1
-        fi
+    if [[ $create_status -ne 0 ]]; then
+        log "ERROR: Failed to create release"
+        notify "⚠️ System update failed (release creation). Will retry next cycle."
+        return 1
+    fi
+
+    # If no new release was needed (already deployed), we're done
+    if [[ -z "$release_name" ]] || echo "$release_name" | grep -q "Already at"; then
+        log "Already up to date"
+        return 0
+    fi
+
+    # Extract just the release name (last line of output)
+    release_name=$(echo "$release_name" | tail -1)
+
+    log "Activating release $release_name..."
+
+    # Activate — this switches the ~/aos symlink and runs validation
+    bash "$RELEASE_MGR" activate "$release_name"
+    local activate_status=$?
+
+    if [[ $activate_status -ne 0 ]]; then
+        log "ERROR: Activation failed — validation rejected the release"
+        notify "⚠️ Release $release_name failed validation. Not activated."
+        return 1
     fi
 
     local new_version
@@ -159,27 +157,21 @@ apply() {
 import json, datetime
 handoff = {
     'triggered_at': datetime.datetime.now().isoformat(),
-    'old_hash': '$old_hash',
     'old_version': '$old_version',
     'new_version': '$new_version',
+    'release': '$release_name',
 }
 with open('$HANDOFF_FILE', 'w') as f:
     json.dump(handoff, f, indent=2)
 "
 
-    log "Code pulled ($old_version → $new_version). Handing off to new script..."
+    log "Release activated ($old_version → $new_version). Handing off to new script..."
 
-    # Replace this process with the NEW version of this script from disk.
-    # The old in-memory code is gone after this line.
+    # Replace this process with the NEW release's check-update for phase 2
     exec "$AOS_DIR/core/bin/crons/check-update" --continue
 }
 
-# ── Phase 2: Deploy (runs from NEW code on disk) ────────────────────────────
-#
-# This function is always executed from the freshly pulled script.
-# It reads the handoff file written by phase 1, then:
-# 1. Deletes the handoff (idempotency — crash mid-deploy won't re-migrate)
-# 2. Runs reconcile, migrations, sync, venv rebuild, restart, health check
+# ── Phase 2: Deploy (runs from NEW release on disk) ──────────────────────
 
 deploy() {
     cd "$AOS_DIR" || exit 1
@@ -189,15 +181,15 @@ deploy() {
         return 0
     fi
 
-    local old_hash old_version new_version
-    old_hash=$(python3 -c "import json; print(json.load(open('$HANDOFF_FILE'))['old_hash'])" 2>/dev/null)
+    local old_version new_version release_name
     old_version=$(python3 -c "import json; print(json.load(open('$HANDOFF_FILE'))['old_version'])" 2>/dev/null)
     new_version=$(python3 -c "import json; print(json.load(open('$HANDOFF_FILE'))['new_version'])" 2>/dev/null)
+    release_name=$(python3 -c "import json; print(json.load(open('$HANDOFF_FILE'))['release'])" 2>/dev/null)
 
     # Delete handoff BEFORE destructive work — idempotency guard.
     rm -f "$HANDOFF_FILE"
 
-    log "Phase 2: deploying $old_version → $new_version"
+    log "Phase 2: deploying $release_name ($old_version → $new_version)"
 
     # Always run reconcile
     log "Running reconcile..."
@@ -213,8 +205,9 @@ deploy() {
     # Run migrations
     log "Running migrations..."
     "$AOS_DIR/core/bin/internal/aos-python" "$AOS_DIR/core/infra/migrations/runner.py" migrate 2>/dev/null || {
-        log "ERROR: migrations failed"
-        notify "⚠️ Update to $new_version: migrations failed. Services not restarted."
+        log "ERROR: migrations failed — rolling back"
+        bash "$RELEASE_MGR" rollback
+        notify "⚠️ Update to $new_version: migrations failed. Rolled back."
         return 1
     }
 
@@ -224,14 +217,18 @@ deploy() {
         bash "$AOS_DIR/core/bin/cli/aos" "$cmd" 2>/dev/null || true
     done
 
-    # Auto-discover which services changed and rebuild their venvs
-    local changed_services
-    changed_services=$(git diff --name-only "$old_hash..HEAD" 2>/dev/null \
-        | grep -E "core/services/[^/]+/(pyproject\.toml|[^/]+\.py)" \
-        | sed 's|core/services/\([^/]*\)/.*|\1|' \
-        | sort -u || true)
+    # Detect changed services by comparing dev repo history
+    local old_hash new_hash changed_services
+    old_hash=$(cat "$HASH_FILE" 2>/dev/null || echo "")
+    new_hash=$(cd "$DEV_REPO" && git rev-parse origin/main 2>/dev/null)
+    if [[ -n "$old_hash" && -n "$new_hash" ]]; then
+        changed_services=$(cd "$DEV_REPO" && git diff --name-only "$old_hash..$new_hash" 2>/dev/null \
+            | grep -E "core/services/[^/]+/(pyproject\.toml|[^/]+\.py)" \
+            | sed 's|core/services/\([^/]*\)/.*|\1|' \
+            | sort -u || true)
+    fi
 
-    if [[ -n "$changed_services" ]]; then
+    if [[ -n "${changed_services:-}" ]]; then
         log "Code/deps changed in: $changed_services"
         for svc in $changed_services; do
             if [[ -d "$HOME/.aos/services/$svc" ]]; then
@@ -253,7 +250,7 @@ deploy() {
         la_name=$(basename "$la_plist" .plist)
         svc_name="${la_name#com.aos.}"
 
-        if echo "$changed_services" | grep -qx "$svc_name"; then
+        if echo "${changed_services:-}" | grep -qx "$svc_name"; then
             log "Restarting $svc_name..."
             launchctl bootout "gui/$uid/$la_name" 2>/dev/null
             launchctl bootstrap "gui/$uid" "$la_plist" 2>/dev/null
@@ -267,12 +264,13 @@ deploy() {
         _health_check "$uid" "$new_version" "${restarted_services[@]}"
     fi
 
+    # Prune old releases
+    bash "$RELEASE_MGR" prune 5 2>/dev/null || true
+
     # Release notes + state update + notification
     local release_notes
     release_notes=$(_extract_release_notes "$new_version")
 
-    local new_hash
-    new_hash=$(git rev-parse HEAD 2>/dev/null)
     python3 -c "
 import json, datetime
 state = {
@@ -280,14 +278,15 @@ state = {
     'last_update': datetime.datetime.now().isoformat(),
     'status': 'up_to_date',
     'version': '$new_version',
-    'local': '$new_hash',
+    'release': '$release_name',
+    'deployed': '$new_hash',
     'remote': '$new_hash',
 }
 with open('$STATE_FILE', 'w') as f:
     json.dump(state, f, indent=2)
 "
 
-    log "Update complete: $new_version"
+    log "Update complete: $new_version ($release_name)"
 
     local note_text
     note_text="━━━━━━━━━━━━━━━━━━
@@ -300,7 +299,7 @@ Already applied. No action needed."
     notify "$note_text"
 }
 
-# ── Health check ─────────────────────────────────────────────────────────────
+# ── Health check ─���────────────────────────────────────��──────────────────────
 
 _health_check() {
     local uid="$1" new_version="$2"
@@ -337,7 +336,7 @@ _health_check() {
     fi
 }
 
-# ── Release notes extraction ────────────────────────────────────────────────
+# ── Release notes extraction ────────────���───────────────────────────────────
 
 _extract_release_notes() {
     local version="$1"
@@ -409,7 +408,7 @@ if other:
 " 2>/dev/null
 }
 
-# ── Status ───────────────────────────────────────────────────────────────────
+# ── Status ────────���─────────────────────────────────���────────────────────────
 
 status() {
     if [[ -f "$STATE_FILE" ]]; then
@@ -418,9 +417,11 @@ import json
 with open('$STATE_FILE') as f:
     s = json.load(f)
 print(f\"  Status:     {s.get('status', 'unknown')}\")
+print(f\"  Release:    {s.get('release', 'unknown')}\")
 print(f\"  Last check: {s.get('last_check', 'never')}\")
-if s.get('behind', 0) > 0:
-    print(f\"  Behind:     {s['behind']} commit(s)\")
+behind = s.get('behind', 0)
+if behind and str(behind) not in ('0', ''):
+    print(f\"  Behind:     {behind} commit(s)\")
     for c in s.get('changes', []):
         print(f\"    {c}\")
 if s.get('last_update'):
@@ -431,15 +432,22 @@ if s.get('last_update'):
     fi
 }
 
-# ── Main ─────────────────────────────────────────────────────────────────────
+# ── Main ─────────────────────��───────────────────────���───────────────────────
 
 case "${1:-}" in
     --apply)
         check
-        result=$?
-        if [[ $result -eq 2 ]]; then
+        # check writes state file; read it to decide
+        update_status=$(python3 -c "
+import json
+try:
+    s = json.load(open('$STATE_FILE'))
+    print(s.get('status', 'unknown'))
+except: print('unknown')
+" 2>/dev/null)
+        if [[ "$update_status" == "update_available" ]]; then
             apply
-        elif [[ $result -eq 0 ]]; then
+        else
             log "Already up to date"
         fi
         ;;
