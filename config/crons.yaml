@@ -9,6 +9,10 @@
 #   active_hours: "08:00-20:00"    — only run during these hours (for `every:`)
 #   enabled: false                 — skip this job entirely
 #
+# Display metadata (ignored by scheduler, used by dashboard):
+#   tier: 1-4                      — job grouping for UI
+#   description: "..."             — human-readable purpose
+#
 # All scripts are idempotent — safe to run manually anytime.
 
 jobs:
@@ -18,44 +22,57 @@ jobs:
     command: bash ~/aos/core/bin/crons/watchdog
     every: 5m
     timeout: 60
+    tier: 1
+    description: Checks services are running, restarts if needed
 
   check-update:
     command: bash ~/aos/core/bin/crons/check-update
     every: 2h
     timeout: 120
+    tier: 1
+    description: Checks for AOS framework updates
 
   auto-update:
     command: bash ~/aos/core/bin/crons/check-update --apply
     at: "04:00"
     timeout: 300
-    # Runs at 4am daily. Pulls latest, migrates, syncs.
-    # Disable if you prefer manual updates:
-    # enabled: false
+    tier: 1
+    description: Pulls and applies AOS updates automatically
 
   sync-sessions:
     command: python3 ~/aos/core/bin/crons/sync-sessions
     every: 30m
     timeout: 120
+    tier: 1
+    description: Syncs Claude Code session data to vault
 
   auto-commit:
     command: bash ~/aos/core/bin/crons/auto-commit cron
     every: 30m
     timeout: 120
+    tier: 1
+    description: Commits vault and config changes to git
 
   qmd-reindex:
     command: bash ~/aos/core/bin/crons/qmd-reindex
     every: 30m
     timeout: 120
+    tier: 1
+    description: Rebuilds search index across all collections
 
   session-export:
     command: python3 ~/aos/core/bin/crons/session-export
     every: 2h
     timeout: 300
+    tier: 1
+    description: Exports session logs to vault for analysis
 
   rotate-logs:
     command: bash ~/aos/core/bin/crons/rotate-logs
     at: "03:00"
     timeout: 60
+    tier: 1
+    description: Cleans up old log files to free disk space
 
   # ── Tier 2: Knowledge & awareness ───────────────────────────────────────────
 
@@ -63,73 +80,90 @@ jobs:
     command: python3 ~/aos/core/bin/crons/compile-daily
     at: "23:30"
     timeout: 120
+    tier: 2
+    description: Compiles daily activity log from sessions and work
 
   compile-weekly:
     command: python3 ~/aos/core/bin/crons/compile-weekly
     at: "23:45"
     weekday: friday
     timeout: 120
+    tier: 2
+    description: Compiles weekly review with metrics and insights
 
   inbox-collect:
     command: python3 ~/aos/core/bin/crons/inbox-collect
     every: 30m
     timeout: 120
+    tier: 2
+    description: Collects loose items into inbox for triage
 
   session-analysis:
     command: python3 ~/aos/core/bin/crons/session-analysis
     at: "22:00"
     weekday: sunday
     timeout: 180
+    tier: 2
+    description: Analyzes session patterns for friction and improvements
 
   stale-detector:
     command: python3 ~/aos/core/bin/crons/stale-detector
     at: "08:00"
     timeout: 60
+    tier: 2
+    description: Flags stale tasks and goals that need attention
 
   contact-sync:
     command: python3 ~/aos/core/engine/comms/sync_contacts.py
     at: "05:30"
     timeout: 120
-    # Incremental sync from macOS Contacts → People DB. Runs before morning briefing.
+    tier: 2
+    description: Syncs macOS Contacts into People DB
 
   stale-initiatives:
     command: python3 ~/aos/core/bin/crons/stale-initiatives
     at: "09:00"
     timeout: 60
-    # Scans initiative docs for staleness (>3 days untouched), sends Telegram nudge
+    tier: 2
+    description: Flags initiative docs untouched for 3+ days
 
   nightly-pipeline:
     command: bash ~/aos/core/bin/crons/nightly-pipeline
     at: "23:00"
     timeout: 600
+    tier: 2
+    description: Runs nightly data processing pipeline
 
   morning-context:
     command: python3 ~/aos/core/bin/crons/morning-context
     at: "06:30"
     timeout: 60
+    tier: 2
+    description: Prepares morning briefing with weather, prayer times, focus
 
-  # ── Tier 3: Disabled until dependencies are met ─────────────────────────────
-  # Enable these as integrations come online.
+  # ── Tier 3: Integration ─────────────────────────────────────────────────────
 
   weekly-digest:
     command: python3 ~/aos/core/bin/crons/weekly-digest
     at: "20:00"
     weekday: sunday
     timeout: 300
-    # Sends Telegram summary + writes vault review note
+    tier: 3
+    description: Sends weekly summary via Telegram and writes vault review
 
   compile-patterns:
     command: python3 ~/aos/core/bin/crons/compile-patterns
     at: "04:00"
     timeout: 120
-    # Scans sessions for repeated behaviors, compiles to scripts/docs
+    tier: 3
+    description: Compiles behavior patterns from session data
 
   reconcile-sessions:
     command: python3 ~/aos/core/bin/crons/reconcile-sessions --quiet
     every: 2h
     timeout: 60
-    # Catch-up reconciliation. Primary trigger is SessionEnd hook.
-    # This catches sessions that didn't end cleanly.
+    tier: 3
+    description: Catches sessions that didn't end cleanly
 
   # ── Tier 4: Intelligence ────────────────────────────────────────────────────
 
@@ -137,16 +171,22 @@ jobs:
     command: python3 ~/aos/core/engine/comms/extract/lifecycle.py
     at: "05:00"
     timeout: 300
+    tier: 4
+    description: Extracts insights from communications
 
   comms-patterns:
     command: python3 ~/aos/core/engine/comms/patterns/compute.py
     at: "05:30"
     timeout: 180
+    tier: 4
+    description: Computes communication patterns and trends
 
   comms-graduation:
     command: python3 ~/aos/core/engine/comms/graduation/runner.py
     at: "06:00"
     timeout: 120
+    tier: 4
+    description: Graduates contacts through trust levels
 
   # ── Planned (scripts not yet built) ─────────────────────────────────────────
   # These entries are placeholders. Scripts will be created when their

@@ -1,0 +1,691 @@
+{% extends "base.html" %}
+{% block title %}Meeting{% endblock %}
+{% block css_vars %}
+/* Meeting dark theme */
+:root {
+    --meet-bg: #1C1917;
+    --meet-bg-surface: #292524;
+    --meet-bg-raised: #44403C;
+    --meet-bg-hover: #57534E;
+    --meet-text: #FAFAF9;
+    --meet-text-secondary: #A8A29E;
+    --meet-text-faint: #78716C;
+    --meet-accent: #F59E0B;
+    --meet-accent-soft: rgba(245,158,11,0.15);
+    --meet-accent-glow: rgba(245,158,11,0.08);
+    --meet-green: #4ADE80;
+    --meet-green-soft: rgba(74,222,128,0.12);
+    --meet-red: #F87171;
+    --meet-blue: #60A5FA;
+    --meet-blue-soft: rgba(96,165,250,0.12);
+}
+{% endblock %}
+
+{% block styles %}
+/* Override page background for meeting page (always dark) */
+.main { background: var(--meet-bg) !important; }
+.page-content { background: var(--meet-bg) !important; }
+.page-header { background: var(--meet-bg) !important; }
+.page-header .page-title { color: var(--meet-text) !important; }
+
+/* Active meeting: hide sidebar, go full-bleed */
+body.meeting-active .sidebar { display: none; }
+body.meeting-active .main { margin-left: 0; }
+body.meeting-active .page-header { display: none; }
+body.meeting-active .page-content { padding: 0; max-width: 100%; }
+
+/* Setup screen */
+.meet-setup {
+    max-width: 560px;
+    margin: 80px auto;
+    padding: 32px;
+    background: var(--meet-bg);
+    color: var(--meet-text);
+    min-height: 100vh;
+    box-sizing: border-box;
+}
+.meet-setup h1 {
+    font-size: 28px;
+    font-weight: 700;
+    margin: 0 0 32px 0;
+    color: var(--meet-text);
+}
+.meet-setup label {
+    display: block;
+    font-size: 11px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--meet-text-faint);
+    margin-bottom: 6px;
+}
+.meet-setup input[type="text"],
+.meet-setup textarea {
+    width: 100%;
+    padding: 10px 12px;
+    background: var(--meet-bg-surface);
+    border: 1px solid var(--meet-bg-raised);
+    border-radius: 3px;
+    color: var(--meet-text);
+    font-size: 16px;
+    font-family: inherit;
+    box-sizing: border-box;
+}
+.meet-setup textarea {
+    height: 200px;
+    font-size: 14px;
+    line-height: 1.6;
+    resize: vertical;
+}
+.meet-setup input:focus,
+.meet-setup textarea:focus {
+    outline: none;
+    border-color: var(--meet-accent);
+}
+.meet-field { margin-bottom: 20px; }
+.meet-hint {
+    font-size: 12px;
+    color: var(--meet-text-faint);
+    margin-top: 4px;
+}
+.btn-start {
+    display: block;
+    width: 100%;
+    padding: 14px;
+    margin-top: 28px;
+    background: var(--meet-accent);
+    color: #1C1917;
+    border: none;
+    border-radius: 3px;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    font-family: inherit;
+}
+.btn-start:hover { opacity: 0.9; }
+
+/* Meeting bar */
+.meet-bar {
+    display: none;
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    height: 48px;
+    background: var(--meet-bg-surface);
+    border-bottom: 1px solid var(--meet-bg-raised);
+    padding: 0 20px;
+    align-items: center;
+    z-index: 1000;
+    font-family: inherit;
+}
+body.meeting-active .meet-bar { display: flex; }
+
+.meet-bar-left {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+.meet-pulse {
+    width: 8px; height: 8px;
+    background: var(--meet-accent);
+    border-radius: 50%;
+    animation: pulse 2s ease-in-out infinite;
+}
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+}
+.meet-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--meet-text);
+}
+.meet-timer {
+    font-size: 14px;
+    font-family: var(--font-mono);
+    color: var(--meet-text-secondary);
+}
+.meet-bar-spacer { flex: 1; }
+.btn-end {
+    padding: 6px 16px;
+    background: transparent;
+    border: 1px solid var(--meet-red);
+    color: var(--meet-red);
+    border-radius: 3px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    font-family: inherit;
+}
+.btn-end:hover { background: rgba(248,113,113,0.1); }
+
+/* Active meeting layout */
+.meet-active {
+    display: none;
+    padding-top: 48px;
+    height: 100vh;
+    box-sizing: border-box;
+    background: var(--meet-bg);
+}
+body.meeting-active .meet-setup { display: none; }
+body.meeting-active .meet-active { display: flex; flex-direction: column; }
+
+/* Transcript area */
+.meet-transcript {
+    flex: 1;
+    overflow-y: auto;
+    padding: 24px 0;
+    position: relative;
+}
+.meet-transcript-inner {
+    max-width: 640px;
+    margin: 0 auto;
+    padding: 0 24px;
+}
+.meet-transcript-fade {
+    position: sticky;
+    top: 0;
+    height: 60px;
+    background: linear-gradient(to bottom, var(--meet-bg), transparent);
+    pointer-events: none;
+    z-index: 1;
+    margin-bottom: -60px;
+}
+.speech-block {
+    margin-bottom: 16px;
+    animation: fadeSlideIn 150ms ease-out;
+}
+@keyframes fadeSlideIn {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+.speech-speaker {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 2px;
+}
+.speech-speaker-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--meet-accent);
+}
+.speech-speaker-name.other { color: var(--meet-blue); }
+.speech-time {
+    font-size: 11px;
+    font-family: var(--font-mono);
+    color: var(--meet-text-faint);
+}
+.speech-text {
+    font-size: 18px;
+    font-weight: 400;
+    color: var(--meet-text);
+    line-height: 1.6;
+}
+.meet-empty {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--meet-text-faint);
+    font-size: 16px;
+}
+
+/* Topic tracker (bottom bar) */
+.meet-topics {
+    background: var(--meet-bg-surface);
+    border-top: 1px solid var(--meet-bg-raised);
+    padding: 12px 20px;
+    display: none;
+}
+body.meeting-active .meet-topics { display: block; }
+
+.topics-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    max-width: 900px;
+    margin: 0 auto;
+    overflow-x: auto;
+}
+.topic-chip {
+    flex-shrink: 0;
+    padding: 4px 10px;
+    border-radius: 3px;
+    font-size: 12px;
+    font-weight: 500;
+    white-space: nowrap;
+}
+.topic-chip.covered {
+    background: var(--meet-green-soft);
+    color: var(--meet-green);
+}
+.topic-chip.pending {
+    background: var(--meet-bg-raised);
+    color: var(--meet-text-faint);
+}
+.topic-chip.current {
+    background: var(--meet-accent-soft);
+    color: var(--meet-accent);
+    border: 1px solid var(--meet-accent);
+}
+.topics-progress {
+    font-size: 12px;
+    color: var(--meet-text-faint);
+    font-family: var(--font-mono);
+    flex-shrink: 0;
+}
+
+/* Post-meeting summary */
+.meet-summary {
+    display: none;
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 48px 24px;
+    color: var(--meet-text);
+    background: var(--meet-bg);
+    min-height: 100vh;
+}
+.meet-summary h1 {
+    font-size: 28px;
+    font-weight: 700;
+    margin: 0 0 8px 0;
+}
+.meet-summary-meta {
+    font-size: 14px;
+    color: var(--meet-text-secondary);
+    margin-bottom: 32px;
+}
+.meet-summary-content {
+    font-size: 16px;
+    line-height: 1.7;
+    color: var(--meet-text-secondary);
+}
+.meet-summary-content h2 {
+    font-size: 20px;
+    font-weight: 600;
+    color: var(--meet-text);
+    margin: 28px 0 12px 0;
+}
+.meet-summary-content ul { padding-left: 20px; }
+.meet-summary-content li { margin-bottom: 6px; }
+.meet-summary-content strong { color: var(--meet-text); }
+.meet-summary-content blockquote {
+    border-left: 3px solid var(--meet-accent);
+    padding: 4px 12px;
+    margin: 12px 0;
+    background: var(--meet-accent-glow);
+    color: var(--meet-text-secondary);
+    font-style: italic;
+}
+
+.summary-actions {
+    display: flex;
+    gap: 12px;
+    margin-top: 32px;
+    padding-top: 20px;
+    border-top: 1px solid var(--meet-bg-raised);
+}
+.btn-action {
+    padding: 10px 20px;
+    background: var(--meet-bg-surface);
+    border: 1px solid var(--meet-bg-raised);
+    color: var(--meet-text);
+    border-radius: 3px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    font-family: inherit;
+}
+.btn-action:hover { background: var(--meet-bg-raised); }
+.btn-action.primary {
+    background: var(--meet-accent);
+    border-color: var(--meet-accent);
+    color: #1C1917;
+}
+
+/* Generating state */
+.meet-generating {
+    display: none;
+    text-align: center;
+    padding: 120px 20px;
+    color: var(--meet-text-secondary);
+    background: var(--meet-bg);
+    min-height: 100vh;
+}
+.meet-generating h2 {
+    font-size: 20px;
+    font-weight: 600;
+    color: var(--meet-text);
+    margin-bottom: 20px;
+}
+.gen-spinner {
+    width: 32px; height: 32px;
+    border: 3px solid var(--meet-bg-raised);
+    border-top: 3px solid var(--meet-accent);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin: 0 auto 20px;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+{% endblock %}
+
+{% block header %}{% endblock %}
+
+{% block content %}
+<!-- Meeting Bar (visible during active meeting) -->
+<div class="meet-bar" id="meetBar">
+    <div class="meet-bar-left">
+        <div class="meet-pulse"></div>
+        <span class="meet-title" id="meetBarTitle">Meeting</span>
+        <span class="meet-timer" id="meetTimer">00:00</span>
+    </div>
+    <div class="meet-bar-spacer"></div>
+    <button class="btn-end" onclick="endMeeting()">End Meeting</button>
+</div>
+
+<!-- State: Setup -->
+<div class="meet-setup" id="setupScreen">
+    <h1>New Meeting</h1>
+    <div class="meet-field">
+        <label>Title</label>
+        <input type="text" id="meetTitle" placeholder="Discovery Call — Ahmed" />
+    </div>
+    <div class="meet-field">
+        <label>Discussion Topics</label>
+        <textarea id="meetQuestions" placeholder="One topic per line&#10;&#10;Business overview&#10;Current pain points&#10;Daily volume&#10;Team structure&#10;Current tools&#10;Revenue model&#10;Growth goals"></textarea>
+        <div class="meet-hint">One topic per line. These will be tracked during the meeting.</div>
+    </div>
+    <button class="btn-start" onclick="startMeeting()">Start Meeting</button>
+</div>
+
+<!-- State: Active Meeting -->
+<div class="meet-active" id="activeScreen">
+    <div class="meet-transcript" id="transcriptArea">
+        <div class="meet-transcript-fade"></div>
+        <div class="meet-transcript-inner" id="transcriptInner">
+            <div class="meet-empty" id="transcriptEmpty">
+                Listening... Start speaking and the transcript will appear here.
+            </div>
+        </div>
+    </div>
+    <div class="meet-topics" id="topicBar">
+        <div class="topics-row" id="topicChips"></div>
+    </div>
+</div>
+
+<!-- State: Generating Summary -->
+<div class="meet-generating" id="generatingScreen">
+    <div class="gen-spinner"></div>
+    <h2>Generating your meeting summary...</h2>
+    <p>Analyzing transcript and extracting insights</p>
+</div>
+
+<!-- State: Summary -->
+<div class="meet-summary" id="summaryScreen">
+    <h1 id="summaryTitle">Meeting Summary</h1>
+    <div class="meet-summary-meta" id="summaryMeta"></div>
+    <div class="meet-summary-content" id="summaryContent"></div>
+    <div class="summary-actions">
+        <button class="btn-action primary" onclick="exportToVault()">Export to Vault</button>
+        <button class="btn-action" onclick="window.location.href='/'">Back to Dashboard</button>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+const COMPANION_URL = 'http://127.0.0.1:7603';
+let meetingSSE = null;
+let timerInterval = null;
+let meetingStartTime = null;
+let autoScroll = true;
+
+// -- Setup --
+
+async function startMeeting() {
+    const title = document.getElementById('meetTitle').value.trim() || 'Untitled Meeting';
+    const questionsRaw = document.getElementById('meetQuestions').value.trim();
+    const questions = questionsRaw ? questionsRaw.split('\n').map(q => q.trim()).filter(q => q) : [];
+
+    // Create meeting
+    try {
+        await fetch(`${COMPANION_URL}/meeting/create`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ title, questions }),
+        });
+    } catch (e) {
+        alert('Cannot reach companion service. Make sure it is running on port 7603.');
+        return;
+    }
+
+    // Activate meeting mode
+    document.body.classList.add('meeting-active');
+    document.getElementById('meetBarTitle').textContent = title;
+
+    // Render topic chips
+    if (questions.length > 0) {
+        renderTopics(questions);
+    }
+
+    // Connect SSE
+    connectMeetingSSE();
+
+    // Start the meeting
+    await fetch(`${COMPANION_URL}/meeting/start`, { method: 'POST' });
+    meetingStartTime = Date.now();
+    timerInterval = setInterval(updateTimer, 1000);
+}
+
+function renderTopics(questions) {
+    const container = document.getElementById('topicChips');
+    container.innerHTML = '<span class="topics-progress" id="topicProgress">0/' + questions.length + '</span>';
+    questions.forEach((q, i) => {
+        const chip = document.createElement('span');
+        chip.className = 'topic-chip pending';
+        chip.textContent = q.length > 30 ? q.substring(0, 30) + '...' : q;
+        chip.dataset.index = i;
+        chip.id = 'topic-' + i;
+        container.appendChild(chip);
+    });
+}
+
+function updateTimer() {
+    if (!meetingStartTime) return;
+    const elapsed = Math.floor((Date.now() - meetingStartTime) / 1000);
+    const mm = String(Math.floor(elapsed / 60)).padStart(2, '0');
+    const ss = String(elapsed % 60).padStart(2, '0');
+    document.getElementById('meetTimer').textContent = mm + ':' + ss;
+}
+
+// -- SSE Connection --
+
+function connectMeetingSSE() {
+    meetingSSE = new EventSource(`${COMPANION_URL}/stream`);
+
+    meetingSSE.addEventListener('transcript', (e) => {
+        const data = JSON.parse(e.data);
+        addTranscriptBlock(data);
+    });
+
+    meetingSSE.addEventListener('meeting_topic', (e) => {
+        const data = JSON.parse(e.data);
+        markTopicCovered(data.index, data.covered_at);
+    });
+
+    meetingSSE.addEventListener('meeting_suggestion', (e) => {
+        const data = JSON.parse(e.data);
+        showSuggestion(data.text);
+    });
+
+    meetingSSE.addEventListener('meeting_state', (e) => {
+        const data = JSON.parse(e.data);
+        if (data.state === 'summary') {
+            showSummary(data.summary, data);
+        }
+    });
+
+    meetingSSE.onerror = () => {
+        console.warn('Meeting SSE connection lost, reconnecting...');
+    };
+}
+
+// -- Transcript rendering --
+
+function addTranscriptBlock(data) {
+    const empty = document.getElementById('transcriptEmpty');
+    if (empty) empty.remove();
+
+    const inner = document.getElementById('transcriptInner');
+    const block = document.createElement('div');
+    block.className = 'speech-block';
+
+    const speakerClass = data.speaker === 'You' ? '' : ' other';
+    block.innerHTML = `
+        <div class="speech-speaker">
+            <span class="speech-speaker-name${speakerClass}">${data.speaker}</span>
+            <span class="speech-time">${data.start_time}</span>
+        </div>
+        <div class="speech-text">${escapeHtml(data.text)}</div>
+    `;
+    inner.appendChild(block);
+
+    // Auto-scroll
+    if (autoScroll) {
+        const area = document.getElementById('transcriptArea');
+        area.scrollTop = area.scrollHeight;
+    }
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+// -- Topic tracking --
+
+function markTopicCovered(index, coveredAt) {
+    const chip = document.getElementById('topic-' + index);
+    if (chip) {
+        chip.className = 'topic-chip covered';
+    }
+    // Update progress
+    const covered = document.querySelectorAll('.topic-chip.covered').length;
+    const total = document.querySelectorAll('.topic-chip').length;
+    const progress = document.getElementById('topicProgress');
+    if (progress) progress.textContent = covered + '/' + total;
+}
+
+// -- Suggestions --
+
+let suggestionTimeout = null;
+function showSuggestion(text) {
+    // Create or reuse suggestion bar
+    let bar = document.getElementById('suggestionBar');
+    if (!bar) {
+        bar = document.createElement('div');
+        bar.id = 'suggestionBar';
+        bar.style.cssText = `
+            position: fixed; bottom: 60px; left: 50%; transform: translateX(-50%);
+            max-width: 560px; width: 90%; padding: 12px 16px;
+            background: var(--meet-accent-soft); border-left: 3px solid var(--meet-accent);
+            border-radius: 3px; z-index: 999;
+            animation: fadeSlideIn 300ms ease-out;
+        `;
+        document.body.appendChild(bar);
+    }
+    bar.innerHTML = `
+        <div style="font-size:11px;font-weight:500;text-transform:uppercase;letter-spacing:0.5px;color:var(--meet-accent);margin-bottom:4px;">Ask Next</div>
+        <div style="font-size:16px;font-weight:500;color:var(--meet-text);line-height:1.4;">${escapeHtml(text)}</div>
+    `;
+    bar.style.display = 'block';
+
+    // Auto-dismiss after 20s
+    if (suggestionTimeout) clearTimeout(suggestionTimeout);
+    suggestionTimeout = setTimeout(() => {
+        if (bar) bar.style.display = 'none';
+    }, 20000);
+}
+
+// -- End meeting --
+
+async function endMeeting() {
+    if (!confirm('End this meeting?')) return;
+
+    // Stop timer
+    clearInterval(timerInterval);
+
+    // Show generating screen
+    document.getElementById('activeScreen').style.display = 'none';
+    document.getElementById('topicBar').style.display = 'none';
+    document.getElementById('meetBar').style.display = 'none';
+    document.getElementById('generatingScreen').style.display = 'block';
+
+    // Remove suggestion bar
+    const bar = document.getElementById('suggestionBar');
+    if (bar) bar.remove();
+
+    // Call end + generate summary
+    try {
+        const resp = await fetch(`${COMPANION_URL}/meeting/end`, { method: 'POST' });
+        const data = await resp.json();
+        showSummary(data.summary);
+    } catch (e) {
+        document.getElementById('generatingScreen').innerHTML =
+            '<h2 style="color:var(--meet-red)">Failed to generate summary</h2><p>' + e.message + '</p>';
+    }
+
+    // Close SSE
+    if (meetingSSE) meetingSSE.close();
+}
+
+function showSummary(summaryMarkdown) {
+    document.getElementById('generatingScreen').style.display = 'none';
+    document.getElementById('summaryScreen').style.display = 'block';
+
+    const title = document.getElementById('meetBarTitle').textContent;
+    const timer = document.getElementById('meetTimer').textContent;
+    document.getElementById('summaryTitle').textContent = title;
+    document.getElementById('summaryMeta').textContent = `Duration: ${timer}`;
+
+    // Render markdown (basic: convert ## to h2, - to li, **bold**)
+    document.getElementById('summaryContent').innerHTML = renderMarkdown(summaryMarkdown || 'No summary generated.');
+}
+
+function renderMarkdown(md) {
+    // Basic markdown rendering for meeting summaries
+    let html = md
+        .replace(/^## (.+)$/gm, '<h2>$1</h2>')
+        .replace(/^### (.+)$/gm, '<h3>$1</h3>')
+        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+        .replace(/^- (.+)$/gm, '<li>$1</li>')
+        .replace(/^(\d+)\. (.+)$/gm, '<li>$2</li>')
+        .replace(/> (.+)$/gm, '<blockquote>$1</blockquote>')
+        .replace(/\n\n/g, '<br><br>');
+
+    // Wrap consecutive <li> in <ul>
+    html = html.replace(/(<li>.*?<\/li>\s*)+/g, (match) => '<ul>' + match + '</ul>');
+    return html;
+}
+
+async function exportToVault() {
+    try {
+        const resp = await fetch(`${COMPANION_URL}/meeting/export`, { method: 'POST' });
+        const data = await resp.json();
+        if (data.ok) {
+            alert('Exported to: ' + data.path);
+        }
+    } catch (e) {
+        alert('Export failed: ' + e.message);
+    }
+}
+
+// -- Scroll detection --
+document.addEventListener('DOMContentLoaded', () => {
+    const area = document.getElementById('transcriptArea');
+    if (area) {
+        area.addEventListener('scroll', () => {
+            const atBottom = area.scrollHeight - area.scrollTop - area.clientHeight < 100;
+            autoScroll = atBottom;
+        });
+    }
+});
+{% endblock %}

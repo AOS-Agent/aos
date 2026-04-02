@@ -258,9 +258,14 @@ def transcribe(
         return _transcribe_bilingual(engine, audio_path, timestamps, t0)
 
     # Standard single-pass transcription
+    # Set initial prompt based on language to avoid cross-language hallucinations
+    # Initial prompt biases Whisper's decoder — keep it minimal to avoid echo
+    # An empty string works best for English; Whisper defaults to English detection
+    _initial_prompt = ""
+
     kwargs = {
         "path_or_hf_repo": MODEL_REPO,
-        "initial_prompt": "\u0628\u0633\u0645 \u0627\u0644\u0644\u0647 \u0627\u0644\u0631\u062d\u0645\u0646 \u0627\u0644\u0631\u062d\u064a\u0645. Hello, \u0645\u0631\u062d\u0628\u0627.",
+        "initial_prompt": _initial_prompt,
         "condition_on_previous_text": True,
         "hallucination_silence_threshold": 1.0,
     }

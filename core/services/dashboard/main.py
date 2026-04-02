@@ -184,6 +184,325 @@ def _system_health() -> dict:
     }
 
 
+GB = 1024**3
+MB = 1024**2
+
+_resources_cache: dict = {}
+_resources_cache_time: float = 0
+
+
+def _du_bytes(path: Path) -> int:
+    """Get directory size in bytes via du -s -k (fast, follows symlinks)."""
+    try:
+        result = subprocess.run(
+            ["du", "-s", "-k", str(path)],
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode == 0:
+            return int(result.stdout.split()[0]) * 1024
+    except Exception:
+        pass
+    return 0
+
+
+def _scan_drives() -> list[dict]:
+    """Discover mounted drives and their usage."""
+    drives = []
+    seen = set()
+    for mount, label in [("/", "Internal SSD"), ("/Volumes/AOS-X", "AOS-X")]:
+        mp = Path(mount)
+        if not mp.exists() or mount in seen:
+            continue
+        seen.add(mount)
+        try:
+            usage = shutil.disk_usage(mount)
+            drives.append({
+                "label": label,
+                "mount": mount,
+                "total_gb": round(usage.total / GB, 1),
+                "used_gb": round(usage.used / GB, 1),
+                "free_gb": round(usage.free / GB, 1),
+                "pct": round(usage.used / usage.total * 100, 1),
+            })
+        except Exception:
+            pass
+    return drives
+
+
+def _scan_directory_breakdown() -> list[dict]:
+    """Walk ~ top-level dirs, resolve symlinks, compute sizes, attribute to drive."""
+    home = Path.home()
+    categories = []
+
+    # Discover top-level dirs in home (skip tiny hidden dirs)
+    for child in sorted(home.iterdir()):
+        name = child.name
+        # Skip irrelevant system dirs
+        if name.startswith(".") and name not in (".aos", ".cache", ".claude", ".bun"):
+            continue
+        if not child.is_dir() and not child.is_symlink():
+            continue
+        if child.is_symlink() and not child.resolve().exists():
+            continue
+
+        real = child.resolve()
+        drive = "AOS-X" if str(real).startswith("/Volumes/AOS-X") else "Internal"
+        size_bytes = _du_bytes(child)
+
+        # Skip tiny dirs (< 10MB)
+        if size_bytes < 10 * MB:
+            continue
+
+        categories.append({
+            "name": name,
+            "path": str(child),
+            "drive": drive,
+            "size_gb": round(size_bytes / GB, 2),
+            "is_symlink": child.is_symlink(),
+            "real_path": str(real) if child.is_symlink() else None,
+        })
+
+    categories.sort(key=lambda c: c["size_gb"], reverse=True)
+    return categories
+
+
+def _scan_cleanables() -> list[dict]:
+    """Discover cleanable artifacts by pattern — not hardcoded paths."""
+    home = Path.home()
+    cleanables = []
+
+    # 1. Cache subdirectories — anything under ~/.cache/ is by definition cleanable
+    cache_dir = home / ".cache"
+    if cache_dir.exists():
+        for child in cache_dir.iterdir():
+            if not child.is_dir():
+                continue
+            size = _du_bytes(child)
+            if size > 50 * MB:
+                cleanables.append({
+                    "label": child.name,
+                    "category": "cache",
+                    "path": str(child),
+                    "size_gb": round(size / GB, 2),
+                    "safe": True,
+                    "description": f"Cache: {child.name}",
+                })
+
+    # 2. Build artifacts in project directories — scan ~/project/ for known patterns
+    project_dir = home / "project"
+    # Universal cleanable directory names (development artifacts, recreatable)
+    artifact_names = {"node_modules", ".next", "__pycache__", "DerivedData", ".build", ".tox", "target", "dist", ".venv"}
+    if project_dir.exists():
+        for proj in project_dir.iterdir():
+            if not proj.is_dir():
+                continue
+            for child in proj.iterdir():
+                if child.name in artifact_names and child.is_dir():
+                    size = _du_bytes(child)
+                    if size > 50 * MB:
+                        cleanables.append({
+                            "label": f"{proj.name}/{child.name}",
+                            "category": "build_artifact",
+                            "path": str(child),
+                            "size_gb": round(size / GB, 2),
+                            "safe": True,
+                            "description": f"Build artifact in {proj.name}",
+                        })
+
+    # 3. Old logs — anything in ~/.aos/logs/ older than 30 days
+    logs_dir = home / ".aos" / "logs"
+    if logs_dir.exists():
+        old_log_bytes = 0
+        old_log_count = 0
+        cutoff = datetime.now().timestamp() - 30 * 86400
+        for f in logs_dir.rglob("*.log"):
+            try:
+                if f.stat().st_mtime < cutoff:
+                    old_log_bytes += f.stat().st_size
+                    old_log_count += 1
+            except Exception:
+                pass
+        if old_log_bytes > 10 * MB:
+            cleanables.append({
+                "label": f"Old logs ({old_log_count} files, >30 days)",
+                "category": "logs",
+                "path": str(logs_dir),
+                "size_gb": round(old_log_bytes / GB, 2),
+                "safe": True,
+                "description": "Log files older than 30 days",
+            })
+
+    # 4. Homebrew cache
+    brew_cache = Path("/opt/homebrew/cache") if Path("/opt/homebrew/cache").exists() else home / "Library" / "Caches" / "Homebrew"
+    if brew_cache.exists():
+        size = _du_bytes(brew_cache)
+        if size > 100 * MB:
+            cleanables.append({
+                "label": "Homebrew cache",
+                "category": "cache",
+                "path": str(brew_cache),
+                "size_gb": round(size / GB, 2),
+                "safe": True,
+                "description": "brew cleanup",
+            })
+
+    cleanables.sort(key=lambda c: c["size_gb"], reverse=True)
+    return cleanables
+
+
+def _scan_processes() -> list[dict]:
+    """Get RAM usage grouped by category — discovered from process commands."""
+    home_str = str(Path.home())
+    try:
+        result = subprocess.run(
+            ["ps", "-e", "-o", "rss=,command="],
+            capture_output=True, text=True, timeout=10,
+        )
+    except Exception:
+        return []
+
+    groups: dict[str, dict] = {}
+
+    for line in result.stdout.strip().split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        parts = line.split(None, 1)
+        if len(parts) < 2:
+            continue
+        try:
+            rss_kb = int(parts[0])
+        except ValueError:
+            continue
+        command = parts[1]
+
+        # Categorize by command path patterns (discovery-based)
+        category = "System"
+        if "aos/core/services/" in command:
+            # Extract service name dynamically from path
+            try:
+                svc = command.split("services/")[1].split("/")[0].split(" ")[0]
+                category = f"AOS: {svc}"
+            except Exception:
+                category = "AOS: service"
+        elif "qmd" in command.lower() or "onnxruntime" in command.lower() or "sentence-transformers" in command.lower():
+            category = "Search & ML models"
+        elif "next-server" in command or "next dev" in command:
+            category = "Next.js"
+        elif "node " in command and home_str in command:
+            category = "Node.js (user)"
+        elif "python" in command and home_str in command:
+            category = "Python (user)"
+        elif command.startswith(("/System", "/usr", "/sbin", "kernel")):
+            category = "System"
+        elif rss_kb < 10240:
+            continue  # Skip tiny processes
+        else:
+            category = "Other"
+
+        if category not in groups:
+            groups[category] = {"rss_mb": 0, "count": 0, "top": []}
+        groups[category]["rss_mb"] += rss_kb / 1024
+        groups[category]["count"] += 1
+        if rss_kb > 50 * 1024:
+            groups[category]["top"].append({
+                "command": command[:100],
+                "rss_mb": round(rss_kb / 1024, 1),
+            })
+
+    result_list = []
+    for cat, data in groups.items():
+        data["top"].sort(key=lambda p: p["rss_mb"], reverse=True)
+        result_list.append({
+            "category": cat,
+            "rss_mb": round(data["rss_mb"], 1),
+            "rss_gb": round(data["rss_mb"] / 1024, 2),
+            "count": data["count"],
+            "top_processes": data["top"][:3],
+        })
+    result_list.sort(key=lambda g: g["rss_mb"], reverse=True)
+    return result_list
+
+
+def _generate_recommendations(drives: list, categories: list, cleanables: list, processes: list) -> list[dict]:
+    """Generate actionable recommendations from scanned resource data."""
+    recs = []
+
+    # Drive pressure
+    for drive in drives:
+        if drive["pct"] > 90:
+            recs.append({
+                "severity": "high",
+                "text": f"{drive['label']} at {drive['pct']}% — only {drive['free_gb']}GB remaining",
+                "type": "disk",
+            })
+        elif drive["pct"] > 75:
+            recs.append({
+                "severity": "medium",
+                "text": f"{drive['label']} at {drive['pct']}% — {drive['free_gb']}GB free",
+                "type": "disk",
+            })
+
+    # Total recoverable space
+    total_cleanable = sum(c["size_gb"] for c in cleanables if c.get("safe"))
+    if total_cleanable > 0.5:
+        recs.append({
+            "severity": "medium" if total_cleanable > 2 else "low",
+            "text": f"{total_cleanable:.1f}GB recoverable across {len(cleanables)} items",
+            "type": "cleanup",
+        })
+
+    # Top cleanable items
+    for c in cleanables[:5]:
+        if c["size_gb"] >= 0.5:
+            recs.append({
+                "severity": "low",
+                "text": f"{c['description']}: {c['size_gb']:.1f}GB — safe to clean",
+                "type": "cleanup",
+                "path": c["path"],
+            })
+
+    # RAM recommendations
+    total_rss = sum(p["rss_mb"] for p in processes)
+    for p in processes:
+        pct_of_total = (p["rss_mb"] / total_rss * 100) if total_rss else 0
+        if p["rss_mb"] > 2048 and pct_of_total > 25:
+            recs.append({
+                "severity": "medium",
+                "text": f"{p['category']} using {p['rss_gb']}GB RAM ({pct_of_total:.0f}% of total)",
+                "type": "memory",
+            })
+
+    return recs
+
+
+def _scan_resources() -> dict:
+    """Full resource scan — expensive, results cached for 5 minutes."""
+    global _resources_cache, _resources_cache_time
+    import time as _time
+    now = _time.time()
+    if _resources_cache and (now - _resources_cache_time) < 300:
+        return _resources_cache
+
+    drives = _scan_drives()
+    categories = _scan_directory_breakdown()
+    cleanables = _scan_cleanables()
+    processes = _scan_processes()
+    recommendations = _generate_recommendations(drives, categories, cleanables, processes)
+
+    result = {
+        "drives": drives,
+        "categories": categories,
+        "cleanables": cleanables,
+        "processes": processes,
+        "recommendations": recommendations,
+        "scanned_at": datetime.now().isoformat(),
+    }
+    _resources_cache = result
+    _resources_cache_time = now
+    return result
+
+
 def _service_status() -> dict:
     """Check which services are running."""
     services = {}
@@ -1350,6 +1669,8 @@ def _get_scheduler_crons() -> dict:
             "run_count": run_count,
             "last_failure": last_failure,
             "status": status,
+            "tier": defn.get("tier", 0),
+            "description": defn.get("description", ""),
         })
 
     # Sort: enabled first (by status priority), then disabled
@@ -1380,6 +1701,170 @@ def _get_scheduler_crons() -> dict:
 async def api_crons():
     """Return structured cron job data merged from scheduler status + config."""
     return _get_scheduler_crons()
+
+
+@app.get("/api/system/resources")
+async def api_system_resources(refresh: bool = False):
+    """Full resource scan — disk breakdown, cleanables, RAM by process, recommendations."""
+    if refresh:
+        global _resources_cache_time
+        _resources_cache_time = 0
+    return await asyncio.get_event_loop().run_in_executor(None, _scan_resources)
+
+
+@app.get("/api/system/attention")
+async def api_system_attention():
+    """Compute system verdict + attention items for Mission Control."""
+    loop = asyncio.get_event_loop()
+    services = await loop.run_in_executor(None, _service_status)
+    cron_data = _get_scheduler_crons()
+    health = await loop.run_in_executor(None, _system_health)
+    tasks = _load_tasks()
+    items_raw = _get_attention_items(services, cron_data, tasks, health)
+
+    # Enrich items with actionable info
+    items = []
+    for item in items_raw:
+        enriched = {**item}
+        text_lower = item.get("text", "").lower()
+        if "offline" in text_lower:
+            # Extract service name from "X is offline"
+            svc_name = item["text"].split(" is ")[0].lower() if " is " in item["text"] else ""
+            enriched["action_type"] = "restart_service"
+            enriched["action_target"] = svc_name
+        elif "cron failed" in text_lower or "cron stale" in text_lower:
+            cron_name = item["text"].split(": ", 1)[-1] if ": " in item["text"] else ""
+            enriched["action_type"] = "run_cron"
+            enriched["action_target"] = cron_name
+        items.append(enriched)
+
+    errors = sum(1 for i in items if i["type"] == "error")
+    warnings = sum(1 for i in items if i["type"] == "warning")
+
+    if errors > 0:
+        verdict = "critical"
+    elif warnings > 0:
+        verdict = "warning"
+    else:
+        verdict = "healthy"
+
+    total_issues = errors + warnings
+    if total_issues == 0:
+        verdict_text = "All systems healthy"
+    elif total_issues == 1:
+        verdict_text = "1 issue needs attention"
+    else:
+        verdict_text = f"{total_issues} issues need attention"
+
+    # Build summary line
+    svc_online = sum(1 for s in services.values() if s["status"] == "online")
+    svc_total = len(services)
+    cron_ok = cron_data.get("summary", {}).get("ok", 0)
+    cron_total = cron_data.get("summary", {}).get("enabled", 0)
+    summary = f"{svc_online}/{svc_total} services up \u00b7 {cron_ok}/{cron_total} crons healthy \u00b7 {health.get('disk_pct', 0)}% disk"
+
+    return {
+        "verdict": verdict,
+        "verdict_text": verdict_text,
+        "summary": summary,
+        "items": items,
+    }
+
+
+@app.post("/api/crons/{name}/run")
+async def api_run_cron(name: str):
+    """Run a cron job immediately."""
+    config_path = Path.home() / "aos" / "config" / "crons.yaml"
+    try:
+        raw = yaml.safe_load(config_path.read_text()) or {}
+        definitions = raw.get("jobs", {})
+    except Exception:
+        return {"error": "Could not read crons.yaml"}
+
+    if name not in definitions:
+        return {"error": f"Unknown cron job: {name}"}
+
+    command = definitions[name].get("command", "")
+    if not command:
+        return {"error": f"No command for job: {name}"}
+
+    timeout = definitions[name].get("timeout", 120)
+    log_path = Path.home() / ".aos" / "logs" / "crons" / f"{name}.log"
+
+    try:
+        result = await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: subprocess.run(
+                command, shell=True, capture_output=True, text=True,
+                timeout=timeout, env={**__import__("os").environ, "AOS_MANUAL_RUN": "1"},
+            ),
+        )
+        # Append output to log
+        with open(log_path, "a") as f:
+            f.write(f"\n--- Manual run at {datetime.now().isoformat()} ---\n")
+            if result.stdout:
+                f.write(result.stdout)
+            if result.stderr:
+                f.write(result.stderr)
+
+        return {
+            "ok": result.returncode == 0,
+            "exit_code": result.returncode,
+            "stdout": result.stdout[-2000:] if result.stdout else "",
+            "stderr": result.stderr[-2000:] if result.stderr else "",
+        }
+    except subprocess.TimeoutExpired:
+        return {"error": f"Job timed out after {timeout}s"}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.patch("/api/crons/{name}")
+async def api_toggle_cron(name: str, request: Request):
+    """Toggle a cron job enabled/disabled."""
+    body = await request.json()
+    enabled = body.get("enabled")
+    if enabled is None:
+        return {"error": "Missing 'enabled' field"}
+
+    config_path = Path.home() / "aos" / "config" / "crons.yaml"
+    try:
+        raw_text = config_path.read_text()
+        raw = yaml.safe_load(raw_text) or {}
+        definitions = raw.get("jobs", {})
+    except Exception:
+        return {"error": "Could not read crons.yaml"}
+
+    if name not in definitions:
+        return {"error": f"Unknown cron job: {name}"}
+
+    definitions[name]["enabled"] = enabled
+    raw["jobs"] = definitions
+
+    try:
+        config_path.write_text(yaml.dump(raw, default_flow_style=False, sort_keys=False))
+        return {"ok": True, "name": name, "enabled": enabled}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/api/crons/{name}/output")
+async def api_cron_output(name: str, lines: int = 50):
+    """Return last N lines of a cron job's log output."""
+    log_path = Path.home() / ".aos" / "logs" / "crons" / f"{name}.log"
+    if not log_path.exists():
+        return {"name": name, "lines": [], "exists": False}
+    tail = _tail_lines(log_path, lines)
+    return {"name": name, "lines": tail, "exists": True}
+
+
+@app.get("/api/services/{name}/logs")
+async def api_service_logs(name: str, lines: int = 50):
+    """Return last N lines of a service's merged logs."""
+    if name not in LOG_SOURCES:
+        return {"name": name, "lines": [], "exists": False}
+    merged = _tail_merged(LOG_SOURCES[name], lines)
+    return {"name": name, "lines": merged, "exists": True}
 
 
 @app.get("/crons", response_class=HTMLResponse)
@@ -2107,6 +2592,23 @@ async def trust_page(request: Request):
         pass
     return templates.TemplateResponse(request, "trust.html", {
         "active_page": "trust",
+        "task_count": active_count if active_count else None,
+    })
+
+
+# ── Meeting / Companion ──────────────────────────────────────────────
+
+@app.get("/meeting", response_class=HTMLResponse)
+async def meeting_page(request: Request):
+    """Meeting companion page."""
+    active_count = 0
+    try:
+        tasks = _load_tasks()
+        active_count = sum(1 for t in tasks if t.get("status") in ("active", "todo"))
+    except Exception:
+        pass
+    return templates.TemplateResponse(request, "meeting.html", {
+        "active_page": "meeting",
         "task_count": active_count if active_count else None,
     })
 

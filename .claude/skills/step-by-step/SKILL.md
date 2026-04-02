@@ -237,13 +237,20 @@ Skipped parts show as: `⏭ Part Name`
 
 **Dependencies Created**: Anything downstream that needs updating
 
-## Work System Integration
+## Task Tracking — Two Layers
 
-Step-by-step tracks all work through the work system. No separate plan files — the work system IS the tracking, the resume state, and the source of truth.
+Step-by-step uses two complementary tracking systems:
+
+| Layer | Tool | Purpose |
+|-------|------|---------|
+| **In-session** | `TaskCreate` / `TaskUpdate` | Visual progress in Claude Code UI — spinners, checkmarks, status |
+| **Persistent** | Work CLI (`~/aos/core/work/cli.py`) | Cross-session state, dashboard events, initiative linking |
+
+Both are mandatory. TaskCreate gives the operator live visual feedback. The work system gives resumability and downstream automation.
 
 ### At SCOPE (after operator approves parts)
 
-Create a parent task and subtasks:
+**1. Create work system tasks** (persistent layer):
 
 ```bash
 # Create parent task for the whole step-by-step flow
@@ -261,7 +268,43 @@ If this work belongs to an initiative phase, add `source_ref` when creating the 
 python3 ~/aos/core/work/cli.py add "{Task Name}" --project {project} --source-ref "vault/knowledge/initiatives/{slug}.md"
 ```
 
-Show the created structure to the operator:
+**2. Create in-session tasks** (visual layer):
+
+Use `TaskCreate` for each part. Wire up dependencies with `addBlockedBy`.
+
+```
+TaskCreate(
+  subject: "Part 1: {name}",
+  description: "{one-line description from scope}",
+  activeForm: "{Present continuous — e.g., 'Setting up health endpoints'}"
+)
+# → returns taskId "1"
+
+TaskCreate(
+  subject: "Part 2: {name}",
+  description: "{one-line description}",
+  activeForm: "{e.g., 'Configuring watchdog script'}"
+)
+# → returns taskId "2"
+# Then: TaskUpdate(taskId: "2", addBlockedBy: ["1"])
+
+TaskCreate(
+  subject: "Part 3: {name}",
+  description: "{one-line description}",
+  activeForm: "{e.g., 'Wiring up alerting'}"
+)
+# → returns taskId "3"
+# Then: TaskUpdate(taskId: "3", addBlockedBy: ["1", "2"])
+```
+
+Rules for in-session tasks:
+- `subject` matches the part name from scope (e.g., "Part 1: Health Endpoints")
+- `activeForm` is present continuous — this text shows in the spinner during execution
+- Wire `addBlockedBy` to mirror the dependency chain from scope
+- Store the `taskId` ↔ work system ID mapping (e.g., taskId "1" = aos#15.1) for the session
+
+**3. Show the created structure** to the operator:
+
 ```
   Scope: {Task Name}                              [aos#15]
 
@@ -270,15 +313,27 @@ Show the created structure to the operator:
   ⬜ 3. {Part 3} (L)                              [aos#15.3]
 ```
 
-### At EXECUTE (after each part completes)
+### At EXECUTE (per part)
 
-Mark the subtask done. This is mandatory — run this command after verifying the part's acceptance criteria:
+**Starting a part** — mark it in-progress in session tasks:
 
-```bash
+```
+TaskUpdate(taskId: "{id}", status: "in_progress")
+```
+
+This activates the spinner with the `activeForm` text. The operator sees live progress.
+
+**Completing a part** — after verifying acceptance criteria, update both layers:
+
+```
+# In-session: show checkmark
+TaskUpdate(taskId: "{id}", status: "completed")
+
+# Persistent: mark subtask done
 python3 ~/aos/core/work/cli.py done aos#15.1
 ```
 
-The engine handles everything downstream:
+The work engine handles everything downstream:
 - Subtask marked done
 - When ALL subtasks done → parent auto-completes (cascade)
 - If parent has `source_ref` → initiative checkbox auto-updates

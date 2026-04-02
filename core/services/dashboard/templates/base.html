@@ -31,6 +31,9 @@
                     <i data-lucide="check-square"></i> <span>Work</span>
                     {% if task_count %}<span class="badge">{{ task_count }}</span>{% endif %}
                 </a></li>
+                <li><a href="/meeting" class="sidebar-link{% if active_page == 'meeting' %} active{% endif %}">
+                    <i data-lucide="mic"></i> <span>Meeting</span>
+                </a></li>
             </ul>
         </div>
 
