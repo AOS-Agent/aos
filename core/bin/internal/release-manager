@@ -97,7 +97,8 @@ create() {
     # Determine version from VERSION file at origin/main
     local version
     version=$(git show origin/main:VERSION 2>/dev/null || echo "unknown")
-    local release_name="${version}-$(echo "$remote_hash" | head -c 7)"
+    local release_name
+    release_name="${version}-$(echo "$remote_hash" | head -c 7)"
     local release_dir="$RELEASES_DIR/$release_name"
 
     if [ -d "$release_dir" ]; then
@@ -298,7 +299,7 @@ prune() {
 
         log "Pruning $name..."
         chmod -R u+w "$RELEASES_DIR/$name" 2>/dev/null || true
-        rm -rf "$RELEASES_DIR/$name"
+        rm -rf "${RELEASES_DIR:?}/$name"
         ((pruned++))
     done
 
@@ -357,7 +358,8 @@ convert() {
     current_hash=$(git rev-parse HEAD 2>/dev/null)
     local version
     version=$(cat "$AOS_LINK/VERSION" 2>/dev/null || echo "unknown")
-    local release_name="${version}-$(echo "$current_hash" | head -c 7)"
+    local release_name
+    release_name="${version}-$(echo "$current_hash" | head -c 7)"
 
     # Step 2: Determine where the git clone should live
     log "Step 2/6: Setting up git repo location..."

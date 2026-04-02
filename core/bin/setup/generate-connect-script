@@ -21,8 +21,10 @@ TS_IP=$(tailscale ip -4 2>/dev/null || echo "TAILSCALE_NOT_CONNECTED")
 MACHINE_NAME=$(scutil --get ComputerName 2>/dev/null || hostname -s)
 
 # Read operator name
+# shellcheck disable=SC2034
 OP_NAME="there"
 if [[ -f "$HOME/.aos/config/operator.yaml" ]]; then
+    # shellcheck disable=SC2034
     OP_NAME=$(python3 -c "
 import yaml
 from pathlib import Path

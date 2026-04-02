@@ -20,10 +20,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Run ShellCheck
-        uses: ludeeus/action-shellcheck@master
-        with:
-          scandir: .
-          severity: warning
+        run: |
+          # Find all shell scripts: *.sh files + extensionless scripts with shebangs
+          find . -type f \( -name "*.sh" -o -path "*/bin/*" \) \
+            -not -path "*/node_modules/*" \
+            -not -path "*/.venv/*" \
+            -not -path "*/target/*" \
+            -not -path "*/vendor/*" \
+            -exec sh -c 'head -1 "$1" | grep -q "#!/.*\(bash\|sh\)" && echo "$1"' _ {} \; \
+            | xargs shellcheck --severity=warning
 
   test:
     name: Tests

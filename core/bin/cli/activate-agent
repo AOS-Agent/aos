@@ -53,6 +53,7 @@ list_catalog() {
         local desc
         desc=$(get_frontmatter_field "$tmpl" "description")
         local role
+        # shellcheck disable=SC2034
         role=$(get_frontmatter_field "$tmpl" "role")
 
         local status=""
@@ -127,7 +128,7 @@ activate() {
     if [[ ! -f "$tmpl" ]]; then
         _err "No catalog template found: $name"
         echo ""
-        _dim "Available: $(ls "$CATALOG_DIR"/*.md 2>/dev/null | xargs -I{} basename {} .md | tr '\n' ' ')"
+        _dim "Available: $(find "$CATALOG_DIR" -maxdepth 1 -name '*.md' -exec basename {} .md \; 2>/dev/null | tr '\n' ' ')"
         exit 1
     fi
 

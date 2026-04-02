@@ -14,6 +14,7 @@
 
 set -euo pipefail
 
+# shellcheck disable=SC2034
 AOS_DIR="$HOME/aos"
 MESH_CONFIG="$HOME/.aos/config/mesh.yaml"
 MESH_DATA="$HOME/.aos/mesh"
@@ -29,6 +30,7 @@ if [[ -t 1 ]]; then
     BOLD='\033[1m'
     NC='\033[0m'
 else
+    # shellcheck disable=SC2034
     GREEN='' RED='' YELLOW='' BLUE='' DIM='' BOLD='' NC=''
 fi
 

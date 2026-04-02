@@ -142,6 +142,7 @@ apply() {
     if [[ $pull_status -ne 0 ]]; then
         log "git pull failed — clearing dirty state and retrying"
         git checkout -- . 2>/dev/null
+        # shellcheck disable=SC2034
         pull_output=$(git pull --ff-only origin main 2>&1)
         pull_status=$?
         if [[ $pull_status -ne 0 ]]; then

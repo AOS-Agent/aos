@@ -451,7 +451,7 @@ if errors:
 
         # If 'code' isn't on PATH but VS Code app exists, fix the symlink
         if [[ -z "$EDITOR_CMD" ]] && [[ -d "/Applications/Visual Studio Code.app" ]]; then
-            local code_bin="/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code"
+            code_bin="/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code"
             if [[ -x "$code_bin" ]]; then
                 ln -sf "$code_bin" /usr/local/bin/code 2>/dev/null || true
                 command -v code &>/dev/null && EDITOR_CMD="code"
@@ -634,12 +634,10 @@ print('\n'.join(deps))
 
             # Verify critical imports work
             local verify_ok=true
-            for mod in yaml; do
-                if ! "$dst/.venv/bin/python" -c "import $mod" 2>/dev/null; then
-                    echo "    ✗ Missing: $mod"
-                    verify_ok=false
-                fi
-            done
+            if ! "$dst/.venv/bin/python" -c "import yaml" 2>/dev/null; then
+                echo "    ✗ Missing: yaml"
+                verify_ok=false
+            fi
 
             if [[ "$verify_ok" == true ]]; then
                 echo "    ✓ $name deployed (Python $("$dst/.venv/bin/python" --version 2>&1 | awk '{print $2}'))"
