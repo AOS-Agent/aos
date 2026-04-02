@@ -1,0 +1,223 @@
+#!/usr/bin/env python3
+"""
+AOS Storage Manager — relocate data directories to the data drive.
+
+Usage:
+    aos storage status       Show current layout vs policy
+    aos storage reconcile    Move directories to data drive per policy
+    aos storage reconcile --dry-run   Show what would be moved
+
+Reads policy from ~/aos/config/storage.yaml.
+"""
+
+import argparse
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+HOME = Path.home()
+AOS = HOME / "aos"
+STORAGE_CONFIG = AOS / "config" / "storage.yaml"
+GB = 1024 ** 3
+
+
+def load_policy():
+    if not STORAGE_CONFIG.exists():
+        print(f"No storage policy found at {STORAGE_CONFIG}")
+        sys.exit(1)
+    import yaml
+    return yaml.safe_load(STORAGE_CONFIG.read_text()) or {}
+
+
+def du_gb(path):
+    try:
+        result = subprocess.run(
+            ["du", "-s", "-k", str(path)],
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode == 0:
+            return int(result.stdout.split()[0]) * 1024 / GB
+    except Exception:
+        pass
+    return 0
+
+
+def fmt_size(gb):
+    if gb >= 1:
+        return f"{gb:.1f}GB"
+    return f"{int(gb * 1024)}MB"
+
+
+def status_cmd(policy):
+    """Show current storage layout."""
+    data_drive = policy.get("data_drive", "")
+    relocations = policy.get("relocations", {})
+    sip_set = set(policy.get("sip_protected", []))
+
+    drive_ok = Path(data_drive).exists() if data_drive else False
+    print(f"Data drive: {data_drive} {'(connected)' if drive_ok else '(NOT CONNECTED)'}")
+    print()
+
+    ok_count = 0
+    drift_count = 0
+    drift_gb = 0
+
+    for category, paths in relocations.items():
+        if not isinstance(paths, list):
+            continue
+        for rel_path in paths:
+            full_path = HOME / rel_path
+            if not full_path.exists() and not full_path.is_symlink():
+                continue
+
+            sip = rel_path in sip_set
+            if full_path.is_symlink():
+                target = str(full_path.resolve())
+                if target.startswith(data_drive):
+                    print(f"  \033[32m✓\033[0m ~/{rel_path} → {target}")
+                    ok_count += 1
+                else:
+                    print(f"  \033[33m⚠\033[0m ~/{rel_path} → {target} (wrong drive)")
+                    drift_count += 1
+            else:
+                size = du_gb(full_path) if not sip else 0
+                sip_tag = " [SIP]" if sip else ""
+                print(f"  \033[31m✗\033[0m ~/{rel_path} — local ({fmt_size(size)}){sip_tag}")
+                drift_count += 1
+                drift_gb += size
+
+    print()
+    if drift_count == 0:
+        print(f"All {ok_count} directories correctly on data drive.")
+    else:
+        print(f"{ok_count} correct, {drift_count} need relocation ({fmt_size(drift_gb)} local)")
+
+
+def reconcile_cmd(policy, dry_run=False):
+    """Move directories to the data drive per policy."""
+    data_drive = policy.get("data_drive", "")
+    if not data_drive or not Path(data_drive).exists():
+        print(f"Data drive not connected: {data_drive}")
+        sys.exit(1)
+
+    relocations = policy.get("relocations", {})
+    sip_set = set(policy.get("sip_protected", []))
+    pinned = set(policy.get("pinned", []))
+
+    moved = 0
+    skipped = 0
+    errors = 0
+
+    for category, paths in relocations.items():
+        if not isinstance(paths, list):
+            continue
+        for rel_path in paths:
+            full_path = HOME / rel_path
+
+            # Skip if doesn't exist
+            if not full_path.exists() and not full_path.is_symlink():
+                continue
+
+            # Skip if already symlinked to data drive
+            if full_path.is_symlink():
+                target = str(full_path.resolve())
+                if target.startswith(data_drive):
+                    continue
+
+            # Skip if pinned
+            if rel_path in pinned:
+                continue
+
+            is_sip = rel_path in sip_set
+            size = du_gb(full_path) if not is_sip else 0
+
+            # Compute destination on data drive
+            dest = Path(data_drive) / rel_path
+            sip_tag = " [SIP: content-only]" if is_sip else ""
+
+            if dry_run:
+                print(f"  Would move: ~/{rel_path} → {dest} ({fmt_size(size)}){sip_tag}")
+                moved += 1
+                continue
+
+            print(f"  Moving ~/{rel_path} ({fmt_size(size)}){sip_tag}...")
+
+            try:
+                dest.parent.mkdir(parents=True, exist_ok=True)
+
+                if is_sip:
+                    # SIP-protected: move contents, leave empty dir
+                    dest.mkdir(parents=True, exist_ok=True)
+                    for child in full_path.iterdir():
+                        if child.name.startswith(".") and child.name in (".", ".."):
+                            continue
+                        child_dest = dest / child.name
+                        if child_dest.exists():
+                            continue  # Already moved
+                        subprocess.run(
+                            ["rsync", "-a", str(child) + ("/") if child.is_dir() else str(child),
+                             str(child_dest) + ("/" if child.is_dir() else "")],
+                            timeout=600, check=True,
+                        )
+                        if child.is_dir():
+                            shutil.rmtree(child, ignore_errors=True)
+                        else:
+                            child.unlink(missing_ok=True)
+                        # Create symlink for each moved item back
+                        if not (full_path / child.name).exists():
+                            os.symlink(str(child_dest), str(full_path / child.name))
+                    print(f"    ✓ Contents moved (dir is SIP-protected)")
+                else:
+                    # Normal: rsync, remove, symlink
+                    dest.mkdir(parents=True, exist_ok=True)
+                    subprocess.run(
+                        ["rsync", "-a", str(full_path) + "/", str(dest) + "/"],
+                        timeout=600, check=True,
+                    )
+                    shutil.rmtree(full_path)
+                    os.symlink(str(dest), str(full_path))
+                    print(f"    ✓ ~/{rel_path} → {dest}")
+
+                moved += 1
+
+            except subprocess.TimeoutExpired:
+                print(f"    ✗ Timed out moving ~/{rel_path}")
+                errors += 1
+            except PermissionError as e:
+                print(f"    ✗ Permission denied: {e}")
+                errors += 1
+            except Exception as e:
+                print(f"    ✗ Error: {e}")
+                errors += 1
+
+    print()
+    action = "Would move" if dry_run else "Moved"
+    print(f"{action} {moved} directories. {skipped} skipped. {errors} errors.")
+
+
+def main():
+    parser = argparse.ArgumentParser(description="AOS Storage Manager")
+    sub = parser.add_subparsers(dest="command")
+
+    sub.add_parser("status", help="Show current layout vs policy")
+
+    recon = sub.add_parser("reconcile", help="Move directories to data drive")
+    recon.add_argument("--dry-run", action="store_true", help="Show what would be moved")
+
+    args = parser.parse_args()
+    if not args.command:
+        parser.print_help()
+        sys.exit(1)
+
+    policy = load_policy()
+
+    if args.command == "status":
+        status_cmd(policy)
+    elif args.command == "reconcile":
+        reconcile_cmd(policy, dry_run=args.dry_run)
+
+
+if __name__ == "__main__":
+    main()

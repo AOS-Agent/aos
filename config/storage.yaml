@@ -1,0 +1,86 @@
+# AOS Storage Policy
+#
+# Declares where data should live. The reconcile check (storage_layout)
+# verifies this on every update cycle and flags drift.
+#
+# The data_drive MUST be a fast external SSD (NVMe recommended).
+# If absent at boot, all symlinks gracefully degrade — nothing breaks,
+# but writes land on internal until the drive reconnects.
+#
+# Philosophy: The internal SSD runs macOS + apps. Everything else
+# lives on the data drive. No performance penalty on NVMe.
+
+data_drive: /Volumes/AOS-X
+
+# ── What gets symlinked to the data drive ─────────────────────────────────────
+#
+# Each entry is a path relative to ~/ that should be a symlink to data_drive.
+# The reconcile check discovers violations; the migration script fixes them.
+#
+# Categories help the UI group these logically.
+
+relocations:
+
+  # Core AOS data — always relocate
+  aos_data:
+    - vault                         # Knowledge vault (Obsidian)
+    - project                       # All project repos
+    - .cache                        # All caches (pip, uv, huggingface, qmd, etc.)
+
+  # Development toolchains — safe, standard practice
+  dev_tools:
+    - Library/Developer             # Xcode command line tools, simulators
+    - Library/Python                # Python user-site packages
+    - go                            # Go modules
+    - nltk_data                     # NLP data
+    - .rustup                       # Rust toolchain
+    - .cargo                        # Rust packages
+    - .vscode                       # VS Code extensions + data
+    - .bun                          # Bun runtime + cache
+    - .local                        # pip user packages, local bins
+
+  # AOS service runtime — venvs are large and fully recreatable
+  service_data:
+    - .aos/services                 # Python venvs for AOS services
+
+  # User media — no reason to be on boot drive
+  media:
+    - Movies                        # User media
+
+  # Large app data — app must be quit during initial move
+  app_data:
+    - Library/Application Support/Claude        # Claude Desktop sessions
+    - Library/Application Support/superwhisper  # Whisper models
+
+# ── Paths that MUST stay on internal (never relocate) ─────────────────────────
+#
+# These are macOS-managed or security-critical. Listed here so the reconcile
+# check knows not to flag them, and the migration script skips them.
+
+pinned:
+  - Library/Preferences             # App settings
+  - Library/Keychains               # Security
+  - Library/LaunchAgents            # Must be local for launchd
+  - Library/Mobile Documents        # iCloud managed
+  - Library/Group Containers        # App sandboxes
+  - Library/Messages                # iMessage
+  - Library/Mail                    # Mail.app
+  - Library/Containers              # Sandboxed app data
+  - .aos/config                     # Instance config (tiny, must be fast)
+  - .aos/data                       # State files
+  - .aos/work                       # Task data
+  - .claude                         # Claude Code config
+
+# ── SIP-protected directories ─────────────────────────────────────────────────
+#
+# macOS prevents replacing these with symlinks (System Integrity Protection).
+# The migration script handles them specially: moves CONTENTS, leaves dir.
+# Listed so we don't retry failed rm + ln -s every cycle.
+
+sip_protected:
+  - Documents
+  - Downloads
+  - Desktop
+  - Music
+  - Pictures
+  - Library/Caches

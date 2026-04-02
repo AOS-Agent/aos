@@ -1,0 +1,27 @@
+# AOS Mesh — Default Configuration
+# Copied to ~/.aos/config/mesh.yaml during mesh init.
+# Only the admin node needs headscale settings.
+
+# Node identity
+role: node                  # "admin" or "node"
+node_name: ""               # Set during init (auto-detected from hostname)
+admin_node: ""              # Tailscale IP of the admin node
+mesh_port: 4100             # Port for mesh HTTP API
+
+# Heartbeat
+heartbeat_interval: 60      # seconds between heartbeats to admin
+offline_threshold: 180      # seconds before marking a node offline
+
+# Sharing defaults (what this node shares with the mesh)
+sharing:
+  collections:
+    knowledge: shared       # research, expertise — searchable by mesh
+    skills: shared          # skill definitions — searchable by mesh
+    log: private            # daily logs — local only
+    agents: private         # agent configs — local only
+    daily: private          # journal — local only
+
+# Headscale (admin only, ignored on regular nodes)
+# headscale:
+#   config: ~/.aos/headscale/config.yaml
+#   url: http://hostname.local:8080

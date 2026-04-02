@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.aos.mesh</string>
+    <key>WorkingDirectory</key>
+    <string>__HOME__/aos</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>__HOME__/aos/core/bin/internal/aos-python</string>
+        <string>__HOME__/aos/core/services/mesh/main.py</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>__HOME__/.aos/logs/meshd.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/.aos/logs/meshd.err.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>__HOME__/.local/bin:/opt/homebrew/bin:__HOME__/.bun/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>MESHD_PORT</key>
+        <string>4100</string>
+    </dict>
+</dict>
+</plist>

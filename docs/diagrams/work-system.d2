@@ -1,0 +1,191 @@
+vars: {
+  d2-config: {
+    theme-id: 200
+    theme-overrides: {
+      N1: "#0f1117"
+      N2: "#1a1d27"
+      N3: "#232733"
+      N4: "#2e3340"
+      N5: "#5c6070"
+      N6: "#8b8f9a"
+      N7: "#e8e9ed"
+      B1: "#e8723a"
+      B2: "#f0854f"
+      B4: "#60a5fa"
+      B5: "#34d399"
+      B6: "#fbbf24"
+    }
+  }
+}
+
+direction: right
+
+# ══════════════════════════════════════════════
+# LEFT: Input Layer
+# ══════════════════════════════════════════════
+
+input: Input {
+  style.fill: "#0f1117"
+  style.stroke: "#2e3340"
+  style.border-radius: 8
+  style.font-color: "#8b8f9a"
+  direction: down
+
+  operator: You {
+    shape: person
+    style.fill: "#2e3340"
+    style.stroke: "#e8723a"
+    style.font-color: "#e8e9ed"
+  }
+
+  hooks: Session Hooks {
+    style.fill: "#1a1d27"
+    style.stroke: "#a78bfa"
+    style.border-radius: 8
+    style.font-color: "#a78bfa"
+
+    start: SessionStart\ninject_context.py {
+      style.fill: "#232733"
+      style.stroke: "#a78bfa"
+      style.border-radius: 6
+      style.font-color: "#e8e9ed"
+    }
+    end_hook: SessionEnd\nsession_close.py {
+      style.fill: "#232733"
+      style.stroke: "#a78bfa"
+      style.border-radius: 6
+      style.font-color: "#e8e9ed"
+    }
+  }
+
+  cli: Work CLI {
+    style.fill: "#1a1d27"
+    style.stroke: "#e8723a"
+    style.border-radius: 8
+    style.font-color: "#e8e9ed"
+    direction: right
+
+    cmd_add: add {style.fill: "#232733"; style.stroke: "#e8723a"; style.border-radius: 6; style.font-color: "#e8e9ed"}
+    cmd_done: done {style.fill: "#232733"; style.stroke: "#e8723a"; style.border-radius: 6; style.font-color: "#e8e9ed"}
+    cmd_start: start {style.fill: "#232733"; style.stroke: "#e8723a"; style.border-radius: 6; style.font-color: "#e8e9ed"}
+    cmd_handoff: handoff {style.fill: "#232733"; style.stroke: "#34d399"; style.border-radius: 6; style.font-color: "#34d399"}
+    cmd_dispatch: dispatch {style.fill: "#232733"; style.stroke: "#34d399"; style.border-radius: 6; style.font-color: "#34d399"}
+    cmd_subtask: subtask {style.fill: "#232733"; style.stroke: "#e8723a"; style.border-radius: 6; style.font-color: "#e8e9ed"}
+  }
+
+  operator -> hooks: session begins {style.stroke: "#a78bfa"; style.font-color: "#a78bfa"}
+  operator -> cli: work commands {style.stroke: "#e8723a"; style.font-color: "#e8723a"}
+}
+
+# ══════════════════════════════════════════════
+# CENTER: Engine + Storage
+# ══════════════════════════════════════════════
+
+center: Core {
+  style.fill: "#0f1117"
+  style.stroke: "#2e3340"
+  style.border-radius: 8
+  style.font-color: "#8b8f9a"
+  direction: down
+
+  engine: Work Engine {
+    style.fill: "#1a1d27"
+    style.stroke: "#e8723a"
+    style.border-radius: 8
+    style.font-color: "#e8e9ed"
+    direction: right
+
+    resolver: Fuzzy Resolver {style.fill: "#232733"; style.stroke: "#e8723a"; style.border-radius: 6; style.font-color: "#e8e9ed"}
+    crud: Task CRUD {style.fill: "#232733"; style.stroke: "#e8723a"; style.border-radius: 6; style.font-color: "#e8e9ed"}
+    cascade: Subtask\nCascade {style.fill: "#232733"; style.stroke: "#34d399"; style.border-radius: 6; style.font-color: "#34d399"}
+    live: Live Context {style.fill: "#232733"; style.stroke: "#fbbf24"; style.border-radius: 6; style.font-color: "#fbbf24"}
+
+    resolver -> crud {style.stroke: "#5c6070"}
+    crud -> cascade: on complete {style.stroke: "#34d399"; style.font-color: "#34d399"}
+    cascade -> crud: auto-complete\nparent {style.stroke: "#34d399"; style.font-color: "#34d399"}
+  }
+
+  model: Data Model {
+    style.fill: "#1a1d27"
+    style.stroke: "#60a5fa"
+    style.border-radius: 8
+    style.font-color: "#60a5fa"
+    direction: right
+
+    goal: Goal {style.fill: "#232733"; style.stroke: "#60a5fa"; style.border-radius: 8; style.font-color: "#e8e9ed"}
+    project: Project {style.fill: "#232733"; style.stroke: "#60a5fa"; style.border-radius: 8; style.font-color: "#e8e9ed"}
+    task: Task {style.fill: "#232733"; style.stroke: "#60a5fa"; style.border-radius: 8; style.font-color: "#e8e9ed"}
+    subtask: Subtask {style.fill: "#232733"; style.stroke: "#60a5fa"; style.border-radius: 8; style.font-color: "#e8e9ed"}
+    thread: Thread {style.fill: "#232733"; style.stroke: "#5c6070"; style.border-radius: 8; style.font-color: "#8b8f9a"}
+    inbox: Inbox {style.fill: "#232733"; style.stroke: "#5c6070"; style.border-radius: 8; style.font-color: "#8b8f9a"}
+
+    goal -> project: scopes {style.stroke: "#60a5fa"; style.font-color: "#60a5fa"}
+    project -> task: contains {style.stroke: "#60a5fa"; style.font-color: "#60a5fa"}
+    task -> subtask: decomposes {style.stroke: "#60a5fa"; style.font-color: "#60a5fa"}
+    inbox -> task: triaged {style.stroke: "#5c6070"; style.font-color: "#5c6070"; style.stroke-dash: 3}
+    thread -> task: becomes {style.stroke: "#5c6070"; style.font-color: "#5c6070"; style.stroke-dash: 3}
+  }
+
+  storage: qareen.db {
+    shape: cylinder
+    style.fill: "#232733"
+    style.stroke: "#22d3ee"
+    style.font-color: "#e8e9ed"
+  }
+
+  engine.crud -> model.task: manages {style.stroke: "#60a5fa"; style.font-color: "#60a5fa"}
+  engine.crud -> storage: read / write {style.stroke: "#22d3ee"; style.font-color: "#22d3ee"}
+}
+
+# ══════════════════════════════════════════════
+# RIGHT: Output Layer
+# ══════════════════════════════════════════════
+
+output: Effects {
+  style.fill: "#0f1117"
+  style.stroke: "#2e3340"
+  style.border-radius: 8
+  style.font-color: "#8b8f9a"
+  direction: down
+
+  dashboard: Dashboard SSE\n(real-time feed) {style.fill: "#232733"; style.stroke: "#fbbf24"; style.border-radius: 6; style.font-color: "#e8e9ed"}
+  initiative: Initiative Sync\n(vault checkbox) {style.fill: "#232733"; style.stroke: "#fbbf24"; style.border-radius: 6; style.font-color: "#e8e9ed"}
+  github: GitHub Issues\n(create / close) {style.fill: "#232733"; style.stroke: "#f472b6"; style.border-radius: 6; style.font-color: "#f472b6"}
+  untracked: Untracked Work\nDetection {style.fill: "#232733"; style.stroke: "#f87171"; style.border-radius: 6; style.font-color: "#f87171"}
+
+  handoff: Handoff System {
+    style.fill: "#1a1d27"
+    style.stroke: "#34d399"
+    style.border-radius: 8
+    style.font-color: "#34d399"
+    direction: down
+
+    write_ho: Write Handoff\nstate + next + files\ndecisions + blockers {style.fill: "#232733"; style.stroke: "#34d399"; style.border-radius: 6; style.font-color: "#e8e9ed"}
+    read_ho: Dispatch\n(context for next session) {style.fill: "#232733"; style.stroke: "#34d399"; style.border-radius: 6; style.font-color: "#e8e9ed"}
+
+    write_ho -> read_ho: next session {style.stroke: "#34d399"; style.font-color: "#34d399"}
+  }
+}
+
+# ══════════════════════════════════════════════
+# CROSS-LAYER CONNECTIONS
+# ══════════════════════════════════════════════
+
+# Input -> Center
+input.cli -> center.engine.resolver: resolve task {style.stroke: "#e8723a"; style.font-color: "#e8723a"}
+input.hooks.start -> center.storage: read active tasks {style.stroke: "#a78bfa"; style.font-color: "#a78bfa"}
+input.hooks.end_hook -> center.engine.live: read workbench {style.stroke: "#a78bfa"; style.font-color: "#a78bfa"; style.stroke-dash: 3}
+input.cli.cmd_start -> center.engine.live: set workbench {style.stroke: "#fbbf24"; style.font-color: "#fbbf24"}
+
+# Center -> Output
+center.engine.crud -> output.dashboard: POST event {style.stroke: "#fbbf24"; style.font-color: "#fbbf24"}
+center.engine.cascade -> output.initiative: check checkbox {style.stroke: "#fbbf24"; style.font-color: "#fbbf24"}
+center.engine.crud -> output.github: sync issue {style.stroke: "#f472b6"; style.font-color: "#f472b6"}
+input.hooks.end_hook -> output.untracked: scan transcript {style.stroke: "#f87171"; style.font-color: "#f87171"}
+
+# Handoff connections
+input.cli.cmd_handoff -> output.handoff.write_ho {style.stroke: "#34d399"; style.font-color: "#34d399"}
+input.cli.cmd_dispatch -> output.handoff.read_ho {style.stroke: "#34d399"; style.font-color: "#34d399"}
+
+# Handoff loop back
+output.handoff.read_ho -> input.hooks.start: feeds next session {style.stroke: "#34d399"; style.font-color: "#34d399"; style.stroke-dash: 3}
