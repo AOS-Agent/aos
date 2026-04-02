@@ -8,16 +8,15 @@ Requires: smartctl (brew install smartmontools)
 """
 
 import json
-import re
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from base import ReconcileCheck, CheckResult, Status
+from base import CheckResult, ReconcileCheck, Status
 
 
 @dataclass

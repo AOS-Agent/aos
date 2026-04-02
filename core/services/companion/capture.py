@@ -17,8 +17,7 @@ from enum import Enum
 from pathlib import Path
 
 import numpy as np
-
-from vad import VoiceActivityDetector, FRAME_SIZE, SAMPLE_RATE
+from vad import FRAME_SIZE, SAMPLE_RATE, VoiceActivityDetector
 
 log = logging.getLogger("companion.capture")
 

@@ -3,14 +3,11 @@
 import json
 import logging
 import subprocess
-import time
-from pathlib import Path
 
+from activity_client import log_activity
+from session_manager import WORKSPACE, clear_session, get_session_id, save_session_id
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
-
-from session_manager import clear_session, get_session_id, save_session_id, WORKSPACE
-from activity_client import log_activity
 
 logger = logging.getLogger(__name__)
 

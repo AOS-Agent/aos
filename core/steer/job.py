@@ -21,9 +21,8 @@ Usage:
     python3 job.py list
     python3 job.py active                          # show running jobs
 """
-import sys
-import os
 import json
+import sys
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path

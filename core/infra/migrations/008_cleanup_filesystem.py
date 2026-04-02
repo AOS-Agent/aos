@@ -22,7 +22,6 @@ Actions:
 
 DESCRIPTION = "Clean up filesystem — remove leftovers, consolidate loose dirs"
 
-import os
 import shutil
 from pathlib import Path
 

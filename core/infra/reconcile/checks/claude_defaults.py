@@ -15,12 +15,11 @@ diffing the file. If new keys are needed, verify the same way.
 """
 
 import json
+import sys
 from pathlib import Path
 
-import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from base import ReconcileCheck, CheckResult, Status
-
+from base import CheckResult, ReconcileCheck, Status
 
 # Keys that must be true in ~/.claude.json for AOS
 # Format: {key: expected_value}

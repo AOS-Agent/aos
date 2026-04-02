@@ -1,20 +1,20 @@
-from .claude_md import RootClaudeMdCheck, GlobalClaudeMdCheck
-from .mcp_location import McpLocationCheck
-from .hooks import HooksPathCheck
-from .launchagents import LaunchAgentPythonCheck
-from .symlinks import AgentSymlinkCheck, SkillSymlinkCheck, RuleSymlinkCheck
-from .log_location import LogLocationCheck
-from .google_workspace import GoogleWorkspaceCheck
-from .initiatives import InitiativeDirectoriesCheck, BridgeTopicsCheck
-from .transcriber import TranscriberServiceCheck
-from .disk_smart import DiskSmartCheck
-from .context_freshness import ContextFreshnessCheck
 from .claude_defaults import ClaudeDefaultsCheck
+from .claude_md import GlobalClaudeMdCheck, RootClaudeMdCheck
+from .context_freshness import ContextFreshnessCheck
 from .dead_code import DeadCodeCheck
-from .runtime_protection import RuntimeProtectionCheck
 from .deployment_health import DeploymentHealthCheck
+from .disk_smart import DiskSmartCheck
+from .google_workspace import GoogleWorkspaceCheck
+from .hooks import HooksPathCheck
+from .initiatives import BridgeTopicsCheck, InitiativeDirectoriesCheck
 from .instance_hygiene import InstanceHygieneCheck
+from .launchagents import LaunchAgentPythonCheck
+from .log_location import LogLocationCheck
+from .mcp_location import McpLocationCheck
+from .runtime_protection import RuntimeProtectionCheck
 from .storage_layout import StorageLayoutCheck
+from .symlinks import AgentSymlinkCheck, RuleSymlinkCheck, SkillSymlinkCheck
+from .transcriber import TranscriberServiceCheck
 
 # Add new checks here — they run in this order on every update cycle.
 ALL_CHECKS = [

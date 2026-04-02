@@ -113,6 +113,7 @@ elif [[ -t 1 ]] && command -v tput &>/dev/null && [[ $(tput colors 2>/dev/null |
     BOLD=$(tput bold)
     RESET=$(tput sgr0)
 else
+    # shellcheck disable=SC2034
     BRAND="" GREEN="" YELLOW="" RED="" CYAN="" MUTED="" ACCENT="" DIM="" BOLD="" RESET=""
 fi
 
@@ -124,7 +125,8 @@ _TOTAL_STEPS=7
 
 _timer_start() { STEP_START=$(date +%s); }
 _timer_elapsed() {
-    local now=$(date +%s)
+    local now
+    now=$(date +%s)
     local elapsed=$((now - STEP_START))
     if [[ $elapsed -ge 60 ]]; then
         echo "$((elapsed / 60))m $((elapsed % 60))s"
@@ -133,7 +135,8 @@ _timer_elapsed() {
     fi
 }
 _total_elapsed() {
-    local now=$(date +%s)
+    local now
+    now=$(date +%s)
     local elapsed=$((now - INSTALL_START))
     echo "$((elapsed / 60))m $((elapsed % 60))s"
 }
@@ -885,6 +888,7 @@ prereq_tailscale() {
 prereq_claude_remote() {
     # Claude Code remote control — allows agents to reach this machine's Claude
     local script="$AOS_DIR/core/bin/setup/claude-remote-start"
+    # shellcheck disable=SC2034
     local plist_template="$AOS_DIR/config/launchagents/com.aos.claude-remote.plist.template"
 
     if ! command -v claude &>/dev/null; then
@@ -2353,10 +2357,14 @@ for name, job in (data.get('jobs') or {}).items():
 }
 
 print_handoff() {
-    local total=$(_total_elapsed)
-    local hostname=$(scutil --get ComputerName 2>/dev/null || hostname -s)
-    local machine_id=$(cat "$MACHINE_ID_FILE" 2>/dev/null || echo "unknown")
-    local op_name=$(python3 -c "
+    local total
+    total=$(_total_elapsed)
+    local hostname
+    hostname=$(scutil --get ComputerName 2>/dev/null || hostname -s)
+    local machine_id
+    machine_id=$(cat "$MACHINE_ID_FILE" 2>/dev/null || echo "unknown")
+    local op_name
+    op_name=$(python3 -c "
 import yaml
 try:
     with open('$USER_DIR/config/operator.yaml') as f:
@@ -2452,7 +2460,7 @@ main() {
     # Keep sudo alive — install can take 20+ minutes, ticket expires in 5
     ( while true; do sudo -n true 2>/dev/null; sleep 50; done ) &
     SUDO_KEEPALIVE_PID=$!
-    trap "kill $SUDO_KEEPALIVE_PID 2>/dev/null" EXIT
+    trap 'kill $SUDO_KEEPALIVE_PID 2>/dev/null' EXIT
 
     # Part 1: Prerequisites
     if _checkpoint_skip "prereqs"; then

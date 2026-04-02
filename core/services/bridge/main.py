@@ -14,7 +14,6 @@ import time
 from pathlib import Path
 
 import yaml
-
 from bridge_events import bridge_event
 
 WORKSPACE = Path.home() / "aos"
@@ -28,6 +27,7 @@ if _lib_path not in sys.path:
     sys.path.insert(0, _lib_path)
 
 from log import get_logger  # noqa: E402
+
 logger = get_logger(
     "bridge",
     log_file="~/.aos/logs/bridge.log",

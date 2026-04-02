@@ -15,7 +15,6 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
-import time
 from pathlib import Path
 
 _PEOPLE_SERVICE = Path.home() / ".aos" / "services" / "people"
@@ -117,7 +116,8 @@ def run_dedup(dry_run: bool = False) -> dict:
             )
 
             # Log to dedup_log
-            import random, string
+            import random
+            import string
             did = "dd_" + "".join(random.choices(string.ascii_lowercase + string.digits, k=8))
             conn.execute(
                 "INSERT INTO dedup_log (id, action, primary_id, secondary_id, reason, confidence, decided_at, decided_by) "

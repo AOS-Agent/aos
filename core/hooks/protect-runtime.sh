@@ -12,6 +12,7 @@ COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null)
 # Nothing to check
 [[ -z "$COMMAND" ]] && exit 0
 
+# shellcheck disable=SC2034
 AOS_RUNTIME="$HOME/aos"
 AOS_RUNTIME_ABS="/Users/agentalhadi/aos"
 

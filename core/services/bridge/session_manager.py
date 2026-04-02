@@ -401,10 +401,10 @@ def _auto_commit():
 
 # ── Persistent session singleton ─────────────────────────────
 
-_persistent: "PersistentSession | None" = None
+_persistent: "PersistentSession | None" = None  # noqa: F821
 
 
-def get_persistent_session() -> "PersistentSession":
+def get_persistent_session() -> "PersistentSession":  # noqa: F821
     """Get or create the persistent session singleton."""
     global _persistent
     if _persistent is None:

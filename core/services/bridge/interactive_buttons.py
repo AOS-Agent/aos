@@ -5,8 +5,8 @@ and renders them as Telegram InlineKeyboardButtons. Also provides default
 quick-action buttons for long responses.
 """
 
-import re
 import logging
+import re
 import time
 from dataclasses import dataclass
 

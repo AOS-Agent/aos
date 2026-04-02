@@ -17,8 +17,8 @@ import logging
 import os
 import subprocess
 import tempfile
-import urllib.request
 import urllib.error
+import urllib.request
 from datetime import date
 from pathlib import Path
 

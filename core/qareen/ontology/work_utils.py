@@ -11,11 +11,9 @@ from __future__ import annotations
 import json
 import os
 import re
-from dataclasses import dataclass
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any, Protocol
-
 
 # ---------------------------------------------------------------------------
 # Protocol for the adapter dependency (avoids circular imports)

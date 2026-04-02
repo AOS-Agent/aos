@@ -9,7 +9,6 @@ from zoneinfo import ZoneInfo
 
 import httpx
 import yaml
-
 from activity_client import log_activity as log_dashboard_activity
 
 logger = logging.getLogger(__name__)

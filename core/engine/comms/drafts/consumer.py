@@ -87,7 +87,8 @@ def _notify_draft(person_name: str, channel: str, draft_text: str, draft_id: str
 
 
 def _nanoid(prefix: str = "d") -> str:
-    import random, string
+    import random
+    import string
     return f"{prefix}_" + "".join(random.choices(string.ascii_lowercase + string.digits, k=8))
 
 

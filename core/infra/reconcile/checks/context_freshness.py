@@ -15,14 +15,13 @@ What it syncs:
 Runs on every `aos update` cycle. Drift is auto-fixed.
 """
 
-import json
 import re
 import subprocess
+import sys
 from pathlib import Path
 
-import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from base import ReconcileCheck, CheckResult, Status
+from base import CheckResult, ReconcileCheck, Status
 
 
 def _get_running_services() -> list[str]:

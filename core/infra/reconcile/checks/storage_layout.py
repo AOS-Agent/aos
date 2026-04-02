@@ -9,12 +9,11 @@ need to be quit, services stopped).
 Fix command: `aos storage reconcile`
 """
 
-import shutil
+import sys
 from pathlib import Path
 
-import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from base import ReconcileCheck, CheckResult, Status
+from base import CheckResult, ReconcileCheck, Status
 
 HOME = Path.home()
 AOS = HOME / "aos"
@@ -147,7 +146,7 @@ class StorageLayoutCheck(ReconcileCheck):
             lines.append(f"  ~/{v['path']}: {v['detail']}{sip_note}")
 
         detail = "\n".join(lines)
-        detail += f"\n\nRun `aos storage reconcile` to fix."
+        detail += "\n\nRun `aos storage reconcile` to fix."
 
         return CheckResult(
             name=self.name,

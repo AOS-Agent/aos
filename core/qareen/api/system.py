@@ -8,13 +8,12 @@ from __future__ import annotations
 import logging
 import platform
 import shutil
-import subprocess
-import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Path as PathParam, Request
+from fastapi import APIRouter, Request
+from fastapi import Path as PathParam
 from fastapi.responses import JSONResponse
 
 from .schemas import (
@@ -156,7 +155,7 @@ async def get_storage(request: Request) -> StorageResponse:
         sym = SymlinkResponse(source=source, target=target, valid=False)
         if source_path.is_symlink():
             resolved = str(source_path.resolve())
-            expected = str(Path(target).resolve()) if Path(target).exists() else target
+            str(Path(target).resolve()) if Path(target).exists() else target
             sym.valid = source_path.exists()
             if not sym.valid:
                 sym.error = f"Symlink target missing: {resolved}"

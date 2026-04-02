@@ -18,9 +18,7 @@ import logging
 import sqlite3
 import sys
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any
 
 log = logging.getLogger(__name__)
 
@@ -177,7 +175,7 @@ def assemble_context(
 
     # ── Style samples (operator's recent outbound) ───────
     try:
-        rows = conn.execute(
+        conn.execute(
             "SELECT occurred_at FROM interactions "
             "WHERE person_id = ? AND direction IN ('outbound', 'both') "
             "ORDER BY occurred_at DESC LIMIT 5",

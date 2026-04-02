@@ -10,7 +10,8 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Path as PathParam, Request
+from fastapi import APIRouter, Request
+from fastapi import Path as PathParam
 from fastapi.responses import JSONResponse
 
 from .schemas import (

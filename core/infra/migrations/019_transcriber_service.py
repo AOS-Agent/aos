@@ -12,7 +12,6 @@ Cleans up:
 
 DESCRIPTION = "Set up unified transcriber service (Whisper Large V3 Turbo)"
 
-import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -57,7 +56,7 @@ def up() -> bool:
                 print(f"       Failed to create venv: {result.stderr}")
                 return False
 
-    pip = VENV_DIR / "bin" / "pip"
+    VENV_DIR / "bin" / "pip"
     python = VENV_DIR / "bin" / "python"
     uv = shutil.which("uv")
 

@@ -12,9 +12,6 @@ Idempotent: safe to run multiple times.
 
 DESCRIPTION = "Update instance path references for v0.6.0 restructure"
 
-import json
-import os
-import re
 from pathlib import Path
 
 # Path mappings: old → new

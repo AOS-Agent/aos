@@ -13,13 +13,12 @@ See GitHub issue #8: plist template existed but was never instantiated.
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
-from urllib.error import URLError
 from urllib.request import Request, urlopen
 
-import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from base import ReconcileCheck, CheckResult, Status
+from base import CheckResult, ReconcileCheck, Status
 
 
 class TranscriberServiceCheck(ReconcileCheck):

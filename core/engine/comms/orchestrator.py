@@ -18,8 +18,6 @@ from __future__ import annotations
 
 import logging
 import sys
-import time
-from collections import Counter, defaultdict
 from pathlib import Path
 
 from .bus import Consumer

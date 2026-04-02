@@ -6,8 +6,10 @@ All functions are pure — they take data in, return metrics out. No I/O.
 """
 
 import os
-from datetime import datetime, date, timedelta
+import sys
+from datetime import date, datetime, timedelta
 from pathlib import Path
+
 import yaml
 
 
@@ -368,7 +370,7 @@ def format_metrics_display(metrics: dict, goal_health: list = None) -> str:
     if metrics["cycle_time_avg_days"] is not None:
         lines.append(f"  Cycle time:   {metrics['cycle_time_avg_days']}d avg (active→done)")
     else:
-        lines.append(f"  Cycle time:   — (no completed tasks with start dates)")
+        lines.append("  Cycle time:   — (no completed tasks with start dates)")
 
     if metrics["lead_time_avg_days"] is not None:
         lines.append(f"  Lead time:    {metrics['lead_time_avg_days']}d avg (created→done)")

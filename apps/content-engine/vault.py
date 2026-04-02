@@ -79,7 +79,7 @@ def build_frontmatter(result: ExtractionResult) -> str:
 def section_metadata(result: ExtractionResult) -> str:
     """Core metadata block."""
     lines = [
-        f"## Metadata",
+        "## Metadata",
         "",
         f"- **Author**: {result.author} ({result.author_id})",
         f"- **Platform**: {result.platform} / {result.content_type}",
@@ -165,9 +165,9 @@ def section_ocr(result: ExtractionResult) -> str:
         seconds = int(ts % 60)
         text = entry.get("text", "").strip()
         lines.append(f"### `{minutes:02d}:{seconds:02d}`")
-        lines.append(f"```")
+        lines.append("```")
         lines.append(text)
-        lines.append(f"```")
+        lines.append("```")
         lines.append("")
     return "\n".join(lines)
 

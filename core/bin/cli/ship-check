@@ -17,6 +17,7 @@
 set -uo pipefail
 
 DEV="$HOME/project/aos"
+# shellcheck disable=SC2034
 RUNTIME="$HOME/aos"
 
 PASS=0
@@ -34,7 +35,7 @@ echo ""
 echo "Code Health"
 echo "───────────"
 
-cd "$DEV"
+cd "$DEV" || exit 1
 
 if [[ "${1:-}" == "--all" ]]; then
     PY_FILES=$(find . -name '*.py' -not -path './.git/*' -not -path '*/__pycache__/*' 2>/dev/null)

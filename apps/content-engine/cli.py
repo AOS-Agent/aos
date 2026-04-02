@@ -14,7 +14,6 @@ import json
 import sys
 from pathlib import Path
 
-from detect import detect_platform, extract_urls
 from engine import extract, extract_metadata_only
 
 

@@ -32,8 +32,13 @@ API_PORT = 4098
 def _serialize_event(event) -> dict:
     """Convert a StreamEvent to a JSON-serializable dict."""
     from session_manager import (
-        TextDelta, TextComplete, ToolStart, ToolResult,
-        SessionInit, RateLimit, ApiRetry, SessionResult,
+        RateLimit,
+        SessionInit,
+        SessionResult,
+        TextComplete,
+        TextDelta,
+        ToolResult,
+        ToolStart,
     )
 
     base = {"ts": time.time()}

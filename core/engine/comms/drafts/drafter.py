@@ -67,7 +67,7 @@ def _build_prompt(ctx: DraftContext) -> str:
     parts.append(ctx.to_prompt_context())
 
     # The actual request
-    parts.append(f"## Message to reply to")
+    parts.append("## Message to reply to")
     parts.append(f"{ctx.person_name}: {ctx.last_inbound}")
     parts.append("")
 

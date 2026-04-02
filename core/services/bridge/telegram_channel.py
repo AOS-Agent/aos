@@ -11,35 +11,39 @@ import tempfile
 import time as _time
 from pathlib import Path
 
-from telegram import Update, ReactionTypeEmoji
+from activity_client import log_activity, log_conversation, update_conversation
+from bridge_events import bridge_event
+from evening_checkin import (
+    _save_checkin_to_daily,
+    is_awaiting_checkin_reply,
+    mark_checkin_replied,
+    was_checkin_replied,
+)
+from execution_logger import log_execution
+from intent_classifier import dispatch as classify_intent
+from interactive_buttons import (
+    build_option_keyboard,
+    detect_options,
+    resolve_callback,
+)
+from message_renderer import render_stream
+from session_manager import (
+    cancel_stream,
+    clear_session,
+    get_session_id,
+    stream_claude,
+)
+from telegram import ReactionTypeEmoji, Update
 from telegram.error import BadRequest, TimedOut
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
     CommandHandler,
-    MessageHandler,
     ContextTypes,
+    MessageHandler,
     filters,
 )
-
-from session_manager import stream_claude, clear_session, cancel_stream, SessionResult, get_session_id
-from message_renderer import render_stream
-from interactive_buttons import (
-    detect_options,
-    build_option_keyboard,
-    build_quick_action_keyboard,
-    resolve_callback,
-)
-from activity_client import log_activity, log_conversation, update_conversation
-from telegram_formatter import md_to_telegram_html
-from voice_transcriber import transcribe_voice, set_mode, get_mode
-from evening_checkin import (
-    is_awaiting_checkin_reply, mark_checkin_replied,
-    was_checkin_replied, _save_checkin_to_daily,
-)
-from execution_logger import log_execution
-from bridge_events import bridge_event
-from intent_classifier import dispatch as classify_intent
+from voice_transcriber import get_mode, set_mode, transcribe_voice
 
 logger = logging.getLogger(__name__)
 
@@ -334,7 +338,7 @@ def _format_tasks_telegram(tasks: list[dict]) -> str:
             lines.append(f"  {icon} {title}{p_str}  <i>{tid}</i>")
 
     if unassigned:
-        lines.append(f"\n<b>UNASSIGNED</b>")
+        lines.append("\n<b>UNASSIGNED</b>")
         for t in sorted(unassigned, key=lambda x: x.get("priority", 9)):
             icon = icons.get(t.get("status", "todo"), "⬜")
             title = t.get("title", "Untitled")
@@ -1003,7 +1007,7 @@ class TelegramChannel:
         try:
             proc = await asyncio.create_subprocess_exec(
                 "ffmpeg", "-i", video_path,
-                "-vf", f"fps=1/2,select='eq(pict_type\\,I)',scale=1280:-1",
+                "-vf", "fps=1/2,select='eq(pict_type\\,I)',scale=1280:-1",
                 "-frames:v", str(max_frames),
                 "-q:v", "2", "-y", pattern,
                 stdout=asyncio.subprocess.DEVNULL,
@@ -1455,7 +1459,7 @@ class TelegramChannel:
         # If YouTube, trigger transcription in the background
         if note_type == "youtube":
             asyncio.create_task(
-                self._transcribe_youtube_capture(update.message.chat, text, filepath, thread_id)
+                self._transcribe_youtube_capture(update.message.chat, text, filepath, update.message.message_thread_id)
             )
 
     async def _transcribe_youtube_capture(self, chat, url_text: str, note_path: Path,
@@ -1648,7 +1652,7 @@ class TelegramChannel:
                 log_activity("telegram", "task_created", summary=task_name[:100])
             else:
                 await update.message.reply_text(
-                    f"Failed to create task.", **kwargs,
+                    "Failed to create task.", **kwargs,
                 )
 
         elif args[0].lower() == "done" and len(args) > 1:

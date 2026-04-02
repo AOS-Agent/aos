@@ -16,8 +16,6 @@ Falls back to direct mlx-whisper if the service is unreachable.
 
 import json
 import logging
-import subprocess
-from pathlib import Path
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 

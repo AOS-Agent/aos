@@ -13,7 +13,6 @@ from pydantic import BaseModel, Field
 
 from ..ontology.types import (
     ChannelType,
-    NoteStage,
     PipelineStage,
     TaskPriority,
     TaskStatus,

@@ -15,6 +15,7 @@ if [[ -t 1 ]]; then
     GREEN=$'\033[32m' RED=$'\033[31m' YELLOW=$'\033[33m'
     CYAN=$'\033[36m' BOLD=$'\033[1m' DIM=$'\033[2m' RESET=$'\033[0m'
 else
+    # shellcheck disable=SC2034
     GREEN="" RED="" YELLOW="" CYAN="" BOLD="" DIM="" RESET=""
 fi
 
@@ -32,6 +33,7 @@ IS_CHECK=false
 IS_CONFIGURE=false
 for arg in "$@"; do
     [[ "$arg" == "--check" ]] && IS_CHECK=true
+    # shellcheck disable=SC2034
     [[ "$arg" == "--configure" ]] && IS_CONFIGURE=true
 done
 

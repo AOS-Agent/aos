@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
@@ -19,7 +18,7 @@ from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 logger = logging.getLogger(__name__)
@@ -149,9 +148,9 @@ async def lifespan(app: FastAPI):
     # Session manager + Intelligence engine
     intelligence_engine = None
     try:
-        from qareen.intelligence.session import SessionManager
-        from qareen.intelligence.engine import CompanionIntelligenceEngine
         from qareen.api.companion import _push_companion_event
+        from qareen.intelligence.engine import CompanionIntelligenceEngine
+        from qareen.intelligence.session import SessionManager
 
         session_manager = SessionManager(db_path=str(AOS_DATA / "data" / "qareen.db"))
 

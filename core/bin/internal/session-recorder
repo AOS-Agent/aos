@@ -39,19 +39,17 @@ mkdir -p "$SESSION_DIR"
 if [[ -t 1 ]]; then
     GREEN=$'\033[32m' RED=$'\033[31m' DIM=$'\033[2m' BOLD=$'\033[1m' RESET=$'\033[0m'
 else
+    # shellcheck disable=SC2034
     GREEN="" RED="" DIM="" BOLD="" RESET=""
 fi
 
 _write_event() {
-    local session_id type detail
+    local session_id
     session_id=$(cat "$CURRENT_FILE" 2>/dev/null || echo "")
 
     if [[ -z "$session_id" ]]; then
         return 1
     fi
-
-    type="$1"
-    detail="$2"
 
     local session_file="$SESSION_DIR/${session_id}.jsonl"
 
@@ -339,7 +337,8 @@ _list_sessions() {
     echo ""
 
     local found=0
-    for f in $(ls -t "$SESSION_DIR"/*.jsonl 2>/dev/null); do
+    for f in "$SESSION_DIR"/*.jsonl; do
+        [[ -e "$f" ]] || continue
         local name
         name=$(basename "$f" .jsonl)
         local lines

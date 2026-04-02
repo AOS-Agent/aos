@@ -4,8 +4,9 @@ yt-dlp handles video tweets well but can't extract text-only tweets.
 For text-only tweets, the engine falls back to Chrome MCP (get_page_text).
 """
 
-from .base import BasePlatformHandler
 from models import ExtractionResult
+
+from .base import BasePlatformHandler
 
 
 class TwitterHandler(BasePlatformHandler):

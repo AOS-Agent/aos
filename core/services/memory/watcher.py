@@ -4,9 +4,8 @@ import threading
 import time
 from pathlib import Path
 
-from watchfiles import watch, Change
-
-from indexer import MemoryIndexer, WORKSPACE, WATCH_GLOBS
+from indexer import WATCH_GLOBS, WORKSPACE, MemoryIndexer
+from watchfiles import watch
 
 # Extensions we care about
 WATCH_EXTENSIONS = {".md", ".yaml", ".yml", ".toml"}

@@ -25,7 +25,8 @@ from .registry import load_adapters
 
 # System event bus — comms publishes here so other domains can react
 try:
-    from core.bus import system_bus, Event as SystemEvent
+    from core.bus import Event as SystemEvent
+    from core.bus import system_bus
     _HAS_SYSTEM_BUS = True
 except ImportError:
     _HAS_SYSTEM_BUS = False

@@ -21,7 +21,7 @@ from pathlib import Path
 # Add parent to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
 
-from base import CheckResult, Status, ReconcileCheck
+from base import CheckResult, ReconcileCheck, Status
 
 LOG_FILE = Path.home() / ".aos" / "logs" / "reconcile.jsonl"
 STATE_FILE = Path.home() / ".aos" / "data" / "reconcile-state.json"

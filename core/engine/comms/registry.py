@@ -121,10 +121,9 @@ def load_adapter(channel_id: str) -> ChannelAdapter | None:
         module = importlib.import_module(full_module)
         adapter_class = getattr(module, class_name)
         return adapter_class()
-    except (ImportError, AttributeError) as e:
+    except (ImportError, AttributeError):
         # Try relative import as fallback
         try:
-            from . import channels
             module = importlib.import_module(f".{module_path}", package="core.comms")
             adapter_class = getattr(module, class_name)
             return adapter_class()

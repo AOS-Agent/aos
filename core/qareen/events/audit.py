@@ -23,11 +23,10 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
-import uuid
-
 
 # ---------------------------------------------------------------------------
 # Audit entry
@@ -149,7 +148,6 @@ class AuditLog:
     def _ensure_initialized(self) -> None:
         """Lazy-initialize if not already done."""
         if not self._initialized:
-            import asyncio
             # Synchronous initialization for cases where we haven't awaited initialize()
             conn = self._get_conn()
             conn.execute("""

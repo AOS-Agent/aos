@@ -35,6 +35,7 @@ class TextToSpeech:
     def load(self):
         """Load Kokoro model into GPU memory. Call once at startup."""
         import os
+
         from mlx_audio.tts.utils import load_model
 
         # Ensure VIRTUAL_ENV is set so misaki/spacy can find packages

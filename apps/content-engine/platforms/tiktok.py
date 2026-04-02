@@ -5,8 +5,9 @@ the handler returns a minimal result. The engine layer can fall back to
 Chrome MCP for full extraction.
 """
 
-from .base import BasePlatformHandler
 from models import ExtractionResult
+
+from .base import BasePlatformHandler
 
 
 class TikTokHandler(BasePlatformHandler):

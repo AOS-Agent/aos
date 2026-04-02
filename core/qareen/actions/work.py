@@ -18,7 +18,6 @@ from qareen.ontology.types import (
     Project,
     Task,
     TaskPriority,
-    TaskStatus,
 )
 
 

@@ -19,15 +19,15 @@ import logging
 import os
 import re
 import subprocess
-import tempfile
-import urllib.request
-import yaml
-from datetime import datetime, date
-from pathlib import Path
 
 # ── Path setup for ontology imports ─────────────────────
-
 import sys
+import tempfile
+import urllib.request
+from datetime import date, datetime
+from pathlib import Path
+
+import yaml
 
 # Walk up from __file__ (without resolving symlinks) to find the project root.
 # backend.py lives at <root>/core/work/backend.py — go up 3 levels.
@@ -47,20 +47,18 @@ if not (_project_root / "core" / "qareen").is_dir():
             break
 
 from core.qareen.ontology.adapters.work import WorkAdapter
-from core.qareen.ontology.work_utils import (
-    TaskResolver,
-    ProjectContext,
-    LiveContext,
-    HandoffFormatter,
-)
 from core.qareen.ontology.types import (
-    Task,
-    TaskStatus,
-    TaskPriority,
-    TaskHandoff,
-    Project,
     Goal,
-    ObjectType,
+    Project,
+    Task,
+    TaskPriority,
+    TaskStatus,
+)
+from core.qareen.ontology.work_utils import (
+    HandoffFormatter,
+    LiveContext,
+    ProjectContext,
+    TaskResolver,
 )
 
 _gh_log = logging.getLogger("work.github")

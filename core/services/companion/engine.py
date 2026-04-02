@@ -6,7 +6,6 @@ No HTTP round trips for transcription — audio numpy arrays go straight to the 
 
 import asyncio
 import json
-import os
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -14,7 +13,6 @@ from enum import Enum
 from pathlib import Path
 
 import httpx
-
 from stt import SpeechToText
 from tts import TextToSpeech
 
@@ -169,6 +167,7 @@ class MeetingEngine:
         """Build a context brief from AOS sources — operator, work, past meetings, vault."""
         import logging
         import subprocess
+
         import yaml
         log = logging.getLogger("companion.context")
         parts = []
@@ -313,12 +312,11 @@ Raw: {raw_text}"""
 
         return raw_text
 
-    async def process_speech_segment(self, audio: "np.ndarray", start_time: float = 0.0):
+    async def process_speech_segment(self, audio: "np.ndarray", start_time: float = 0.0):  # noqa: F821
         """Transcribe a speech segment: Whisper for accuracy, then LLM cleanup.
 
         Pipeline: audio → Whisper (accurate) → Claude (clean grammar) → transcript
         """
-        import numpy as np
 
         if not self.meeting or self.meeting.state != MeetingState.ACTIVE:
             return

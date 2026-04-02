@@ -14,7 +14,6 @@ Old plists are unloaded but not deleted (user may have customized).
 
 DESCRIPTION = "Install service LaunchAgents from templates"
 
-import os
 import subprocess
 from pathlib import Path
 

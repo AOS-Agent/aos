@@ -16,7 +16,7 @@ import json
 import re
 import urllib.error
 import urllib.request
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any
 
 from ..channel import ChannelAdapter

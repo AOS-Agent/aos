@@ -22,11 +22,14 @@ set -euo pipefail
 AGENT_SECRET="$HOME/aos/core/bin/agent-secret"
 
 # OAuth app credentials (shared across all accounts)
-export GOOGLE_OAUTH_CLIENT_ID=$("$AGENT_SECRET" get GOOGLE_OAUTH_CLIENT_ID 2>/dev/null)
-export GOOGLE_OAUTH_CLIENT_SECRET=$("$AGENT_SECRET" get GOOGLE_OAUTH_CLIENT_SECRET 2>/dev/null)
+GOOGLE_OAUTH_CLIENT_ID=$("$AGENT_SECRET" get GOOGLE_OAUTH_CLIENT_ID 2>/dev/null)
+export GOOGLE_OAUTH_CLIENT_ID
+GOOGLE_OAUTH_CLIENT_SECRET=$("$AGENT_SECRET" get GOOGLE_OAUTH_CLIENT_SECRET 2>/dev/null)
+export GOOGLE_OAUTH_CLIENT_SECRET
 
 # Default email — used when no user_google_email is specified in a tool call
-export USER_GOOGLE_EMAIL=$("$AGENT_SECRET" get GOOGLE_PRIMARY_EMAIL 2>/dev/null)
+USER_GOOGLE_EMAIL=$("$AGENT_SECRET" get GOOGLE_PRIMARY_EMAIL 2>/dev/null)
+export USER_GOOGLE_EMAIL
 
 # Prevent oauthlib from rejecting localhost without HTTPS
 export OAUTHLIB_INSECURE_TRANSPORT=1

@@ -17,11 +17,12 @@ import re
 import sqlite3
 import subprocess
 import tempfile
-import yaml
 import urllib.request
-from datetime import datetime, date
-from pathlib import Path
+from datetime import date, datetime
 from difflib import SequenceMatcher
+from pathlib import Path
+
+import yaml
 
 _gh_log = logging.getLogger("work.github")
 

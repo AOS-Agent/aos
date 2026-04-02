@@ -8,8 +8,9 @@ so the engine doesn't error on first read.
 
 DESCRIPTION = "Bootstrap work system data (work.yaml)"
 
-import yaml
 from pathlib import Path
+
+import yaml
 
 WORK_DIR = Path.home() / ".aos" / "work"
 WORK_FILE = WORK_DIR / "work.yaml"
@@ -47,7 +48,7 @@ def up() -> bool:
             if not isinstance(data, dict):
                 raise ValueError("Invalid format")
             print("       work.yaml is valid")
-        except Exception as e:
+        except Exception:
             # Back up corrupt file and create fresh
             backup = WORK_FILE.with_suffix(".yaml.bak")
             WORK_FILE.rename(backup)

@@ -18,7 +18,7 @@ import json
 import logging
 import threading
 from datetime import datetime
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 log = logging.getLogger(__name__)
 

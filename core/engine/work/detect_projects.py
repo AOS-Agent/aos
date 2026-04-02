@@ -17,10 +17,10 @@ Usage:
     python3 detect_projects.py --json       # JSON output for dashboard API
 """
 
+import getpass
 import json
 import os
 import sys
-import getpass
 from datetime import datetime
 from pathlib import Path
 
@@ -165,7 +165,6 @@ def detect() -> list[dict]:
     """Run full detection, return suggestions for new projects."""
     existing = get_existing_projects()
     existing_names = {p.get("title", "").lower() for p in existing.values()}
-    existing_paths = set()
     # No path field in projects yet, so we rely on name matching
 
     session_data = scan_claude_sessions()

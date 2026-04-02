@@ -14,13 +14,11 @@ Cleanup requires explicit operator approval via `aos hygiene --apply`.
 Runs every update cycle. Only flags AOS-namespaced items.
 """
 
-import json
-import os
+import sys
 from pathlib import Path
 
-import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from base import ReconcileCheck, CheckResult, Status
+from base import CheckResult, ReconcileCheck, Status
 
 AOS = Path.home() / "aos"
 USER = Path.home() / ".aos"
@@ -258,7 +256,7 @@ class InstanceHygieneCheck(ReconcileCheck):
                 lines.append(f"  {category}: {label}{size_str}")
 
         detail = "\n".join(lines)
-        detail += f"\n\nRun `aos hygiene` to review and clean."
+        detail += "\n\nRun `aos hygiene` to review and clean."
 
         return CheckResult(
             name=self.name,

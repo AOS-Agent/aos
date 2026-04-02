@@ -92,9 +92,9 @@ def _load_engine():
 
 def warmup():
     """Pre-load the model so first request is fast."""
+    import struct
     import tempfile
     import wave
-    import struct
 
     _load_engine()
 
@@ -165,13 +165,12 @@ def _merge_bilingual(en_result: dict, ar_result: dict) -> tuple[list[dict], str]
     # Build a timeline: for each EN segment, find overlapping AR segments
     # and pick the one with better quality
     merged = []
-    ar_idx = 0
 
     for en_seg in en_segs:
         en_start = en_seg.get("start", 0)
         en_end = en_seg.get("end", 0)
         en_text = en_seg.get("text", "").strip()
-        en_score = _segment_quality(en_seg)
+        _segment_quality(en_seg)
 
         # Find overlapping AR segments
         best_ar_text = ""

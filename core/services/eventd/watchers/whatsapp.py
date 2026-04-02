@@ -114,7 +114,7 @@ class WhatsAppWatcher(BaseWatcher):
 
         self._last_message_ts = max(m.timestamp for m in messages) + timedelta(seconds=1)
 
-        from core.bus import system_bus, Event
+        from core.bus import Event, system_bus
 
         for msg in messages:
             system_bus.publish(Event(

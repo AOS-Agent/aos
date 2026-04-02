@@ -7,8 +7,9 @@ import json
 import subprocess
 import sys
 
-from .base import BasePlatformHandler
 from models import ExtractionResult
+
+from .base import BasePlatformHandler
 
 
 class YouTubeHandler(BasePlatformHandler):

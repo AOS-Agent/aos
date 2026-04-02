@@ -49,7 +49,7 @@ def main():
         hook_input = {}
 
     session_id = hook_input.get("session_id", "")
-    cwd = hook_input.get("cwd", os.getcwd())
+    hook_input.get("cwd", os.getcwd())
     tool_results = hook_input.get("tool_use_results", [])
 
     if not session_id:

@@ -5,7 +5,7 @@ import subprocess
 import sys
 from abc import ABC, abstractmethod
 
-from models import ExtractionResult, Engagement
+from models import Engagement, ExtractionResult
 
 
 class BasePlatformHandler(ABC):

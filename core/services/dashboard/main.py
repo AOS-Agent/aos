@@ -13,21 +13,32 @@ from zoneinfo import ZoneInfo
 
 import httpx
 import yaml
+from activity import (
+    end_session,
+    get_agent_stats,
+    get_conversations,
+    get_recent,
+    get_session,
+    get_session_activity,
+    get_sessions,
+    get_today_summary,
+    log_activity,
+    should_log_to_feed,
+    update_activity,
+    upsert_session,
+)
+from activity import (
+    log_conversation as _log_conversation,
+)
+from activity import (
+    update_conversation as _update_conversation,
+)
+from agent_registry import AgentRegistry
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from starlette.responses import StreamingResponse
-
-from activity import (
-    log_activity, update_activity, get_recent, get_agent_stats,
-    log_conversation as _log_conversation, update_conversation as _update_conversation,
-    get_conversations, get_conversation_stats,
-    upsert_session, end_session, get_sessions, get_session,
-    get_session_stats, get_session_activity, should_log_to_feed,
-    get_today_summary, get_recent_sessions_enriched,
-)
-from agent_registry import AgentRegistry
 
 WORKSPACE = Path.home() / "aos"
 registry = AgentRegistry(WORKSPACE)
@@ -600,7 +611,6 @@ def _load_morning_context() -> dict:
 
 def _load_weekly_metrics() -> dict:
     """Load current week's metrics for momentum display."""
-    import glob as glob_mod
     metrics_dir = Path.home() / ".aos" / "work" / "metrics"
     if not metrics_dir.exists():
         return {}
@@ -912,7 +922,6 @@ async def api_messages_unanswered():
                     if ts:
                         msg_dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
                         if msg_dt.tzinfo:
-                            from zoneinfo import ZoneInfo
                             now_aware = datetime.now(msg_dt.tzinfo)
                             delta = int((now_aware - msg_dt).total_seconds())
                         else:
@@ -957,10 +966,9 @@ async def work_page(request: Request):
         q_mod = _work_mod("query")
 
         data = mod.load_all()
-        summary_data = mod.summary()
+        mod.summary()
     except Exception:
         data = {"tasks": [], "projects": [], "goals": [], "threads": [], "inbox": []}
-        summary_data = {}
         q_mod = None
 
     tasks = data.get("tasks", [])
@@ -1110,7 +1118,7 @@ async def api_stream(request: Request):
 
         # Subscribe to work event bus (bounded to prevent memory exhaustion)
         if len(_sse_subscribers) >= _MAX_SSE_SUBSCRIBERS:
-            yield f"event: error\ndata: {{\"message\": \"too many connections\"}}\n\n"
+            yield "event: error\ndata: {\"message\": \"too many connections\"}\n\n"
             return
         queue: asyncio.Queue = asyncio.Queue(maxsize=100)
         _sse_subscribers.append(queue)
@@ -1333,7 +1341,7 @@ def _duration_filter(start: str, end: str) -> str:
     if not start or not end:
         return ""
     try:
-        from datetime import datetime, timezone
+        from datetime import datetime
         s = datetime.fromisoformat(start)
         e = datetime.fromisoformat(end)
         delta = (e - s).total_seconds()
@@ -1467,7 +1475,7 @@ async def api_session_hook(request: Request):
                              summary=cmd[:100], session_id=session_id)
             elif tool_name == "Agent":
                 desc = tool_input.get("description", "")[:80]
-                log_activity("claude", f"Launched agent",
+                log_activity("claude", "Launched agent",
                              status="completed",
                              summary=desc, session_id=session_id)
 
@@ -1772,7 +1780,7 @@ async def api_system_attention():
 
 
 @app.post("/api/crons/{name}/run")
-async def api_run_cron(name: str):
+async def api_run_cron_direct(name: str):
     """Run a cron job immediately."""
     config_path = Path.home() / "aos" / "config" / "crons.yaml"
     try:

@@ -5,9 +5,8 @@ import setproctitle; setproctitle.setproctitle("aos-memory")
 import json
 from typing import Optional
 
-from mcp.server.fastmcp import FastMCP
-
 from indexer import MemoryIndexer
+from mcp.server.fastmcp import FastMCP
 from watcher import start_watcher
 
 # Initialize

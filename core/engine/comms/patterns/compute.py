@@ -22,8 +22,7 @@ import json
 import logging
 import statistics
 import sys
-import time
-from collections import Counter, defaultdict
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
@@ -81,7 +80,7 @@ def compute_patterns(conn, person_id: str) -> dict | None:
     preferred_days = [d for d, _ in days.most_common(3)]
 
     # Style metrics
-    total_msgs = sum(msg_lengths)
+    sum(msg_lengths)
     avg_msg_length = statistics.mean(msg_lengths) if msg_lengths else 0
     brief_count = sum(1 for m in msg_lengths if m <= 2)  # 1-2 messages = brief
     brief_ratio = brief_count / len(msg_lengths) if msg_lengths else 0

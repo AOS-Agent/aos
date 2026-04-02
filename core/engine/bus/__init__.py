@@ -14,8 +14,8 @@ Usage:
     system_bus.subscribe(my_consumer)
 """
 
-from .event import Event
 from .bus import SystemBus, system_bus
 from .consumer import EventConsumer
+from .event import Event
 
 __all__ = ["Event", "SystemBus", "system_bus", "EventConsumer"]

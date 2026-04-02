@@ -7,9 +7,7 @@ initiative pipeline functional, and release readiness.
 Run:  python3 ~/project/aos/tests/test_initiative_bridge.py
 """
 
-import importlib
 import inspect
-import json
 import os
 import subprocess
 import sys
@@ -115,7 +113,7 @@ except ImportError as e:
     check("Import: core.infra.lib.notify.send_telegram", False, str(e))
 
 try:
-    from core.services.bridge.shared_context import load, add_decision, get_decisions
+    from core.services.bridge.shared_context import add_decision, get_decisions, load
     check("Import: shared_context (load, add_decision, get_decisions)", True)
 except ImportError as e:
     check("Import: shared_context", False, str(e))
@@ -213,7 +211,11 @@ check("Reconcile runner executes (check mode)", result.returncode == 0,
       (result.stdout + result.stderr).strip()[:200] if result.returncode != 0 else "")
 
 # Check initiative-specific reconcile (returns bool, not dict)
-from core.infra.reconcile.checks.initiatives import InitiativeDirectoriesCheck, BridgeTopicsCheck
+from core.infra.reconcile.checks.initiatives import (
+    BridgeTopicsCheck,
+    InitiativeDirectoriesCheck,
+)
+
 init_check = InitiativeDirectoriesCheck()
 bridge_check = BridgeTopicsCheck()
 
@@ -268,7 +270,10 @@ except Exception as e:
 # Evening checkin — test the actual builder
 print("  — Evening Checkin —")
 try:
-    from core.services.bridge.evening_checkin import _build_evening_wrap, _load_initiatives
+    from core.services.bridge.evening_checkin import (
+        _build_evening_wrap,
+        _load_initiatives,
+    )
     check("evening_checkin._build_evening_wrap callable", callable(_build_evening_wrap))
 
     wrap = _build_evening_wrap()

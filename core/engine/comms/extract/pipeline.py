@@ -17,8 +17,6 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
-import time
-from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
 

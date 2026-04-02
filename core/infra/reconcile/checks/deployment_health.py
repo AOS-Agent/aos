@@ -8,11 +8,11 @@ Catches the "shipped but never deployed" class of bugs:
 - QMD collections declared but not registered
 """
 
-import subprocess
 import shutil
+import subprocess
 from pathlib import Path
 
-from ..base import ReconcileCheck, CheckResult, Status
+from ..base import CheckResult, ReconcileCheck, Status
 
 HOME = Path.home()
 AOS = HOME / "aos"
@@ -115,7 +115,7 @@ class DeploymentHealthCheck(ReconcileCheck):
 
     def _fix_venv(self, issue):
         """Create venv and install deps for a service."""
-        svc_name = issue["service"]
+        issue["service"]
         svc_framework = Path(issue["framework"])
         svc_instance = Path(issue["instance"])
 

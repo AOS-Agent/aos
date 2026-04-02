@@ -14,10 +14,9 @@ import os
 import subprocess
 import sys
 import tempfile
-import urllib.request
 import urllib.error
+import urllib.request
 from pathlib import Path
-
 
 TRANSCRIBER_URL = os.environ.get("TRANSCRIBER_URL", "http://127.0.0.1:7602")
 

@@ -10,16 +10,19 @@ store it reads from and how to translate.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any
-
-from ..types import (
-    ContextCard, Link, LinkType, ObjectType,
-)
 
 # Forward reference to avoid circular import — Ontology is defined in model.py
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+
+from ..types import (
+    ContextCard,
+    Link,
+    LinkType,
+    ObjectType,
+)
+
 if TYPE_CHECKING:
-    from ..model import Ontology
+    pass
 
 
 class Adapter(ABC):
