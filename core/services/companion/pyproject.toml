@@ -1,0 +1,26 @@
+[project]
+name = "aos-companion"
+version = "0.2.0"
+description = "AOS Companion — live voice-intelligent meeting service"
+requires-python = ">=3.12"
+dependencies = [
+    # Core
+    "fastapi>=0.135",
+    "uvicorn[standard]>=0.34",
+    "httpx>=0.28",
+    "pyyaml>=6.0",
+    "setproctitle>=1.3",
+    # Audio
+    "sounddevice>=0.5",
+    "numpy>=2.0",
+    # VAD (Silero v5 via ONNX — runs on CPU, no GPU contention)
+    "onnxruntime>=1.19",
+    # STT (mlx-whisper — in-process on Apple Silicon GPU)
+    "mlx-whisper>=0.4",
+    # TTS (Kokoro 82M via mlx-audio — Apple Silicon GPU)
+    "mlx-audio>=0.1",
+    "misaki>=0.7",
+    "num2words>=0.5",
+    "phonemizer>=3.3",
+    "spacy>=3.8",
+]
