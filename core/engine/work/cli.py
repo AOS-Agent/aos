@@ -21,10 +21,10 @@ import sys
 import os
 import json
 
-# Add parent dir to path so we can import engine/query
+# Add parent dir to path so we can import backend/query
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-import engine
+import backend as engine  # Drop-in replacement for old engine
 import query
 
 

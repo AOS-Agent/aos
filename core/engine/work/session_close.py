@@ -36,8 +36,11 @@ LOG_DIR = Path.home() / ".aos" / "logs"
 LOG_FILE = LOG_DIR / "sessions.jsonl"
 DASHBOARD_URL = "http://127.0.0.1:4096"
 
-# Add work engine to path
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Add ontology backend to path
+_this_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, _this_dir)
+_work_dir = os.path.abspath(os.path.join(_this_dir, '..', '..', 'work'))
+sys.path.insert(0, _work_dir)
 
 
 def _notify_dashboard(event: dict) -> None:
@@ -148,7 +151,7 @@ def main():
 
     # --- Step 2: Link to work system ---
     try:
-        import engine
+        import backend as engine
     except ImportError:
         return  # Work engine not available, skip silently
 

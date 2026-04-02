@@ -25,9 +25,11 @@ from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+_work_dir = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'work'))
+sys.path.insert(0, _work_dir)
 
 try:
-    import engine
+    import backend as engine
 except ImportError:
     print("Work engine not available")
     sys.exit(1)

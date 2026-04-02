@@ -53,14 +53,16 @@ except Exception:
 
 DASHBOARD_URL = "http://127.0.0.1:4096"
 
-# Add work engine to path
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__))))
+# Add ontology backend to path
+_this_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, _this_dir)  # for query.py (still in this dir)
+_work_dir = os.path.abspath(os.path.join(_this_dir, '..', '..', 'work'))
+sys.path.insert(0, _work_dir)  # for backend.py
 
 try:
-    import engine
+    import backend as engine
     import query
 except Exception:
-    # engine.py uses Python 3.10+ syntax (str | None) — fails on 3.9
     _safe_exit(_check_onboarding() or "")
 
 

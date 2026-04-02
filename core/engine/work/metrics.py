@@ -262,7 +262,9 @@ def compute_drift(goals: list, tasks: list) -> dict:
     # Build project→goal lookup (projects have a 'goal' field)
     project_to_goal = {}
     try:
-        import engine as _engine
+        _work_dir = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'work'))
+        sys.path.insert(0, _work_dir)
+        import backend as _engine
         for p in _engine.get_all_projects():
             if p.get("goal"):
                 project_to_goal[p["id"]] = p["goal"]

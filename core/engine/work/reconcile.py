@@ -21,7 +21,10 @@ import os
 import sys
 from pathlib import Path
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+_this_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, _this_dir)
+_work_dir = os.path.abspath(os.path.join(_this_dir, '..', '..', 'work'))
+sys.path.insert(0, _work_dir)
 
 LOG_FILE = Path.home() / ".aos" / "logs" / "reconcile.log"
 
@@ -52,9 +55,9 @@ def main():
     if not session_id:
         return
 
-    # Try to load work engine
+    # Try to load work engine (ontology backend)
     try:
-        import engine
+        import backend as engine
     except ImportError:
         _log("Work engine not available — skipping")
         return
