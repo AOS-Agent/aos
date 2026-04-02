@@ -680,7 +680,7 @@ export interface Card {
   card_type: CardType
   title: string
   body: string
-  status: 'pending' | 'approved' | 'dismissed' | 'expired'
+  status: 'pending' | 'approved_pending' | 'approved' | 'dismissed' | 'expired'
   created_at: string
   expires_at?: string
   source_utterance?: string

@@ -7,8 +7,8 @@ import { useLiveMic } from '@/hooks/useLiveMic';
 import { EmptyState } from '@/components/primitives';
 
 const COMPANION = '/companion';
-const COMPANION_DIRECT = typeof window !== 'undefined' ? `${window.location.protocol}//${window.location.hostname}:${window.location.protocol === 'https:' ? '7604' : '7603'}` : 'http://localhost:7603';
-const WS_COMPANION = typeof window !== 'undefined' ? `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.hostname}:${window.location.protocol === 'https:' ? '7604' : '7603'}` : 'ws://localhost:7603';
+const COMPANION_DIRECT = '';  // Same origin — Qareen serves SSE at /companion/stream
+const WS_URL = typeof window !== 'undefined' ? `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}` : 'ws://localhost:7700';
 
 type Phase = 'idle' | 'recording' | 'paused' | 'generating' | 'detail';
 interface TranscriptBlock { speaker: string; text: string; timestamp: number; start_time: string; partial?: boolean; finalized?: string; draft?: string; }
@@ -46,7 +46,7 @@ export default function MeetingPage() {
   const formatTime = (s: number) => { const mm = String(Math.floor(s / 60)).padStart(2, '0'); const ss = String(s % 60).padStart(2, '0'); return `${mm}:${ss}`; };
 
   const connectSSE = useCallback(() => {
-    const sse = new EventSource(`${COMPANION_DIRECT}/stream`); sseRef.current = sse;
+    const sse = new EventSource(`${COMPANION_DIRECT}/companion/stream`); sseRef.current = sse;
     sse.addEventListener('transcript', e => { const d = JSON.parse(e.data); setTranscript(p => [...p.filter((b: any) => !b.partial), d]); });
     sse.addEventListener('transcript_partial', e => { const d = JSON.parse(e.data); setTranscript(p => [...p.filter((b: any) => !b.partial), { ...d, speaker: 'You', partial: true, finalized: d.finalized || '', draft: d.draft || '' }]); });
     sse.addEventListener('meeting_notes', e => { const d = JSON.parse(e.data); setNotes(p => ({ ...p, [d.topic]: [...(p[d.topic] || []), ...d.notes] })); });
@@ -58,7 +58,7 @@ export default function MeetingPage() {
   const handleRecord = async () => {
     setError(null); setTranscript([]); setNotes({}); setSuggestion(null); setSummary(''); setElapsed(0); setPhase('recording');
     try {
-      await startLiveMic(`${WS_COMPANION}/ws/mic`); await startAudio();
+      await startLiveMic(`${WS_URL}/ws/audio`); await startAudio();
       await fetch(`${COMPANION}/meeting/create`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: '', participants: participantInput.trim() ? participantInput.split(',').map(p => p.trim()).filter(Boolean) : [] }) });
       connectSSE();
       await fetch(`${COMPANION}/meeting/start`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source: 'remote' }) });

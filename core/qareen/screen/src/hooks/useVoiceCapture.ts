@@ -9,14 +9,26 @@ import { useState, useCallback, useRef } from 'react'
 import { useLiveMic } from './useLiveMic'
 
 function getWsUrl(): string {
-  const hostname = window.location.hostname
-  // On localhost, connect directly to backend WebSocket
+  const { hostname, protocol, port } = window.location
+  const isSecure = protocol === 'https:'
+  const wsProto = isSecure ? 'wss:' : 'ws:'
+
+  // Dev server (Vite proxy handles /ws/audio → backend)
   if (hostname === 'localhost' || hostname === '127.0.0.1') {
-    return 'ws://localhost:7700/ws/audio'
+    // Use Vite dev server port if available, otherwise direct to backend
+    if (port === '5173') {
+      return `ws://${hostname}:${port}/ws/audio`
+    }
+    return `ws://localhost:7700/ws/audio`
   }
-  // Over network (Tailscale), use the dedicated WSS proxy on port 7604
-  // This is the proven path that worked with the old companion service
-  return `wss://${hostname}:7604/ws/audio`
+
+  // Over network (Tailscale HTTPS) — use dedicated WSS proxy on port 7604
+  if (isSecure) {
+    return `wss://${hostname}:7604/ws/audio`
+  }
+
+  // HTTP over network — connect directly
+  return `${wsProto}//${hostname}:7700/ws/audio`
 }
 
 async function checkMicAvailable(): Promise<{ available: boolean; error?: string }> {

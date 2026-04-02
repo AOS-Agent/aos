@@ -1,5 +1,7 @@
-import { useEffect, useRef, useState, useCallback, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
+import { Command } from 'cmdk';
 import {
   Search,
   CheckSquare,
@@ -16,131 +18,45 @@ import {
   BarChart3,
   Settings,
   Mic,
-  FileSearch,
+  Plus,
+  Sun,
+  RefreshCw,
   type LucideIcon,
 } from 'lucide-react';
 import { useUIStore } from '@/store/ui';
-import { useWork, type Task } from '@/hooks/useWork';
 
-interface NavigationEntry {
+interface NavEntry {
   label: string;
   href: string;
   icon: LucideIcon;
+  keywords?: string[];
 }
 
-interface SearchResult {
-  title: string;
-  path: string;
-  collection: string;
-  snippet: string;
-  score: number;
-}
-
-const SCREENS: NavigationEntry[] = [
-  { label: 'Companion', href: '/', icon: Mic },
-  { label: 'Tasks', href: '/tasks', icon: CheckSquare },
-  { label: 'Agents', href: '/agents', icon: Bot },
-  { label: 'System', href: '/system', icon: Activity },
-  { label: 'Projects', href: '/projects', icon: FolderKanban },
-  { label: 'Calendar', href: '/calendar', icon: Calendar },
-  { label: 'Vault', href: '/vault', icon: Library },
-  { label: 'Memory', href: '/memory', icon: Brain },
-  { label: 'Approvals', href: '/approvals', icon: ShieldCheck },
-  { label: 'Pipelines', href: '/pipelines', icon: GitBranch },
-  { label: 'Analytics', href: '/analytics', icon: BarChart3 },
-  { label: 'People', href: '/people', icon: Users },
-  { label: 'Config', href: '/config', icon: Settings },
-  { label: 'Channels', href: '/channels', icon: MessageCircle },
+const NAV_ITEMS: NavEntry[] = [
+  { label: 'Go to Companion', href: '/', icon: Mic, keywords: ['home', 'chat', 'voice'] },
+  { label: 'Go to Tasks', href: '/tasks', icon: CheckSquare, keywords: ['todo', 'work'] },
+  { label: 'Go to Projects', href: '/projects', icon: FolderKanban, keywords: ['project'] },
+  { label: 'Go to Calendar', href: '/calendar', icon: Calendar, keywords: ['schedule', 'date'] },
+  { label: 'Go to Vault', href: '/vault', icon: Library, keywords: ['docs', 'notes', 'knowledge'] },
+  { label: 'Go to Memory', href: '/memory', icon: Brain, keywords: ['recall', 'remember'] },
+  { label: 'Go to Agents', href: '/agents', icon: Bot, keywords: ['agent', 'ai'] },
+  { label: 'Go to Approvals', href: '/approvals', icon: ShieldCheck, keywords: ['approve', 'pending'] },
+  { label: 'Go to System', href: '/system', icon: Activity, keywords: ['health', 'services'] },
+  { label: 'Go to Pipelines', href: '/pipelines', icon: GitBranch, keywords: ['pipeline', 'flow'] },
+  { label: 'Go to Analytics', href: '/analytics', icon: BarChart3, keywords: ['stats', 'chart'] },
+  { label: 'Go to People', href: '/people', icon: Users, keywords: ['contacts', 'person'] },
+  { label: 'Go to Config', href: '/config', icon: Settings, keywords: ['settings', 'preferences'] },
+  { label: 'Go to Channels', href: '/channels', icon: MessageCircle, keywords: ['telegram', 'messages'] },
 ];
-
-type ResultItem = { type: 'screen'; entry: NavigationEntry }
-  | { type: 'task'; task: Task }
-  | { type: 'vault'; result: SearchResult };
 
 export default function CommandPalette() {
   const open = useUIStore((s) => s.commandPaletteOpen);
   const setOpen = useUIStore((s) => s.setCommandPaletteOpen);
   const toggleCommandPalette = useUIStore((s) => s.toggleCommandPalette);
-
   const navigate = useNavigate();
-  const inputRef = useRef<HTMLInputElement>(null);
-  const { data: workData } = useWork();
+  const queryClient = useQueryClient();
 
-  const [query, setQuery] = useState('');
-  const [selectedIndex, setSelectedIndex] = useState(0);
-  const [vaultResults, setVaultResults] = useState<SearchResult[]>([]);
-  const [searching, setSearching] = useState(false);
-
-  // Build combined results
-  const q = query.trim().toLowerCase();
-  const items: ResultItem[] = [];
-
-  // Screen navigation
-  const filteredScreens = q
-    ? SCREENS.filter(s => s.label.toLowerCase().includes(q))
-    : SCREENS.slice(0, 6);
-  filteredScreens.forEach(entry => items.push({ type: 'screen', entry }));
-
-  // Task search (in-memory, instant)
-  if (q.length >= 2 && workData?.tasks) {
-    const matchedTasks = workData.tasks
-      .filter(t => t.status !== 'done' && t.status !== 'cancelled')
-      .filter(t => t.title.toLowerCase().includes(q))
-      .slice(0, 5);
-    matchedTasks.forEach(task => items.push({ type: 'task', task }));
-  }
-
-  // Vault search results (from API, async)
-  vaultResults.forEach(result => items.push({ type: 'vault', result }));
-
-  // Debounced vault search
-  useEffect(() => {
-    if (!open || q.length < 3) {
-      setVaultResults([]);
-      return;
-    }
-
-    const timer = setTimeout(async () => {
-      setSearching(true);
-      try {
-        const res = await fetch(`/api/vault/search?q=${encodeURIComponent(q)}&limit=5`);
-        if (res.ok) {
-          const data = await res.json();
-          const results = Array.isArray(data) ? data : data.results || [];
-          setVaultResults(results.slice(0, 5).map((r: Record<string, unknown>) => ({
-            title: (r.title as string) || (r.path as string) || 'Untitled',
-            path: (r.path as string) || '',
-            collection: (r.collection as string) || '',
-            snippet: (r.snippet as string) || (r.context as string) || '',
-            score: (r.score as number) || 0,
-          })));
-        }
-      } catch {
-        // API unavailable
-      } finally {
-        setSearching(false);
-      }
-    }, 500);
-
-    return () => clearTimeout(timer);
-  }, [q, open]);
-
-  // Reset state when opening
-  useEffect(() => {
-    if (open) {
-      setQuery('');
-      setSelectedIndex(0);
-      setVaultResults([]);
-      requestAnimationFrame(() => inputRef.current?.focus());
-    }
-  }, [open]);
-
-  // Clamp selectedIndex
-  useEffect(() => {
-    setSelectedIndex(prev => Math.min(prev, Math.max(items.length - 1, 0)));
-  }, [items.length]);
-
-  // Global Cmd+K
+  // Global Cmd+K listener
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.metaKey && e.key === 'k') {
@@ -152,162 +68,106 @@ export default function CommandPalette() {
     return () => window.removeEventListener('keydown', handler);
   }, [toggleCommandPalette]);
 
-  const activate = useCallback(
-    (item: ResultItem) => {
-      if (item.type === 'screen') {
-        navigate(item.entry.href);
-      } else if (item.type === 'task') {
-        navigate('/tasks');
-      } else if (item.type === 'vault') {
-        navigate('/vault');
-      }
+  const runAndClose = useCallback(
+    (fn: () => void) => {
+      fn();
       setOpen(false);
     },
-    [navigate, setOpen]
+    [setOpen],
   );
 
-  const handleKeyDown = (e: ReactKeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      setSelectedIndex(prev => (prev + 1) % Math.max(items.length, 1));
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      setSelectedIndex(prev => (prev - 1 + items.length) % Math.max(items.length, 1));
-    } else if (e.key === 'Enter') {
-      e.preventDefault();
-      if (items[selectedIndex]) activate(items[selectedIndex]);
-    } else if (e.key === 'Escape') {
-      e.preventDefault();
-      setOpen(false);
-    }
-  };
-
-  if (!open) return null;
-
-  let currentGlobalIdx = 0;
+  const toggleTheme = useCallback(() => {
+    const current = document.documentElement.getAttribute('data-theme') ?? 'dark';
+    const next = current === 'dark' ? 'light' : 'dark';
+    localStorage.setItem('qareen-theme', next);
+    document.documentElement.setAttribute('data-theme', next);
+    document.documentElement.classList.toggle('dark', next === 'dark');
+  }, []);
 
   return (
-    <div
-      className="fixed inset-0 bg-black/50 z-50 flex items-start justify-center pt-[18vh]"
-      onClick={(e) => { if (e.target === e.currentTarget) setOpen(false); }}
+    <Command.Dialog
+      open={open}
+      onOpenChange={setOpen}
+      label="Command palette"
+      loop
+      overlayClassName="command-overlay"
+      contentClassName="command-content"
     >
-      <div className="max-w-[640px] w-full mx-4 bg-bg-secondary border border-border-secondary rounded-[10px] shadow-high overflow-hidden">
-        {/* Search input */}
-        <div className="border-b border-border flex items-center px-4">
-          <Search className="w-4 h-4 text-text-quaternary shrink-0" />
-          <input
-            ref={inputRef}
-            type="text"
-            value={query}
-            onChange={(e) => { setQuery(e.target.value); setSelectedIndex(0); }}
-            onKeyDown={handleKeyDown}
-            placeholder="Search tasks, docs, or navigate..."
-            className="flex-1 h-12 border-none outline-none text-[14px] bg-transparent text-text placeholder:text-text-quaternary ml-3"
-          />
-          {searching && (
-            <span className="text-[10px] text-text-quaternary">searching...</span>
-          )}
-        </div>
-
-        {/* Results */}
-        <div className="max-h-[400px] overflow-y-auto py-2">
-          {/* Screens section */}
-          {filteredScreens.length > 0 && (
-            <>
-              <div className="px-4 py-1.5">
-                <span className="text-[10px] font-[590] uppercase text-text-quaternary tracking-[0.06em]">Navigate</span>
-              </div>
-              {filteredScreens.map((entry) => {
-                const idx = currentGlobalIdx++;
-                const Icon = entry.icon;
-                return (
-                  <button
-                    key={entry.href}
-                    type="button"
-                    onClick={() => activate({ type: 'screen', entry })}
-                    onMouseEnter={() => setSelectedIndex(idx)}
-                    className={`w-[calc(100%-16px)] mx-2 h-8 flex items-center gap-3 px-3 rounded-[4px] cursor-pointer transition-colors text-left ${
-                      idx === selectedIndex ? 'bg-hover text-text' : 'text-text-secondary'
-                    }`}
-                    style={{ transitionDuration: 'var(--duration-instant)' }}
-                  >
-                    <Icon className="w-3.5 h-3.5 text-text-quaternary shrink-0" />
-                    <span className="text-xs font-[510]">{entry.label}</span>
-                  </button>
-                );
-              })}
-            </>
-          )}
-
-          {/* Tasks section */}
-          {items.filter(i => i.type === 'task').length > 0 && (
-            <>
-              <div className="px-4 py-1.5 mt-1">
-                <span className="text-[10px] font-[590] uppercase text-text-quaternary tracking-[0.06em]">Tasks</span>
-              </div>
-              {items.filter(i => i.type === 'task').map((item) => {
-                if (item.type !== 'task') return null;
-                const idx = currentGlobalIdx++;
-                return (
-                  <button
-                    key={item.task.id}
-                    type="button"
-                    onClick={() => activate(item)}
-                    onMouseEnter={() => setSelectedIndex(idx)}
-                    className={`w-[calc(100%-16px)] mx-2 h-8 flex items-center gap-3 px-3 rounded-[4px] cursor-pointer transition-colors text-left ${
-                      idx === selectedIndex ? 'bg-hover text-text' : 'text-text-secondary'
-                    }`}
-                    style={{ transitionDuration: 'var(--duration-instant)' }}
-                  >
-                    <CheckSquare className="w-3.5 h-3.5 text-text-quaternary shrink-0" />
-                    <span className="text-xs font-[510] flex-1 truncate">{item.task.title}</span>
-                    <span className="text-[10px] text-text-quaternary">{item.task.project || ''}</span>
-                  </button>
-                );
-              })}
-            </>
-          )}
-
-          {/* Vault search section */}
-          {vaultResults.length > 0 && (
-            <>
-              <div className="px-4 py-1.5 mt-1">
-                <span className="text-[10px] font-[590] uppercase text-text-quaternary tracking-[0.06em]">Vault</span>
-              </div>
-              {vaultResults.map((result, i) => {
-                const idx = currentGlobalIdx++;
-                return (
-                  <button
-                    key={result.path + i}
-                    type="button"
-                    onClick={() => activate({ type: 'vault', result })}
-                    onMouseEnter={() => setSelectedIndex(idx)}
-                    className={`w-[calc(100%-16px)] mx-2 min-h-[32px] flex items-center gap-3 px-3 py-1.5 rounded-[4px] cursor-pointer transition-colors text-left ${
-                      idx === selectedIndex ? 'bg-hover text-text' : 'text-text-secondary'
-                    }`}
-                    style={{ transitionDuration: 'var(--duration-instant)' }}
-                  >
-                    <FileSearch className="w-3.5 h-3.5 text-text-quaternary shrink-0" />
-                    <div className="min-w-0 flex-1">
-                      <div className="text-xs font-[510] truncate">{result.title}</div>
-                      {result.snippet && (
-                        <div className="text-[10px] text-text-quaternary truncate mt-0.5">{result.snippet}</div>
-                      )}
-                    </div>
-                    <span className="text-[10px] text-text-quaternary shrink-0">{result.collection}</span>
-                  </button>
-                );
-              })}
-            </>
-          )}
-
-          {items.length === 0 && !searching && q.length > 0 && (
-            <div className="px-4 py-8 text-center">
-              <span className="text-xs text-text-quaternary">No results found</span>
-            </div>
-          )}
-        </div>
+      <div className="flex items-center border-b border-border px-4">
+        <Search className="w-4 h-4 text-text-quaternary shrink-0" />
+        <Command.Input
+          placeholder="Type a command or search..."
+          className="flex-1 h-12 border-none outline-none text-[14px] bg-transparent text-text placeholder:text-text-quaternary ml-3"
+        />
       </div>
-    </div>
+
+      <Command.List className="max-h-[340px] overflow-y-auto py-2">
+        <Command.Empty className="px-4 py-8 text-center text-xs text-text-quaternary">
+          No results found.
+        </Command.Empty>
+
+        {/* Navigation */}
+        <Command.Group
+          heading="Navigation"
+          className="[&_[cmdk-group-heading]]:px-4 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:type-overline [&_[cmdk-group-heading]]:text-text-quaternary"
+        >
+          {NAV_ITEMS.map((item) => {
+            const Icon = item.icon;
+            return (
+              <Command.Item
+                key={item.href}
+                value={item.label}
+                keywords={item.keywords}
+                onSelect={() => runAndClose(() => navigate(item.href))}
+                className="mx-2 h-8 flex items-center gap-3 px-3 rounded-[4px] cursor-pointer text-text-secondary data-[selected=true]:bg-bg-tertiary data-[selected=true]:text-text transition-colors"
+                style={{ transitionDuration: 'var(--duration-instant)' }}
+              >
+                <Icon className="w-3.5 h-3.5 text-text-quaternary shrink-0" />
+                <span className="text-xs font-[510]">{item.label}</span>
+              </Command.Item>
+            );
+          })}
+        </Command.Group>
+
+        {/* Actions */}
+        <Command.Group
+          heading="Actions"
+          className="[&_[cmdk-group-heading]]:px-4 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:mt-1 [&_[cmdk-group-heading]]:type-overline [&_[cmdk-group-heading]]:text-text-quaternary"
+        >
+          <Command.Item
+            value="New Task"
+            keywords={['create', 'add', 'todo']}
+            onSelect={() => runAndClose(() => navigate('/tasks?new=true'))}
+            className="mx-2 h-8 flex items-center gap-3 px-3 rounded-[4px] cursor-pointer text-text-secondary data-[selected=true]:bg-bg-tertiary data-[selected=true]:text-text transition-colors"
+            style={{ transitionDuration: 'var(--duration-instant)' }}
+          >
+            <Plus className="w-3.5 h-3.5 text-text-quaternary shrink-0" />
+            <span className="text-xs font-[510]">New Task</span>
+          </Command.Item>
+
+          <Command.Item
+            value="Toggle Theme"
+            keywords={['dark', 'light', 'mode', 'appearance']}
+            onSelect={() => runAndClose(toggleTheme)}
+            className="mx-2 h-8 flex items-center gap-3 px-3 rounded-[4px] cursor-pointer text-text-secondary data-[selected=true]:bg-bg-tertiary data-[selected=true]:text-text transition-colors"
+            style={{ transitionDuration: 'var(--duration-instant)' }}
+          >
+            <Sun className="w-3.5 h-3.5 text-text-quaternary shrink-0" />
+            <span className="text-xs font-[510]">Toggle Theme</span>
+          </Command.Item>
+
+          <Command.Item
+            value="Refresh Data"
+            keywords={['reload', 'invalidate', 'fetch']}
+            onSelect={() => runAndClose(() => queryClient.invalidateQueries())}
+            className="mx-2 h-8 flex items-center gap-3 px-3 rounded-[4px] cursor-pointer text-text-secondary data-[selected=true]:bg-bg-tertiary data-[selected=true]:text-text transition-colors"
+            style={{ transitionDuration: 'var(--duration-instant)' }}
+          >
+            <RefreshCw className="w-3.5 h-3.5 text-text-quaternary shrink-0" />
+            <span className="text-xs font-[510]">Refresh Data</span>
+          </Command.Item>
+        </Command.Group>
+      </Command.List>
+    </Command.Dialog>
   );
 }

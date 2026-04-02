@@ -77,10 +77,26 @@ export const ContextCard = memo(function ContextCard({ card }: ContextCardProps)
 })
 
 // --- Person ---
+
+const trendLabels: Record<string, string> = {
+  growing: 'Growing',
+  stable: 'Stable',
+  drifting: 'Drifting',
+  dormant: 'Dormant',
+}
+
+const trendColors: Record<string, string> = {
+  growing: 'text-green',
+  stable: 'text-text-quaternary',
+  drifting: 'text-orange',
+  dormant: 'text-text-quaternary',
+}
+
 function PersonDetails({ data }: { data: Record<string, unknown> }) {
   const lastContact = data.last_contact as string | undefined
   const openItems = data.open_items as number | undefined
   const trend = data.trend as string | undefined
+  const channels = data.channels as string[] | undefined
 
   return (
     <div className="pl-[22px] space-y-0.5">
@@ -89,13 +105,20 @@ function PersonDetails({ data }: { data: Record<string, unknown> }) {
           Last: {lastContact}
         </p>
       )}
-      {openItems !== undefined && (
+      {channels && channels.length > 0 && (
+        <p className="type-tiny text-text-quaternary">
+          {channels.join(' \u00b7 ')}
+        </p>
+      )}
+      {openItems !== undefined && openItems > 0 && (
         <p className="type-tiny text-text-quaternary">
           {openItems} open item{openItems !== 1 ? 's' : ''}
         </p>
       )}
       {trend && (
-        <p className="type-tiny text-text-quaternary">{trend}</p>
+        <p className={`type-tiny ${trendColors[trend] ?? 'text-text-quaternary'}`}>
+          {trendLabels[trend] ?? trend}
+        </p>
       )}
       {data.recent_message ? (
         <p className="type-tiny text-text-quaternary italic truncate">

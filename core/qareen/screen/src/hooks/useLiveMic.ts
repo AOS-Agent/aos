@@ -8,6 +8,8 @@ export function useLiveMic() {
   const streamRef = useRef<MediaStream | null>(null);
   const contextRef = useRef<AudioContext | null>(null);
   const processorRef = useRef<ScriptProcessorNode | null>(null);
+  const activeRef = useRef(false);
+  const reconnectAttempts = useRef(0);
 
   const start = useCallback(async (wsUrl: string): Promise<boolean> => {
     try {
@@ -46,10 +48,24 @@ export function useLiveMic() {
       wsRef.current = ws;
 
       await new Promise<void>((resolve, reject) => {
-        ws.onopen = () => resolve();
+        ws.onopen = () => {
+          reconnectAttempts.current = 0;
+          resolve();
+        };
         ws.onerror = () => reject(new Error('WebSocket connection failed'));
         setTimeout(() => reject(new Error('WebSocket timeout')), 8000);
       });
+
+      // Auto-reconnect on unexpected close while mic is still active
+      ws.onclose = (e) => {
+        if (activeRef.current && e.code !== 1000) {
+          const delay = Math.min(1000 * Math.pow(2, reconnectAttempts.current), 15000);
+          reconnectAttempts.current++;
+          if (reconnectAttempts.current <= 5) {
+            setTimeout(() => start(wsUrl), delay);
+          }
+        }
+      };
 
       // Resample buffer for target rate
       const resampleRatio = TARGET_RATE / nativeSampleRate;
@@ -89,6 +105,7 @@ export function useLiveMic() {
       source.connect(processor);
       processor.connect(ctx.destination); // Required for ScriptProcessor to fire
 
+      activeRef.current = true;
       console.log(`[LiveMic] Streaming at ${nativeSampleRate}Hz → resampled to ${TARGET_RATE}Hz`);
       return true;
     } catch (e) {
@@ -99,6 +116,8 @@ export function useLiveMic() {
   }, []);
 
   const stop = useCallback(() => {
+    activeRef.current = false;
+    reconnectAttempts.current = 0;
     if (processorRef.current) {
       processorRef.current.disconnect();
       processorRef.current = null;

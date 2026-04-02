@@ -83,11 +83,19 @@ export function StreamColumn() {
   }, [])
 
   // Auto-scroll to bottom when new items arrive and user is at bottom
-  useEffect(() => {
+  // Debounced to avoid jitter with rapid updates
+  const scrollToBottom = useCallback(() => {
     if (isAtBottom && scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+      requestAnimationFrame(() => {
+        scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
+      })
     }
-  }, [stream.length, segments.length, isAtBottom])
+  }, [isAtBottom])
+
+  useEffect(() => {
+    const timer = setTimeout(scrollToBottom, 50)
+    return () => clearTimeout(timer)
+  }, [stream.length, segments.length, scrollToBottom])
 
   const jumpToLive = useCallback(() => {
     const el = scrollRef.current

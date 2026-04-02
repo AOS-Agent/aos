@@ -129,7 +129,6 @@ export default function ConfigPage() {
   const [tab, setTab] = useState('profile');
   return (
     <div className="px-5 md:px-8 py-4 md:py-6 overflow-y-auto h-full">
-      <h1 className="type-title mb-6">Settings</h1>
       <TabBar tabs={[{ id: 'profile', label: 'Profile' }, { id: 'schedule', label: 'Schedule' }, { id: 'trust', label: 'Trust' }, { id: 'accounts', label: 'Accounts' }, { id: 'integrations', label: 'Integrations' }]} active={tab} onChange={setTab} className="mb-6" />
       <div className="max-w-2xl">
         {tab === 'profile' && <ProfileSection />}

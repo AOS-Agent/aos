@@ -1,34 +1,34 @@
 @import "tailwindcss";
 @import "@fontsource-variable/inter";
+@import "@fontsource-variable/eb-garamond";
 
 /* ============================================================
-   AOS Design System — Clean Dark Design System
+   AOS Design System — Warm Dark Design System
 
-   Philosophy: Clean, neutral dark — like Apple Messages dark
-   mode. Subtle warmth (2-3% saturation), never visibly tinted.
-   Accent orange for intentional highlights only.
+   Philosophy: Warm dark browns — intentionally warm, not cold
+   or clinical. Brown-tinted near-blacks, amber accents. Pure
+   white headings for readability.
    ============================================================ */
 
 @theme {
-  /* === Backgrounds — neutral dark, Apple-style ===
-     Near-black to dark gray elevation steps.
-     Barely warm (hue ~20, sat ~3%) — looks neutral, not orange */
-  --color-bg:            #0A0A0A;
-  --color-bg-panel:      #141414;
-  --color-bg-secondary:  #1C1C1E;
-  --color-bg-tertiary:   #2C2C2E;
-  --color-bg-quaternary: #3A3A3C;
+  /* === Backgrounds — warm dark browns, NOT blue-black ===
+     Brown-tinted near-black to warm gray elevation steps. */
+  --color-bg:            #0D0B09;
+  --color-bg-panel:      #151210;
+  --color-bg-secondary:  #1E1A16;
+  --color-bg-tertiary:   #2A2520;
+  --color-bg-quaternary: #3A3530;
 
-  /* === Text — pure white, clean grays === */
+  /* === Text — pure white headings, warm gray body === */
   --color-text:           #FFFFFF;
-  --color-text-secondary: #EBEBF5;
-  --color-text-tertiary:  #8E8E93;
-  --color-text-quaternary:#636366;
+  --color-text-secondary: #E8E4DF;
+  --color-text-tertiary:  #9A9490;
+  --color-text-quaternary:#6B6560;
 
-  /* === Borders — neutral white opacity === */
-  --color-border:           rgba(255, 255, 255, 0.06);
-  --color-border-secondary: rgba(255, 255, 255, 0.10);
-  --color-border-tertiary:  rgba(255, 255, 255, 0.15);
+  /* === Borders — warm tinted === */
+  --color-border:           rgba(255, 245, 235, 0.06);
+  --color-border-secondary: rgba(255, 245, 235, 0.10);
+  --color-border-tertiary:  rgba(255, 245, 235, 0.15);
 
   /* === AOS Accent (orange) === */
   --color-accent:       #D9730D;
@@ -72,10 +72,10 @@
   --color-tag-pink:      #FF375F;
   --color-tag-pink-bg:   #28101A;
 
-  /* === Interaction — neutral white alpha === */
-  --color-hover:    rgba(255, 255, 255, 0.05);
-  --color-active:   rgba(255, 255, 255, 0.08);
-  --color-selected: rgba(255, 255, 255, 0.12);
+  /* === Interaction — warm white alpha === */
+  --color-hover:    rgba(255, 245, 235, 0.05);
+  --color-active:   rgba(255, 245, 235, 0.08);
+  --color-selected: rgba(255, 245, 235, 0.12);
 
   /* === Border Radius === */
   --radius-xs:   3px;
@@ -93,6 +93,7 @@
   /* === Typography === */
   --font-sans: "Inter Variable", "SF Pro Text", -apple-system,
     BlinkMacSystemFont, sans-serif;
+  --font-serif: "EB Garamond Variable", "Georgia", "Times New Roman", serif;
   --font-mono: "Berkeley Mono", "SF Mono", ui-monospace, Menlo, monospace;
 
   /* === Transitions === */
@@ -124,12 +125,19 @@ html {
 body {
   color: var(--color-text);
   background: var(--color-bg);
-  font-family: var(--font-sans);
-  font-size: 13px;
-  line-height: 1.5;
-  letter-spacing: -0.008em;
+  font-family: var(--font-serif);
+  font-size: 14px;
+  line-height: 1.6;
+  letter-spacing: 0em;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+/* UI elements stay sans-serif — menus, buttons, labels, inputs, nav */
+nav, button, [role="button"], input, select, textarea, label,
+kbd, code, pre, th, .type-overline, .type-tiny, .type-label, .type-caption {
+  font-family: var(--font-sans);
+  letter-spacing: -0.008em;
 }
 
 /* === Touch Interaction === */
@@ -166,6 +174,8 @@ a, button, [role="button"], input, select, textarea, label {
 *:focus-visible {
   outline: none;
 }
+
+/* Aurora background is now a React canvas component (AuroraBackground.tsx) */
 
 /* === Light Mode — warm paper === */
 [data-theme="light"] {
@@ -297,4 +307,39 @@ a, button, [role="button"], input, select, textarea, label {
   ::view-transition-new(*) {
     animation-duration: 0.01ms !important;
   }
+}
+
+/* === Command Palette (cmdk) === */
+.command-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: var(--z-command);
+  animation: cmd-overlay-in var(--duration-fast) var(--ease-out);
+}
+
+.command-content {
+  position: fixed;
+  top: 18vh;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 560px;
+  width: calc(100% - 32px);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border-secondary);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-high);
+  z-index: var(--z-command);
+  overflow: hidden;
+  animation: cmd-content-in var(--duration-normal) var(--ease-out);
+}
+
+@keyframes cmd-overlay-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes cmd-content-in {
+  from { opacity: 0; transform: translateX(-50%) scale(0.96); }
+  to   { opacity: 1; transform: translateX(-50%) scale(1); }
 }

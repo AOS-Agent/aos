@@ -12,7 +12,13 @@ export interface SystemHealth {
 async function fetchHealth(): Promise<SystemHealth> {
   const res = await fetch(`${API}/health`);
   if (!res.ok) throw new Error(`Health API error: ${res.status}`);
-  return res.json();
+  const data = await res.json();
+  return {
+    disk_pct: data.disk_pct ?? 0,
+    disk_free_gb: data.disk_free_gb ?? 0,
+    ram_pct: data.ram_pct ?? 0,
+    ram_used_gb: data.ram_used_gb ?? 0,
+  };
 }
 
 export function useHealth() {

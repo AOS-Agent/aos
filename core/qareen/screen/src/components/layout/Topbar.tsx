@@ -1,5 +1,4 @@
 import { useLocation } from 'react-router-dom';
-import TransitionLink from '@/components/primitives/TransitionLink';
 import {
   Menu,
   Search,
@@ -88,23 +87,16 @@ export default function Topbar() {
         <Menu className="w-4 h-4" />
       </button>
 
-      {/* Branding */}
-      <TransitionLink
-        href="/"
-        className="flex items-center gap-2 shrink-0 hover:opacity-80 transition-opacity duration-100"
+      {/* Page title — left-aligned */}
+      <h1
+        className="text-sm font-semibold text-text tracking-[-0.01em] select-none"
+        style={{ viewTransitionName: 'page-title' }}
       >
-        <span className="text-[13px] font-[650] text-text tracking-[-0.01em]">Qareen</span>
-      </TransitionLink>
+        {title}
+      </h1>
 
-      {/* Page title */}
-      <div className="flex-1 flex items-center justify-center">
-        <h1
-          className="text-sm font-semibold text-text tracking-[-0.01em] select-none"
-          style={{ viewTransitionName: 'page-title' }}
-        >
-          {title}
-        </h1>
-      </div>
+      {/* Spacer */}
+      <div className="flex-1" />
 
       {/* Right section */}
       <div className="flex items-center gap-1">
@@ -124,7 +116,7 @@ export default function Topbar() {
         <button
           type="button"
           onClick={() => setCommandPaletteOpen(true)}
-          className="h-7 flex items-center gap-2 px-2.5 rounded-[5px] bg-bg-secondary border border-border text-text-quaternary hover:text-text-tertiary hover:border-border-secondary transition-colors duration-100"
+          className="h-7 flex items-center gap-2 px-2.5 rounded-[5px] bg-bg-secondary border border-border text-text-tertiary hover:text-text-secondary hover:border-border-secondary transition-colors duration-100"
           aria-label="Search"
         >
           <Search className="w-3.5 h-3.5" />
@@ -138,7 +130,7 @@ export default function Topbar() {
         <button
           type="button"
           onClick={toggleTheme}
-          className="w-8 h-8 flex items-center justify-center rounded-sm text-text-tertiary hover:text-text-secondary hover:bg-hover transition-colors duration-100"
+          className="w-8 h-8 flex items-center justify-center rounded-sm text-text-secondary hover:text-text hover:bg-hover transition-colors duration-100"
           aria-label="Toggle theme"
         >
           {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
@@ -148,7 +140,7 @@ export default function Topbar() {
         <button
           type="button"
           onClick={() => queryClient.invalidateQueries()}
-          className="w-8 h-8 flex items-center justify-center rounded-sm text-text-tertiary hover:text-text-secondary hover:bg-hover transition-colors duration-100"
+          className="w-8 h-8 flex items-center justify-center rounded-sm text-text-secondary hover:text-text hover:bg-hover transition-colors duration-100"
           aria-label="Refresh all data"
         >
           <RefreshCw className="w-4 h-4" />

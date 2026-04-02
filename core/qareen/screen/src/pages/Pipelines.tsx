@@ -81,8 +81,6 @@ export default function PipelinesPage() {
 
   return (
     <div className="px-5 md:px-8 py-4 md:py-6 overflow-y-auto h-full">
-      <h1 className="type-title mb-6">Pipelines</h1>
-
       {isError && <ErrorBanner message="Failed to load pipelines." />}
 
       {isLoading ? (

@@ -20,6 +20,9 @@ const Chief = lazy(() => import('@/pages/Chief'));
 const Meeting = lazy(() => import('@/pages/Meeting'));
 const Approvals = lazy(() => import('@/pages/Approvals'));
 const Memory = lazy(() => import('@/pages/Memory'));
+const Sessions = lazy(() => import('@/pages/Sessions'));
+const SessionDetail = lazy(() => import('@/pages/SessionDetail'));
+const Settings = lazy(() => import('@/pages/Settings'));
 
 function PageFallback() {
   return (
@@ -49,6 +52,7 @@ export default function App() {
           <Route path="/agents" element={<Agents />} />
           <Route path="/system" element={<System />} />
           <Route path="/config" element={<Config />} />
+          <Route path="/settings" element={<Settings />} />
           <Route path="/analytics" element={<Analytics />} />
           <Route path="/channels" element={<Channels />} />
           <Route path="/pipelines" element={<Pipelines />} />
@@ -59,6 +63,8 @@ export default function App() {
           <Route path="/meeting" element={<Meeting />} />
           <Route path="/approvals" element={<Approvals />} />
           <Route path="/memory" element={<Memory />} />
+          <Route path="/sessions" element={<Sessions />} />
+          <Route path="/sessions/:id" element={<SessionDetail />} />
         </Route>
       </Routes>
     </Suspense>
