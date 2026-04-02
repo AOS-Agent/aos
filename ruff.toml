@@ -1,0 +1,21 @@
+# Ruff linter config — keep it lightweight, tighten over time
+target-version = "py39"
+
+[lint]
+# Start with basic error detection, not style nits
+select = ["E", "F", "I"]
+# E = pycodestyle errors, F = pyflakes, I = isort
+
+# Ignore rules that would be too noisy on an existing codebase
+ignore = [
+    "E501",  # line too long — not worth fighting right now
+]
+
+# Don't lint vendored or generated code
+exclude = [
+    "vendor/",
+    "apps/*/node_modules/",
+    "apps/*/.venv/",
+    "**/target/",
+    "**/__pycache__/",
+]
