@@ -127,7 +127,7 @@ class WhatsAppLocalWatcher(BaseWatcher):
             pass  # Transcriber not available — voice stays untranscribed
 
         # Publish each inbound message as an event
-        from core.bus import system_bus, Event
+        from core.bus import Event, system_bus
 
         for msg in inbound:
             system_bus.publish(Event(

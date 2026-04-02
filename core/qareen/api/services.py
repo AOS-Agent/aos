@@ -11,7 +11,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Path as PathParam, Query, Request
+from fastapi import APIRouter, Query, Request
+from fastapi import Path as PathParam
 from fastapi.responses import JSONResponse
 
 from .schemas import (

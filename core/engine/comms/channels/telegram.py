@@ -14,14 +14,11 @@ Send goes through the bridge's Telegram bot API.
 from __future__ import annotations
 
 import json
-import os
-import re
 import time
 import urllib.error
 import urllib.request
 from datetime import datetime
 from pathlib import Path
-from typing import Any
 
 from ..channel import ChannelAdapter
 from ..models import Conversation, Message

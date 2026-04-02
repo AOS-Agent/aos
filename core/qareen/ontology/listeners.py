@@ -33,9 +33,6 @@ from ..events.bus import EventBus
 from ..events.types import (
     Event,
     TaskCompleted,
-    TaskCreated,
-    TaskDeleted,
-    TaskUpdated,
 )
 
 if TYPE_CHECKING:

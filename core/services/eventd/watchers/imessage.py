@@ -109,7 +109,7 @@ class iMessageWatcher(BaseWatcher):
             pass
 
         # Publish each message as an event (all types, not just text)
-        from core.bus import system_bus, Event
+        from core.bus import Event, system_bus
 
         for msg in messages:
             system_bus.publish(Event(

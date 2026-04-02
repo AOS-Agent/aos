@@ -18,7 +18,6 @@ Also cleans up:
 
 DESCRIPTION = "Consolidate MCP servers and vendor tools into ~/aos/vendor/"
 
-import os
 import shutil
 from pathlib import Path
 

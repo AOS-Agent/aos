@@ -1,16 +1,6 @@
 # Ruff linter config — keep it lightweight, tighten over time
 target-version = "py39"
 
-[lint]
-# Start with basic error detection, not style nits
-select = ["E", "F", "I"]
-# E = pycodestyle errors, F = pyflakes, I = isort
-
-# Ignore rules that would be too noisy on an existing codebase
-ignore = [
-    "E501",  # line too long — not worth fighting right now
-]
-
 # Don't lint vendored or generated code
 exclude = [
     "vendor/",
@@ -19,3 +9,27 @@ exclude = [
     "**/target/",
     "**/__pycache__/",
 ]
+
+[lint]
+# Start with basic error detection, not style nits
+select = ["E", "F", "I"]
+# E = pycodestyle errors, F = pyflakes, I = isort
+
+# Ignore rules that would be too noisy on an existing codebase
+ignore = [
+    "E501",  # line too long — not worth fighting right now
+    "E402",  # module-level import not at top — sys.path setup before imports is intentional
+    "E701",  # multiple statements on one line (colon) — used for compact handlers
+    "E702",  # multiple statements on one line (semicolon) — used for compact handlers
+    "E741",  # ambiguous variable name (l, O) — common in list comprehensions
+]
+
+[lint.per-file-ignores]
+# setproctitle must run before other imports (import; call on same line)
+"core/services/bridge/main.py" = ["I001"]
+"core/services/companion/main.py" = ["I001"]
+"core/services/dashboard/main.py" = ["I001"]
+"core/services/listen/main.py" = ["I001"]
+"core/services/memory/main.py" = ["I001"]
+# Standalone test script that imports to verify they exist
+"tests/test_initiative_bridge.py" = ["F401"]

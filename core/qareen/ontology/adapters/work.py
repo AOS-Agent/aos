@@ -11,7 +11,7 @@ import json
 import re
 import sqlite3
 import uuid
-from datetime import datetime, date
+from datetime import date, datetime
 from typing import Any
 
 from ..types import (
@@ -403,7 +403,7 @@ class WorkAdapter(Adapter):
                     confidence=obj.get("confidence"),
                 )
             else:
-                raise TypeError(f"Dict must have 'text' (inbox) or '_type'='thread' with 'title'")
+                raise TypeError("Dict must have 'text' (inbox) or '_type'='thread' with 'title'")
         else:
             raise TypeError(f"Unsupported type: {type(obj)}")
 

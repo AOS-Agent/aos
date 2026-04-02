@@ -126,7 +126,7 @@ class PeopleIntelConsumer(Consumer):
             # Check if we already have a recent interaction for this person + channel
             # (avoid duplicates on repeated polls)
             earliest = min(m.timestamp for m in msgs)
-            latest = max(m.timestamp for m in msgs)
+            max(m.timestamp for m in msgs)
 
             if self._interaction_exists(person["id"], msgs[0].channel, earliest):
                 continue

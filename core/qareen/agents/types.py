@@ -17,7 +17,6 @@ from typing import Any
 
 from ..ontology.types import TrustLevel
 
-
 # ---------------------------------------------------------------------------
 # Agent definition (loaded from .md files)
 # ---------------------------------------------------------------------------

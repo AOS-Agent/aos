@@ -94,8 +94,8 @@ def ocr_frames(frames: list[dict]) -> list[dict]:
 
     try:
         from PIL import Image
-        from surya.recognition import FoundationPredictor, RecognitionPredictor
         from surya.detection import DetectionPredictor
+        from surya.recognition import FoundationPredictor, RecognitionPredictor
     except ImportError as e:
         print(f"  Surya not available: {e}", file=sys.stderr)
         return []

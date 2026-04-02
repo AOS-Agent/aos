@@ -16,14 +16,8 @@ Requirements (install on MacBook):
 
 import argparse
 import asyncio
-import json
 import logging
-import os
 import struct
-import sys
-import time
-import urllib.request
-from pathlib import Path
 
 import numpy as np
 import sounddevice as sd

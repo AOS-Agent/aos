@@ -150,8 +150,9 @@ HEALTH_DIR = Path.home() / ".aos" / "data" / "health"
 VAULT_DAILY = Path.home() / "vault" / "daily"
 VAULT_TEMPLATES = Path.home() / "vault" / "templates"
 
-from pydantic import Field
 from typing import Optional
+
+from pydantic import Field
 
 
 class HealthSample(BaseModel):
@@ -181,7 +182,8 @@ from fastapi import Request
 @app.post("/health/sync")
 async def sync_health_data(request: Request):
     """Receive full health data from HealthSync iOS app. Accepts any JSON with a date field."""
-    import json, re
+    import json
+    import re
     from datetime import datetime as _dt
 
     raw_body = await request.body()
@@ -373,7 +375,7 @@ async def receive_health_data(request: Request):
         if sleep_score and "sleep:" in content:
             content = re.sub(r'^sleep:.*$', f'sleep: {sleep_score}', content, count=1, flags=re.MULTILINE)
         # Add health data to Notes section
-        health_summary = f"\n## Health Data\n\n"
+        health_summary = "\n## Health Data\n\n"
         if sleep_hours > 0:
             health_summary += f"- Sleep: {sleep_hours:.1f}h (score: {sleep_score}/5)\n"
         if steps > 0:
@@ -414,9 +416,9 @@ async def push_health_data(
     """Simple GET endpoint for iPhone Shortcuts — no JSON body needed.
     Usage: /health/push?steps=3200&distance=2.1&flights=1&sleep=7.5&active_energy=450
     """
-    import json, re
+    import json
+    import re
     from datetime import datetime as _dt
-    from fastapi import Request as _Req
 
     # Log the raw request for debugging
     HEALTH_DIR.mkdir(parents=True, exist_ok=True)
@@ -462,7 +464,7 @@ async def push_health_data(
         content = daily_file.read_text()
         if sleep_score and "sleep:" in content:
             content = re.sub(r'^sleep:.*$', f'sleep: {sleep_score}', content, count=1, flags=re.MULTILINE)
-        health_summary = f"\n## Health Data\n\n"
+        health_summary = "\n## Health Data\n\n"
         if sleep_hours > 0:
             health_summary += f"- Sleep: {sleep_hours:.1f}h (score: {sleep_score}/5)\n"
         if steps > 0:

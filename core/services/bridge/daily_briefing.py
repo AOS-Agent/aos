@@ -7,11 +7,8 @@ Runs once per day at a configured hour. Scans tasks, initiatives,
 schedule, and overnight work, then sends a classified briefing.
 """
 
-import glob
 import json
 import logging
-import os
-import re
 import threading
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -620,8 +617,8 @@ def _build_morning_prompt() -> str:
         prompts = [
             f"Asalamualaikum {op_name}. You've got {active_count} things in motion"
             + (f" \u2014 '{top_task}' is the most recent" if top_task else "") + ".\n\n"
-            f"What's actually important today? Not everything \u2014 just the real priorities.\n\n"
-            f"Voice note. 60 seconds. Go.",
+            "What's actually important today? Not everything \u2014 just the real priorities.\n\n"
+            "Voice note. 60 seconds. Go.",
 
             f"{op_name}, there's a lot on your plate \u2014 {active_count} active items.\n\n"
             f"What would make today feel like progress? What can wait?\n\n"
@@ -642,8 +639,8 @@ def _build_morning_prompt() -> str:
         prompts = [
             f"Asalamualaikum {op_name}. What's on your mind this morning?\n\n"
             + (f"'{top_task}' is still active" + (f" in {top_project}" if top_project else "") + ". " if top_task else "")
-            + f"Where do you want to push today?\n\n"
-            f"Send a voice note \u2014 I'll turn it into tasks and notes.",
+            + "Where do you want to push today?\n\n"
+            "Send a voice note \u2014 I'll turn it into tasks and notes.",
 
             f"Morning {op_name}. Before the day takes over \u2014 "
             f"what matters most right now?\n\n"

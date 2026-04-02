@@ -6,16 +6,15 @@ List, inspect, activate, and configure agent trust levels.
 from __future__ import annotations
 
 import logging
-import os
 import re
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Path as PathParam, Request, status
+from fastapi import APIRouter, Request, status
+from fastapi import Path as PathParam
 from fastapi.responses import JSONResponse
 
 from .schemas import (
-    AgentCatalogResponse,
     AgentListResponse,
     AgentResponse,
     UpdateTrustRequest,

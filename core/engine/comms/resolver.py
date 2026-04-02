@@ -30,7 +30,6 @@ import sqlite3
 import sys
 import time
 from pathlib import Path
-from typing import Optional
 
 _PEOPLE_SERVICE = Path.home() / ".aos" / "services" / "people"
 if str(_PEOPLE_SERVICE) not in sys.path:

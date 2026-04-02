@@ -22,12 +22,17 @@ from typing import Any
 
 import yaml
 
-from ..types import (
-    ContextCard, Decision, Link, LinkType, Note, NoteStage, ObjectType,
-)
 from ..model import SearchResult
+from ..types import (
+    ContextCard,
+    Decision,
+    Link,
+    LinkType,
+    Note,
+    NoteStage,
+    ObjectType,
+)
 from .base import Adapter
-
 
 # ---------------------------------------------------------------------------
 # Constants

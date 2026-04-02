@@ -290,11 +290,11 @@ def up() -> bool:
         AOS_DATA.mkdir(parents=True, exist_ok=True)
         if not dest_db.exists():
             shutil.move(str(people_db), str(dest_db))
-            print(f"       Moved people.db → ~/.aos/data/")
+            print("       Moved people.db → ~/.aos/data/")
         else:
             # Both exist — keep the newer one at ~/.aos/data/, remove old
             people_db.unlink()
-            print(f"       Removed duplicate people.db (kept ~/.aos/data/ copy)")
+            print("       Removed duplicate people.db (kept ~/.aos/data/ copy)")
 
     # 4. Clean up empty old directories
     removed_dirs = []

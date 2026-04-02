@@ -1,28 +1,26 @@
 """Render Claude stream events to Telegram messages."""
 
 import logging
-import random
 import re
 import time
 from collections.abc import AsyncGenerator
 
-from telegram import Bot
-from telegram.error import BadRequest, TimedOut
-
-from session_manager import (
-    StreamEvent,
-    TextDelta,
-    TextComplete,
-    ToolStart,
-    ToolResult,
-    SessionInit,
-    SessionResult,
-    ApiRetry,
-    RateLimit,
-)
-from telegram_formatter import md_to_telegram_html
 from bridge_events import bridge_event
 from longform_handler import is_longform, publish_longform
+from session_manager import (
+    ApiRetry,
+    RateLimit,
+    SessionInit,
+    SessionResult,
+    StreamEvent,
+    TextComplete,
+    TextDelta,
+    ToolResult,
+    ToolStart,
+)
+from telegram import Bot
+from telegram.error import BadRequest, TimedOut
+from telegram_formatter import md_to_telegram_html
 
 logger = logging.getLogger("bridge.renderer")
 

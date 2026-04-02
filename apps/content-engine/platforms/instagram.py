@@ -1,7 +1,8 @@
 """Instagram platform handler."""
 
-from .base import BasePlatformHandler
 from models import ExtractionResult
+
+from .base import BasePlatformHandler
 
 
 class InstagramHandler(BasePlatformHandler):

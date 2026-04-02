@@ -14,18 +14,33 @@ Usage:
 
 from __future__ import annotations
 
-from typing import Any, Callable
-
-from .types import (
-    ActionResult, ContextCard, Link, LinkType, ObjectType,
-    Person, Task, Project, Goal, Message, Note, Decision,
-    Session, Agent, Channel, Integration, Operator, TrustEntry,
-)
 # Adapter base is imported by concrete adapters, not needed here at runtime.
 # We reference it only for type hints.
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Callable
+
+from .types import (
+    ActionResult,
+    Agent,
+    Channel,
+    ContextCard,
+    Decision,
+    Goal,
+    Integration,
+    Link,
+    LinkType,
+    Message,
+    Note,
+    ObjectType,
+    Operator,
+    Person,
+    Project,
+    Session,
+    Task,
+    TrustEntry,
+)
+
 if TYPE_CHECKING:
-    from .adapters.base import Adapter
+    pass
 
 
 # Type alias for any ontology object
@@ -251,8 +266,9 @@ class Ontology:
 
     def operator(self) -> Operator:
         """Load the operator profile from config."""
-        import yaml
         from pathlib import Path
+
+        import yaml
         config_path = Path(self._config_dir) / "operator.yaml"
         if not config_path.exists():
             return Operator(name="Operator")

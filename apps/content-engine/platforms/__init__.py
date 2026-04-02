@@ -1,7 +1,7 @@
-from .youtube import YouTubeHandler
 from .instagram import InstagramHandler
 from .tiktok import TikTokHandler
 from .twitter import TwitterHandler
+from .youtube import YouTubeHandler
 
 # Registry: platform name → handler instance
 HANDLERS = {

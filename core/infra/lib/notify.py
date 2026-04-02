@@ -10,13 +10,13 @@ Usage:
     send_telegram("Into a topic", thread_id=12345)
 """
 
+import json
 import logging
 import os
 import subprocess
 import time
-import urllib.request
 import urllib.error
-import json
+import urllib.request
 
 from lib.rate_limit import RateLimiter
 

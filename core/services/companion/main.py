@@ -10,13 +10,12 @@ from pathlib import Path
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
-from fastapi.middleware.cors import CORSMiddleware
-from starlette.responses import StreamingResponse
-
 from capture import AudioCapture, SpeechSegment
 from engine import MeetingEngine, MeetingState
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from starlette.responses import StreamingResponse
 
 app = FastAPI(title="AOS Companion")
 app.add_middleware(
@@ -54,7 +53,7 @@ async def meeting_stream(request: Request):
                     yield f"event: {event['type']}\ndata: {json.dumps(event['data'])}\n\n"
                 except asyncio.TimeoutError:
                     # Send keepalive
-                    yield f"event: ping\ndata: {{}}\n\n"
+                    yield "event: ping\ndata: {}\n\n"
         finally:
             engine.unsubscribe(queue)
 
@@ -597,6 +596,7 @@ async def ws_audio(websocket: WebSocket):
 
     import tempfile
     import time as _time
+
     from engine import SpeechBlock
 
     chunk_count = 0
@@ -688,8 +688,8 @@ async def ws_mic(websocket: WebSocket):
     log.info("Remote mic connected: %s", websocket.client)
 
     import struct
+
     import numpy as np
-    import mlx.core as mx
 
     # Ring buffer: accumulates 100ms chunks between feed cycles
     ring_buffer: list[np.ndarray] = []
@@ -910,7 +910,6 @@ VAULT_ROOT = Path.home() / "vault"
 @app.get("/vault/tree")
 async def vault_tree():
     """Return the vault folder/file tree."""
-    import os
 
     def _scan(dirpath: Path, rel: str = "") -> list[dict]:
         items = []
@@ -948,8 +947,8 @@ async def vault_tree():
 @app.get("/vault/file/{file_path:path}")
 async def vault_read(file_path: str):
     """Read a vault file. Returns content + parsed frontmatter."""
-    from fastapi import HTTPException
     import yaml as _yaml
+    from fastapi import HTTPException
 
     full_path = VAULT_ROOT / file_path
     if not full_path.exists() or not full_path.is_file():

@@ -5,11 +5,11 @@ Every test that needs file I/O gets its own isolated tmp_path directory.
 NEVER touches ~/.aos/ — all paths are redirected to pytest's tmp_path.
 """
 
-import os
 import sys
-import yaml
-import pytest
 from pathlib import Path
+
+import pytest
+import yaml
 
 # Make the work package importable without installing it
 WORK_DIR_SRC = Path(__file__).parent.parent / "core" / "engine" / "work"
@@ -69,7 +69,6 @@ def work_env(tmp_path, monkeypatch):
             task = engine.add_task("Hello")
             assert task["title"] == "Hello"
     """
-    import importlib
     # Re-import fresh each time so module-level state is clean
     import engine as eng
 

@@ -1,7 +1,7 @@
 """Simple token-bucket rate limiter for AOS service calls."""
 
-import time
 import threading
+import time
 
 
 class RateLimiter:

@@ -50,7 +50,8 @@ def _write_feedback(person_id: str, surface_type: str, operator_action: str,
         import db as people_db
         conn = people_db.connect()
 
-        import random, string
+        import random
+        import string
         fid = "sf_" + "".join(random.choices(string.ascii_lowercase + string.digits, k=10))
 
         conn.execute(

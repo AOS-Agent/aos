@@ -8,7 +8,6 @@ For v1 migrants: doesn't touch ~/aos/, just builds the v2 structure.
 
 DESCRIPTION = "Initialize user data directory (~/.aos/)"
 
-import os
 from pathlib import Path
 
 USER_DIR = Path.home() / ".aos"

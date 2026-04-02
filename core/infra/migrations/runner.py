@@ -16,12 +16,12 @@ Usage:
     python3 runner.py import           # Interactive import from discovered setup
 """
 
-import os
-import sys
 import importlib.util
-import yaml
-from pathlib import Path
+import sys
 from datetime import datetime
+from pathlib import Path
+
+import yaml
 
 AOS_DIR = Path.home() / "aos"
 USER_DIR = Path.home() / ".aos"
@@ -103,7 +103,7 @@ def cmd_migrate():
 
         # Check if already applied (idempotent check)
         if hasattr(mod, "check") and mod.check():
-            print(f"       → Already applied, skipping")
+            print("       → Already applied, skipping")
             save_version(num)
             log_migration(num, name, "skipped", "Already applied")
             continue
@@ -112,10 +112,10 @@ def cmd_migrate():
         try:
             result = mod.up()
             if result is False:
-                print(f"       ✗ Failed")
+                print("       ✗ Failed")
                 log_migration(num, name, "failed")
                 return False
-            print(f"       ✓ Done")
+            print("       ✓ Done")
             save_version(num)
             log_migration(num, name, "applied")
         except Exception as e:
@@ -138,13 +138,13 @@ def cmd_status():
     print(f"Applied: {len(applied)} | Pending: {len(pending)}")
 
     if pending:
-        print(f"\nPending migrations:")
+        print("\nPending migrations:")
         for num, name, mod in pending:
             desc = getattr(mod, "DESCRIPTION", name)
             print(f"  [{num}] {desc}")
 
     if applied:
-        print(f"\nApplied:")
+        print("\nApplied:")
         for num, name, mod in applied:
             desc = getattr(mod, "DESCRIPTION", name)
             print(f"  [{num}] {desc} ✓")

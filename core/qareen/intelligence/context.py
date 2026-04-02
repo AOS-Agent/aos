@@ -397,8 +397,9 @@ async def build_briefing(ontology) -> dict[str, Any] | None:
     if not ontology:
         return None
 
-    from ..ontology.types import ObjectType
     import uuid
+
+    from ..ontology.types import ObjectType
 
     try:
         # Active tasks

@@ -20,13 +20,9 @@ from typing import Any
 
 from ..ontology.types import (
     ChannelType,
-    MessageDirection,
     ObjectType,
-    PipelineStage,
     TaskPriority,
-    TaskStatus,
 )
-
 
 # ---------------------------------------------------------------------------
 # Base event

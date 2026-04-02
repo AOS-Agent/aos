@@ -19,13 +19,11 @@ from an environment variable before importing inject_context.
 """
 
 import json
-import os
-import sys
 import subprocess
-import tempfile
-import yaml
-import pytest
+import sys
 from pathlib import Path
+
+import yaml
 
 WORK_PKG = Path(__file__).parent.parent / "core" / "engine" / "work"
 sys.path.insert(0, str(WORK_PKG))

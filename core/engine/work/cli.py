@@ -17,16 +17,15 @@ Usage:
     work migrate                      (migrate old t1,t2 IDs to new format)
 """
 
-import sys
-import os
 import json
+import os
+import sys
 
 # Add parent dir to path so we can import backend/query
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import backend as engine  # Drop-in replacement for old engine
 import query
-
 
 # ── Resolution helpers ────────────────────────────────
 
@@ -142,7 +141,7 @@ def cmd_done(args):
     if result:
         print(f"Completed {result['id']}: {result['title']}")
         if result.get("auto_completed"):
-            print(f"  (auto-completed by subtask cascade)")
+            print("  (auto-completed by subtask cascade)")
     else:
         print(f"Task {task['id']} not found")
         sys.exit(1)
@@ -160,7 +159,7 @@ def cmd_start(args):
     result = engine.start_task(task["id"], session_id=session_id)
     if result:
         print(f"Started {result['id']}: {result['title']}")
-        print(f"  → Live context set. All work will be attributed to this task.")
+        print("  → Live context set. All work will be attributed to this task.")
     else:
         print(f"Task {task['id']} not found")
         sys.exit(1)
@@ -176,7 +175,7 @@ def cmd_stop(args):
     title = ctx.get("title", "")
     engine.clear_live_context()
     print(f"Stopped tracking {task_id}: {title}")
-    print(f"  → Task remains active but work won't be auto-attributed.")
+    print("  → Task remains active but work won't be auto-attributed.")
 
 
 def cmd_active(args):
@@ -215,7 +214,7 @@ def cmd_show(args):
     task = _resolve(query_str)
     tree = engine.get_task_tree(task["id"])
     if not tree:
-        print(f"Task not found")
+        print("Task not found")
         sys.exit(1)
 
     # Display task details
@@ -257,17 +256,17 @@ def cmd_show(args):
             for line in handoff["state"].strip().split("\n"):
                 print(f"    {line}")
         if handoff.get("next_step"):
-            print(f"\n  Next step:")
+            print("\n  Next step:")
             for line in handoff["next_step"].strip().split("\n"):
                 print(f"    {line}")
         if handoff.get("files_touched"):
             print(f"\n  Files: {', '.join(handoff['files_touched'])}")
         if handoff.get("decisions"):
-            print(f"\n  Decisions:")
+            print("\n  Decisions:")
             for d in handoff["decisions"]:
                 print(f"    - {d}")
         if handoff.get("blockers"):
-            print(f"\n  Blockers:")
+            print("\n  Blockers:")
             for b in handoff["blockers"]:
                 print(f"    ! {b}")
 
@@ -310,7 +309,7 @@ def cmd_list(args):
 
     # Auto-detect project from cwd if not specified
     if not project and not show_all:
-        auto_proj = _auto_project()
+        _auto_project()
         # Don't auto-filter — just note it for display
         # (show all tasks, but highlight the current project)
 
@@ -375,7 +374,7 @@ def cmd_list(args):
         print()
 
     if unassigned:
-        print(f"  Unassigned")
+        print("  Unassigned")
         print()
         _print_task_list(unassigned)
         print()
@@ -470,7 +469,7 @@ def cmd_subtask(args):
     if sub:
         print(f"Created {sub['id']}: {sub['title']} (under {parent['id']})")
     else:
-        print(f"Failed to create subtask")
+        print("Failed to create subtask")
         sys.exit(1)
 
 
@@ -519,7 +518,7 @@ def cmd_handoff(args):
     if result:
         print(f"Handoff written for {result['id']}: {result['title']}")
     else:
-        print(f"Failed to write handoff")
+        print("Failed to write handoff")
         sys.exit(1)
 
 
@@ -795,7 +794,7 @@ def cmd_link(args):
             count = len(result.get("sessions", []))
             print(f"Linked session to task {result['id']}: {result['title']} ({count} sessions)")
         else:
-            print(f"Task not found")
+            print("Task not found")
             sys.exit(1)
 
 
@@ -1156,7 +1155,7 @@ def cmd_initiatives(args):
                         mark = "🔶"
                     else:
                         mark = "⬜"
-                    p_pct = int(p["done"] / p["total"] * 100) if p["total"] else 0
+                    int(p["done"] / p["total"] * 100) if p["total"] else 0
                     print(f"      {mark} Phase {p['num']}: {p['title']} ({p['done']}/{p['total']})")
 
             count += 1

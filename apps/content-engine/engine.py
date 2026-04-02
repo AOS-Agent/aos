@@ -12,11 +12,11 @@ Usage:
 
 import sys
 
+from dedup import is_processed, mark_processed
 from detect import detect_platform
 from models import ExtractionResult, SourceContext
 from platforms import get_handler
 from transcribe import transcribe_url
-from dedup import is_processed, mark_processed
 from vault import save_vault_note
 
 

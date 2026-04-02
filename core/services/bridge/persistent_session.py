@@ -124,7 +124,7 @@ class PersistentSession:
 
         Reads directly from stdout — no background reader, no race conditions.
         """
-        from session_manager import parse_event, SessionInit, SessionResult
+        from session_manager import SessionInit, SessionResult, parse_event
 
         # Auto-start if not alive
         if not self.alive:

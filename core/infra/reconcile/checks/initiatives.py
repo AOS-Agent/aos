@@ -11,12 +11,11 @@ bridge-topics.yaml scaffold if missing (the TopicManager will
 populate topic IDs at runtime when Telegram is available).
 """
 
-import subprocess
+import sys
 from pathlib import Path
 
-import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from base import ReconcileCheck, CheckResult, Status
+from base import CheckResult, ReconcileCheck, Status
 
 
 class InitiativeDirectoriesCheck(ReconcileCheck):

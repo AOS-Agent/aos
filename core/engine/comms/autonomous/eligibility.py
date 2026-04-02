@@ -91,7 +91,7 @@ def is_auto_eligible(
     # Gate 3: Check blocking patterns
     for pattern in BLOCKING_PATTERNS:
         if re.search(pattern, message_text):
-            return EligibilityResult(False, f"Blocked: matches safety pattern")
+            return EligibilityResult(False, "Blocked: matches safety pattern")
 
     # Gate 4: Must match at least one eligible pattern
     for template_key, patterns in ELIGIBLE_PATTERNS.items():

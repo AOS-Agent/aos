@@ -14,9 +14,9 @@ Creates:
 
 DESCRIPTION = "Initiative pipeline infrastructure (dirs, config)"
 
-import os
-import yaml
 from pathlib import Path
+
+import yaml
 
 HOME = Path.home()
 VAULT = HOME / "vault"
@@ -89,7 +89,7 @@ def up() -> bool:
             data["initiatives"] = DEFAULT_INITIATIVES
             # Read original file to do surgical append instead of yaml.dump
             # (yaml.dump would reformat the entire file)
-            original = OPERATOR_YAML.read_text()
+            OPERATOR_YAML.read_text()
             initiative_block = "\ninitiatives:\n"
             for key, val in DEFAULT_INITIATIVES.items():
                 if isinstance(val, bool):

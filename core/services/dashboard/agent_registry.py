@@ -253,7 +253,7 @@ class AgentRegistry:
             agents[name] = {
                 "role": role,
                 "trust_level": 1,
-                "note": f"Created dynamically. Trust level 1 — verify everything.",
+                "note": "Created dynamically. Trust level 1 — verify everything.",
             }
             data["agents"] = agents
             self.trust_path.write_text(yaml.dump(data, default_flow_style=False, allow_unicode=True))

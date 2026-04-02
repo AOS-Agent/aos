@@ -49,7 +49,7 @@ from pydantic import BaseModel, Field
 
 from ..intelligence.classifier import classify
 from ..intelligence.generator import generate_card
-from ..intelligence.types import Card, TaskCard
+from ..intelligence.types import Card
 
 logger = logging.getLogger(__name__)
 
@@ -353,7 +353,6 @@ async def parse_intent(req: IntentRequest, request: Request) -> IntentResponse:
     # Phase 2: If still ambiguous and text is substantial, use Claude Haiku
     if not skill and len(text.split()) >= 4:
         try:
-            from ..intelligence.engine import IntelligenceEngine
             prompt = (
                 "Parse this voice command into a session type. "
                 "Reply with ONLY one word: thinking, meeting, planning, or email.\n\n"

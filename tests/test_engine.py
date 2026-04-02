@@ -10,15 +10,15 @@ No test ever touches ~/.aos/.
 
 import os
 import sys
-import yaml
-import pytest
 from pathlib import Path
+
+import pytest
+import yaml
 
 # conftest.py already adds the work package to sys.path, but be explicit here
 # so the module can be imported standalone too.
 sys.path.insert(0, str(Path(__file__).parent.parent / "core" / "engine" / "work"))
 
-import engine
 
 
 # ===========================================================================
@@ -123,7 +123,7 @@ class TestFuzzyResolution:
         eng.add_project("AOS Framework", short_id="aos", project_id="aos")
 
         t1 = eng.add_task("First task", project="aos")   # aos#1
-        t2 = eng.add_task("Second task", project="aos")  # aos#2
+        eng.add_task("Second task", project="aos")  # aos#2
 
         result = eng.resolve_task(t1["id"])
         assert result is not None, "Exact ID must resolve"
@@ -215,7 +215,7 @@ class TestSubtaskCascade:
         parent = eng.add_task("Partial feature", project="aos")
 
         s1 = eng.add_subtask(parent["id"], "Done part")
-        s2 = eng.add_subtask(parent["id"], "Still pending part")
+        eng.add_subtask(parent["id"], "Still pending part")
 
         eng.complete_task(s1["id"])
         # s2 is still todo
@@ -302,7 +302,7 @@ class TestEdgeCases:
 
         # Should not raise — bad YAML -> yaml.safe_load returns None -> _empty_work
         try:
-            data = eng._load()
+            eng._load()
         except Exception as exc:
             # If it raises, that's fine as long as we document the behavior.
             # Some YAML parsers may raise on truly corrupt input.

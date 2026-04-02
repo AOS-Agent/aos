@@ -613,9 +613,10 @@ def handle_friction(text: str) -> str:
 
 def handle_sessions(text: str) -> str:
     """Count sessions from the past 7 days."""
-    import yaml
     from collections import Counter
     from datetime import datetime, timedelta
+
+    import yaml
 
     sessions_dir = Path.home() / "vault" / "sessions"
     if not sessions_dir.exists():
@@ -647,7 +648,7 @@ def handle_sessions(text: str) -> str:
     if count == 0:
         return "No sessions in the past 7 days."
 
-    lines = [f"<b>Sessions — Last 7 Days</b>\n", f"Total: <b>{count}</b>\n"]
+    lines = ["<b>Sessions — Last 7 Days</b>\n", f"Total: <b>{count}</b>\n"]
 
     if projects:
         proj_str = ", ".join(f"{p} ({c})" for p, c in projects.most_common(5))
@@ -724,7 +725,7 @@ def handle_messages(text: str) -> str:
             lines.append(f"  {preview[:80]}")
         lines.append("")
 
-    lines.append(f"Reply in app or from here: /reply {{name}} {{message}}")
+    lines.append("Reply in app or from here: /reply {name} {message}")
     return "\n".join(lines)
 
 
@@ -808,7 +809,6 @@ def handle_reply(text: str) -> str:
 
 def handle_greeting(text: str) -> str:
     """Respond to greetings instantly — no Claude needed."""
-    import random
     from datetime import datetime
 
     hour = datetime.now().hour
@@ -834,9 +834,9 @@ def handle_trust(text: str) -> str:
     /trust_set Ahmed 2 → override Ahmed's level to 2
     """
     import sqlite3
-    import sys
-    import yaml
     from pathlib import Path
+
+    import yaml
 
     people_db_path = Path.home() / ".aos" / "data" / "people.db"
     trust_path = Path.home() / ".aos" / "config" / "trust.yaml"
@@ -998,9 +998,13 @@ def handle_draft_feedback(text: str) -> str:
             sys.path.insert(0, p)
 
     try:
-        from core.comms.drafts.feedback import handle_accept, handle_edit, handle_discard, get_pending_draft
+        from core.comms.drafts.feedback import (
+            get_pending_draft,
+            handle_accept,
+            handle_discard,
+        )
 
-        parts = text.strip().split("_", 2)
+        text.strip().split("_", 2)
         # Format: /reply_accept_d_abc12345 or /reply_discard_d_abc12345
         # Extract action and draft_id
         if text.startswith("/reply_accept_"):

@@ -15,8 +15,8 @@ Claude Code hooks protocol:
 """
 
 import json
-import sys
 import os
+import sys
 from pathlib import Path
 
 
@@ -45,8 +45,8 @@ except ImportError:
     _safe_exit(_check_onboarding() or "")
 
 try:
-    import urllib.request
     import glob as globmod
+    import urllib.request
     from datetime import date
 except Exception:
     _safe_exit(_check_onboarding() or "")
@@ -103,7 +103,7 @@ def main():
 
     summary = engine.summary()
     inbox_count = summary["inbox"]
-    thread_count = summary["threads"]
+    summary["threads"]
 
     # Build context string
     lines = []
@@ -137,7 +137,7 @@ def main():
 
     # Project-specific active tasks first (most relevant)
     if project_active:
-        lines.append(f"**Active in this project:**")
+        lines.append("**Active in this project:**")
         for t in project_active:
             sub = _subtask_info(t, tasks)
             init = _initiative_info(t)
@@ -558,7 +558,7 @@ def main():
 
     # Notify dashboard of session start (fire-and-forget)
     try:
-        project_name = Path(cwd).name if cwd else "unknown"
+        Path(cwd).name if cwd else "unknown"
         notify_data = json.dumps({
             "hook_type": "tool",
             "payload": {
