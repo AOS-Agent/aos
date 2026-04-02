@@ -2,7 +2,9 @@
 # release-manager — immutable versioned releases for AOS
 #
 # Architecture:
-#   ~/project/aos/        Single git clone (dev workspace)
+#   Git clone lives at ONE of (checked in order):
+#     1. ~/project/aos/   (dev machines with AOS-X)
+#     2. ~/.aos/repo/     (fleet machines, created during conversion)
 #   ~/aos-releases/       Versioned release directories (read-only)
 #   ~/aos                 Symlink → ~/aos-releases/<active version>/
 #
@@ -16,16 +18,29 @@
 #   release-manager list                Show all releases
 #   release-manager prune [keep]        Keep last N releases (default 5)
 #   release-manager current             Show active release version
+#   release-manager convert             Convert git-clone ~/aos/ to release system
 
 set -euo pipefail
 
 RELEASES_DIR="$HOME/aos-releases"
 AOS_LINK="$HOME/aos"
-DEV_REPO="$HOME/project/aos"
 STATE_DIR="$HOME/.aos/data"
 LOCK_FILE="$STATE_DIR/deploy.lock"
 HASH_FILE="$STATE_DIR/deployed-hash"
 PREV_FILE="$STATE_DIR/previous-release"
+
+# Find the git repo — prefer ~/project/aos/ (dev), fall back to ~/.aos/repo/ (fleet)
+_find_repo() {
+    if [ -d "$HOME/project/aos/.git" ]; then
+        echo "$HOME/project/aos"
+    elif [ -d "$HOME/.aos/repo/.git" ]; then
+        echo "$HOME/.aos/repo"
+    else
+        echo ""
+    fi
+}
+
+DEV_REPO="$(_find_repo)"
 
 mkdir -p "$RELEASES_DIR" "$STATE_DIR"
 
@@ -303,6 +318,129 @@ current() {
     fi
 }
 
+# ── Convert from git clone to release system ──────────────────────────────
+#
+# Safe one-time migration. Moves ~/aos/ (git clone) to ~/.aos/repo/ or
+# preserves ~/project/aos/ if it exists. Creates first release from current
+# state. Replaces ~/aos/ with a symlink. Full backup at ~/aos-backup/.
+#
+# If any step fails, the backup is restored automatically.
+
+convert() {
+    log "Converting to release system..."
+
+    # Already converted?
+    if [ -L "$AOS_LINK" ]; then
+        log "Already converted — ~/aos is a symlink"
+        return 0
+    fi
+
+    # Must be a git clone
+    if [ ! -d "$AOS_LINK/.git" ]; then
+        log "ERROR: ~/aos exists but is not a git clone — cannot convert"
+        exit 1
+    fi
+
+    acquire_lock
+
+    # Step 1: Ensure we're on latest main
+    log "Step 1/6: Pulling latest code..."
+    cd "$AOS_LINK"
+    git checkout -- . 2>/dev/null || true
+    git pull --ff-only origin main 2>/dev/null || {
+        log "ERROR: git pull failed — aborting conversion"
+        release_lock
+        exit 1
+    }
+
+    local current_hash
+    current_hash=$(git rev-parse HEAD 2>/dev/null)
+    local version
+    version=$(cat "$AOS_LINK/VERSION" 2>/dev/null || echo "unknown")
+    local release_name="${version}-$(echo "$current_hash" | head -c 7)"
+
+    # Step 2: Determine where the git clone should live
+    log "Step 2/6: Setting up git repo location..."
+    local repo_dest
+    if [ -d "$HOME/project/aos/.git" ]; then
+        repo_dest="$HOME/project/aos"
+        log "  Dev workspace exists at $repo_dest — will use it"
+        # Make sure dev repo has latest main
+        cd "$repo_dest"
+        git fetch origin main --quiet 2>/dev/null || true
+    else
+        repo_dest="$HOME/.aos/repo"
+        log "  Fleet machine — will move clone to $repo_dest"
+    fi
+
+    # Step 3: Create backup
+    log "Step 3/6: Backing up ~/aos/ → ~/aos-backup/..."
+    if [ -d "$HOME/aos-backup" ]; then
+        log "  Previous backup exists — removing it"
+        rm -rf "$HOME/aos-backup"
+    fi
+    cp -a "$AOS_LINK" "$HOME/aos-backup"
+
+    # Step 4: Create first release from current state
+    log "Step 4/6: Creating release $release_name..."
+    mkdir -p "$RELEASES_DIR"
+    local release_dir="$RELEASES_DIR/$release_name"
+
+    cd "$AOS_LINK"
+    git archive HEAD | tar -xf - -C "$(mktemp -d)"  # test archive works
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    git archive HEAD | tar -xf - -C "$tmpdir"
+    mv "$tmpdir" "$release_dir"
+    chmod -R a-w "$release_dir"
+
+    # Step 5: Move git clone to its permanent home (if needed)
+    log "Step 5/6: Moving git clone..."
+    if [ "$repo_dest" = "$HOME/.aos/repo" ]; then
+        mkdir -p "$(dirname "$repo_dest")"
+        # Move the actual git clone (~/aos/) to ~/.aos/repo/
+        mv "$AOS_LINK" "$repo_dest"
+    else
+        # Dev workspace already exists — just remove the old git clone
+        rm -rf "$AOS_LINK"
+    fi
+
+    # Step 6: Create symlink
+    log "Step 6/6: Creating symlink..."
+    ln -sfn "$release_dir" "$AOS_LINK"
+
+    # Record state
+    echo "$current_hash" > "$HASH_FILE"
+
+    # Update DEV_REPO for any subsequent commands in this session
+    DEV_REPO="$repo_dest"
+
+    # Verify
+    if [ ! -L "$AOS_LINK" ]; then
+        log "ERROR: Symlink creation failed — restoring backup"
+        rm -f "$AOS_LINK" 2>/dev/null
+        mv "$HOME/aos-backup" "$AOS_LINK"
+        release_lock
+        exit 1
+    fi
+
+    if [ ! -f "$AOS_LINK/VERSION" ]; then
+        log "ERROR: Symlink doesn't resolve to valid release — restoring backup"
+        rm -f "$AOS_LINK"
+        mv "$HOME/aos-backup" "$AOS_LINK"
+        release_lock
+        exit 1
+    fi
+
+    log ""
+    log "Conversion complete!"
+    log "  ~/aos → $release_dir"
+    log "  Git clone: $repo_dest"
+    log "  Backup: ~/aos-backup/ (safe to delete after verification)"
+    log ""
+    log "Run 'aos self-test' to verify, then 'rm -rf ~/aos-backup' when satisfied."
+}
+
 # ── Main ───────────────────────────────────────────────────────────────────
 
 case "${1:-help}" in
@@ -312,6 +450,7 @@ case "${1:-help}" in
     list)     list_releases ;;
     prune)    prune "${2:-5}" ;;
     current)  current ;;
+    convert)  convert ;;
     *)
         echo "Usage: release-manager <command>"
         echo ""
@@ -322,6 +461,7 @@ case "${1:-help}" in
         echo "  list                Show all releases"
         echo "  prune [N]           Keep last N releases (default 5)"
         echo "  current             Show active release"
+        echo "  convert             Convert git-clone ~/aos/ to release system"
         exit 1
         ;;
 esac

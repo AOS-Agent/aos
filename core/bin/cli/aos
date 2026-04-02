@@ -61,6 +61,10 @@ case "${1:-help}" in
         bash "$AOS_DIR/core/bin/internal/release-manager" list
         ;;
 
+    convert-to-releases)
+        bash "$AOS_DIR/core/bin/internal/release-manager" convert
+        ;;
+
     reconcile)
         # Run invariant checks — fixes drift from wrong installs, brew updates, etc.
         "$AOS_DIR/core/bin/internal/aos-python" "$AOS_DIR/core/infra/reconcile/runner.py" "${2:-run}"

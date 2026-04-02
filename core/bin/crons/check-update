@@ -199,6 +199,22 @@ deploy() {
 
     log "Phase 2: deploying $old_version → $new_version"
 
+    # Auto-convert to release system if still a git clone
+    if [ -d "$AOS_DIR/.git" ] && [ -f "$AOS_DIR/core/bin/internal/release-manager" ]; then
+        log "Detected git clone at ~/aos — converting to release system..."
+        bash "$AOS_DIR/core/bin/internal/release-manager" convert
+        convert_status=$?
+        if [[ $convert_status -eq 0 ]]; then
+            log "Conversion successful. Continuing deploy from new release..."
+            # After conversion, AOS_DIR is now a symlink — re-enter it
+            cd "$AOS_DIR" || exit 1
+            notify "🔄 Converted to release system. ~/aos is now read-only. Backup at ~/aos-backup/"
+        else
+            log "WARN: Release conversion failed — continuing with git clone"
+            notify "⚠️ Release conversion failed on this machine. Still on git clone. Check logs."
+        fi
+    fi
+
     # Always run reconcile
     log "Running reconcile..."
     "$AOS_DIR/core/bin/internal/aos-python" "$AOS_DIR/core/infra/reconcile/runner.py" run \
