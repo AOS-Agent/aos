@@ -2,7 +2,7 @@
 Invariant: System agents, skills, and rules are symlinked from the framework.
 
 Agents: ~/.claude/agents/chief.md → ~/aos/core/agents/chief.md
-Skills: ~/.claude/skills/recall/  → ~/aos/.claude/skills/recall/
+Skills: ~/.claude/skills/recall/  → ~/aos/core/skills/recall/
 Rules:  ~/.claude/rules/work-awareness.md → ~/aos/.claude/rules/work-awareness.md
 
 All framework items are auto-discovered (no hardcoded lists).
@@ -80,10 +80,10 @@ class AgentSymlinkCheck(ReconcileCheck):
 
 class SkillSymlinkCheck(ReconcileCheck):
     name = "skill_symlinks"
-    description = "Framework skills symlinked to ~/aos/.claude/skills/"
+    description = "Framework skills symlinked to ~/aos/core/skills/"
 
     SKILLS_DIR = Path.home() / ".claude" / "skills"
-    SOURCE_DIR = Path.home() / "aos" / ".claude" / "skills"
+    SOURCE_DIR = Path.home() / "aos" / "core" / "skills"
 
     def _framework_skills(self):
         """Auto-discover skill directories from framework source."""

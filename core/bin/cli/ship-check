@@ -121,7 +121,7 @@ echo "─────────"
 
 # Every skill directory must have a SKILL.md
 skill_orphans=0
-for dir in "$DEV"/.claude/skills/*/; do
+for dir in "$DEV"/core/skills/*/; do
     [[ -d "$dir" ]] || continue
     name=$(basename "$dir")
     if [[ ! -f "$dir/SKILL.md" ]]; then
@@ -130,7 +130,7 @@ for dir in "$DEV"/.claude/skills/*/; do
     fi
 done
 if [[ $skill_orphans -eq 0 ]]; then
-    skill_count=$(find "$DEV/.claude/skills" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
+    skill_count=$(find "$DEV/core/skills" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
     pass "All $skill_count skills have SKILL.md"
 fi
 
@@ -215,7 +215,7 @@ fi
 # Skills that define allowed-tools should only list valid tool names
 valid_tools="Bash|Read|Write|Edit|Glob|Grep|Agent|WebSearch|WebFetch"
 skill_tool_issues=0
-for skill_md in "$DEV"/.claude/skills/*/SKILL.md; do
+for skill_md in "$DEV"/core/skills/*/SKILL.md; do
     [[ -f "$skill_md" ]] || continue
     skill_name=$(basename "$(dirname "$skill_md")")
     # Extract allowed-tools line from frontmatter
@@ -289,9 +289,9 @@ fi
 
 # Skills in scorecard should use auto-discovery
 if grep -q 'default_skills=' "$DEV/install.sh" 2>/dev/null; then
-    fail "install.sh has hardcoded skills list — should auto-discover from .claude/skills/"
+    fail "install.sh has hardcoded skills list — should auto-discover from core/skills/"
 else
-    skill_count=$(find "$DEV/.claude/skills" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
+    skill_count=$(find "$DEV/core/skills" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
     pass "Skill checks use auto-discovery ($skill_count skills)"
 fi
 
@@ -543,10 +543,10 @@ if [[ "${1:-}" != "--all" ]]; then
     fi
 
     # Symlink targets — agents, skills, rules restructuring
-    if echo "$diff_files" | grep -qE '^core/agents/.*\.md$|^\.claude/skills/.*/SKILL\.md$|^\.claude/rules/'; then
+    if echo "$diff_files" | grep -qE '^core/agents/.*\.md$|^core/skills/.*/SKILL\.md$|^\.claude/rules/'; then
         # Only flag if files were DELETED or RENAMED (additions are fine)
         deleted_or_renamed=$(git diff origin/main --name-only --diff-filter=DR 2>/dev/null \
-            | grep -cE '^core/agents/|^\.claude/skills/|^\.claude/rules/' || true)
+            | grep -cE '^core/agents/|^core/skills/|^\.claude/rules/' || true)
         deleted_or_renamed=${deleted_or_renamed:-0}
         if [[ "$deleted_or_renamed" -gt 0 ]]; then
             instance_impact=1

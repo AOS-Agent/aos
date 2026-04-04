@@ -5,7 +5,7 @@ The framework IS the manifest:
   - core/services/*/pyproject.toml  → declares expected service venvs
   - config/launchagents/com.aos.*   → declares expected LaunchAgent plists
   - config/preserved-services.yaml  → instance services used by framework code
-  - .claude/skills/*/SKILL.md       → declares expected skill symlinks
+  - core/skills/*/SKILL.md          → declares expected skill symlinks
 
 Anything in instance space that doesn't trace back to the framework is
 potentially orphaned. This check REPORTS orphans — it never deletes.
