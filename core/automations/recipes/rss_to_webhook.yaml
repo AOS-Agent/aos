@@ -1,0 +1,88 @@
+id: rss_to_webhook
+name: RSS Feed Monitor
+description: Monitors an RSS feed and sends new items to a webhook (Telegram, Slack, etc.)
+category: monitoring
+tags: [rss, feed, monitor, notifications]
+tested_n8n_version: "2.x"
+required_credentials: []
+
+variables:
+  - name: feed_url
+    description: RSS feed URL to monitor
+    type: url
+    required: true
+    examples: ["https://blog.example.com/rss", "https://news.ycombinator.com/rss"]
+  - name: webhook_url
+    description: Where to send new items (Telegram bot URL, Slack webhook, etc.)
+    type: url
+    required: true
+  - name: poll_interval_minutes
+    description: How often to check for new items (in minutes)
+    type: number
+    default: 30
+  - name: workflow_name
+    description: Human-readable name
+    type: string
+    default: "RSS Monitor"
+
+template:
+  name: "{{workflow_name}}"
+  nodes:
+    - id: "trigger-1"
+      name: "Poll Schedule"
+      type: "n8n-nodes-base.scheduleTrigger"
+      typeVersion: 1.2
+      position: [250, 300]
+      parameters:
+        rule:
+          interval:
+            - field: "minutes"
+              minutesInterval: "{{poll_interval_minutes}}"
+    - id: "rss-1"
+      name: "Read RSS"
+      type: "n8n-nodes-base.rssFeedRead"
+      typeVersion: 1.1
+      position: [450, 300]
+      parameters:
+        url: "{{feed_url}}"
+        options: {}
+    - id: "limit-1"
+      name: "Limit Items"
+      type: "n8n-nodes-base.limit"
+      typeVersion: 1
+      position: [650, 300]
+      parameters:
+        maxItems: 5
+    - id: "http-1"
+      name: "Notify"
+      type: "n8n-nodes-base.httpRequest"
+      typeVersion: 4.2
+      position: [850, 300]
+      parameters:
+        method: "POST"
+        url: "{{webhook_url}}"
+        sendBody: true
+        contentType: "json"
+        bodyParameters:
+          parameters:
+            - name: "text"
+              value: "={{ $json.title + '\\n' + ($json.link || '') }}"
+        options: {}
+  connections:
+    Poll Schedule:
+      main:
+        - - node: "Read RSS"
+            type: "main"
+            index: 0
+    Read RSS:
+      main:
+        - - node: "Limit Items"
+            type: "main"
+            index: 0
+    Limit Items:
+      main:
+        - - node: "Notify"
+            type: "main"
+            index: 0
+  settings:
+    executionOrder: "v1"
