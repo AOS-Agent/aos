@@ -1,0 +1,91 @@
+id: form_to_sheets
+name: Form Submission to Google Sheets
+description: Receives form data via webhook and appends it as a row in Google Sheets
+category: data
+tags: [form, webhook, google-sheets, leads, data-collection]
+tested_n8n_version: "2.x"
+required_credentials:
+  - google_workspace
+
+variables:
+  - name: webhook_path
+    description: Webhook path for the form (e.g., 'contact-form')
+    type: string
+    required: true
+    examples: ["contact-form", "lead-capture", "signup-form"]
+  - name: spreadsheet_url
+    description: Google Sheets URL
+    type: url
+    required: true
+  - name: sheet_name
+    description: Sheet tab name
+    type: string
+    default: "Sheet1"
+  - name: workflow_name
+    description: Human-readable name
+    type: string
+    default: "Form to Sheets"
+
+template:
+  name: "{{workflow_name}}"
+  nodes:
+    - id: "webhook-1"
+      name: "Form Webhook"
+      type: "n8n-nodes-base.webhook"
+      typeVersion: 2
+      position: [250, 300]
+      webhookId: "{{webhook_path}}"
+      parameters:
+        path: "{{webhook_path}}"
+        httpMethod: "POST"
+        responseMode: "onReceived"
+        options: {}
+    - id: "set-1"
+      name: "Add Timestamp"
+      type: "n8n-nodes-base.set"
+      typeVersion: 3.4
+      position: [450, 300]
+      parameters:
+        assignments:
+          assignments:
+            - id: "ts-1"
+              name: "submitted_at"
+              value: "={{ $now.toISO() }}"
+              type: "string"
+        options:
+          includeOtherFields: true
+    - id: "sheets-1"
+      name: "Append to Sheet"
+      type: "n8n-nodes-base.googleSheets"
+      typeVersion: 4.5
+      position: [650, 300]
+      parameters:
+        operation: "append"
+        documentId:
+          __rl: true
+          mode: "url"
+          value: "{{spreadsheet_url}}"
+        sheetName:
+          __rl: true
+          mode: "name"
+          value: "{{sheet_name}}"
+        columns:
+          mappingMode: "autoMapInputData"
+        options: {}
+      credentials:
+        googleSheetsOAuth2Api:
+          id: null
+          name: "Google Sheets"
+  connections:
+    Form Webhook:
+      main:
+        - - node: "Add Timestamp"
+            type: "main"
+            index: 0
+    Add Timestamp:
+      main:
+        - - node: "Append to Sheet"
+            type: "main"
+            index: 0
+  settings:
+    executionOrder: "v1"

@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.aos.n8n</string>
+    <key>WorkingDirectory</key>
+    <string>__HOME__/.aos/services/n8n</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/homebrew/bin/n8n</string>
+        <string>start</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+    <key>StandardOutPath</key>
+    <string>__HOME__/.aos/logs/n8n.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/.aos/logs/n8n.err.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:__HOME__/.local/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>N8N_PORT</key>
+        <string>5678</string>
+        <key>N8N_HOST</key>
+        <string>127.0.0.1</string>
+        <key>N8N_PROTOCOL</key>
+        <string>http</string>
+        <key>N8N_USER_FOLDER</key>
+        <string>__HOME__/.aos/services/n8n</string>
+        <key>N8N_DIAGNOSTICS_ENABLED</key>
+        <string>false</string>
+        <key>N8N_PERSONALIZATION_ENABLED</key>
+        <string>false</string>
+        <key>N8N_TEMPLATES_ENABLED</key>
+        <string>false</string>
+        <key>N8N_VERSION_NOTIFICATIONS_ENABLED</key>
+        <string>false</string>
+        <key>N8N_HIRING_BANNER_ENABLED</key>
+        <string>false</string>
+        <key>N8N_SECURE_COOKIE</key>
+        <string>false</string>
+        <key>N8N_RUNNERS_ENABLED</key>
+        <string>false</string>
+        <key>WEBHOOK_URL</key>
+        <string>http://localhost:5678/</string>
+        <key>N8N_EDITOR_BASE_URL</key>
+        <string>http://localhost:5678</string>
+        <key>EXECUTIONS_DATA_SAVE_ON_ERROR</key>
+        <string>all</string>
+        <key>EXECUTIONS_DATA_SAVE_ON_SUCCESS</key>
+        <string>all</string>
+        <key>GENERIC_TIMEZONE</key>
+        <string>Asia/Riyadh</string>
+    </dict>
+</dict>
+</plist>

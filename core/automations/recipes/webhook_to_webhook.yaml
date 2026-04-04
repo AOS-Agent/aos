@@ -1,0 +1,74 @@
+id: webhook_relay
+name: Webhook Relay
+description: Receives a webhook, transforms the data, and forwards it to another endpoint
+category: integration
+tags: [webhook, relay, transform, api]
+tested_n8n_version: "2.x"
+required_credentials: []
+
+variables:
+  - name: webhook_path
+    description: Path for the incoming webhook (e.g., 'my-hook')
+    type: string
+    required: true
+    examples: ["lead-capture", "form-submit", "stripe-webhook"]
+  - name: destination_url
+    description: URL to forward the transformed data to
+    type: url
+    required: true
+  - name: workflow_name
+    description: Human-readable name
+    type: string
+    default: "Webhook Relay"
+
+template:
+  name: "{{workflow_name}}"
+  nodes:
+    - id: "webhook-1"
+      name: "Webhook"
+      type: "n8n-nodes-base.webhook"
+      typeVersion: 2
+      position: [250, 300]
+      webhookId: "{{webhook_path}}"
+      parameters:
+        path: "{{webhook_path}}"
+        httpMethod: "POST"
+        responseMode: "lastNode"
+        options: {}
+    - id: "set-1"
+      name: "Transform"
+      type: "n8n-nodes-base.set"
+      typeVersion: 3.4
+      position: [450, 300]
+      parameters:
+        mode: "raw"
+        jsonOutput: "={{ JSON.stringify({ received: true, timestamp: new Date().toISOString(), data: $json.body }) }}"
+        options: {}
+    - id: "http-1"
+      name: "Forward"
+      type: "n8n-nodes-base.httpRequest"
+      typeVersion: 4.2
+      position: [650, 300]
+      parameters:
+        method: "POST"
+        url: "{{destination_url}}"
+        sendBody: true
+        contentType: "json"
+        bodyParameters:
+          parameters:
+            - name: "payload"
+              value: "={{ JSON.stringify($json) }}"
+        options: {}
+  connections:
+    Webhook:
+      main:
+        - - node: "Transform"
+            type: "main"
+            index: 0
+    Transform:
+      main:
+        - - node: "Forward"
+            type: "main"
+            index: 0
+  settings:
+    executionOrder: "v1"

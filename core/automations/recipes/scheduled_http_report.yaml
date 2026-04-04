@@ -1,0 +1,79 @@
+id: scheduled_http_report
+name: Scheduled HTTP Report
+description: Fetches data from an API on a schedule and sends the result via HTTP (Telegram, webhook, etc.)
+category: monitoring
+tags: [schedule, api, report, http]
+tested_n8n_version: "2.x"
+required_credentials: []
+
+variables:
+  - name: schedule_cron
+    description: When to run (cron expression)
+    type: cron
+    default: "0 8 * * *"
+    required: true
+    examples: ["0 8 * * *", "0 9 * * 1", "0 */6 * * *"]
+  - name: source_url
+    description: URL to fetch data from
+    type: url
+    required: true
+    examples: ["https://api.example.com/orders", "https://api.example.com/stats"]
+  - name: webhook_url
+    description: URL to send the report to (Telegram bot, Slack webhook, etc.)
+    type: url
+    required: true
+  - name: workflow_name
+    description: Human-readable name for this automation
+    type: string
+    default: "Scheduled Report"
+
+template:
+  name: "{{workflow_name}}"
+  nodes:
+    - id: "trigger-1"
+      name: "Schedule"
+      type: "n8n-nodes-base.scheduleTrigger"
+      typeVersion: 1.2
+      position: [250, 300]
+      parameters:
+        rule:
+          interval:
+            - field: "cronExpression"
+              expression: "{{schedule_cron}}"
+    - id: "http-1"
+      name: "Fetch Data"
+      type: "n8n-nodes-base.httpRequest"
+      typeVersion: 4.2
+      position: [450, 300]
+      parameters:
+        method: "GET"
+        url: "{{source_url}}"
+        options: {}
+    - id: "http-2"
+      name: "Send Report"
+      type: "n8n-nodes-base.httpRequest"
+      typeVersion: 4.2
+      position: [650, 300]
+      parameters:
+        method: "POST"
+        url: "{{webhook_url}}"
+        sendBody: true
+        contentType: "json"
+        bodyParameters:
+          parameters:
+            - name: "text"
+              value: "={{ JSON.stringify($json, null, 2).substring(0, 4000) }}"
+        options: {}
+  connections:
+    Schedule:
+      main:
+        - - node: "Fetch Data"
+            type: "main"
+            index: 0
+    Fetch Data:
+      main:
+        - - node: "Send Report"
+            type: "main"
+            index: 0
+  settings:
+    executionOrder: "v1"
