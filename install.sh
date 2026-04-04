@@ -2157,7 +2157,7 @@ assert s.get('hooks', {}).get('$hook_name')
     _step "Skills"
     # Auto-discover: every skill directory in the framework should be symlinked globally
     local skill_count=0 skill_missing=0 missing_names=""
-    for skill_dir in "$AOS_DIR"/.claude/skills/*/; do
+    for skill_dir in "$AOS_DIR"/core/skills/*/; do
         [[ -d "$skill_dir" ]] || continue
         [[ -f "$skill_dir/SKILL.md" ]] || continue
         local skill_name

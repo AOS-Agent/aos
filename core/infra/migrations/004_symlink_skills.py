@@ -1,7 +1,7 @@
 """
 Migration 004: Symlink AOS skills to ~/.claude/skills/.
 
-AOS skills live in ~/aos/.claude/skills/ (shipped with the system).
+AOS skills live in ~/aos/core/skills/ (shipped with the system).
 They need to be accessible at ~/.claude/skills/ for Claude Code to find them.
 
 For ongoing skill management, use `aos sync-skills` which handles tiered
@@ -20,7 +20,7 @@ import os
 from pathlib import Path
 
 AOS_DIR = Path.home() / "aos"
-SOURCE_DIR = AOS_DIR / ".claude" / "skills"
+SOURCE_DIR = AOS_DIR / "core" / "skills"
 TARGET_DIR = Path.home() / ".claude" / "skills"
 
 # Skills that are deprecated and should NOT be checked/linked
