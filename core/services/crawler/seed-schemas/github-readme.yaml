@@ -1,0 +1,14 @@
+name: github-readme
+domain: github.com
+description: Extract README content and repo metadata from GitHub
+strategy: css
+selector:
+  name: GitHub Repo
+  baseSelector: "[data-testid='repo-root']"
+  fields:
+    - name: readme
+      selector: "article.markdown-body"
+      type: text
+    - name: description
+      selector: "p.f4"
+      type: text

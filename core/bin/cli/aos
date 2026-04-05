@@ -228,6 +228,13 @@ aos_servers = {
         "args": [str(aos_dir / "core/services/memory/main.py")],
         "cwd": str(aos_dir / "core/services/memory"),
         "env": {}
+    },
+    "crawler": {
+        "type": "stdio",
+        "command": str(home / ".aos/services/crawler/.venv/bin/python"),
+        "args": [str(aos_dir / "core/services/crawler/main.py")],
+        "cwd": str(aos_dir / "core/services/crawler"),
+        "env": {}
     }
 }
 

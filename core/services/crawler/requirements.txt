@@ -1,0 +1,4 @@
+crawl4ai>=0.8.6
+mcp[cli]>=1.0
+pyyaml>=6.0
+setproctitle>=1.3
