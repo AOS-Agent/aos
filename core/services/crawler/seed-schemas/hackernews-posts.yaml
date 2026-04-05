@@ -1,0 +1,21 @@
+name: hackernews-posts
+domain: news.ycombinator.com
+description: Extract front page posts from Hacker News
+strategy: css
+selector:
+  name: HN Posts
+  baseSelector: ".athing"
+  fields:
+    - name: rank
+      selector: ".rank"
+      type: text
+    - name: title
+      selector: ".titleline a"
+      type: text
+    - name: url
+      selector: ".titleline a"
+      type: attribute
+      attribute: href
+    - name: site
+      selector: ".sitestr"
+      type: text

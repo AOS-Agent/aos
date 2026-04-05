@@ -1,0 +1,11 @@
+name: wikipedia-article
+domain: en.wikipedia.org
+description: Extract article sections from Wikipedia pages
+strategy: css
+selector:
+  name: Wikipedia Sections
+  baseSelector: ".mw-heading + *"
+  fields:
+    - name: heading
+      selector: ":scope"
+      type: text

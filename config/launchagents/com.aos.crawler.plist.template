@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.aos.crawler</string>
+    <key>WorkingDirectory</key>
+    <string>__HOME__/aos/core/services/crawler</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>__HOME__/.aos/services/crawler/.venv/bin/python</string>
+        <string>__HOME__/aos/core/services/crawler/main.py</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <false/>
+    <key>ThrottleInterval</key>
+    <integer>5</integer>
+    <key>StandardOutPath</key>
+    <string>__HOME__/.aos/logs/crawler.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/.aos/logs/crawler.err.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:__HOME__/.bun/bin:__HOME__/.local/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+</dict>
+</plist>
