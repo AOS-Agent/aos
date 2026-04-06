@@ -1,0 +1,64 @@
+# AOS Intelligence Feed — Source Watchlist
+# Copy to ~/.aos/config/feeds.yaml and customize.
+# Sources are synced to the database on migration.
+#
+# route: RSSHub path (prepended with http://localhost:1200)
+# route_url: direct RSS URL (for sources with native RSS)
+# keywords: items must match at least one keyword (empty = accept all)
+# priority: high (Telegram notify), normal, low
+
+sources:
+  # ── Twitter/X (requires TWITTER_AUTH_TOKEN in Keychain) ──
+  # - name: "Andrej Karpathy"
+  #   platform: twitter
+  #   route: "/twitter/user/karpathy"
+  #   priority: high
+  #   keywords: [ai, llm, neural, knowledge, training]
+
+  # - name: "Simon Willison"
+  #   platform: twitter
+  #   route: "/twitter/user/simonw"
+  #   priority: normal
+  #   keywords: [llm, python, sqlite, ai, claude]
+
+  # ── YouTube ──
+  # - name: "3Blue1Brown"
+  #   platform: youtube
+  #   route: "/youtube/@3blue1brown"
+  #   priority: high
+  #   keywords: []
+
+  # ── GitHub (releases) ──
+  # - name: "crawl4ai releases"
+  #   platform: github
+  #   route: "/github/release/unclecode/crawl4ai"
+  #   priority: normal
+  #   keywords: []
+
+  # ── Hacker News ──
+  - name: "HN Best"
+    platform: hackernews
+    route: "/hackernews/best"
+    priority: low
+    keywords: [llm, ai, claude, apple, python, rust, mac]
+
+  # ── Blogs (direct RSS, no RSSHub needed) ──
+  # - name: "Simon Willison's blog"
+  #   platform: blog
+  #   route_url: "https://simonwillison.net/atom/everything/"
+  #   priority: normal
+  #   keywords: []
+
+  # ── arXiv ──
+  # - name: "arXiv cs.CL"
+  #   platform: arxiv
+  #   route: "/arxiv/search_query=cat:cs.CL&sortBy=submittedDate&sortOrder=descending"
+  #   priority: normal
+  #   keywords: [transformer, llm, rag, agent, retrieval]
+
+triage:
+  mode: keywords          # "keywords" (now) or "llm" (future)
+  default_action: save    # what to do when source has no keywords
+
+schedule:
+  interval_minutes: 30
