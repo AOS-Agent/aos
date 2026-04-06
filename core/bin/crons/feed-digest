@@ -1,0 +1,102 @@
+#!/bin/bash
+# feed-digest — Send a Telegram notification of unread high-priority briefs.
+# Runs after feed-ingest (or on its own schedule).
+set -e
+
+AGENT_SECRET="$HOME/aos/core/bin/cli/agent-secret"
+DB_PATH="$HOME/.aos/data/qareen.db"
+
+# ── Preflight ────────────────────────────────────────────
+
+if [ ! -f "$DB_PATH" ]; then
+    echo "[feed-digest] Database not found: $DB_PATH"
+    exit 1
+fi
+
+if [ ! -x "$AGENT_SECRET" ]; then
+    echo "[feed-digest] agent-secret not found or not executable"
+    exit 1
+fi
+
+# ── Fetch credentials ────────────────────────────────────
+
+BOT_TOKEN=$("$AGENT_SECRET" get TELEGRAM_BOT_TOKEN 2>/dev/null)
+CHAT_ID=$("$AGENT_SECRET" get TELEGRAM_CHAT_ID 2>/dev/null)
+
+if [ -z "$BOT_TOKEN" ] || [ -z "$CHAT_ID" ]; then
+    echo "[feed-digest] Telegram credentials not configured in Keychain"
+    exit 0
+fi
+
+# ── Query unread high-relevance briefs ────────────────────
+
+BRIEFS=$(sqlite3 "$DB_PATH" <<'SQL'
+SELECT
+    b.title,
+    b.platform,
+    b.relevance_score,
+    b.url,
+    s.name AS source_name
+FROM intelligence_briefs b
+JOIN intelligence_sources s ON b.source_id = s.id
+WHERE b.status = 'unread'
+  AND b.surfaced = 0
+  AND b.relevance_score >= 0.3
+ORDER BY b.relevance_score DESC, b.created_at DESC
+LIMIT 10;
+SQL
+)
+
+if [ -z "$BRIEFS" ]; then
+    echo "[feed-digest] No unread high-priority briefs to send"
+    exit 0
+fi
+
+# ── Count total unread ────────────────────────────────────
+
+TOTAL_UNREAD=$(sqlite3 "$DB_PATH" "SELECT COUNT(*) FROM intelligence_briefs WHERE status = 'unread' AND surfaced = 0;")
+
+# ── Build the message ────────────────────────────────────
+
+MSG="Intelligence Digest"
+MSG="$MSG"$'\n'"${TOTAL_UNREAD} unread briefs"
+MSG="$MSG"$'\n'
+
+# Parse each brief (pipe-separated from sqlite3 default)
+while IFS='|' read -r title platform score url source_name; do
+    [ -z "$title" ] && continue
+    # Truncate title to 80 chars
+    short_title="${title:0:80}"
+    # Format score as percentage
+    pct=$(echo "$score" | awk '{printf "%.0f", $1 * 100}')
+    MSG="$MSG"$'\n'"${pct}% ${short_title}"
+    if [ -n "$source_name" ]; then
+        MSG="$MSG"$'\n'"   via ${source_name}"
+    fi
+done <<< "$BRIEFS"
+
+# ── Send via Telegram Bot API ────────────────────────────
+
+HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+    -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+    -d "chat_id=${CHAT_ID}" \
+    -d "text=${MSG}" \
+    -d "disable_web_page_preview=true" \
+)
+
+if [ "$HTTP_CODE" = "200" ]; then
+    echo "[feed-digest] Telegram digest sent (${TOTAL_UNREAD} unread)"
+
+    # Mark these as surfaced
+    sqlite3 "$DB_PATH" <<'SQL'
+UPDATE intelligence_briefs
+SET surfaced = 1,
+    surfaced_at = datetime('now')
+WHERE status = 'unread'
+  AND surfaced = 0
+  AND relevance_score >= 0.3;
+SQL
+
+else
+    echo "[feed-digest] Telegram send failed (HTTP $HTTP_CODE)"
+fi

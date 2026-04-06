@@ -20,6 +20,9 @@ const Skills = lazy(() => import('@/pages/Skills'));
 const Sessions = lazy(() => import('@/pages/Sessions'));
 const SessionDetail = lazy(() => import('@/pages/SessionDetail'));
 const AgentConfig = lazy(() => import('@/pages/AgentConfig'));
+const IntelligenceFeed = lazy(() => import('@/pages/IntelligenceFeed'));
+const IntelligenceDetail = lazy(() => import('@/pages/IntelligenceDetail'));
+const IntelligenceSources = lazy(() => import('@/pages/IntelligenceSources'));
 
 // ── Review: pages with real UI, kept for evaluation ──
 const Calendar = lazy(() => import('@/pages/Calendar'));
@@ -45,6 +48,11 @@ export default function App() {
         <Route path="/agents/:id" element={<AgentConfig />} />
         <Route path="/skills" element={<Skills />} />
         <Route path="/org" element={<Org />} />
+
+        {/* ── Intelligence feed ── */}
+        <Route path="/intelligence" element={<IntelligenceFeed />} />
+        <Route path="/intelligence/sources" element={<IntelligenceSources />} />
+        <Route path="/intelligence/:id" element={<IntelligenceDetail />} />
 
         {/* ── Sub-routes ── */}
         <Route path="/sessions" element={<Sessions />} />

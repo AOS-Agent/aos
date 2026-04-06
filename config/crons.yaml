@@ -195,6 +195,20 @@ jobs:
     tier: 4
     description: Refreshes signal_store, person_classification, and intelligence_queue nudges
 
+  feed-ingest:
+    command: bash ~/aos/core/bin/crons/feed-ingest
+    every: 30m
+    timeout: 300
+    tier: 4
+    description: Polls internet sources, scores relevance, stores to feed DB
+
+  feed-digest:
+    command: bash ~/aos/core/bin/crons/feed-digest
+    at: "07:00"
+    timeout: 60
+    tier: 4
+    description: Sends morning intelligence digest to Telegram
+
   # ── Planned (scripts not yet built) ─────────────────────────────────────────
   # These entries are placeholders. Scripts will be created when their
   # integration dependencies are ready.

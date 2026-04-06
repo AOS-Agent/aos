@@ -1,0 +1,14 @@
+#!/bin/bash
+# feed-ingest — Poll RSS feeds and store intelligence briefs.
+# Runs every 30 minutes via cron.
+set -e
+
+VENV_PYTHON="$HOME/.aos/services/crawler/.venv/bin/python"
+RUNNER="$HOME/aos/core/engine/feeds/runner.py"
+
+if [ ! -f "$VENV_PYTHON" ]; then
+    echo "[feed-ingest] Crawler venv not found: $VENV_PYTHON"
+    exit 1
+fi
+
+exec "$VENV_PYTHON" "$RUNNER" 2>&1
