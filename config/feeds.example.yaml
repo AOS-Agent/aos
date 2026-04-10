@@ -62,3 +62,42 @@ triage:
 
 schedule:
   interval_minutes: 30
+
+# ───────────────────────────────────────────────────────────
+# Automation hooks — what to do when high-relevance items arrive
+# ───────────────────────────────────────────────────────────
+#
+# The action engine reads this section on each `intelligence.brief_created`
+# event and runs any matching actions. Rules match on relevance_score
+# thresholds. Multiple rules can fire on the same item.
+#
+# All actions are optional. Remove or comment out any you don't want.
+
+actions:
+  high_relevance:
+    threshold: 0.8
+    description: Notable items worth seeing right away
+    notify:
+      telegram: true    # Send a Telegram message via the bridge
+      event: true       # Emit an EventBus event for the UI badge
+    create_task: false
+
+  very_high_relevance:
+    threshold: 0.95
+    description: Research-worthy items — auto-create a task
+    notify:
+      telegram: true
+      event: true
+    create_task: true
+    task_prefix: "Research:"
+    task_priority: 2    # 1=urgent, 2=important, 3=default
+
+  # Fires whenever a compilation proposal lands in the review queue
+  proposal_pending:
+    notify:
+      event: true       # Pipeline view surfaces the badge
+
+  # Fires whenever a capture is auto-compiled to the vault
+  brief_compiled:
+    notify:
+      event: true

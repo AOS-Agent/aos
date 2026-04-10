@@ -23,6 +23,7 @@ const AgentConfig = lazy(() => import('@/pages/AgentConfig'));
 const IntelligenceFeed = lazy(() => import('@/pages/IntelligenceFeed'));
 const IntelligenceDetail = lazy(() => import('@/pages/IntelligenceDetail'));
 const IntelligenceSources = lazy(() => import('@/pages/IntelligenceSources'));
+const Knowledge = lazy(() => import('@/pages/Knowledge'));
 
 // ── Review: pages with real UI, kept for evaluation ──
 const Calendar = lazy(() => import('@/pages/Calendar'));
@@ -49,8 +50,15 @@ export default function App() {
         <Route path="/skills" element={<Skills />} />
         <Route path="/org" element={<Org />} />
 
-        {/* ── Intelligence feed ── */}
-        <Route path="/intelligence" element={<IntelligenceFeed />} />
+        {/* ── Knowledge — unified home for intelligence, library, topics, pipeline ── */}
+        <Route path="/knowledge" element={<Knowledge />} />
+        <Route path="/knowledge/feed" element={<Knowledge />} />
+        <Route path="/knowledge/library" element={<Knowledge />} />
+        <Route path="/knowledge/topics" element={<Knowledge />} />
+        <Route path="/knowledge/pipeline" element={<Knowledge />} />
+
+        {/* ── Legacy intelligence routes — redirect to Knowledge ── */}
+        <Route path="/intelligence" element={<Navigate to="/knowledge/feed" replace />} />
         <Route path="/intelligence/sources" element={<IntelligenceSources />} />
         <Route path="/intelligence/:id" element={<IntelligenceDetail />} />
 

@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+        qareen-dev — Uvicorn development backend for AOS Qareen.
+
+        Runs on port 4097 with hot-reload enabled, watching the dev workspace
+        at /Volumes/AOS-X/project/aos/core. Auto-restarts on crash with a
+        crash-loop throttle so it doesn't respawn endlessly.
+
+        This is the BACKEND the vite dev server (localhost:5173) proxies to
+        when VITE_API_PORT=4097. It's intentionally separate from the runtime
+        qareen service (port 4096) so developer edits to core/qareen/api/*
+        show up immediately without affecting the production-style runtime.
+
+        Installed via: core/bin/internal/install-qareen-dev-plist
+        Uninstalled:   launchctl unload ~/Library/LaunchAgents/com.agent.qareen-dev.plist
+    -->
+    <key>Label</key>
+    <string>com.agent.qareen-dev</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__VENV_PYTHON__</string>
+        <string>-c</string>
+        <string>import uvicorn; uvicorn.run('qareen.main:app', host='0.0.0.0', port=4097, reload=True, reload_dirs=['__DEV_CORE_DIR__'], reload_excludes=['**/__pycache__/**', '**/*.pyc', 'engine/util/**', 'engine/people/**', 'engine/comms/**', 'engine/bus/**', 'services/**', 'bin/**', '**/.git/**', '**/vault/**', '**/logs/**'], log_level='info')</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>__DEV_CORE_DIR__</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>PYTHONUNBUFFERED</key>
+        <string>1</string>
+        <key>HOME</key>
+        <string>__HOME__</string>
+    </dict>
+
+    <!-- Auto-restart on crash, but throttle to prevent respawn storms -->
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+        <key>Crashed</key>
+        <true/>
+    </dict>
+
+    <!-- At least 10 seconds between respawns — stops crash loops -->
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <!-- Start automatically at login -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Log paths -->
+    <key>StandardOutPath</key>
+    <string>__HOME__/.aos/logs/qareen-dev.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/.aos/logs/qareen-dev.err.log</string>
+
+    <!-- Nice level — dev backend is not production-critical -->
+    <key>Nice</key>
+    <integer>5</integer>
+
+    <!-- Process limits — 4GB RSS max (uvicorn can leak in reload mode) -->
+    <key>SoftResourceLimits</key>
+    <dict>
+        <key>NumberOfFiles</key>
+        <integer>4096</integer>
+    </dict>
+</dict>
+</plist>

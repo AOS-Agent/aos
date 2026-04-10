@@ -1,0 +1,28 @@
+#!/bin/bash
+# vault-maintenance — Nightly lint pass over the vault.
+#
+# Runs the maintenance pipeline:
+#   1. Refreshes vault_inventory
+#   2. Detects orphans + stale docs (heuristic)
+#   3. Refreshes topic orientations (Sonnet)
+#   4. Drafts synthesis suggestions (Sonnet)
+#   5. Writes daily report to ~/vault/log/YYYY-MM-DD-maintenance.md
+#
+# Invoked nightly by cron, wrapped through cron-wrap for telemetry.
+set -e
+
+QAREEN_PYTHON="$HOME/.aos/services/qareen/.venv/bin/python"
+AOS_ROOT="$HOME/aos"
+
+if [ ! -x "$QAREEN_PYTHON" ]; then
+    echo "[vault-maintenance] qareen venv python not found: $QAREEN_PYTHON" >&2
+    exit 1
+fi
+
+if [ ! -d "$AOS_ROOT/core/engine/intelligence/lint" ]; then
+    echo "[vault-maintenance] lint package not found at $AOS_ROOT" >&2
+    exit 1
+fi
+
+cd "$AOS_ROOT/core"
+exec "$QAREEN_PYTHON" -m engine.intelligence.lint.runner "$@"

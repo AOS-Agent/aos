@@ -1,0 +1,149 @@
+#!/usr/bin/env bash
+# install-qareen-dev-plist — Render + install the dev backend LaunchAgent.
+#
+# Usage:
+#   install-qareen-dev-plist              # install + load
+#   install-qareen-dev-plist --uninstall  # unload + remove
+#   install-qareen-dev-plist --status     # show load state + recent logs
+#
+# Idempotent — safe to run multiple times.
+set -e
+
+LABEL="com.agent.qareen-dev"
+PLIST_DIR="$HOME/Library/LaunchAgents"
+PLIST_PATH="$PLIST_DIR/$LABEL.plist"
+TEMPLATE_RUNTIME="$HOME/aos/config/templates/com.agent.qareen-dev.plist.template"
+TEMPLATE_DEV="$HOME/project/aos/config/templates/com.agent.qareen-dev.plist.template"
+
+# Prefer runtime template, fall back to dev workspace (for pre-ship testing)
+TEMPLATE=""
+if [ -f "$TEMPLATE_RUNTIME" ]; then
+    TEMPLATE="$TEMPLATE_RUNTIME"
+elif [ -f "$TEMPLATE_DEV" ]; then
+    TEMPLATE="$TEMPLATE_DEV"
+else
+    echo "ERROR: template not found at $TEMPLATE_RUNTIME or $TEMPLATE_DEV" >&2
+    exit 1
+fi
+
+# Dev workspace path — the plist will point launchd at this for hot-reload
+DEV_CORE_DIR="/Volumes/AOS-X/project/aos/core"
+if [ ! -d "$DEV_CORE_DIR" ]; then
+    echo "ERROR: dev workspace not found at $DEV_CORE_DIR" >&2
+    exit 1
+fi
+
+# Venv Python for the qareen service
+VENV_PYTHON="$HOME/.aos/services/qareen/.venv/bin/python"
+if [ ! -x "$VENV_PYTHON" ]; then
+    echo "ERROR: qareen venv python not found at $VENV_PYTHON" >&2
+    echo "Run 'aos setup' or provision the qareen service first." >&2
+    exit 1
+fi
+
+
+do_render() {
+    mkdir -p "$PLIST_DIR"
+    mkdir -p "$HOME/.aos/logs"
+    sed \
+        -e "s|__VENV_PYTHON__|$VENV_PYTHON|g" \
+        -e "s|__DEV_CORE_DIR__|$DEV_CORE_DIR|g" \
+        -e "s|__HOME__|$HOME|g" \
+        "$TEMPLATE" > "$PLIST_PATH"
+    echo "Rendered plist: $PLIST_PATH"
+}
+
+
+do_unload_if_loaded() {
+    if launchctl list 2>/dev/null | grep -q "$LABEL"; then
+        echo "Unloading existing $LABEL..."
+        launchctl unload "$PLIST_PATH" 2>/dev/null || true
+        sleep 1
+    fi
+}
+
+
+do_load() {
+    launchctl load "$PLIST_PATH"
+    sleep 2
+    if launchctl list 2>/dev/null | grep -q "$LABEL"; then
+        echo "✓ $LABEL loaded successfully"
+    else
+        echo "✗ $LABEL failed to load — check logs at ~/.aos/logs/qareen-dev.err.log" >&2
+        return 1
+    fi
+}
+
+
+do_install() {
+    # Kill any bare dev uvicorn first (non-launchd) so 4097 is free
+    local existing
+    existing=$(lsof -tiTCP:4097 -sTCP:LISTEN 2>/dev/null || true)
+    if [ -n "$existing" ]; then
+        echo "Found existing listener on 4097 (PID $existing) — killing it..."
+        kill -9 $existing 2>/dev/null || true
+        sleep 1
+    fi
+
+    do_unload_if_loaded
+    do_render
+    do_load
+
+    # Verify the service is actually responding
+    sleep 3
+    local code
+    code=$(curl --max-time 3 -sS -o /dev/null -w "%{http_code}" http://127.0.0.1:4097/api/health 2>/dev/null || echo "000")
+    if [ "$code" = "200" ]; then
+        echo "✓ /api/health responded 200 on :4097"
+    else
+        echo "⚠ /api/health returned $code — may still be starting up. Check:" >&2
+        echo "  tail -30 ~/.aos/logs/qareen-dev.err.log" >&2
+    fi
+
+    echo
+    echo "Dev backend is under launchd. To uninstall:"
+    echo "  $0 --uninstall"
+}
+
+
+do_uninstall() {
+    do_unload_if_loaded
+    if [ -f "$PLIST_PATH" ]; then
+        rm "$PLIST_PATH"
+        echo "Removed $PLIST_PATH"
+    fi
+    echo "✓ $LABEL uninstalled"
+}
+
+
+do_status() {
+    echo "=== LaunchAgent status ==="
+    if [ -f "$PLIST_PATH" ]; then
+        echo "plist: $PLIST_PATH (exists)"
+    else
+        echo "plist: $PLIST_PATH (NOT installed)"
+    fi
+    echo
+    echo "=== launchctl list ==="
+    launchctl list 2>/dev/null | grep "$LABEL" || echo "(not loaded)"
+    echo
+    echo "=== Port 4097 listener ==="
+    lsof -iTCP:4097 -sTCP:LISTEN -P 2>/dev/null || echo "(nothing listening)"
+    echo
+    echo "=== /api/health ==="
+    curl --max-time 3 -sS -w "\nHTTP: %{http_code}\n" http://127.0.0.1:4097/api/health 2>&1 || true
+    echo
+    echo "=== Recent stderr (last 10 lines) ==="
+    tail -10 "$HOME/.aos/logs/qareen-dev.err.log" 2>&1 || echo "(no log)"
+}
+
+
+case "${1:-install}" in
+    install|"") do_install ;;
+    --uninstall|uninstall) do_uninstall ;;
+    --status|status) do_status ;;
+    *)
+        echo "usage: $0 [install | --uninstall | --status]" >&2
+        exit 2
+        ;;
+esac

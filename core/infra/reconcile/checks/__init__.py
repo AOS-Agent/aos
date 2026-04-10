@@ -3,6 +3,7 @@ from .claude_md import GlobalClaudeMdCheck, RootClaudeMdCheck
 from .context_freshness import ContextFreshnessCheck
 from .dead_code import DeadCodeCheck
 from .deployment_health import DeploymentHealthCheck
+from .dev_backend_plist import DevBackendPlistCheck
 from .dev_browser import DevBrowserCheck
 from .disk_smart import DiskSmartCheck
 from .google_workspace import GoogleWorkspaceCheck
@@ -18,6 +19,7 @@ from .sentinel_plist import SentinelPlistDriftCheck
 from .storage_layout import StorageLayoutCheck
 from .symlinks import AgentSymlinkCheck, RuleSymlinkCheck, SkillSymlinkCheck
 from .transcriber import TranscriberServiceCheck
+from .vault_contract import VaultContractCheck
 
 # Add new checks here — they run in this order on every update cycle.
 ALL_CHECKS = [
@@ -84,6 +86,16 @@ ALL_CHECKS = [
     # Storage layout — verify data dirs are on the data drive per policy.
     # Reports drift but never auto-moves (operator awareness required).
     StorageLayoutCheck,
+
+    # Vault inventory — refresh vault_inventory table, report drift.
+    # Never mutates vault files; the bootstrap flow (Part 8) handles
+    # operator-approved upgrades.
+    VaultContractCheck,
+
+    # Dev backend LaunchAgent — verifies qareen-dev is loaded under launchd
+    # so the dev uvicorn on 4097 auto-restarts on crash. Notify-only; never
+    # auto-installs (modifies ~/Library/LaunchAgents/).
+    DevBackendPlistCheck,
 
     # Instance hygiene — diff framework declarations against instance state,
     # clean orphaned service venvs, stale LaunchAgents, broken symlinks,

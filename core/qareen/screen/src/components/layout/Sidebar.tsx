@@ -5,7 +5,7 @@ import {
   Activity, Settings, Mic, MessageSquare,
   Menu, Search, Sun, Moon, X,
   CalendarDays, Users,
-  Network, Sparkles,
+  Network, Sparkles, Radar,
   type LucideIcon,
 } from 'lucide-react';
 import { useUIStore } from '@/store/ui';
@@ -39,6 +39,7 @@ const NAV_GROUPS: NavGroup[] = [
       { label: 'Work', href: '/work', icon: ListTodo },
       { label: 'People', href: '/people', icon: Users },
       { label: 'Timeline', href: '/timeline', icon: CalendarDays },
+      { label: 'Knowledge', href: '/knowledge', icon: Radar },
     ],
   },
   {
