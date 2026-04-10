@@ -196,18 +196,25 @@ jobs:
     description: Refreshes signal_store, person_classification, and intelligence_queue nudges
 
   feed-ingest:
-    command: bash ~/aos/core/bin/crons/feed-ingest
+    command: bash ~/aos/core/bin/internal/cron-wrap feed-ingest bash ~/aos/core/bin/crons/feed-ingest
     every: 30m
     timeout: 300
     tier: 4
     description: Polls internet sources, scores relevance, stores to feed DB
 
   feed-digest:
-    command: bash ~/aos/core/bin/crons/feed-digest
+    command: bash ~/aos/core/bin/internal/cron-wrap feed-digest bash ~/aos/core/bin/crons/feed-digest
     at: "07:00"
     timeout: 60
     tier: 4
     description: Sends morning intelligence digest to Telegram
+
+  vault-maintenance:
+    command: bash ~/aos/core/bin/internal/cron-wrap vault-maintenance bash ~/aos/core/bin/crons/vault-maintenance
+    at: "04:30"
+    timeout: 1800
+    tier: 4
+    description: Nightly lint pass — orphans, stale docs, topic refresh, synthesis suggestions
 
   # ── Planned (scripts not yet built) ─────────────────────────────────────────
   # These entries are placeholders. Scripts will be created when their

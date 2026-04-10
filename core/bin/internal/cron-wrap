@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+# cron-wrap — wrap any cron invocation with start/end/exit telemetry.
+#
+# Usage:
+#   cron-wrap <cron_name> <command> [args...]
+#
+# Example (from config/crons.yaml):
+#   command: bash ~/aos/core/bin/internal/cron-wrap feed-ingest bash ~/aos/core/bin/crons/feed-ingest
+#
+# Writes one row to cron_runs at start (status='running'), updates it at
+# end with duration, exit code, stdout/stderr tails, and final status.
+#
+# Never crashes the wrapped command — telemetry failures are logged to
+# ~/.aos/logs/cron-wrap.err and swallowed.
+set -u
+
+if [ $# -lt 2 ]; then
+    echo "usage: cron-wrap <cron_name> <command> [args...]" >&2
+    exit 2
+fi
+
+CRON_NAME="$1"
+shift
+
+DB="$HOME/.aos/data/qareen.db"
+HOST="$(hostname -s 2>/dev/null || echo unknown)"
+LOGS_DIR="$HOME/.aos/logs"
+ERR_LOG="$LOGS_DIR/cron-wrap.err"
+mkdir -p "$LOGS_DIR"
+
+# Create a temp dir for stdout/stderr capture
+TMPDIR="$(mktemp -d -t cronwrap.XXXXXX)"
+STDOUT_FILE="$TMPDIR/stdout"
+STDERR_FILE="$TMPDIR/stderr"
+trap 'rm -rf "$TMPDIR"' EXIT
+
+# Record the start — insert a 'running' row, grab its rowid back.
+STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ)"
+ROW_ID=""
+if [ -f "$DB" ]; then
+    ROW_ID="$(
+        sqlite3 "$DB" <<SQL 2>>"$ERR_LOG"
+INSERT INTO cron_runs (cron_name, started_at, status, host, pid)
+VALUES ('$CRON_NAME', '$STARTED_AT', 'running', '$HOST', $$);
+SELECT last_insert_rowid();
+SQL
+    )"
+fi
+
+# Run the command, capturing both streams
+START_EPOCH="$(date +%s)"
+"$@" > "$STDOUT_FILE" 2> "$STDERR_FILE"
+EXIT_CODE=$?
+END_EPOCH="$(date +%s)"
+ENDED_AT="$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ)"
+DURATION_MS=$(( (END_EPOCH - START_EPOCH) * 1000 ))
+
+# Tail stdout/stderr to at most 8KB each
+STDOUT_TAIL="$(tail -c 8192 "$STDOUT_FILE" 2>/dev/null | sed "s/'/''/g")"
+STDERR_TAIL="$(tail -c 8192 "$STDERR_FILE" 2>/dev/null | sed "s/'/''/g")"
+
+# Echo the command's stdout to our own stdout (for normal log capture)
+cat "$STDOUT_FILE"
+cat "$STDERR_FILE" >&2
+
+# Decide final status
+STATUS="ok"
+if [ $EXIT_CODE -ne 0 ]; then
+    if [ $EXIT_CODE -eq 124 ] || [ $EXIT_CODE -eq 137 ]; then
+        STATUS="timeout"
+    elif [ $EXIT_CODE -eq 143 ] || [ $EXIT_CODE -eq 130 ]; then
+        STATUS="killed"
+    else
+        STATUS="failed"
+    fi
+fi
+
+# Update the row with final state
+if [ -f "$DB" ] && [ -n "$ROW_ID" ]; then
+    sqlite3 "$DB" <<SQL 2>>"$ERR_LOG"
+UPDATE cron_runs
+SET ended_at = '$ENDED_AT',
+    duration_ms = $DURATION_MS,
+    exit_code = $EXIT_CODE,
+    status = '$STATUS',
+    stdout_tail = '$STDOUT_TAIL',
+    stderr_tail = '$STDERR_TAIL'
+WHERE id = $ROW_ID;
+SQL
+fi
+
+exit $EXIT_CODE

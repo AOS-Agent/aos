@@ -1,14 +1,23 @@
 #!/bin/bash
 # feed-ingest — Poll RSS feeds and store intelligence briefs.
 # Runs every 30 minutes via cron.
+#
+# Uses the crawler venv (has feedparser, httpx) but invokes the ingest
+# runner as a module so relative imports resolve cleanly.
 set -e
 
 VENV_PYTHON="$HOME/.aos/services/crawler/.venv/bin/python"
-RUNNER="$HOME/aos/core/engine/feeds/runner.py"
+AOS_ROOT="$HOME/aos"
 
 if [ ! -f "$VENV_PYTHON" ]; then
     echo "[feed-ingest] Crawler venv not found: $VENV_PYTHON"
     exit 1
 fi
 
-exec "$VENV_PYTHON" "$RUNNER" 2>&1
+if [ ! -d "$AOS_ROOT/core/engine/intelligence/ingest" ]; then
+    echo "[feed-ingest] intelligence.ingest package not found at $AOS_ROOT"
+    exit 1
+fi
+
+cd "$AOS_ROOT"
+exec "$VENV_PYTHON" -m core.engine.intelligence.ingest.runner 2>&1

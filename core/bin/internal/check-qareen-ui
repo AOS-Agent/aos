@@ -1,0 +1,380 @@
+#!/usr/bin/env python3
+"""
+AOS Qareen UI Health Check — smoke test via dev-browser
+
+Verifies the Qareen UI (Vite + React, localhost:5173) is up and functional:
+  1. Pre-flight curl to confirm Qareen is reachable
+  2. Route smoke tests — fresh page per route, verify <main> has children
+  3. API health checks — in-page fetch() against backend endpoints
+  4. Screenshots saved to ~/.aos/logs/visual-regression/
+  5. Summary printed, exit 0 if all pass, exit 1 if any fail
+
+Requires: dev-browser (installed globally via npm)
+"""
+
+import json
+import shutil
+import subprocess
+import sys
+from datetime import datetime
+from pathlib import Path
+
+# ── Paths ─────────────────────────────────────────────────────────────────────
+
+HOME = Path.home()
+SCREENSHOT_DIR = HOME / ".aos" / "logs" / "visual-regression"
+QAREEN_URL = "http://localhost:5173"
+DEVBROWSER_TIMEOUT = 180  # seconds for the full script
+
+ROUTES = [
+    ("/", "home"),
+    ("/work", "work"),
+    ("/knowledge", "knowledge-today"),
+    ("/knowledge/feed", "knowledge-feed"),
+    ("/knowledge/library", "knowledge-library"),
+    ("/knowledge/topics", "knowledge-topics"),
+    ("/knowledge/pipeline", "knowledge-pipeline"),
+    ("/agents", "agents"),
+    ("/automations", "automations"),
+    ("/settings", "settings"),
+    ("/integrations", "integrations"),
+]
+
+API_ENDPOINTS = [
+    "/api/health",
+    "/api/knowledge/today",
+    "/api/knowledge/health",
+    "/api/knowledge/library?view=stage",
+    "/api/knowledge/topics",
+    "/api/knowledge/pipeline",
+    "/api/intelligence/feed?days=30&limit=3",
+    "/api/intelligence/stats",
+    "/api/services",
+    "/api/system/health",
+    "/api/context",
+]
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def ts() -> str:
+    """ISO-format timestamp without microseconds."""
+    return datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+
+
+def log(msg: str):
+    print(f"[check-qareen-ui {ts()}] {msg}", flush=True)
+
+
+def run_devbrowser(script: str, timeout: int = DEVBROWSER_TIMEOUT) -> tuple[int, str, str]:
+    """Run a dev-browser --headless script. Returns (returncode, stdout, stderr)."""
+    try:
+        result = subprocess.run(
+            ["dev-browser", "--headless", "--timeout", str(timeout)],
+            input=script,
+            capture_output=True,
+            text=True,
+            timeout=timeout + 15,  # shell timeout slightly above script timeout
+        )
+        return result.returncode, result.stdout, result.stderr
+    except subprocess.TimeoutExpired:
+        return -1, "", "dev-browser process timed out"
+    except FileNotFoundError:
+        return -2, "", "dev-browser not found in PATH"
+
+
+def stop_devbrowser():
+    """Clean up the dev-browser daemon."""
+    try:
+        subprocess.run(
+            ["dev-browser", "stop"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except Exception:
+        pass  # best-effort cleanup
+
+
+# ── Pre-flight ────────────────────────────────────────────────────────────────
+
+def preflight_check() -> bool:
+    """Verify Qareen is reachable via curl before launching a browser."""
+    try:
+        result = subprocess.run(
+            ["curl", "-sf", "--max-time", "5", QAREEN_URL],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
+# ── Route smoke tests ─────────────────────────────────────────────────────────
+
+def test_routes() -> list[dict]:
+    """
+    Hit each route with a fresh browser.newPage(), verify <main> has children,
+    and save a screenshot. Returns list of result dicts.
+    """
+    results = []
+
+    # Build a single dev-browser script that tests all routes sequentially.
+    # Each route gets its own page (browser.newPage()) to avoid SPA nav flakiness.
+    # Screenshots are saved via saveScreenshot to ~/.dev-browser/tmp/, then we
+    # copy them to the target directory afterward.
+    screenshot_names = []
+    route_js_blocks = []
+
+    for path, name in ROUTES:
+        screenshot_name = f"{name}.png"
+        screenshot_names.append((name, screenshot_name))
+        route_js_blocks.append(f"""
+    // Route: {path}
+    try {{
+        const page_{name} = await browser.newPage();
+        await page_{name}.goto("{QAREEN_URL}{path}", {{ waitUntil: "commit", timeout: 20000 }});
+        await page_{name}.waitForTimeout(4000);
+
+        const childCount_{name} = await page_{name}.evaluate(function() {{
+            var main = document.querySelector("main");
+            return main ? main.children.length : 0;
+        }});
+
+        const buf_{name} = await page_{name}.screenshot();
+        const ssPath_{name} = await saveScreenshot(buf_{name}, "{screenshot_name}");
+
+        routeResults.push({{
+            route: "{path}",
+            name: "{name}",
+            pass: childCount_{name} > 0,
+            children: childCount_{name},
+            screenshot: ssPath_{name},
+        }});
+        await page_{name}.close();
+    }} catch (e) {{
+        routeResults.push({{
+            route: "{path}",
+            name: "{name}",
+            pass: false,
+            error: e.message || String(e),
+            screenshot: null,
+        }});
+    }}
+""")
+
+    script = f"""
+const routeResults = [];
+{"".join(route_js_blocks)}
+console.log(JSON.stringify(routeResults));
+"""
+
+    log("Running route smoke tests...")
+    rc, stdout, stderr = run_devbrowser(script)
+
+    if rc != 0:
+        log(f"dev-browser failed (exit {rc}): {stderr.strip()}")
+        # Return all routes as failed
+        for path, name in ROUTES:
+            results.append({
+                "route": path,
+                "name": name,
+                "pass": False,
+                "error": f"dev-browser exit {rc}: {stderr.strip()[:200]}",
+                "screenshot": None,
+            })
+        return results
+
+    # Parse JSON output from the script (last line that's valid JSON)
+    parsed = None
+    for line in reversed(stdout.strip().splitlines()):
+        line = line.strip()
+        if line.startswith("["):
+            try:
+                parsed = json.loads(line)
+                break
+            except json.JSONDecodeError:
+                continue
+
+    if parsed is None:
+        log(f"Could not parse route test output. stdout: {stdout[:500]}")
+        for path, name in ROUTES:
+            results.append({
+                "route": path,
+                "name": name,
+                "pass": False,
+                "error": "Failed to parse dev-browser output",
+                "screenshot": None,
+            })
+        return results
+
+    # Copy screenshots from dev-browser tmp to our target directory
+    devbrowser_tmp = HOME / ".dev-browser" / "tmp"
+    for item in parsed:
+        src_path = item.get("screenshot")
+        name = item.get("name", "unknown")
+        if src_path and Path(src_path).exists():
+            dest = SCREENSHOT_DIR / f"{name}.png"
+            shutil.copy2(src_path, dest)
+            item["screenshot"] = str(dest)
+
+    return parsed
+
+
+# ── API health checks ────────────────────────────────────────────────────────
+
+def test_api_endpoints() -> list[dict]:
+    """
+    Load a page and use in-page fetch() to test API endpoints.
+    Returns list of result dicts.
+    """
+    endpoint_js_blocks = []
+    for endpoint in API_ENDPOINTS:
+        endpoint_js_blocks.append(f"""
+    try {{
+        const resp = await page.evaluate(async () => {{
+            const r = await fetch("{endpoint}");
+            return {{ status: r.status, ok: r.ok }};
+        }});
+        apiResults.push({{
+            endpoint: "{endpoint}",
+            pass: resp.ok,
+            status: resp.status,
+        }});
+    }} catch (e) {{
+        apiResults.push({{
+            endpoint: "{endpoint}",
+            pass: false,
+            error: e.message || String(e),
+        }});
+    }}
+""")
+
+    script = f"""
+const apiResults = [];
+const page = await browser.newPage();
+await page.goto("{QAREEN_URL}/", {{ waitUntil: "commit", timeout: 20000 }});
+await page.waitForTimeout(3000);
+{"".join(endpoint_js_blocks)}
+console.log(JSON.stringify(apiResults));
+"""
+
+    log("Running API health checks...")
+    rc, stdout, stderr = run_devbrowser(script)
+
+    if rc != 0:
+        log(f"dev-browser failed for API checks (exit {rc}): {stderr.strip()}")
+        return [
+            {"endpoint": ep, "pass": False, "error": f"dev-browser exit {rc}"}
+            for ep in API_ENDPOINTS
+        ]
+
+    # Parse JSON output
+    parsed = None
+    for line in reversed(stdout.strip().splitlines()):
+        line = line.strip()
+        if line.startswith("["):
+            try:
+                parsed = json.loads(line)
+                break
+            except json.JSONDecodeError:
+                continue
+
+    if parsed is None:
+        log(f"Could not parse API test output. stdout: {stdout[:500]}")
+        return [
+            {"endpoint": ep, "pass": False, "error": "Failed to parse output"}
+            for ep in API_ENDPOINTS
+        ]
+
+    return parsed
+
+
+# ── Summary ───────────────────────────────────────────────────────────────────
+
+def print_summary(route_results: list[dict], api_results: list[dict]) -> bool:
+    """Print a formatted summary. Returns True if all passed."""
+    all_pass = True
+
+    print("\n" + "=" * 60)
+    print("  Qareen UI Health Check Summary")
+    print("=" * 60)
+
+    # Route results
+    print("\n  Route Smoke Tests:")
+    print("  " + "-" * 56)
+    for r in route_results:
+        status = "PASS" if r.get("pass") else "FAIL"
+        if not r.get("pass"):
+            all_pass = False
+        route = r.get("route", "?")
+        extra = ""
+        if r.get("pass"):
+            extra = f"  ({r.get('children', '?')} children)"
+        elif r.get("error"):
+            extra = f"  ({r['error'][:60]})"
+        print(f"    {status:4s}  {route:<20s}{extra}")
+        if r.get("screenshot"):
+            print(f"          screenshot: {r['screenshot']}")
+
+    # API results
+    print("\n  API Health Checks:")
+    print("  " + "-" * 56)
+    for r in api_results:
+        status = "PASS" if r.get("pass") else "FAIL"
+        if not r.get("pass"):
+            all_pass = False
+        endpoint = r.get("endpoint", "?")
+        extra = ""
+        if r.get("status"):
+            extra = f"  (HTTP {r['status']})"
+        elif r.get("error"):
+            extra = f"  ({r['error'][:60]})"
+        print(f"    {status:4s}  {endpoint:<45s}{extra}")
+
+    # Final verdict
+    print("\n" + "=" * 60)
+    verdict = "ALL PASSED" if all_pass else "SOME CHECKS FAILED"
+    print(f"  Result: {verdict}")
+    print("=" * 60 + "\n")
+
+    return all_pass
+
+
+# ── Main ──────────────────────────────────────────────────────────────────────
+
+def main():
+    log("Starting Qareen UI health check")
+
+    # Ensure screenshot directory exists
+    SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Pre-flight: is Qareen even running?
+    if not preflight_check():
+        log(f"ABORT: Qareen not reachable at {QAREEN_URL}")
+        print(f"\nQareen is not running at {QAREEN_URL}. Start it first.")
+        sys.exit(1)
+
+    log(f"Qareen reachable at {QAREEN_URL}")
+
+    try:
+        # Run route smoke tests
+        route_results = test_routes()
+
+        # Run API health checks
+        api_results = test_api_endpoints()
+
+        # Print summary
+        all_pass = print_summary(route_results, api_results)
+
+        sys.exit(0 if all_pass else 1)
+
+    finally:
+        # Always clean up the daemon
+        log("Stopping dev-browser daemon")
+        stop_devbrowser()
+
+
+if __name__ == "__main__":
+    main()
