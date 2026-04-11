@@ -39,7 +39,7 @@ ALL_CHECKS = [
     # Services — LaunchAgent plists reference existing Python
     LaunchAgentPythonCheck,
 
-    # Integrations — MCP servers for external services
+    # Integrations — Google Workspace gws CLI
     GoogleWorkspaceCheck,
 
     # Content — CLAUDE.md managed sections are current
