@@ -88,6 +88,16 @@ core/infra/reconcile/
 ~/vault/                       KNOWLEDGE (Obsidian, separate repo)
 ```
 
+## Key Databases
+
+```
+~/.aos/data/comms.db    — 248K+ messages, full text, FTS5 search (all channels)
+~/.aos/data/people.db   — 1,148 people, identifiers, aliases, relationships
+~/.aos/data/work.db     — Tasks, projects, goals, handoffs
+```
+
+Subsystem details load on demand via `.claude/rules/` — see `comms-pipeline.md` and `people-system.md`.
+
 ## Key Rules
 
 - Hooks must NEVER crash — always output valid JSON and exit 0
