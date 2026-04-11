@@ -5,7 +5,7 @@ This bridge copies those tokens into n8n so automations can use them
 without the user ever touching n8n.
 
 Supported token sources:
-- Google Workspace: ~/.google_workspace_mcp/credentials/{email}.json
+- Google Workspace: ~/.aos/config/google/credentials/{email}.json
 - Telegram: macOS Keychain (TELEGRAM_BOT_TOKEN)
 
 The bridge runs:
@@ -23,11 +23,11 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-GOOGLE_CREDS_DIR = Path.home() / ".google_workspace_mcp" / "credentials"
+GOOGLE_CREDS_DIR = Path.home() / ".aos" / "config" / "google" / "credentials"
 
 
 async def sync_google_credentials(n8n_client, email: str | None = None) -> list[str]:
-    """Sync Google OAuth tokens from workspace-mcp into n8n.
+    """Sync Google OAuth tokens into n8n.
 
     If email is specified, syncs only that account.
     Otherwise syncs all accounts found in the credentials directory.

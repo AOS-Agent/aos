@@ -37,7 +37,7 @@ apps:
   Calendar:
     type: native
     approaches:
-      # google-workspace-mcp(zero) merged from integration manifest at runtime
+      # gws-cli(zero) merged from integration manifest at runtime
       - method: applescript
         cost: low
         notes: "Apple Calendar CRUD via AppleScript — works offline, syncs to iCloud/Google"
@@ -52,7 +52,7 @@ apps:
   Gmail:
     type: service
     approaches:
-      # google-workspace-mcp(zero) merged from integration manifest at runtime
+      # gws-cli(zero) merged from integration manifest at runtime
       - method: applescript
         target: "Mail"
         cost: low
@@ -198,7 +198,7 @@ apps:
   "Google Drive":
     type: service
     approaches:
-      # google-workspace-mcp(zero) merged from integration manifest at runtime
+      # gws-cli(zero) merged from integration manifest at runtime
       - method: chrome
         target: "drive.google.com"
         cost: medium
@@ -207,7 +207,7 @@ apps:
   "Google Docs":
     type: service
     approaches:
-      # google-workspace-mcp(zero) merged from integration manifest at runtime
+      # gws-cli(zero) merged from integration manifest at runtime
       - method: chrome
         target: "docs.google.com"
         cost: medium
@@ -215,7 +215,7 @@ apps:
   "Google Sheets":
     type: service
     approaches:
-      # google-workspace-mcp(zero) merged from integration manifest at runtime
+      # gws-cli(zero) merged from integration manifest at runtime
       - method: chrome
         target: "sheets.google.com"
         cost: medium
@@ -234,7 +234,7 @@ apps:
   Contacts:
     type: native
     approaches:
-      # google-workspace-mcp(zero) merged from integration manifest at runtime
+      # gws-cli(zero) merged from integration manifest at runtime
       - method: applescript
         cost: low
         notes: "Apple Contacts app — all synced accounts"
