@@ -78,7 +78,7 @@ def _log_results(results: list[CheckResult]):
 
 
 def _write_state(results: list[CheckResult]):
-    """Write summary state for dashboard."""
+    """Write summary state for Qareen."""
     STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
     state = {
         "last_run": datetime.now(timezone.utc).isoformat(),
