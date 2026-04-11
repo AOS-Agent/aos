@@ -216,12 +216,13 @@ catalog:
     tier: 2
     category: productivity
     status: active
-    description: Gmail, Calendar, Docs, Sheets, Slides, Drive, Forms, Tasks, Contacts, Chat, Apps Script via workspace-mcp.
-    access: mcp
-    mcp_server: google-workspace
+    description: Gmail, Calendar, Docs, Sheets, Slides, Drive, Forms, Tasks, Contacts, Chat, Apps Script via gws CLI.
+    access: cli
+    binary: gws
+    wrapper: core/bin/internal/gws-account
     provides: [email, calendar, docs, sheets, slides, drive, forms, tasks, contacts, chat, apps_script]
     requires: [OAuth credentials in Keychain]
-    setup_hint: "Credentials in Keychain (GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET, GOOGLE_PRIMARY_EMAIL). Wrapper at core/bin/internal/google-workspace-mcp."
+    setup_hint: "brew install googleworkspace-cli. Credentials in Keychain (GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET, GOOGLE_PRIMARY_EMAIL). Multi-account wrapper at core/bin/internal/gws-account."
 
   clickup:
     name: ClickUp

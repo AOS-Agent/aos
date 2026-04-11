@@ -1,0 +1,43 @@
+#!/bin/bash
+# gws-account — Multi-account wrapper for gws (Google Workspace CLI)
+#
+# Picks the right credential file based on --account flag or Keychain default.
+# Credential files live at ~/.aos/config/google/credentials/{email}.json
+#
+# Usage:
+#   gws-account --account user@example.com gmail users messages list ...
+#   gws-account gmail users messages list ...   # uses GOOGLE_PRIMARY_EMAIL
+#
+# The wrapper sets GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE and passes
+# all remaining arguments through to gws.
+
+set -euo pipefail
+
+AGENT_SECRET="$HOME/aos/core/bin/agent-secret"
+CREDS_DIR="$HOME/.aos/config/google/credentials"
+
+ACCOUNT=""
+if [[ "${1:-}" == "--account" ]]; then
+    ACCOUNT="$2"
+    shift 2
+fi
+
+if [[ -z "$ACCOUNT" ]]; then
+    ACCOUNT=$("$AGENT_SECRET" get GOOGLE_PRIMARY_EMAIL 2>/dev/null || true)
+fi
+
+if [[ -z "$ACCOUNT" ]]; then
+    echo "Error: no account specified and GOOGLE_PRIMARY_EMAIL not in Keychain" >&2
+    exit 3
+fi
+
+CRED_FILE="$CREDS_DIR/$ACCOUNT.json"
+if [[ ! -f "$CRED_FILE" ]]; then
+    echo "Error: no credentials for $ACCOUNT at $CRED_FILE" >&2
+    echo "Available accounts:" >&2
+    ls "$CREDS_DIR"/*.json 2>/dev/null | xargs -I{} basename {} .json >&2 || echo "  (none)" >&2
+    exit 2
+fi
+
+export GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE="$CRED_FILE"
+exec gws "$@"

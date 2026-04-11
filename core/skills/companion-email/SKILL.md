@@ -2,10 +2,10 @@
 name: companion-email
 description: >
   Email triage session skill for the Companion. Activates a Processing session
-  (3-column layout) for sorting, responding to, and managing email. Uses Google
-  Workspace MCP for Gmail access. Groups emails by priority, drafts responses,
-  proposes batch actions. Trigger on: session_type=email, "let's do emails",
-  "clear my inbox", "email triage", "check my email", "inbox zero".
+  (3-column layout) for sorting, responding to, and managing email. Uses gws CLI
+  for Gmail access. Groups emails by priority, drafts responses, proposes batch
+  actions. Trigger on: session_type=email, "let's do emails", "clear my inbox",
+  "email triage", "check my email", "inbox zero".
 ---
 
 # Companion Email Skill
@@ -24,7 +24,7 @@ This is a **Processing** session (3-column layout):
 ## Startup
 
 When the session starts:
-1. Query Gmail via Google Workspace MCP: `search_gmail_messages` with query "is:unread" or "in:inbox"
+1. Query Gmail via gws CLI: `gws-account gmail users messages list --params '{"userId":"me","q":"is:unread"}'`
 2. Load email list into the Source column
 3. Begin sorting immediately
 4. Show progress: "Loading X emails..."
@@ -87,7 +87,7 @@ Draft flow:
 1. Draft appears in Understanding (center column)
 2. Operator reviews: "make it shorter", "CC Ahmad", "change the tone"
 3. Draft updates in Understanding
-4. When ready: push to Queue → Approve → Send via Gmail MCP
+4. When ready: push to Queue → Approve → Send via gws CLI
 
 ## Ask Next Prompts
 
@@ -124,14 +124,30 @@ Actions Taken:
 Inbox Status: [count] remaining
 ```
 
-## MCP Tools Used
+## CLI Commands Used
 
-- `mcp__google-workspace__search_gmail_messages` — find emails
-- `mcp__google-workspace__get_gmail_message_content` — read email body
-- `mcp__google-workspace__send_gmail_message` — send replies
-- `mcp__google-workspace__modify_gmail_message_labels` — archive, star, label
-- `mcp__google-workspace__batch_modify_gmail_message_labels` — batch operations
-- `mcp__google-workspace__draft_gmail_message` — create drafts
+The `gws-account` wrapper at `~/aos/core/bin/internal/gws-account` handles multi-account
+credential selection. Use `--account email` to target a specific account.
+
+```bash
+# List messages
+gws-account gmail users messages list --params '{"userId":"me","q":"is:unread","maxResults":50}'
+
+# Read message content
+gws-account gmail users messages get --params '{"userId":"me","id":"MSG_ID","format":"full"}'
+
+# Send reply
+gws-account gmail users messages send --params '{"userId":"me"}' --json '{"raw":"BASE64_ENCODED_EMAIL"}'
+
+# Modify labels (archive = remove INBOX)
+gws-account gmail users messages modify --params '{"userId":"me","id":"MSG_ID"}' --json '{"removeLabelIds":["INBOX"]}'
+
+# Batch modify labels
+gws-account gmail users messages batchModify --params '{"userId":"me"}' --json '{"ids":["ID1","ID2"],"removeLabelIds":["INBOX"]}'
+
+# Create draft
+gws-account gmail users drafts create --params '{"userId":"me"}' --json '{"message":{"raw":"BASE64_ENCODED_EMAIL"}}'
+```
 
 ## Important
 

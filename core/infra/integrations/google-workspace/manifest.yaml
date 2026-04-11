@@ -1,14 +1,14 @@
 # Google Workspace Integration Manifest
 
 name: Google Workspace
-version: "1.0"
+version: "2.0"
 category: productivity
 
 description: >
-  Full Google Workspace access via workspace-mcp (MCP server).
-  Gmail, Drive, Calendar, Docs, Sheets, Slides, Forms, Tasks,
-  Contacts, Chat, Apps Script, Google Search. OAuth credentials
-  stored in macOS Keychain, wrapper at core/bin/internal/google-workspace-mcp.
+  Full Google Workspace access via gws CLI (https://github.com/googleworkspace/cli).
+  Gmail, Drive, Calendar, Docs, Sheets, Slides, Forms, Tasks, Contacts, Chat,
+  Apps Script, Google Search. OAuth credentials stored in macOS Keychain,
+  multi-account wrapper at core/bin/internal/gws-account.
 
 # What this integration provides to the system
 provides:
@@ -61,71 +61,70 @@ requires:
     - key: GOOGLE_PRIMARY_EMAIL
       store: keychain
       description: Primary Google account email
-  services:
-    - name: workspace-mcp
-      type: mcp
-      binary: ~/.local/bin/workspace-mcp
-      wrapper: core/bin/internal/google-workspace-mcp
-      description: MCP server wrapping workspace-mcp with Keychain credentials
+  binaries:
+    - name: gws
+      install: brew install googleworkspace-cli
+      description: Google Workspace CLI
+  scripts:
+    - name: gws-account
+      path: core/bin/internal/gws-account
+      description: Multi-account wrapper that sets credentials per invocation
   config: []
 
 # How to verify this integration is working
 health:
   checks:
-    - name: binary_installed
-      command: "test -x ~/.local/bin/workspace-mcp && echo installed"
+    - name: gws_installed
+      command: "which gws >/dev/null 2>&1 && echo installed"
       expect: installed
     - name: wrapper_exists
-      command: "test -x ~/aos/core/bin/internal/google-workspace-mcp && echo exists"
+      command: "test -x ~/aos/core/bin/internal/gws-account && echo exists"
       expect: exists
     - name: credentials_stored
       command: "~/aos/core/bin/cli/agent-secret get GOOGLE_OAUTH_CLIENT_ID >/dev/null 2>&1 && echo ok"
       expect: ok
-    - name: mcp_in_settings
-      command: "python3 -c \"import json; s=json.load(open('$HOME/.claude/settings.json')); print('ok' if 'google-workspace' in s.get('mcpServers',{}) else 'missing')\""
+    - name: account_tokens
+      command: "ls ~/.aos/config/google/credentials/*.json >/dev/null 2>&1 && echo ok"
       expect: ok
 
 # Capability chain entries this integration adds.
-# Each key maps to an app name in capabilities.yaml.
-# At session start, these methods are merged into the base capability map.
-# Zero-cost MCP methods get inserted before costlier fallbacks.
 capabilities:
   Gmail:
-    method: google-workspace-mcp
+    method: gws-cli
     cost: zero
-    notes: "MCP server — full Gmail: read, send, search, labels, drafts."
+    notes: "gws CLI — full Gmail: read, send, search, labels, drafts."
   Calendar:
-    method: google-workspace-mcp
+    method: gws-cli
     cost: zero
-    notes: "MCP server — Google Calendar CRUD. List, create, update, delete events."
+    notes: "gws CLI — Google Calendar CRUD. List, create, update, delete events."
   "Google Drive":
-    method: google-workspace-mcp
+    method: gws-cli
     cost: zero
-    notes: "MCP server — list, search, read, create, upload, share files."
+    notes: "gws CLI — list, search, read, create, upload, share files."
   "Google Docs":
-    method: google-workspace-mcp
+    method: gws-cli
     cost: zero
-    notes: "MCP server — read, create, edit Google Docs."
+    notes: "gws CLI — read, create, edit Google Docs."
   "Google Sheets":
-    method: google-workspace-mcp
+    method: gws-cli
     cost: zero
-    notes: "MCP server — read, create, edit spreadsheets, cell-level ops."
+    notes: "gws CLI — read, create, edit spreadsheets, cell-level ops."
   Contacts:
-    method: google-workspace-mcp
+    method: gws-cli
     cost: zero
-    notes: "MCP server — Google Contacts: search, read, create, update."
+    notes: "gws CLI — Google Contacts: search, read, create, update."
 
 # Layers this integration touches
 layers:
   - integrations   # This manifest
-  - services       # MCP server process
+  - cli            # gws binary + gws-account wrapper
 
 # Setup steps
 setup:
   steps:
-    - description: Install workspace-mcp
+    - description: Install gws CLI
       type: command
-      command: "uv tool install workspace-mcp"
+      command: "brew install googleworkspace-cli"
     - description: Store OAuth credentials
       type: interactive
       instruction: >
@@ -133,8 +132,13 @@ setup:
         agent-secret set GOOGLE_OAUTH_CLIENT_ID <id>
         agent-secret set GOOGLE_OAUTH_CLIENT_SECRET <secret>
         agent-secret set GOOGLE_PRIMARY_EMAIL <email>
-    - description: Register MCP server at user scope
-      type: command
-      command: "claude mcp add --scope user --transport stdio google-workspace $HOME/aos/core/bin/internal/google-workspace-mcp"
+    - description: Authenticate accounts
+      type: interactive
+      instruction: >
+        For each Google account, authenticate via gws:
+        GOOGLE_WORKSPACE_CLI_CLIENT_ID=$(agent-secret get GOOGLE_OAUTH_CLIENT_ID)
+        GOOGLE_WORKSPACE_CLI_CLIENT_SECRET=$(agent-secret get GOOGLE_OAUTH_CLIENT_SECRET)
+        GOOGLE_WORKSPACE_CLI_CONFIG_DIR=~/.config/gws/tmp gws auth login
+        Then convert the credential file to ~/.aos/config/google/credentials/{email}.json
     - description: Verify
       type: health_check
