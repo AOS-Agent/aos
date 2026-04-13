@@ -51,7 +51,7 @@ class iMessageAdapter(ChannelAdapter):
             # Quick test: can we open and query it?
             conn = self._connect()
             if conn:
-                conn.close()
+                self._disconnect(conn)
                 return True
         except Exception:
             pass
@@ -67,7 +67,7 @@ class iMessageAdapter(ChannelAdapter):
                 # Get message count as a health indicator
                 cursor = conn.execute("SELECT COUNT(*) FROM message")
                 count = cursor.fetchone()[0]
-                conn.close()
+                self._disconnect(conn)
                 return {**base, "available": True, "total_messages": count}
         except PermissionError:
             return {**base, "available": False, "error": "Full Disk Access required"}
@@ -125,7 +125,7 @@ class iMessageAdapter(ChannelAdapter):
 
             return conversations
         finally:
-            conn.close()
+            self._disconnect(conn)
 
     def get_messages(
         self,
@@ -253,7 +253,7 @@ class iMessageAdapter(ChannelAdapter):
 
             return messages
         finally:
-            conn.close()
+            self._disconnect(conn)
 
     def resolve_handle(self, handle: str) -> str | None:
         """Resolve an iMessage handle to a normalized phone or email.
@@ -335,9 +335,20 @@ class iMessageAdapter(ChannelAdapter):
 
         conn = sqlite3.connect(tmp.name)
         conn.row_factory = sqlite3.Row
-        # Track tmp path for potential cleanup
-        self._tmp_path = tmp.name
+        # Track tmp path so _disconnect can clean it up
+        conn._tmp_path = tmp.name  # type: ignore[attr-defined]
         return conn
+
+    def _disconnect(self, conn: sqlite3.Connection) -> None:
+        """Close connection and delete the temp copy of chat.db."""
+        tmp_path = getattr(conn, "_tmp_path", None)
+        try:
+            conn.close()
+        except Exception:
+            pass
+        if tmp_path:
+            for suffix in ["", "-wal", "-shm"]:
+                Path(tmp_path + suffix).unlink(missing_ok=True)
 
     def _to_apple_ns(self, dt: datetime) -> int:
         """Convert datetime to Apple nanosecond timestamp."""
