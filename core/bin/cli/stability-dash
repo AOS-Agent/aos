@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# AOS Stability Dashboard — CLI wrapper
+#
+# Usage:
+#   stability-dash              → open dashboard in browser + start server
+#   stability-dash serve        → start server only (no browser)
+#   stability-dash status       → print summary to stdout
+#   stability-dash update p1-2 done [--by agent] [--note "text"]
+#   stability-dash update p1-2 in-progress
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SERVER="$(dirname "$SCRIPT_DIR")/../core/tools/stability-dash/server.py"
+
+# Resolve relative to the framework
+if [[ ! -f "$SERVER" ]]; then
+    SERVER="$HOME/project/aos/core/tools/stability-dash/server.py"
+fi
+if [[ ! -f "$SERVER" ]]; then
+    SERVER="$HOME/aos/core/tools/stability-dash/server.py"
+fi
+
+PORT=4200
+
+case "${1:-}" in
+    serve)
+        exec python3 "$SERVER" --port "$PORT"
+        ;;
+    status)
+        exec python3 "$SERVER" status
+        ;;
+    update)
+        shift
+        exec python3 "$SERVER" update "$@"
+        ;;
+    stop)
+        PID=$(lsof -ti :$PORT 2>/dev/null)
+        if [[ -n "$PID" ]]; then
+            kill "$PID"
+            echo "  Stopped dashboard (pid $PID)"
+        else
+            echo "  Dashboard not running"
+        fi
+        ;;
+    "")
+        # Start server if not running, then open browser
+        if ! lsof -ti :$PORT &>/dev/null; then
+            python3 "$SERVER" --port "$PORT" &
+            sleep 0.5
+        fi
+        open "http://localhost:$PORT"
+        echo "  Dashboard → http://localhost:$PORT"
+        ;;
+    *)
+        echo "Usage: stability-dash [serve|status|update|stop]"
+        echo ""
+        echo "  (no args)           Start server + open in browser"
+        echo "  serve               Start server only"
+        echo "  status              Print summary"
+        echo "  update ID STATUS    Update a task (pending|in-progress|done|blocked|skipped)"
+        echo "  stop                Stop the server"
+        exit 1
+        ;;
+esac

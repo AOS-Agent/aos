@@ -144,6 +144,21 @@ class WhatsAppAdapter(ChannelAdapter):
             sender = raw.get("sender", "Unknown")
             from_me = raw.get("from_me", False) or sender.lower() in ("me", "you")
 
+            # Extract media type from bridge response
+            # whatsmeow provides: type (text/image/video/audio/ptt/document/sticker/...)
+            raw_type = raw.get("type", "text")
+            _BRIDGE_MEDIA_MAP = {
+                "text": "text", "image": "image", "video": "video",
+                "audio": "voice", "ptt": "voice",  # ptt = push-to-talk = voice note
+                "document": "document", "sticker": "sticker",
+                "location": "location", "contact": "contact",
+                "reaction": "reaction",
+            }
+            media_type = _BRIDGE_MEDIA_MAP.get(raw_type, "text")
+
+            # Extract media path if bridge downloaded the file
+            media_path = raw.get("media_path", "") or raw.get("file_path", "")
+
             msg = Message(
                 id=raw.get("id", f"wa-{ts.timestamp():.0f}"),
                 channel=self.name,
@@ -152,9 +167,12 @@ class WhatsAppAdapter(ChannelAdapter):
                 text=raw.get("text", ""),
                 timestamp=ts,
                 from_me=from_me,
+                media_type=media_type,
+                media_path=media_path,
                 metadata={
                     k: v for k, v in raw.items()
-                    if k not in ("text", "timestamp", "sender", "chat", "id", "from_me")
+                    if k not in ("text", "timestamp", "sender", "chat", "id", "from_me",
+                                 "type", "media_path", "file_path")
                 },
             )
             messages.append(msg)

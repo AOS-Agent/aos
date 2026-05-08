@@ -1,0 +1,699 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AOS Stability</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+  :root {
+    --bg: #0D0B09;
+    --bg-panel: #151210;
+    --bg-secondary: #1E1A16;
+    --bg-tertiary: #2A2520;
+    --bg-quaternary: #3A3530;
+    --text: #FFFFFF;
+    --text-secondary: #E8E4DF;
+    --text-tertiary: #9A9490;
+    --text-quaternary: #6B6560;
+    --border: rgba(255, 245, 235, 0.06);
+    --border-secondary: rgba(255, 245, 235, 0.10);
+    --border-tertiary: rgba(255, 245, 235, 0.15);
+    --accent: #D9730D;
+    --accent-hover: #E8842A;
+    --accent-muted: #1F1510;
+    --accent-subtle: rgba(217,115,13,0.15);
+    --green: #30D158;
+    --green-muted: #0D1F12;
+    --red: #FF453A;
+    --red-muted: #1F0F0E;
+    --yellow: #FFD60A;
+    --yellow-muted: #1C1A08;
+    --blue: #0A84FF;
+    --blue-muted: #0A1520;
+    --teal: #64D2FF;
+    --purple: #BF5AF2;
+    --hover: rgba(255, 245, 235, 0.05);
+    --active: rgba(255, 245, 235, 0.08);
+    --glass-bg: rgba(30, 26, 22, 0.60);
+    --glass-border: rgba(255, 245, 235, 0.08);
+    --font-sans: "Inter", "SF Pro Text", -apple-system, sans-serif;
+    --font-mono: "SF Mono", ui-monospace, monospace;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: var(--font-sans);
+    background: var(--bg);
+    color: var(--text-secondary);
+    min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 48px 32px;
+  }
+
+  /* Header */
+  .header {
+    margin-bottom: 48px;
+  }
+
+  .header-top {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: 8px;
+  }
+
+  .header h1 {
+    font-size: 20px;
+    font-weight: 600;
+    color: var(--text);
+    letter-spacing: -0.02em;
+  }
+
+  .header .updated {
+    font-size: 12px;
+    font-family: var(--font-mono);
+    color: var(--text-quaternary);
+  }
+
+  .live-dot {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--green);
+    margin-right: 6px;
+    animation: pulse 2s ease-in-out infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  /* Overall progress */
+  .overall-progress {
+    margin-bottom: 40px;
+  }
+
+  .progress-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 10px;
+  }
+
+  .progress-label {
+    font-size: 13px;
+    color: var(--text-tertiary);
+    font-weight: 500;
+  }
+
+  .progress-value {
+    font-size: 13px;
+    font-family: var(--font-mono);
+    color: var(--text-tertiary);
+  }
+
+  .progress-bar {
+    height: 4px;
+    background: var(--bg-tertiary);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+
+  .progress-fill {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 2px;
+    transition: width 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .progress-fill.complete {
+    background: var(--green);
+  }
+
+  /* Phases grid */
+  .phases {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 20px;
+  }
+
+  @media (max-width: 900px) {
+    .phases { grid-template-columns: 1fr; }
+  }
+
+  /* Phase card */
+  .phase {
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    transition: border-color 0.2s;
+  }
+
+  .phase:hover {
+    border-color: var(--border-secondary);
+  }
+
+  .phase-header {
+    padding: 20px 20px 0;
+  }
+
+  .phase-number {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-quaternary);
+    margin-bottom: 6px;
+  }
+
+  .phase-name {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 4px;
+  }
+
+  .phase-desc {
+    font-size: 12px;
+    color: var(--text-quaternary);
+    line-height: 1.4;
+    margin-bottom: 14px;
+  }
+
+  .phase-progress {
+    padding: 0 20px;
+    margin-bottom: 16px;
+  }
+
+  .phase-progress-bar {
+    height: 3px;
+    background: var(--bg-tertiary);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+
+  .phase-progress-fill {
+    height: 100%;
+    border-radius: 2px;
+    transition: width 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .phase-progress-meta {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 6px;
+    font-size: 11px;
+    font-family: var(--font-mono);
+    color: var(--text-quaternary);
+  }
+
+  /* Phase colors */
+  .phase[data-phase="phase-1"] .phase-progress-fill { background: var(--red); }
+  .phase[data-phase="phase-1"] .phase-number { color: var(--red); }
+  .phase[data-phase="phase-2"] .phase-progress-fill { background: var(--yellow); }
+  .phase[data-phase="phase-2"] .phase-number { color: var(--yellow); }
+  .phase[data-phase="phase-3"] .phase-progress-fill { background: var(--teal); }
+  .phase[data-phase="phase-3"] .phase-number { color: var(--teal); }
+
+  .phase.all-done .phase-progress-fill { background: var(--green) !important; }
+
+  /* Tasks */
+  .task-list {
+    padding: 0 12px 12px;
+  }
+
+  .task {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 10px 8px;
+    border-radius: 8px;
+    transition: background 0.15s;
+    cursor: default;
+  }
+
+  .task:hover {
+    background: var(--hover);
+  }
+
+  .task + .task {
+    border-top: 1px solid var(--border);
+  }
+
+  .task:hover + .task {
+    border-top-color: transparent;
+  }
+
+  /* Status indicator */
+  .task-status {
+    flex-shrink: 0;
+    width: 18px;
+    height: 18px;
+    margin-top: 1px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+  }
+
+  .task-status.pending {
+    border: 1.5px solid var(--text-quaternary);
+  }
+
+  .task-status.in-progress {
+    border: 1.5px solid var(--accent);
+    background: var(--accent-muted);
+    position: relative;
+  }
+
+  .task-status.in-progress::after {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+    animation: pulse 1.5s ease-in-out infinite;
+  }
+
+  .task-status.done {
+    border: 1.5px solid var(--green);
+    background: var(--green-muted);
+  }
+
+  .task-status.done::after {
+    content: "✓";
+    font-size: 10px;
+    color: var(--green);
+    font-weight: 700;
+  }
+
+  .task-status.blocked {
+    border: 1.5px solid var(--red);
+    background: var(--red-muted);
+  }
+
+  .task-status.blocked::after {
+    content: "!";
+    font-size: 10px;
+    color: var(--red);
+    font-weight: 700;
+  }
+
+  .task-status.skipped {
+    border: 1.5px solid var(--text-quaternary);
+    background: var(--bg-tertiary);
+  }
+
+  .task-status.skipped::after {
+    content: "–";
+    font-size: 11px;
+    color: var(--text-quaternary);
+  }
+
+  .task-body {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .task-title {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    line-height: 1.3;
+  }
+
+  .task.done .task-title {
+    color: var(--text-quaternary);
+    text-decoration: line-through;
+    text-decoration-color: var(--text-quaternary);
+  }
+
+  .task-details {
+    font-size: 11px;
+    color: var(--text-quaternary);
+    line-height: 1.4;
+    margin-top: 3px;
+    display: none;
+  }
+
+  .task:hover .task-details {
+    display: block;
+  }
+
+  .task-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 4px;
+  }
+
+  .task-linked {
+    font-size: 10px;
+    font-family: var(--font-mono);
+    color: var(--accent);
+    background: var(--accent-muted);
+    padding: 1px 6px;
+    border-radius: 4px;
+  }
+
+  .task-updated {
+    font-size: 10px;
+    font-family: var(--font-mono);
+    color: var(--text-quaternary);
+  }
+
+  .task-notes {
+    margin-top: 6px;
+    display: none;
+  }
+
+  .task:hover .task-notes {
+    display: block;
+  }
+
+  .task-note {
+    font-size: 11px;
+    color: var(--text-tertiary);
+    padding: 4px 8px;
+    background: var(--bg-tertiary);
+    border-radius: 4px;
+    margin-top: 3px;
+    border-left: 2px solid var(--accent-subtle);
+  }
+
+  .task-note-by {
+    font-size: 10px;
+    color: var(--text-quaternary);
+    font-family: var(--font-mono);
+  }
+
+  /* Activity log */
+  .activity {
+    margin-top: 48px;
+    border-top: 1px solid var(--border);
+    padding-top: 24px;
+  }
+
+  .activity h2 {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-tertiary);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 16px;
+  }
+
+  .activity-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .activity-item {
+    font-size: 12px;
+    color: var(--text-tertiary);
+    padding: 6px 10px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .activity-item:hover {
+    background: var(--hover);
+  }
+
+  .activity-time {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-quaternary);
+    flex-shrink: 0;
+    width: 70px;
+  }
+
+  .activity-badge {
+    font-size: 10px;
+    font-weight: 600;
+    padding: 1px 6px;
+    border-radius: 4px;
+    flex-shrink: 0;
+  }
+
+  .activity-badge.done { color: var(--green); background: var(--green-muted); }
+  .activity-badge.in-progress { color: var(--accent); background: var(--accent-muted); }
+  .activity-badge.blocked { color: var(--red); background: var(--red-muted); }
+
+  .empty-activity {
+    font-size: 12px;
+    color: var(--text-quaternary);
+    font-style: italic;
+    padding: 8px 0;
+  }
+
+  /* Footer */
+  .footer {
+    margin-top: 48px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border);
+    font-size: 11px;
+    font-family: var(--font-mono);
+    color: var(--text-quaternary);
+    display: flex;
+    justify-content: space-between;
+  }
+
+  .footer code {
+    background: var(--bg-tertiary);
+    padding: 2px 6px;
+    border-radius: 3px;
+    color: var(--text-tertiary);
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <div class="header-top">
+      <h1>AOS Stability Roadmap</h1>
+      <span class="updated"><span class="live-dot"></span><span id="updated-time">loading...</span></span>
+    </div>
+  </div>
+
+  <div class="overall-progress">
+    <div class="progress-header">
+      <span class="progress-label">Overall Progress</span>
+      <span class="progress-value" id="overall-label">0 / 0</span>
+    </div>
+    <div class="progress-bar">
+      <div class="progress-fill" id="overall-fill" style="width: 0%"></div>
+    </div>
+  </div>
+
+  <div class="phases" id="phases"></div>
+
+  <div class="activity">
+    <h2>Recent Activity</h2>
+    <div class="activity-list" id="activity-list">
+      <div class="empty-activity">No updates yet. Tasks update in real-time as work progresses.</div>
+    </div>
+  </div>
+
+  <div class="footer">
+    <span>CLI: <code>python3 server.py update p1-2 done</code></span>
+    <span>API: <code>POST /api/update {"task_id":"p1-2","status":"done"}</code></span>
+  </div>
+</div>
+
+<script>
+const POLL_INTERVAL = 3000;
+let lastState = null;
+let activityLog = [];
+
+function timeAgo(iso) {
+  if (!iso) return '';
+  const diff = (Date.now() - new Date(iso).getTime()) / 1000;
+  if (diff < 60) return 'just now';
+  if (diff < 3600) return `${Math.floor(diff/60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff/3600)}h ago`;
+  return `${Math.floor(diff/86400)}d ago`;
+}
+
+function formatTime(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+}
+
+function renderPhase(phase, stats) {
+  const allDone = stats.done === stats.total && stats.total > 0;
+  const html = `
+    <div class="phase ${allDone ? 'all-done' : ''}" data-phase="${phase.id}">
+      <div class="phase-header">
+        <div class="phase-number">${phase.id.replace('-', ' ')}</div>
+        <div class="phase-name">${phase.name}</div>
+        <div class="phase-desc">${phase.description}</div>
+      </div>
+      <div class="phase-progress">
+        <div class="phase-progress-bar">
+          <div class="phase-progress-fill" style="width: ${stats.pct}%"></div>
+        </div>
+        <div class="phase-progress-meta">
+          <span>${stats.done}/${stats.total} tasks</span>
+          <span>${stats.pct}%</span>
+        </div>
+      </div>
+      <div class="task-list">
+        ${phase.tasks.map(t => renderTask(t)).join('')}
+      </div>
+    </div>
+  `;
+  return html;
+}
+
+function renderTask(t) {
+  const notes = (t.notes || []).map(n => `
+    <div class="task-note">
+      ${n.text}
+      <span class="task-note-by">${n.by || ''} · ${timeAgo(n.at)}</span>
+    </div>
+  `).join('');
+
+  return `
+    <div class="task ${t.status}">
+      <div class="task-status ${t.status}"></div>
+      <div class="task-body">
+        <div class="task-title">${t.title}</div>
+        <div class="task-details">${t.details || ''}</div>
+        <div class="task-meta">
+          ${t.linked_task ? `<span class="task-linked">${t.linked_task}</span>` : ''}
+          ${t.updated_at ? `<span class="task-updated">${timeAgo(t.updated_at)}${t.updated_by ? ' · ' + t.updated_by : ''}</span>` : ''}
+        </div>
+        ${notes ? `<div class="task-notes">${notes}</div>` : ''}
+      </div>
+    </div>
+  `;
+}
+
+function detectChanges(oldState, newState) {
+  if (!oldState) return [];
+  const changes = [];
+  for (const np of newState.phases) {
+    const op = oldState.phases.find(p => p.id === np.id);
+    if (!op) continue;
+    for (const nt of np.tasks) {
+      const ot = op.tasks.find(t => t.id === nt.id);
+      if (!ot) continue;
+      if (ot.status !== nt.status) {
+        changes.push({
+          task_id: nt.id,
+          title: nt.title,
+          from: ot.status,
+          to: nt.status,
+          at: nt.updated_at || new Date().toISOString(),
+          by: nt.updated_by || 'unknown',
+        });
+      }
+    }
+  }
+  return changes;
+}
+
+function renderActivity() {
+  const list = document.getElementById('activity-list');
+  if (activityLog.length === 0) {
+    list.innerHTML = '<div class="empty-activity">No updates yet. Tasks update in real-time as work progresses.</div>';
+    return;
+  }
+  list.innerHTML = activityLog.slice(-20).reverse().map(a => `
+    <div class="activity-item">
+      <span class="activity-time">${formatTime(a.at)}</span>
+      <span class="activity-badge ${a.to}">${a.to}</span>
+      <span>${a.title}</span>
+    </div>
+  `).join('');
+}
+
+function render(state) {
+  const stats = state._stats;
+
+  // Overall
+  document.getElementById('overall-label').textContent = `${stats.total_done} / ${stats.total_tasks}`;
+  const fill = document.getElementById('overall-fill');
+  fill.style.width = stats.total_pct + '%';
+  fill.classList.toggle('complete', stats.total_pct === 100);
+
+  // Updated time
+  document.getElementById('updated-time').textContent = timeAgo(state.updated_at);
+
+  // Phases
+  const phasesEl = document.getElementById('phases');
+  phasesEl.innerHTML = state.phases.map((p, i) => {
+    const ps = stats.phases.find(s => s.id === p.id);
+    return renderPhase(p, ps);
+  }).join('');
+}
+
+async function poll() {
+  try {
+    const res = await fetch('/api/state');
+    if (!res.ok) return;
+    const state = await res.json();
+
+    // Detect changes
+    if (lastState) {
+      const changes = detectChanges(lastState, state);
+      activityLog.push(...changes);
+      if (changes.length > 0) renderActivity();
+    }
+
+    render(state);
+    lastState = JSON.parse(JSON.stringify(state));
+  } catch (e) {
+    // silent — will retry next poll
+  }
+}
+
+// Initial load
+poll();
+
+// Build activity from existing updated_at timestamps on first load
+setTimeout(() => {
+  if (lastState) {
+    const initial = [];
+    for (const p of lastState.phases) {
+      for (const t of p.tasks) {
+        if (t.updated_at && t.status !== 'pending') {
+          initial.push({
+            task_id: t.id,
+            title: t.title,
+            from: 'pending',
+            to: t.status,
+            at: t.updated_at,
+            by: t.updated_by || '',
+          });
+        }
+      }
+    }
+    initial.sort((a, b) => new Date(a.at) - new Date(b.at));
+    activityLog = initial;
+    renderActivity();
+  }
+}, 500);
+
+// Poll loop
+setInterval(poll, POLL_INTERVAL);
+</script>
+</body>
+</html>

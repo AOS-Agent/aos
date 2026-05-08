@@ -54,9 +54,25 @@ class DraftContext:
     has_style_samples: bool = False
     has_edit_history: bool = False
 
+    # Operator voice profile (PRIMARY — how the operator communicates globally)
+    voice_prompt_block: str = ""
+    has_voice_profile: bool = False
+
+    # Style intelligence (SECONDARY — per-relationship mode + exemplars)
+    style_profile: dict | None = None
+    active_mode: str = ""
+    mode_exemplars: list[str] = field(default_factory=list)
+    enhancement_level: str = "clean"
+    has_style_intelligence: bool = False
+
     def to_prompt_context(self) -> str:
         """Format as a text block the drafter can include in its prompt."""
         lines = []
+
+        # Voice profile goes FIRST — it's the primary source of truth
+        if self.voice_prompt_block:
+            lines.append(self.voice_prompt_block)
+            lines.append("")
 
         lines.append(f"## Person: {self.person_name}")
         if self.relationship:
@@ -99,6 +115,30 @@ class DraftContext:
                 lines.append(f"  You changed to: {edit.get('final', '')}")
             lines.append("")
 
+        if self.style_profile:
+            if self.style_profile.get("prose_summary"):
+                lines.append("## Your communication style with this person")
+                lines.append(f"  {self.style_profile['prose_summary']}")
+                if self.active_mode:
+                    lines.append(f"  Current mode: {self.active_mode}")
+                lines.append("")
+
+            # Style markers — hard rules the drafter MUST follow
+            markers = self.style_profile.get("style_markers", [])
+            if markers:
+                lines.append("## STYLE RULES (mandatory — violating these makes the message sound fake)")
+                for marker in markers:
+                    lines.append(f"  - {marker}")
+                lines.append("")
+
+        if self.mode_exemplars:
+            lines.append("## How you write in this mode (match this voice EXACTLY)")
+            lines.append("  Study these real messages. Match the capitalization, punctuation,")
+            lines.append("  spelling, emoji patterns, and message length precisely.")
+            for ex in self.mode_exemplars[:6]:
+                lines.append(f"  You: {ex}")
+            lines.append("")
+
         return "\n".join(lines)
 
 
@@ -109,6 +149,9 @@ def assemble_context(
     conn: sqlite3.Connection,
     last_inbound: str = "",
     recent_messages: list[dict] | None = None,
+    requested_topic: str | None = None,
+    register_cues: list[str] | None = None,
+    enhancement_override: str | None = None,
 ) -> DraftContext:
     """Assemble full drafting context for a person.
 
@@ -203,5 +246,49 @@ def assemble_context(
             ctx.has_edit_history = len(ctx.style_edits) > 0
     except Exception as e:
         log.debug(f"Failed to load style edits: {e}")
+
+    # ── Operator voice profile (PRIMARY) ────────────────
+    try:
+        from core.engine.comms.style.voice import load_voice_profile
+        vp = load_voice_profile()
+        if vp:
+            ctx.voice_prompt_block = vp.to_prompt_block()
+            ctx.has_voice_profile = True
+    except Exception as e:
+        log.debug(f"Voice profile unavailable: {e}")
+
+    # ── Style intelligence (SECONDARY) ──────────────────
+    try:
+        from core.engine.comms.style.profiles import (
+            load_style_profile, detect_active_mode, ensure_profile,
+        )
+        # Single connection for both ensure_profile and detect_active_mode
+        comms_db_path = str(Path.home() / ".aos" / "data" / "comms.db")
+        with sqlite3.connect(comms_db_path) as comms_conn:
+            comms_conn.row_factory = sqlite3.Row
+
+            # On-demand: compute profile if person has enough messages but no profile yet
+            ensure_profile(person_id, conn, comms_conn)
+
+            profile = load_style_profile(person_id, conn)
+            if profile:
+                ctx.style_profile = profile
+                ctx.enhancement_level = (
+                    enhancement_override
+                    or profile.get("enhancement_default", "clean")
+                )
+                mode_name, exemplar_texts = detect_active_mode(
+                    person_id=person_id,
+                    recent_messages=recent_messages or [],
+                    requested_topic=requested_topic,
+                    register_cues=register_cues or [],
+                    people_conn=conn,
+                    comms_conn=comms_conn,
+                )
+                ctx.active_mode = mode_name
+                ctx.mode_exemplars = exemplar_texts
+                ctx.has_style_intelligence = True
+    except Exception as e:
+        log.debug(f"Style intelligence unavailable: {e}")
 
     return ctx

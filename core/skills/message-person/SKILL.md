@@ -63,6 +63,9 @@ Key commands:
 # With verb hint (skill passes the operator's verb)
 ~/aos/core/bin/cli/message-person --to "<name>" --hint text --text "<body>" --dry-run --json
 
+# With enhancement override
+~/aos/core/bin/cli/message-person --to "<name>" --text "<body>" --enhance elevated --dry-run --json
+
 # Explicit channel override
 ~/aos/core/bin/cli/message-person --to "<name>" --channel slack --text "<body>" --dry-run --json
 
@@ -89,6 +92,12 @@ Extract from the operator's message:
 - **Verb hint** — the operator's verb maps to a preferred channel (see table above)
 
 Be conservative with the body. Send what they said, not a rewrite. If they said "tell \<name\> that Y" → the body is "Y" phrased naturally. Don't add greetings or sign-offs unless the operator included them.
+
+- **Enhancement cues** — detect if the operator implies a style level:
+  - "raw", "exactly as I'd write it", "just like me" → `--enhance raw`
+  - "clean it up", "fix the grammar" → `--enhance clean`
+  - "make it formal", "professional", "tighten it up" → `--enhance elevated`
+  - No cue → use person's default (usually "clean")
 
 ### Step 2 — Resolve + pick channel (dry-run)
 
@@ -168,6 +177,22 @@ Unless the operator chains another message, stop. No unsolicited follow-ups.
 ## Draft-first persistence
 
 Every message attempt (preview or send) is logged to `~/.aos/data/comms-drafts.jsonl` with a `draft_id`, status, channel, recipient, and body. This provides a paper trail of all messaging activity. Use `--no-draft` to suppress logging for test runs.
+
+## Style Intelligence
+
+When a person has a computed style profile (≥20 outbound messages analyzed by the nightly `compute-style-intelligence` cron), the system automatically:
+
+- **Detects conversational mode** — banter, transactional, deep, warm, or professional — based on the current thread texture + topic
+- **Pulls exemplar messages** that match the detected mode — real messages the operator sent in this mode
+- **Applies enhancement dial** — raw (exact replication), clean (fix grammar only), or elevated (tighter/sharper)
+
+The preview JSON includes `style_info.has_style` and `style_info.enhancement` when style intelligence is active. Show it in the preview:
+
+> → **WhatsApp** to **Alice** (style: banter, clean)
+> "yalla can you send me the deck?"
+> **Send?**
+
+If no style profile exists (new contact or <20 messages), drafting proceeds normally without style intelligence.
 
 ## What this skill does NOT do
 

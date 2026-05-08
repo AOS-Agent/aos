@@ -21,7 +21,7 @@ from urllib.request import Request, urlopen
 
 logger = logging.getLogger(__name__)
 
-TRANSCRIBER_URL = "http://127.0.0.1:7601"
+TRANSCRIBER_URL = "http://127.0.0.1:7602"
 TIMEOUT = 300  # 5 minutes max for long audio
 
 

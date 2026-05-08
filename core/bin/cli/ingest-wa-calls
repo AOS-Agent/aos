@@ -1,0 +1,262 @@
+#!/usr/bin/env python3
+"""ingest-wa-calls — import WhatsApp call events into comms.db + people.db.
+
+Reads call events (missed calls, call logs) from WhatsApp Desktop's
+ChatStorage.sqlite and ingests them into the unified comms pipeline.
+
+Each call becomes:
+- A message in comms.db: content = "[missed call]" or "[call] Xm Ys"
+- An interaction in people.db (if resolver is available)
+
+Idempotent — uses deterministic IDs (wa-call-{z_pk}) to avoid duplicates.
+
+Usage:
+    ingest-wa-calls                    # ingest all calls
+    ingest-wa-calls --since 2025-01-01
+    ingest-wa-calls --dry-run
+    ingest-wa-calls --verbose
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import logging
+import shutil
+import sqlite3
+import sys
+import tempfile
+import time
+from datetime import datetime
+from pathlib import Path
+
+# Make AOS importable
+for _candidate in (Path.home() / "project" / "aos", Path.home() / "aos"):
+    if (_candidate / "core").is_dir() and str(_candidate) not in sys.path:
+        sys.path.insert(0, str(_candidate))
+
+log = logging.getLogger("ingest-wa-calls")
+
+COMMS_DB = Path.home() / ".aos" / "data" / "comms.db"
+PEOPLE_DB = Path.home() / ".aos" / "data" / "people.db"
+WA_DB = (
+    Path.home() / "Library" / "Group Containers"
+    / "group.net.whatsapp.WhatsApp.shared" / "ChatStorage.sqlite"
+)
+APPLE_EPOCH = 978307200
+
+# WA message types for calls
+CALL_TYPES = {
+    10: "missed_call",  # Missed/declined/unanswered
+    11: "call",         # Completed call with duration
+}
+
+
+def get_resolver():
+    """Try to load the people resolver."""
+    try:
+        from core.engine.people import resolver
+        return resolver
+    except ImportError:
+        try:
+            sys.path.insert(0, str(Path.home() / "aos" / "core" / "engine" / "people"))
+            import resolver
+            return resolver
+        except ImportError:
+            return None
+
+
+def get_people_conn():
+    """Get a connection to people.db."""
+    if PEOPLE_DB.exists():
+        return sqlite3.connect(str(PEOPLE_DB))
+    return None
+
+
+def resolve_person(sender: str, resolver_mod, people_conn) -> str | None:
+    """Resolve a sender JID to a person_id."""
+    if not resolver_mod or not people_conn:
+        return None
+    try:
+        result = resolver_mod.resolve_contact(sender, context="whatsapp", conn=people_conn)
+        if result and result.get("resolved"):
+            return result.get("person_id")
+    except Exception:
+        pass
+    return None
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Ingest WhatsApp call events into comms.db")
+    parser.add_argument("--since", help="Only calls after this date (YYYY-MM-DD)")
+    parser.add_argument("--dry-run", action="store_true", help="Report without writing")
+    parser.add_argument("--verbose", "-v", action="store_true")
+    args = parser.parse_args()
+
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.INFO,
+        format="%(message)s",
+    )
+
+    # Preflight
+    if not WA_DB.exists():
+        log.error("WhatsApp ChatStorage.sqlite not found")
+        sys.exit(1)
+    if not COMMS_DB.exists():
+        log.error("comms.db not found")
+        sys.exit(1)
+
+    # Copy WA DB for safe reading
+    tmp = tempfile.NamedTemporaryFile(suffix=".sqlite", delete=False)
+    tmp.close()
+    shutil.copy2(str(WA_DB), tmp.name)
+    wa_conn = sqlite3.connect(tmp.name)
+    wa_conn.row_factory = sqlite3.Row
+
+    # Build query
+    cutoff = 0
+    if args.since:
+        since_dt = datetime.fromisoformat(args.since)
+        cutoff = since_dt.timestamp() - APPLE_EPOCH
+
+    rows = wa_conn.execute("""
+        SELECT
+            m.Z_PK,
+            m.ZMESSAGEDATE,
+            m.ZMESSAGETYPE,
+            m.ZISFROMME,
+            m.ZFROMJID,
+            m.ZMESSAGESTATUS,
+            c.ZCONTACTJID,
+            c.ZPARTNERNAME,
+            c.ZSESSIONTYPE
+        FROM ZWAMESSAGE m
+        JOIN ZWACHATSESSION c ON m.ZCHATSESSION = c.Z_PK
+        WHERE m.ZMESSAGETYPE IN (10, 11)
+          AND m.ZMESSAGEDATE >= ?
+        ORDER BY m.ZMESSAGEDATE
+    """, (cutoff,)).fetchall()
+
+    log.info("Found %d call events in WhatsApp local DB", len(rows))
+
+    if not rows:
+        wa_conn.close()
+        Path(tmp.name).unlink(missing_ok=True)
+        return
+
+    # Connect to comms.db
+    comms_conn = sqlite3.connect(str(COMMS_DB))
+    comms_conn.execute("PRAGMA journal_mode=WAL")
+
+    # Set up people resolver
+    resolver_mod = get_resolver()
+    people_conn = get_people_conn()
+    resolve_cache: dict[str, str | None] = {}
+
+    stats = {"total": len(rows), "new": 0, "skipped": 0, "duplicate": 0}
+
+    for row in rows:
+        z_pk = row["Z_PK"]
+        msg_id = f"wa-call-{z_pk}"
+        msg_type = CALL_TYPES.get(row["ZMESSAGETYPE"], "call")
+
+        # Check for duplicate
+        existing = comms_conn.execute(
+            "SELECT 1 FROM messages WHERE id = ? LIMIT 1", (msg_id,)
+        ).fetchone()
+        if existing:
+            stats["duplicate"] += 1
+            continue
+
+        # Parse timestamp
+        ts = datetime.fromtimestamp(row["ZMESSAGEDATE"] + APPLE_EPOCH)
+        ts_str = ts.isoformat()
+
+        # Skip group calls (noise)
+        jid = row["ZCONTACTJID"] or ""
+        is_group = "@g.us" in jid or row["ZSESSIONTYPE"] != 0
+
+        from_me = bool(row["ZISFROMME"])
+        partner = row["ZPARTNERNAME"] or jid
+        from_jid = row["ZFROMJID"] or ""
+
+        # Determine call direction and status
+        status = row["ZMESSAGESTATUS"]
+        if msg_type == "missed_call":
+            if from_me:
+                content = "[outgoing call — no answer]"
+            elif status == 0:
+                content = "[missed call]"
+            else:
+                content = "[missed call]"
+        else:
+            content = "[call]"
+
+        direction = "outbound" if from_me else "inbound"
+        sender = "me" if from_me else (from_jid or jid)
+
+        # Resolve person
+        resolve_key = jid or sender
+        if resolve_key not in resolve_cache:
+            resolve_cache[resolve_key] = resolve_person(resolve_key, resolver_mod, people_conn)
+        person_id = resolve_cache[resolve_key]
+
+        # Conversation ID (match whatsapp import pattern)
+        conv_id = f"conv_wa_{jid[:12]}" if jid else None
+
+        meta = json.dumps({
+            "jid": jid,
+            "from_jid": from_jid,
+            "partner_name": partner,
+            "is_group": is_group,
+            "call_type": msg_type,
+        })
+
+        if args.dry_run:
+            label = "group " if is_group else ""
+            log.info(
+                "[DRY] %s %s%s %s %s → %s",
+                ts_str[:10], label, msg_type, direction, partner, person_id or "?"
+            )
+            stats["new"] += 1
+            continue
+
+        comms_conn.execute("""
+            INSERT OR IGNORE INTO messages
+                (id, channel, direction, sender_id, content, timestamp,
+                 person_id, conversation_id, channel_metadata,
+                 has_attachment, attachment_type)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'call')
+        """, (
+            msg_id,
+            "whatsapp",
+            direction,
+            sender,
+            content,
+            ts_str,
+            person_id,
+            conv_id,
+            meta,
+        ))
+        stats["new"] += 1
+
+    if not args.dry_run:
+        comms_conn.commit()
+
+    comms_conn.close()
+    wa_conn.close()
+    Path(tmp.name).unlink(missing_ok=True)
+
+    if people_conn:
+        people_conn.close()
+
+    log.info("")
+    log.info("=== Call ingestion complete ===")
+    log.info("Total call events:  %d", stats["total"])
+    log.info("New (ingested):     %d", stats["new"])
+    log.info("Duplicates:         %d", stats["duplicate"])
+    log.info("Skipped:            %d", stats["skipped"])
+
+
+if __name__ == "__main__":
+    main()

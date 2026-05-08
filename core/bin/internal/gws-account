@@ -1,21 +1,32 @@
 #!/bin/bash
 # gws-account — Multi-account wrapper for gws (Google Workspace CLI)
 #
-# Picks the right credential file based on --account flag or Keychain default.
+# Exchanges the per-account refresh token for a fresh access token,
+# then passes it to gws via GOOGLE_WORKSPACE_CLI_TOKEN. This bypasses
+# gws's single-account token cache and project_id permission checks,
+# enabling seamless multi-account usage.
+#
 # Credential files live at ~/.aos/config/google/credentials/{email}.json
+# Each contains: client_id, client_secret, refresh_token, type.
 #
 # Usage:
 #   gws-account --account user@example.com gmail users messages list ...
 #   gws-account gmail users messages list ...   # uses GOOGLE_PRIMARY_EMAIL
 #
-# The wrapper sets GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE and passes
-# all remaining arguments through to gws.
+# Why not GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE?
+#   gws caches tokens in macOS Keychain under a single key ("gws-cli"),
+#   so switching credential files doesn't switch accounts. And gws sends
+#   an x-goog-user-project header from client_secret.json's project_id,
+#   which triggers 403s for accounts that aren't IAM members of the GCP
+#   project. Passing a pre-obtained token via env var avoids both issues.
 
 set -euo pipefail
 
 AGENT_SECRET="$HOME/aos/core/bin/agent-secret"
 CREDS_DIR="$HOME/.aos/config/google/credentials"
+TOKEN_ENDPOINT="https://oauth2.googleapis.com/token"
 
+# --- Parse --account flag ---
 ACCOUNT=""
 if [[ "${1:-}" == "--account" ]]; then
     ACCOUNT="$2"
@@ -31,6 +42,7 @@ if [[ -z "$ACCOUNT" ]]; then
     exit 3
 fi
 
+# --- Locate credential file ---
 CRED_FILE="$CREDS_DIR/$ACCOUNT.json"
 if [[ ! -f "$CRED_FILE" ]]; then
     echo "Error: no credentials for $ACCOUNT at $CRED_FILE" >&2
@@ -39,5 +51,39 @@ if [[ ! -f "$CRED_FILE" ]]; then
     exit 2
 fi
 
-export GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE="$CRED_FILE"
+# --- Exchange refresh token for access token ---
+# Uses Python for JSON parsing (always available on macOS).
+# Token exchange is a single HTTPS POST, takes ~200ms.
+ACCESS_TOKEN=$(python3 -c "
+import json, urllib.request, urllib.parse, sys
+try:
+    cred = json.load(open('$CRED_FILE'))
+    data = urllib.parse.urlencode({
+        'client_id': cred['client_id'],
+        'client_secret': cred['client_secret'],
+        'refresh_token': cred['refresh_token'],
+        'grant_type': 'refresh_token'
+    }).encode()
+    req = urllib.request.Request('$TOKEN_ENDPOINT', data=data)
+    resp = urllib.request.urlopen(req, timeout=10)
+    token_data = json.loads(resp.read())
+    if 'access_token' not in token_data:
+        print('Error: token response missing access_token', file=sys.stderr)
+        print(json.dumps(token_data), file=sys.stderr)
+        sys.exit(1)
+    print(token_data['access_token'])
+except Exception as e:
+    print(f'Error exchanging token for $ACCOUNT: {e}', file=sys.stderr)
+    sys.exit(1)
+" 2>&1)
+
+# Check if token exchange succeeded (python3 exit code)
+if [[ $? -ne 0 ]] || [[ -z "$ACCESS_TOKEN" ]] || [[ "$ACCESS_TOKEN" == Error* ]]; then
+    echo "Failed to obtain access token for $ACCOUNT" >&2
+    echo "$ACCESS_TOKEN" >&2
+    exit 1
+fi
+
+# --- Pass token to gws ---
+export GOOGLE_WORKSPACE_CLI_TOKEN="$ACCESS_TOKEN"
 exec gws "$@"

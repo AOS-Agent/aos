@@ -1,0 +1,181 @@
+#!/usr/bin/env python3
+"""
+Style Intelligence — compute per-relationship communication style profiles.
+
+Runs nightly after enrich-comms and comms-patterns. For each eligible person
+(>= 20 outbound messages), extracts texture vectors from their outbound messages,
+clusters by communication mode, labels modes via Haiku, and stores the profile.
+
+Three stages per person:
+  1. Extract & Cluster  (SQL + Python, no LLM)
+  2. Label & Exemplars  (Claude Haiku, ~1K tokens/person)
+  3. Write Profile      (SQL)
+
+Usage:
+    python3 compute-style-intelligence                  # all eligible
+    python3 compute-style-intelligence --dry-run        # preview
+    python3 compute-style-intelligence --person-id X    # one person
+    python3 compute-style-intelligence --limit 50       # cap
+    python3 compute-style-intelligence --force           # recompute even if fresh
+"""
+
+import sqlite3
+import sys
+from datetime import datetime
+from pathlib import Path
+
+# AOS paths
+for _p in (Path.home() / "project" / "aos", Path.home() / "aos"):
+    if (_p / "core").is_dir():
+        sys.path.insert(0, str(_p))
+        break
+
+from core.engine.comms.style.extractor import (
+    compute_stage_1, get_eligible_persons, MIN_OUTBOUND,
+)
+from core.engine.comms.style.labeler import label_clusters
+from core.engine.comms.style.profiles import (
+    upsert_profile, upsert_modes, needs_recompute,
+)
+
+COMMS_DB = Path.home() / ".aos" / "data" / "comms.db"
+PEOPLE_DB = Path.home() / ".aos" / "data" / "people.db"
+
+DRY_RUN = "--dry-run" in sys.argv
+VERBOSE = "--verbose" in sys.argv or "-v" in sys.argv
+FORCE = "--force" in sys.argv
+LIMIT = 100
+PERSON_ID = None
+
+for i, arg in enumerate(sys.argv):
+    if arg == "--limit":
+        try:
+            LIMIT = int(sys.argv[i + 1])
+        except (IndexError, ValueError):
+            pass
+    if arg == "--person-id":
+        try:
+            PERSON_ID = sys.argv[i + 1]
+        except IndexError:
+            pass
+
+
+def log(msg):
+    ts = datetime.now().strftime("%H:%M:%S")
+    print(f"[{ts}] {msg}")
+
+
+def main():
+    if not COMMS_DB.exists():
+        log("comms.db not found")
+        return
+    if not PEOPLE_DB.exists():
+        log("people.db not found")
+        return
+
+    comms_conn = sqlite3.connect(str(COMMS_DB))
+    comms_conn.row_factory = sqlite3.Row
+    people_conn = sqlite3.connect(str(PEOPLE_DB))
+    people_conn.row_factory = sqlite3.Row
+
+    # Determine which persons to process
+    if PERSON_ID:
+        # Count outbound for this person
+        cnt = comms_conn.execute(
+            "SELECT COUNT(*) FROM messages WHERE person_id = ? AND direction = 'outbound'",
+            (PERSON_ID,),
+        ).fetchone()[0]
+        persons = [(PERSON_ID, cnt)]
+    else:
+        persons = get_eligible_persons(people_conn, comms_conn)
+
+    persons = persons[:LIMIT]
+
+    total = len(persons)
+    processed = 0
+    written = 0
+    skipped = 0
+    failed = 0
+
+    log(f"Found {total} eligible person(s) (limit={LIMIT}, dry_run={DRY_RUN}, force={FORCE})")
+
+    for person_id, outbound_count in persons:
+        try:
+            # Check if recompute needed
+            if not FORCE and not PERSON_ID:
+                if not needs_recompute(person_id, people_conn, comms_conn):
+                    if VERBOSE:
+                        log(f"  Skipping {person_id} — profile is fresh")
+                    skipped += 1
+                    continue
+
+            # Resolve person name
+            row = people_conn.execute(
+                "SELECT canonical_name FROM people WHERE id = ?", (person_id,)
+            ).fetchone()
+            person_name = row["canonical_name"] if row else person_id
+
+            # Stage 1: Extract & Cluster (shared with on-demand compute)
+            result = compute_stage_1(person_id, comms_conn)
+            if result is None:
+                if VERBOSE:
+                    log(f"  Skipping {person_name} — insufficient outbound messages")
+                skipped += 1
+                continue
+
+            vectors, clusters, content_map, global_traits, style_markers = result
+
+            if VERBOSE:
+                log(f"  {person_name}: {len(vectors)} messages, {len(clusters)} clusters")
+
+            if DRY_RUN:
+                processed += 1
+                continue
+
+            # Stage 2: Label clusters via LLM
+            result = label_clusters(person_name, person_id, clusters, global_traits, comms_conn)
+            if not result:
+                log(f"  WARNING: LLM labeling failed for {person_name}, writing profile without mode labels")
+                # Still write the profile with global traits
+                upsert_profile(people_conn, person_id, global_traits, "", len(vectors), outbound_count, style_markers=style_markers)
+                people_conn.commit()
+                written += 1
+                processed += 1
+                continue
+
+            # Stage 3: Write profile
+            prose_summary = result.get("prose_summary", "")
+            modes = result.get("modes", [])
+
+            upsert_profile(
+                people_conn, person_id, global_traits,
+                prose_summary, len(vectors), outbound_count,
+                style_markers=style_markers,
+            )
+            upsert_modes(people_conn, person_id, modes)
+            people_conn.commit()
+
+            written += 1
+            processed += 1
+
+            if VERBOSE:
+                mode_names = [m.get("name", "?") for m in modes]
+                log(f"  {person_name}: profile written with modes: {', '.join(mode_names)}")
+
+        except Exception as e:
+            failed += 1
+            log(f"  ERROR processing {person_id}: {e}")
+            if VERBOSE:
+                import traceback
+                traceback.print_exc()
+            continue
+
+    comms_conn.close()
+    people_conn.close()
+
+    action = "Would process" if DRY_RUN else "Processed"
+    log(f"{action} {processed}/{total} people, {written} profiles written ({skipped} skipped, {failed} failed)")
+
+
+if __name__ == "__main__":
+    main()

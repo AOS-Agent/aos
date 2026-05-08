@@ -161,11 +161,21 @@ class CommsStoreConsumer(Consumer):
 
         direction = "outbound" if msg.from_me else "inbound"
 
+        # Map media fields to DB columns
+        has_attachment = 1 if msg.has_media else 0
+        attachment_type = msg.media_type if msg.has_media else None
+        attachment_path = msg.media_path or None
+
+        # Store channel-specific metadata as JSON
+        import json as _json
+        channel_meta = _json.dumps(msg.metadata) if msg.metadata else None
+
         conn.execute("""
             INSERT OR IGNORE INTO messages
                 (id, channel, direction, sender_id, content, timestamp,
-                 person_id, conversation_id, channel_metadata)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 person_id, conversation_id, channel_metadata,
+                 has_attachment, attachment_type, attachment_path)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             msg_id,
             msg.channel,
@@ -175,7 +185,10 @@ class CommsStoreConsumer(Consumer):
             ts_str,
             person_id,
             conv_id,
-            None,
+            channel_meta,
+            has_attachment,
+            attachment_type,
+            attachment_path,
         ))
 
         return True

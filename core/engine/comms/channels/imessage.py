@@ -40,6 +40,7 @@ class iMessageAdapter(ChannelAdapter):
 
     def __init__(self, db_path: Path | None = None):
         self.db_path = db_path or DB_PATH
+        self._tmp_paths: dict[int, str] = {}  # conn id -> tmp file path
 
     # --- Lifecycle ---
 
@@ -61,19 +62,19 @@ class iMessageAdapter(ChannelAdapter):
         base = {"channel": self.name}
         if not self.db_path.exists():
             return {**base, "available": False, "error": "chat.db not found"}
+        conn = self._connect()
+        if not conn:
+            return {**base, "available": False, "error": "Could not open database"}
         try:
-            conn = self._connect()
-            if conn:
-                # Get message count as a health indicator
-                cursor = conn.execute("SELECT COUNT(*) FROM message")
-                count = cursor.fetchone()[0]
-                self._disconnect(conn)
-                return {**base, "available": True, "total_messages": count}
+            cursor = conn.execute("SELECT COUNT(*) FROM message")
+            count = cursor.fetchone()[0]
+            return {**base, "available": True, "total_messages": count}
         except PermissionError:
             return {**base, "available": False, "error": "Full Disk Access required"}
         except Exception as e:
             return {**base, "available": False, "error": str(e)}
-        return {**base, "available": False}
+        finally:
+            self._disconnect(conn)
 
     # --- Read interface ---
 
@@ -320,28 +321,29 @@ class iMessageAdapter(ChannelAdapter):
             return None
 
         tmp = tempfile.NamedTemporaryFile(suffix=".sqlite", delete=False)
+        tmp_path = tmp.name
         tmp.close()
 
         try:
-            shutil.copy2(self.db_path, tmp.name)
+            shutil.copy2(self.db_path, tmp_path)
             # Also copy WAL and SHM files for consistency
             for ext in ["-wal", "-shm"]:
                 wal = self.db_path.parent / (self.db_path.name + ext)
                 if wal.exists():
-                    shutil.copy2(wal, tmp.name + ext)
-        except PermissionError:
-            Path(tmp.name).unlink(missing_ok=True)
+                    shutil.copy2(wal, tmp_path + ext)
+            conn = sqlite3.connect(tmp_path)
+            conn.row_factory = sqlite3.Row
+            # Track tmp path on the adapter (not the conn — Python 3.14 removed __dict__ from Connection)
+            self._tmp_paths[id(conn)] = tmp_path
+            return conn
+        except (PermissionError, OSError):
+            for suffix in ["", "-wal", "-shm"]:
+                Path(tmp_path + suffix).unlink(missing_ok=True)
             return None
-
-        conn = sqlite3.connect(tmp.name)
-        conn.row_factory = sqlite3.Row
-        # Track tmp path so _disconnect can clean it up
-        conn._tmp_path = tmp.name  # type: ignore[attr-defined]
-        return conn
 
     def _disconnect(self, conn: sqlite3.Connection) -> None:
         """Close connection and delete the temp copy of chat.db."""
-        tmp_path = getattr(conn, "_tmp_path", None)
+        tmp_path = self._tmp_paths.pop(id(conn), None)
         try:
             conn.close()
         except Exception:

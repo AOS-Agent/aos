@@ -7,6 +7,11 @@ Checks:
 3. OAuth credentials exist in macOS Keychain
 4. At least one account credential file exists
 5. Legacy workspace-mcp MCP server is not registered
+6. client_secret.json has project_id stripped (multi-account fix)
+   gws sends x-goog-user-project header from client_secret.json's project_id,
+   which triggers 403s for accounts that aren't IAM members of the GCP project.
+   Stripping project_id prevents the header from being sent. The full copy is
+   preserved at ~/.aos/config/google/client_secret.full.json for gws auth login.
 """
 
 import json
@@ -26,6 +31,9 @@ class GoogleWorkspaceCheck(ReconcileCheck):
     AGENT_SECRET = Path.home() / "aos" / "core" / "bin" / "agent-secret"
     GWS_ACCOUNT = Path.home() / "aos" / "core" / "bin" / "internal" / "gws-account"
     CREDS_DIR = Path.home() / ".aos" / "config" / "google" / "credentials"
+    GWS_CONFIG_DIR = Path.home() / ".config" / "gws"
+    CLIENT_SECRET = GWS_CONFIG_DIR / "client_secret.json"
+    CLIENT_SECRET_FULL = Path.home() / ".aos" / "config" / "google" / "client_secret.full.json"
     CLAUDE_JSON = Path.home() / ".claude.json"
     REQUIRED_SECRETS = [
         "GOOGLE_OAUTH_CLIENT_ID",
@@ -43,6 +51,36 @@ class GoogleWorkspaceCheck(ReconcileCheck):
             return result.returncode == 0 and bool(result.stdout.strip())
         except Exception:
             return False
+
+    def _client_secret_has_project_id(self) -> bool:
+        """Return True if client_secret.json still has project_id (needs stripping)."""
+        try:
+            data = json.loads(self.CLIENT_SECRET.read_text())
+            key = "installed" if "installed" in data else "web"
+            return "project_id" in data.get(key, {})
+        except Exception:
+            return False
+
+    def _strip_project_id(self) -> str | None:
+        """Strip project_id from client_secret.json, saving full copy first."""
+        try:
+            raw = self.CLIENT_SECRET.read_text()
+            data = json.loads(raw)
+            key = "installed" if "installed" in data else "web"
+            if "project_id" not in data.get(key, {}):
+                return None
+
+            # Save full copy (with project_id) for gws auth login
+            self.CLIENT_SECRET_FULL.parent.mkdir(parents=True, exist_ok=True)
+            if not self.CLIENT_SECRET_FULL.exists():
+                self.CLIENT_SECRET_FULL.write_text(raw)
+
+            # Strip project_id from runtime copy
+            del data[key]["project_id"]
+            self.CLIENT_SECRET.write_text(json.dumps(data, indent=2) + "\n")
+            return "Stripped project_id from client_secret.json (multi-account fix)"
+        except Exception as e:
+            return f"Failed to strip project_id: {e}"
 
     def _legacy_mcp_registered(self) -> list[str]:
         """Return list of legacy MCP server names still registered."""
@@ -64,10 +102,18 @@ class GoogleWorkspaceCheck(ReconcileCheck):
             return False
         if self._legacy_mcp_registered():
             return False
+        if self._client_secret_has_project_id():
+            return False
         return True
 
     def fix(self) -> CheckResult:
         issues = []
+
+        # Strip project_id from client_secret.json (multi-account fix)
+        if self._client_secret_has_project_id():
+            result = self._strip_project_id()
+            if result:
+                issues.append(result)
 
         # Remove legacy MCP registrations
         legacy = self._legacy_mcp_registered()

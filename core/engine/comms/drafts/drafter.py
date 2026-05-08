@@ -57,9 +57,10 @@ def _build_prompt(ctx: DraftContext) -> str:
     parts = []
 
     parts.append(
-        "You are drafting a reply on behalf of an operator. "
-        "Match their voice and style exactly — you are ghostwriting, not composing your own message. "
-        "The reply should sound like THEM, not like an AI assistant."
+        "You are ghostwriting a message as the operator. "
+        "The recipient must not be able to tell this was AI-generated. "
+        "Your #1 job is to sound EXACTLY like the operator — not like a polished AI. "
+        "Study the exemplar messages and style rules below. They are ground truth."
     )
     parts.append("")
 
@@ -74,14 +75,54 @@ def _build_prompt(ctx: DraftContext) -> str:
     # Instructions
     parts.append("## Instructions")
     parts.append("- Write ONLY the reply text. No explanations, no quotes, no preamble.")
-    parts.append("- Match the operator's voice: length, tone, emoji usage, language.")
-    parts.append("- If the conversation is in a mix of English and Urdu/Arabic, match that pattern.")
-    parts.append("- Keep it natural and conversational — this is a real message to a real person.")
+
+    if ctx.has_style_intelligence:
+        # Strong anti-AI-normalization instructions
+        parts.append("- The STYLE RULES above are MANDATORY. Every single one.")
+        parts.append("- The exemplar messages show EXACTLY how the operator writes. Match them.")
+        parts.append(
+            "- DO NOT 'improve' the operator's style. Do not add punctuation they don't use. "
+            "Do not capitalize what they leave lowercase. Do not expand abbreviations they use. "
+            "Do not normalize their laugh patterns. Do not add emojis they don't use."
+        )
+        parts.append(
+            "- AI tells: periods at end of casual messages, perfect grammar in informal chats, "
+            "'I hope this message finds you well', using 'haha' when they use 'ahahah'. "
+            "These are detectable. Avoid them."
+        )
+
+        level = ctx.enhancement_level
+        if level == "raw":
+            parts.append(
+                "- MODE: RAW — Replicate EVERYTHING exactly: typos, abbreviations, missing "
+                "punctuation, fragments, weird spacing, extended letters. If they write "
+                "'doingggg' you write 'doingggg'. If they skip periods, you skip periods. "
+                "Zero corrections."
+            )
+        elif level == "elevated":
+            parts.append(
+                "- MODE: ELEVATED — Same voice, same personality, but sharper. Fix actual "
+                "errors (not style choices), improve sentence structure where it helps clarity. "
+                "Keep their abbreviations, emoji patterns, laugh style, and language mixing. "
+                "Think: them on their best day, not a different person."
+            )
+        else:  # clean (default)
+            parts.append(
+                "- MODE: CLEAN — Fix only clear spelling mistakes (not abbreviations — 'ur' is "
+                "intentional, not a typo). Fix only grammar that causes confusion. Keep everything "
+                "else: no periods if they don't use them, no capitalization if they don't capitalize, "
+                "same emoji patterns, same message length range."
+            )
+    else:
+        # Fallback for no style intelligence
+        parts.append("- Match the operator's voice: length, tone, emoji usage, language.")
+        parts.append("- If the conversation is in a mix of English and Urdu/Arabic, match that pattern.")
+        parts.append("- Keep it natural and conversational — this is a real message to a real person.")
 
     if ctx.style_edits:
         parts.append("- IMPORTANT: Learn from the correction history above. Adjust your style accordingly.")
 
-    if not ctx.has_style_samples:
+    if not ctx.has_style_samples and not ctx.has_style_intelligence:
         parts.append("- NOTE: No prior outbound messages available. Keep the reply brief and neutral.")
 
     return "\n".join(parts)
@@ -100,7 +141,13 @@ def _compute_confidence(ctx: DraftContext) -> float:
     if ctx.has_edit_history:
         score += 0.1  # We've learned from corrections
 
-    return min(score, 0.9)
+    if ctx.has_voice_profile:
+        score += 0.15  # Operator voice DNA (primary)
+
+    if ctx.has_style_intelligence:
+        score += 0.15  # Per-relationship mode + exemplars (secondary)
+
+    return min(score, 1.0)
 
 
 def draft_reply(ctx: DraftContext, timeout: int = 30) -> DraftResult:
@@ -155,7 +202,8 @@ def draft_reply(ctx: DraftContext, timeout: int = 30) -> DraftResult:
         result.reasoning = (
             f"Drafted with {len(ctx.style_samples)} style samples, "
             f"{'patterns' if ctx.has_patterns else 'no patterns'}, "
-            f"{'edit history' if ctx.has_edit_history else 'no edit history'}"
+            f"{'edit history' if ctx.has_edit_history else 'no edit history'}, "
+            f"{'style: ' + ctx.active_mode + '/' + ctx.enhancement_level if ctx.has_style_intelligence else 'no style intelligence'}"
         )
 
         if not ctx.has_style_samples:

@@ -38,6 +38,7 @@ logger = logging.getLogger(__name__)
 
 PEOPLE_DB = Path.home() / ".aos" / "data" / "people.db"
 COMMS_DB = Path.home() / ".aos" / "data" / "comms.db"
+IMESSAGE_DB = Path.home() / "Library" / "Messages" / "chat.db"
 CONTACTS_ROOT = Path.home() / "Library" / "Application Support" / "AddressBook" / "Sources"
 WA_CHAT_STORAGE = (
     Path.home() / "Library" / "Group Containers"
@@ -321,6 +322,185 @@ def enrich_identifiers(
             conn.close()
 
 
+# ── iMessage handle enrichment ──────────────────────────────────────────
+
+
+def _phone_suffix(phone: str) -> str | None:
+    """Return the last 10 digits of a phone number, or None if <10 digits."""
+    if not phone:
+        return None
+    digits = re.sub(r"\D", "", phone)
+    return digits[-10:] if len(digits) >= 10 else None
+
+
+def enrich_imessage_handles(
+    conn: sqlite3.Connection | None = None,
+    dry_run: bool = False,
+) -> dict[str, int]:
+    """Read iMessage handles from chat.db and write imessage_handle identifiers.
+
+    For each handle in chat.db (phone or email), matches to a person_id
+    using the same phone-suffix and email-exact logic as the signal adapter.
+    Writes the matched handle as type 'imessage_handle' in person_identifiers.
+
+    When a person has multiple iMessage handles, the one with the most
+    messages is marked is_primary=1.
+
+    Returns counts: {handles_scanned, matched, identifiers_added, already_existed, skipped_ambiguous}
+    """
+    if not IMESSAGE_DB.exists():
+        logger.info("enrich_imessage_handles: chat.db not found, skipping")
+        return {"handles_scanned": 0, "matched": 0, "identifiers_added": 0,
+                "already_existed": 0, "skipped_ambiguous": 0}
+
+    own_conn = conn is None
+    if own_conn:
+        conn = sqlite3.connect(str(PEOPLE_DB))
+        conn.row_factory = sqlite3.Row
+
+    try:
+        idx = _build_people_index(conn)
+
+        # Build phone-suffix → pid and email → pid maps from existing identifiers.
+        suffix_to_pid: dict[str, str] = {}
+        ambiguous_suffixes: set[str] = set()
+        email_to_pid: dict[str, str] = {}
+
+        for pid, idents in idx["existing"].items():
+            for typ, val in idents:
+                if typ == "phone":
+                    sfx = _phone_suffix(val)
+                    if sfx:
+                        existing = suffix_to_pid.get(sfx)
+                        if existing and existing != pid:
+                            ambiguous_suffixes.add(sfx)
+                        else:
+                            suffix_to_pid[sfx] = pid
+                elif typ == "wa_jid":
+                    # Also index phone portion of wa_jid
+                    digits = re.sub(r"[^\d]", "", val.split("@")[0] if "@" in val else val)
+                    sfx = digits[-10:] if len(digits) >= 10 else None
+                    if sfx:
+                        existing = suffix_to_pid.get(sfx)
+                        if existing and existing != pid:
+                            ambiguous_suffixes.add(sfx)
+                        else:
+                            suffix_to_pid[sfx] = pid
+                elif typ == "email":
+                    email_to_pid.setdefault(val.lower(), pid)
+
+        for s in ambiguous_suffixes:
+            suffix_to_pid.pop(s, None)
+
+        # Copy chat.db safely.
+        tmp = _copy_db(IMESSAGE_DB)
+        if not tmp:
+            logger.warning("enrich_imessage_handles: could not copy chat.db")
+            return {"handles_scanned": 0, "matched": 0, "identifiers_added": 0,
+                    "already_existed": 0, "skipped_ambiguous": 0}
+
+        try:
+            chat_conn = sqlite3.connect(f"file:{tmp}?mode=ro", uri=True)
+            chat_conn.row_factory = sqlite3.Row
+
+            # Read all handles with message counts (1:1 chats only, style=45).
+            rows = chat_conn.execute("""
+                SELECT h.ROWID, h.id AS handle_id,
+                       COUNT(m.ROWID) AS msg_count
+                FROM handle h
+                LEFT JOIN chat_handle_join chj ON chj.handle_id = h.ROWID
+                LEFT JOIN chat c ON chj.chat_id = c.ROWID AND c.style = 45
+                LEFT JOIN chat_message_join cmj ON cmj.chat_id = c.ROWID
+                LEFT JOIN message m ON cmj.message_id = m.ROWID
+                GROUP BY h.ROWID, h.id
+            """).fetchall()
+            chat_conn.close()
+        except sqlite3.Error as e:
+            logger.warning("enrich_imessage_handles: chat.db query failed: %s", e)
+            return {"handles_scanned": 0, "matched": 0, "identifiers_added": 0,
+                    "already_existed": 0, "skipped_ambiguous": 0}
+        finally:
+            Path(tmp).unlink(missing_ok=True)
+            for ext in ("-wal", "-shm"):
+                Path(tmp + ext).unlink(missing_ok=True)
+
+        counts = {
+            "handles_scanned": len(rows),
+            "matched": 0,
+            "identifiers_added": 0,
+            "already_existed": 0,
+            "skipped_ambiguous": 0,
+        }
+
+        # Match handles → person_ids, track message counts per (pid, handle).
+        pid_handles: dict[str, list[tuple[str, int]]] = {}  # pid → [(handle, msg_count)]
+
+        for row in rows:
+            handle_id = (row["handle_id"] or "").strip()
+            if not handle_id:
+                continue
+
+            msg_count = row["msg_count"] or 0
+            pid = None
+
+            if "@" in handle_id and "whatsapp" not in handle_id.lower():
+                # Email-style handle
+                pid = email_to_pid.get(handle_id.strip().lower())
+            else:
+                sfx = _phone_suffix(handle_id)
+                if sfx:
+                    if sfx in ambiguous_suffixes:
+                        counts["skipped_ambiguous"] += 1
+                        continue
+                    pid = suffix_to_pid.get(sfx)
+
+            if pid:
+                counts["matched"] += 1
+                pid_handles.setdefault(pid, []).append((handle_id, msg_count))
+
+        # Check existing imessage_handle identifiers.
+        existing_imsg: dict[str, set[str]] = {}  # pid → set of handles
+        for row in conn.execute(
+            "SELECT person_id, value FROM person_identifiers WHERE type = 'imessage_handle'"
+        ).fetchall():
+            existing_imsg.setdefault(row["person_id"], set()).add(row["value"])
+
+        # Write new identifiers.
+        now = int(time.time())
+        for pid, handle_list in pid_handles.items():
+            # Sort by msg_count desc to determine primary.
+            handle_list.sort(key=lambda t: t[1], reverse=True)
+            existing_for_pid = existing_imsg.get(pid, set())
+
+            for i, (handle_val, _msg_count) in enumerate(handle_list):
+                if handle_val in existing_for_pid:
+                    counts["already_existed"] += 1
+                    continue
+
+                is_primary = 1 if i == 0 and not existing_for_pid else 0
+
+                if not dry_run:
+                    try:
+                        conn.execute(
+                            "INSERT OR IGNORE INTO person_identifiers "
+                            "(person_id, type, value, normalized, is_primary, source, added_at) "
+                            "VALUES (?, 'imessage_handle', ?, ?, ?, 'apple-messages-enrichment', ?)",
+                            (pid, handle_val, handle_val, is_primary, now),
+                        )
+                        counts["identifiers_added"] += 1
+                    except sqlite3.IntegrityError:
+                        counts["already_existed"] += 1
+                else:
+                    counts["identifiers_added"] += 1
+
+        if not dry_run:
+            conn.commit()
+        return counts
+    finally:
+        if own_conn:
+            conn.close()
+
+
 # ── Bulk re-resolve comms.db ────────────────────────────────────────────
 
 
@@ -444,7 +624,13 @@ def main() -> int:
             print(f"  {k}: {v}")
         print()
 
-    print("Phase 2: Bulk re-resolve comms.db (NULL person_id rows)")
+    print("Phase 2: iMessage handles → people.db imessage_handle enrichment")
+    imsg_counts = enrich_imessage_handles(dry_run=args.dry_run)
+    for k, v in imsg_counts.items():
+        print(f"  {k}: {v}")
+    print()
+
+    print("Phase 3: Bulk re-resolve comms.db (NULL person_id rows)")
     resolve = bulk_resolve_comms(dry_run=args.dry_run)
     for k, v in resolve.items():
         print(f"  {k}: {v}")

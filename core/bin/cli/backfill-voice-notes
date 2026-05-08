@@ -1,0 +1,528 @@
+#!/usr/bin/env python3
+"""backfill-voice-notes — transcribe voice messages already in comms.db.
+
+Finds voice messages with empty content, resolves audio file paths via
+the WhatsApp local DB, downloads from WhatsApp CDN if needed, transcribes
+via the AOS transcriber service, and updates comms.db with transcripts.
+
+Usage:
+    backfill-voice-notes                    # process all voice messages
+    backfill-voice-notes --limit 10         # process first 10
+    backfill-voice-notes --dry-run          # report without transcribing
+    backfill-voice-notes --download         # download audio from WA CDN first
+    backfill-voice-notes --channel whatsapp # only WhatsApp voice notes
+    backfill-voice-notes --verbose
+
+The transcriber service must be running (port 7602). Audio files must exist
+on disk — either already downloaded or fetched via --download.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import logging
+import os
+import shutil
+import sqlite3
+import sys
+import tempfile
+import time
+from datetime import datetime
+from pathlib import Path
+from urllib.error import URLError
+from urllib.request import Request, urlopen
+
+# Make AOS importable
+for _candidate in (Path.home() / "project" / "aos", Path.home() / "aos"):
+    if (_candidate / "core").is_dir() and str(_candidate) not in sys.path:
+        sys.path.insert(0, str(_candidate))
+
+log = logging.getLogger("backfill-voice-notes")
+
+COMMS_DB = Path.home() / ".aos" / "data" / "comms.db"
+WA_DB = (
+    Path.home() / "Library" / "Group Containers"
+    / "group.net.whatsapp.WhatsApp.shared" / "ChatStorage.sqlite"
+)
+WA_CONTAINER = (
+    Path.home() / "Library" / "Group Containers"
+    / "group.net.whatsapp.WhatsApp.shared"
+)
+MEDIA_CACHE = Path.home() / ".aos" / "cache" / "voice_notes"
+TRANSCRIBER_URL = "http://127.0.0.1:7602"
+APPLE_EPOCH = 978307200
+
+
+def check_transcriber() -> bool:
+    """Check if the transcriber service is ready."""
+    try:
+        req = Request(f"{TRANSCRIBER_URL}/health", method="GET")
+        with urlopen(req, timeout=3) as resp:
+            data = json.loads(resp.read())
+            return data.get("status") == "ready"
+    except Exception:
+        return False
+
+
+def transcribe_audio(audio_path: str, language_hint: str = "auto") -> str | None:
+    """Transcribe an audio file via the transcriber service."""
+    if not os.path.exists(audio_path):
+        return None
+
+    size = os.path.getsize(audio_path)
+    if size == 0 or size > 25 * 1024 * 1024:  # 25MB limit for backfill
+        return None
+
+    try:
+        payload = json.dumps({
+            "audio_path": audio_path,
+            "mode": "fast",
+            "language_hint": language_hint,
+            "timestamps": False,
+        }).encode()
+
+        req = Request(
+            f"{TRANSCRIBER_URL}/transcribe",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+
+        with urlopen(req, timeout=180) as resp:
+            result = json.loads(resp.read())
+            text = result.get("text", "").strip()
+            if text:
+                lang = result.get("language", "?")
+                duration = result.get("duration_audio", 0)
+                log.info(
+                    "  Transcribed (%.0fs, %s): %s%s",
+                    duration, lang, text[:80], "..." if len(text) > 80 else ""
+                )
+                return text
+            return None
+
+    except Exception as e:
+        log.warning("  Transcription failed: %s", e)
+        return None
+
+
+def _wa_db_copy():
+    """Create a temp copy of the WhatsApp local DB for safe reading."""
+    if not WA_DB.exists():
+        return None
+    try:
+        tmp = tempfile.NamedTemporaryFile(suffix=".sqlite", delete=False)
+        tmp.close()
+        shutil.copy2(str(WA_DB), tmp.name)
+        conn = sqlite3.connect(tmp.name)
+        conn.row_factory = sqlite3.Row
+        return conn, tmp.name
+    except Exception:
+        return None
+
+
+# Cache the WA DB copy for the duration of the run
+_wa_conn = None
+_wa_tmp = None
+
+
+def _cleanup_wa_conn():
+    """Close cached WA connection and delete the temp DB copy."""
+    global _wa_conn, _wa_tmp
+    if _wa_conn is not None:
+        try:
+            _wa_conn.close()
+        except Exception:
+            pass
+        _wa_conn = None
+    if _wa_tmp:
+        Path(_wa_tmp).unlink(missing_ok=True)
+        _wa_tmp = None
+
+
+import atexit
+atexit.register(_cleanup_wa_conn)
+
+
+def _get_wa_conn():
+    global _wa_conn, _wa_tmp
+    if _wa_conn is None:
+        result = _wa_db_copy()
+        if result:
+            _wa_conn, _wa_tmp = result
+    return _wa_conn
+
+
+def get_wa_media_info_by_timestamp(timestamp_iso: str, conversation_id: str) -> dict | None:
+    """Get media info from WhatsApp local DB by matching timestamp + conversation."""
+    conn = _get_wa_conn()
+    if not conn:
+        return None
+
+    try:
+        ts = datetime.fromisoformat(timestamp_iso)
+        apple_ts = ts.timestamp() - APPLE_EPOCH
+
+        row = conn.execute("""
+            SELECT mi.ZMEDIALOCALPATH, mi.ZMEDIAURL, mi.ZMEDIAKEY, mi.ZFILESIZE, mi.ZMOVIEDURATION
+            FROM ZWAMESSAGE m
+            JOIN ZWACHATSESSION c ON m.ZCHATSESSION = c.Z_PK
+            LEFT JOIN ZWAMEDIAITEM mi ON mi.ZMESSAGE = m.Z_PK
+            WHERE m.ZMESSAGETYPE IN (3, 8)
+              AND ABS(m.ZMESSAGEDATE - ?) < 2
+              AND c.ZCONTACTJID = ?
+            LIMIT 1
+        """, (apple_ts, conversation_id)).fetchone()
+
+        if row:
+            return {
+                "local_path": row["ZMEDIALOCALPATH"],
+                "media_url": row["ZMEDIAURL"],
+                "media_key": row["ZMEDIAKEY"],
+                "file_size": row["ZFILESIZE"],
+                "duration": row["ZMOVIEDURATION"],
+            }
+    except Exception as e:
+        log.debug("WA DB lookup failed: %s", e)
+
+    return None
+
+
+def resolve_audio_path(msg_id: str, attachment_path: str | None, timestamp: str, conversation_id: str) -> str | None:
+    """Try to find the audio file on disk."""
+    # 1. Direct attachment_path
+    if attachment_path and os.path.exists(attachment_path):
+        return attachment_path
+
+    # 2. Cross-reference WA local DB by timestamp + conversation
+    if conversation_id:
+        info = get_wa_media_info_by_timestamp(timestamp, conversation_id)
+        if info and info.get("local_path"):
+            for prefix in ["Message/", ""]:
+                full_path = WA_CONTAINER / prefix / info["local_path"]
+                if full_path.exists():
+                    return str(full_path)
+
+    # 3. Check media cache (previously downloaded)
+    cached = MEDIA_CACHE / f"{msg_id}.opus"
+    if cached.exists():
+        return str(cached)
+
+    return None
+
+
+def download_wa_media(msg_id: str, timestamp: str, conversation_id: str) -> str | None:
+    """Download voice note audio from WhatsApp CDN.
+
+    WhatsApp media is encrypted with AES-256-CBC. The media key from the
+    local DB is needed to decrypt.
+
+    Returns path to downloaded file, or None.
+    """
+    if not conversation_id:
+        return None
+
+    info = get_wa_media_info_by_timestamp(timestamp, conversation_id)
+    if not info or not info.get("media_url"):
+        return None
+
+    url = info["media_url"]
+    MEDIA_CACHE.mkdir(parents=True, exist_ok=True)
+    out_path = MEDIA_CACHE / f"{msg_id}.enc"
+    final_path = MEDIA_CACHE / f"{msg_id}.opus"
+
+    if final_path.exists():
+        return str(final_path)
+
+    try:
+        req = Request(url, headers={
+            "User-Agent": "WhatsApp/2.24.0 iOS",
+            "Origin": "https://web.whatsapp.com",
+        })
+        with urlopen(req, timeout=30) as resp:
+            data = resp.read()
+
+        if len(data) < 100:
+            log.debug("  Download too small (%d bytes), likely expired", len(data))
+            return None
+
+        # Write encrypted data — decryption requires media key handling
+        # For now, if the data has valid audio headers, it may be unencrypted
+        # (some older media). Otherwise we need the crypto pipeline.
+        with open(str(out_path), "wb") as f:
+            f.write(data)
+
+        # Try to decrypt using WhatsApp media key
+        media_key = info.get("media_key")
+        if media_key and _decrypt_wa_media(str(out_path), str(final_path), media_key, "audio"):
+            os.unlink(str(out_path))
+            return str(final_path)
+
+        # If decryption failed but file looks like valid audio, rename
+        if _is_valid_audio(str(out_path)):
+            os.rename(str(out_path), str(final_path))
+            return str(final_path)
+
+        # Clean up
+        if out_path.exists():
+            os.unlink(str(out_path))
+        return None
+
+    except Exception as e:
+        log.debug("  Download failed: %s", e)
+        return None
+
+
+def _decrypt_wa_media(
+    enc_path: str, out_path: str, media_key_raw: bytes, media_type: str
+) -> bool:
+    """Decrypt WhatsApp media using the media key.
+
+    WhatsApp stores the media key as a protobuf blob in iOS. The actual
+    32-byte key is extracted from field 1 (after 0a20 prefix).
+
+    Decryption: HKDF-SHA256(Extract+Expand) → AES-256-CBC.
+    """
+    try:
+        import hashlib
+        import hmac
+
+        # HKDF info strings per media type
+        HKDF_INFO = {
+            "audio": b"WhatsApp Audio Keys",
+            "ptt": b"WhatsApp Audio Keys",
+            "image": b"WhatsApp Image Keys",
+            "video": b"WhatsApp Video Keys",
+            "document": b"WhatsApp Document Keys",
+        }
+
+        info = HKDF_INFO.get(media_type, b"WhatsApp Audio Keys")
+
+        # Extract 32-byte key from protobuf blob
+        # Format: 0a20 <32 bytes key> [additional protobuf fields]
+        if len(media_key_raw) >= 34 and media_key_raw[0:1] == b'\x0a' and media_key_raw[1] == 0x20:
+            media_key = media_key_raw[2:34]
+        else:
+            media_key = media_key_raw[:32]
+
+        # HKDF Extract: PRK = HMAC-SHA256(salt=zeros, IKM=media_key)
+        prk = hmac.new(b'\x00' * 32, media_key, hashlib.sha256).digest()
+
+        # HKDF Expand: PRK → 112 bytes keying material
+        expanded = _hkdf_expand(prk, info, 112)
+
+        iv = expanded[:16]
+        cipher_key = expanded[16:48]
+        # mac_key = expanded[48:80]  # for MAC verification (skipped)
+
+        with open(enc_path, "rb") as f:
+            enc_data = f.read()
+
+        # Last 10 bytes are MAC
+        if len(enc_data) < 10:
+            return False
+        ciphertext = enc_data[:-10]
+
+        # AES-256-CBC decrypt
+        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
+        cipher = Cipher(algorithms.AES(cipher_key), modes.CBC(iv))
+        decryptor = cipher.decryptor()
+        decrypted = decryptor.update(ciphertext) + decryptor.finalize()
+
+        with open(out_path, "wb") as f:
+            f.write(decrypted)
+
+        return _is_valid_audio(out_path)
+
+    except ImportError:
+        log.debug("  cryptography package not installed, cannot decrypt WA media")
+        return False
+    except Exception as e:
+        log.debug("  Decryption failed: %s", e)
+        return False
+
+
+def _hkdf_expand(prk: bytes, info: bytes, length: int) -> bytes:
+    """HKDF-Expand (RFC 5869) using SHA-256."""
+    import hashlib
+    import hmac
+    import math
+
+    hash_len = 32
+    n = math.ceil(length / hash_len)
+    okm = b""
+    prev = b""
+
+    for i in range(1, n + 1):
+        prev = hmac.new(prk, prev + info + bytes([i]), hashlib.sha256).digest()
+        okm += prev
+
+    return okm[:length]
+
+
+def _is_valid_audio(path: str) -> bool:
+    """Quick check if a file looks like valid audio."""
+    try:
+        with open(path, "rb") as f:
+            header = f.read(16)
+        # OGG/Opus header
+        if header[:4] == b"OggS":
+            return True
+        # RIFF/WAV
+        if header[:4] == b"RIFF":
+            return True
+        # MP3
+        if header[:2] in (b"\xff\xfb", b"\xff\xf3", b"\xff\xf2", b"ID3"):
+            return True
+        # AAC/M4A
+        if header[4:8] == b"ftyp":
+            return True
+        # AMR
+        if header[:6] == b"#!AMR\n":
+            return True
+        return False
+    except Exception:
+        return False
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Backfill transcriptions for voice messages in comms.db"
+    )
+    parser.add_argument("--limit", type=int, default=0, help="Max messages to process")
+    parser.add_argument("--dry-run", action="store_true", help="Report without transcribing")
+    parser.add_argument("--download", action="store_true", help="Download audio from WA CDN")
+    parser.add_argument("--channel", help="Only process specific channel (e.g. whatsapp)")
+    parser.add_argument("--verbose", "-v", action="store_true")
+    args = parser.parse_args()
+
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.INFO,
+        format="%(message)s",
+    )
+
+    # Preflight checks
+    if not COMMS_DB.exists():
+        log.error("comms.db not found at %s", COMMS_DB)
+        sys.exit(1)
+
+    if not args.dry_run:
+        if not check_transcriber():
+            log.error("Transcriber service not available at %s", TRANSCRIBER_URL)
+            log.error("Start it: launchctl kickstart -kp gui/$(id -u)/com.aos.transcriber")
+            sys.exit(1)
+        log.info("Transcriber service: ready")
+
+    # Query voice messages with empty content
+    conn = sqlite3.connect(str(COMMS_DB))
+    conn.row_factory = sqlite3.Row
+
+    query = """
+        SELECT id, channel, sender_id, timestamp, attachment_path, channel_metadata, conversation_id
+        FROM messages
+        WHERE attachment_type = 'voice'
+          AND (content IS NULL OR content = '')
+    """
+    params = []
+    if args.channel:
+        query += " AND channel = ?"
+        params.append(args.channel)
+    query += " ORDER BY timestamp DESC"
+    if args.limit:
+        query += f" LIMIT {int(args.limit)}"
+
+    rows = conn.execute(query, params).fetchall()
+    log.info("Found %d voice messages with empty content", len(rows))
+
+    if not rows:
+        return
+
+    # Process
+    stats = {
+        "total": len(rows),
+        "audio_found": 0,
+        "downloaded": 0,
+        "transcribed": 0,
+        "failed": 0,
+        "no_audio": 0,
+    }
+
+    for i, row in enumerate(rows, 1):
+        msg_id = row["id"]
+        meta_str = row["channel_metadata"]
+        meta = {}
+        if meta_str:
+            try:
+                meta = json.loads(meta_str)
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        sender = row["sender_id"] or "?"
+        partner = meta.get("partner_name", sender)
+        ts = row["timestamp"][:10] if row["timestamp"] else "?"
+        duration = meta.get("duration", "?")
+
+        log.info(
+            "[%d/%d] %s — %s (%ss) from %s",
+            i, stats["total"], msg_id, ts, duration, partner
+        )
+
+        timestamp = row["timestamp"]
+        # conversation_id in comms.db is hashed (conv_wa_xxx), use JID from metadata
+        jid = meta.get("jid", "")
+
+        # Try to find audio file
+        audio_path = resolve_audio_path(msg_id, row["attachment_path"], timestamp, jid)
+
+        # Try downloading if not found and --download flag set
+        if not audio_path and args.download:
+            audio_path = download_wa_media(msg_id, timestamp, jid)
+            if audio_path:
+                stats["downloaded"] += 1
+                log.info("  Downloaded: %s", audio_path)
+
+        if not audio_path:
+            stats["no_audio"] += 1
+            log.info("  No audio file available")
+            continue
+
+        stats["audio_found"] += 1
+
+        if args.dry_run:
+            log.info("  [DRY RUN] Would transcribe: %s", audio_path)
+            continue
+
+        # Transcribe
+        transcript = transcribe_audio(audio_path)
+        if transcript:
+            content = f"[voice] {transcript}"
+            conn.execute(
+                "UPDATE messages SET content = ? WHERE id = ?",
+                (content, msg_id),
+            )
+            conn.commit()
+            stats["transcribed"] += 1
+        else:
+            stats["failed"] += 1
+
+        # Brief pause between transcriptions
+        time.sleep(0.3)
+
+    conn.close()
+
+    # Summary
+    log.info("")
+    log.info("=== Backfill complete ===")
+    log.info("Total voice messages:  %d", stats["total"])
+    log.info("Audio files found:     %d", stats["audio_found"])
+    if args.download:
+        log.info("Downloaded from CDN:   %d", stats["downloaded"])
+    log.info("Transcribed:           %d", stats["transcribed"])
+    log.info("Failed:                %d", stats["failed"])
+    log.info("No audio available:    %d", stats["no_audio"])
+
+
+if __name__ == "__main__":
+    main()

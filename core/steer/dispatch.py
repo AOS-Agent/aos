@@ -4,7 +4,7 @@ STEER Dispatcher — spawns Claude Code sessions in tmux for GUI automation task
 
 Flow:
   1. Create job YAML via job.py
-  2. Create tmux session via Drive
+  2. Create detached tmux session (native tmux, no Drive dependency)
   3. Run Claude with autonomous-execution skill + job tracking instructions
   4. Return job ID for polling
 
@@ -18,17 +18,17 @@ Usage:
         print(result["summary"])
 """
 import json
+import os
+import shutil
 import subprocess
 import sys
 import time
 from pathlib import Path
 
 # Paths
-DRIVE_DIR = Path.home() / "aos" / "vendor" / "mac-mini-agent-tools" / "apps" / "drive"
-DRIVE = DRIVE_DIR / "main.py"
-DRIVE_PYTHON = DRIVE_DIR / ".venv" / "bin" / "python3"  # Drive has its own venv with psutil
 JOB_SCRIPT = Path(__file__).parent / "job.py"
 JOBS_DIR = Path.home() / ".aos" / "steer" / "jobs"
+TMUX = shutil.which("tmux") or "/opt/homebrew/bin/tmux"
 
 # The system prompt appended to every STEER job session
 STEER_SYSTEM_PROMPT = """
@@ -70,6 +70,43 @@ If you fail:
 """
 
 
+# ---------------------------------------------------------------------------
+# tmux helpers — replaces the Drive dependency
+# ---------------------------------------------------------------------------
+
+def _tmux(*args, **kwargs) -> subprocess.CompletedProcess:
+    """Run a tmux command, return the CompletedProcess."""
+    return subprocess.run(
+        [TMUX, *args],
+        capture_output=True, text=True, **kwargs,
+    )
+
+
+def _tmux_session_exists(name: str) -> bool:
+    return _tmux("has-session", "-t", name).returncode == 0
+
+
+def _tmux_create_session(name: str, work_dir: str) -> subprocess.CompletedProcess:
+    """Create a detached tmux session."""
+    return _tmux(
+        "new-session", "-d", "-s", name, "-c", work_dir,
+    )
+
+
+def _tmux_send(name: str, cmd: str) -> subprocess.CompletedProcess:
+    """Send keys to a tmux session (with Enter)."""
+    return _tmux("send-keys", "-t", name, cmd, "Enter")
+
+
+def _tmux_kill(name: str) -> subprocess.CompletedProcess:
+    """Kill a tmux session if it exists."""
+    return _tmux("kill-session", "-t", name)
+
+
+# ---------------------------------------------------------------------------
+# Core API
+# ---------------------------------------------------------------------------
+
 def dispatch_steer_job(prompt: str, *, agent: str = "chief", cwd: str = None) -> str:
     """
     Dispatch a STEER automation job.
@@ -90,8 +127,10 @@ def dispatch_steer_job(prompt: str, *, agent: str = "chief", cwd: str = None) ->
     # 1. Create job
     result = subprocess.run(
         [sys.executable, str(JOB_SCRIPT), "create", prompt],
-        capture_output=True, text=True
+        capture_output=True, text=True,
     )
+    if result.returncode != 0:
+        raise RuntimeError(f"Failed to create job: {result.stderr}")
     job_data = json.loads(result.stdout)
     job_id = job_data["job_id"]
     job_path = JOBS_DIR / f"{job_id}.yaml"
@@ -99,7 +138,7 @@ def dispatch_steer_job(prompt: str, *, agent: str = "chief", cwd: str = None) ->
     # 2. Start the job
     subprocess.run(
         [sys.executable, str(JOB_SCRIPT), "start", job_id],
-        capture_output=True, text=True
+        capture_output=True, text=True,
     )
 
     # 3. Build the system prompt
@@ -129,25 +168,19 @@ def dispatch_steer_job(prompt: str, *, agent: str = "chief", cwd: str = None) ->
     session_name = f"steer-{job_id[:15]}"
     work_dir = cwd or str(Path.home())
 
-    # Use Drive to create a detached session
-    create_result = subprocess.run(
-        [str(DRIVE_PYTHON), str(DRIVE), "session", "create", session_name,
-         "--detach", "--dir", work_dir, "--json"],
-        capture_output=True, text=True
-    )
+    create_result = _tmux_create_session(session_name, work_dir)
     if create_result.returncode != 0:
         # Mark job as failed
-        subprocess.run([sys.executable, str(JOB_SCRIPT), "fail", job_id,
-                       f"Failed to create tmux session: {create_result.stderr}"],
-                      capture_output=True, text=True)
+        subprocess.run(
+            [sys.executable, str(JOB_SCRIPT), "fail", job_id,
+             f"Failed to create tmux session: {create_result.stderr}"],
+            capture_output=True, text=True,
+        )
         raise RuntimeError(f"tmux session creation failed: {create_result.stderr}")
 
     # 6. Send Claude command to the session
     sentinel_cmd = f'{claude_cmd} ; echo "__STEER_JOB_DONE_{job_id}:$?"'
-    subprocess.run(
-        [str(DRIVE_PYTHON), str(DRIVE), "send", session_name, sentinel_cmd, "--enter"],
-        capture_output=True, text=True
-    )
+    _tmux_send(session_name, sentinel_cmd)
 
     return job_id
 
@@ -161,7 +194,7 @@ def poll_job(job_id: str) -> dict:
     """
     result = subprocess.run(
         [sys.executable, str(JOB_SCRIPT), "get", job_id],
-        capture_output=True, text=True
+        capture_output=True, text=True,
     )
     if result.returncode != 0:
         return {"id": job_id, "status": "unknown", "error": result.stderr}
@@ -197,12 +230,7 @@ def wait_for_job(job_id: str, *, timeout: float = 300, poll_interval: float = 3.
 def cleanup_job(job_id: str):
     """Clean up tmux session and temp files after a job."""
     session_name = f"steer-{job_id[:15]}"
-
-    # Kill tmux session if still running
-    subprocess.run(
-        [str(DRIVE_PYTHON), str(DRIVE), "session", "kill", session_name],
-        capture_output=True, text=True
-    )
+    _tmux_kill(session_name)
 
     # Clean temp files
     for f in Path("/tmp").glob(f"steer-job-{job_id}*"):

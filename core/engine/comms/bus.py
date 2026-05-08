@@ -87,6 +87,7 @@ class MessageBus:
             ("core.comms.consumers.comms_store", "CommsStoreConsumer"),
             ("core.comms.consumers.people_intel", "PeopleIntelConsumer"),
             ("core.comms.consumers.pattern_update", "PatternUpdateConsumer"),
+            ("core.comms.consumers.media_enrichment", "MediaEnrichmentConsumer"),
             ("core.comms.orchestrator", "CommsOrchestrator"),
         ]
         for mod_path, cls_name in _consumer_classes:
@@ -266,7 +267,14 @@ class MessageBus:
         """Return health status for the bus and all adapters."""
         adapter_health = {}
         for adapter in self.adapters:
-            adapter_health[adapter.name] = adapter.health()
+            try:
+                adapter_health[adapter.name] = adapter.health()
+            except Exception as e:
+                adapter_health[adapter.name] = {
+                    "channel": adapter.name,
+                    "available": False,
+                    "error": f"health check crashed: {e}",
+                }
 
         return {
             "adapters": adapter_health,

@@ -47,20 +47,38 @@ class WhatsAppLocalAdapter(ChannelAdapter):
 
     def __init__(self, db_path: Path = WA_DB_PATH):
         self.db_path = db_path
+        self._tmp_paths: dict[int, str] = {}  # conn id -> tmp file path
 
     def _connect(self) -> sqlite3.Connection | None:
         """Copy DB to temp location and connect (avoids locking live DB)."""
         if not self.db_path.exists():
             return None
+        tmp_path = None
         try:
             tmp = tempfile.NamedTemporaryFile(suffix=".sqlite", delete=False)
+            tmp_path = tmp.name
             tmp.close()
-            shutil.copy2(str(self.db_path), tmp.name)
-            conn = sqlite3.connect(tmp.name)
+            shutil.copy2(str(self.db_path), tmp_path)
+            conn = sqlite3.connect(tmp_path)
             conn.row_factory = sqlite3.Row
+            # Track tmp path on the adapter (not the conn — Python 3.14 removed __dict__ from Connection)
+            self._tmp_paths[id(conn)] = tmp_path
             return conn
         except (PermissionError, OSError):
+            if tmp_path:
+                Path(tmp_path).unlink(missing_ok=True)
             return None
+
+    def _disconnect(self, conn: sqlite3.Connection) -> None:
+        """Close connection and delete the temp copy of ChatStorage.sqlite."""
+        tmp_path = self._tmp_paths.pop(id(conn), None)
+        try:
+            conn.close()
+        except Exception:
+            pass
+        if tmp_path:
+            for suffix in ["", "-wal", "-shm"]:
+                Path(tmp_path + suffix).unlink(missing_ok=True)
 
     def _from_apple_ts(self, ts: float | None) -> datetime | None:
         if ts is None:
@@ -82,15 +100,16 @@ class WhatsAppLocalAdapter(ChannelAdapter):
         base = {"channel": self.name}
         if not self.db_path.exists():
             return {**base, "available": False, "error": "ChatStorage.sqlite not found"}
+        conn = self._connect()
+        if not conn:
+            return {**base, "available": False, "error": "Could not open database"}
         try:
-            conn = self._connect()
-            if conn:
-                count = conn.execute("SELECT COUNT(*) FROM ZWAMESSAGE WHERE ZTEXT IS NOT NULL").fetchone()[0]
-                conn.close()
-                return {**base, "available": True, "total_messages": count}
+            count = conn.execute("SELECT COUNT(*) FROM ZWAMESSAGE WHERE ZTEXT IS NOT NULL").fetchone()[0]
+            return {**base, "available": True, "total_messages": count}
         except Exception as e:
             return {**base, "available": False, "error": str(e)}
-        return {**base, "available": False}
+        finally:
+            self._disconnect(conn)
 
     # --- Read interface ---
 
@@ -135,7 +154,7 @@ class WhatsAppLocalAdapter(ChannelAdapter):
                 ))
             return conversations
         finally:
-            conn.close()
+            self._disconnect(conn)
 
     def get_messages(
         self,
@@ -252,7 +271,7 @@ class WhatsAppLocalAdapter(ChannelAdapter):
 
             return messages
         finally:
-            conn.close()
+            self._disconnect(conn)
 
     def resolve_handle(self, handle: str) -> str | None:
         if not handle:

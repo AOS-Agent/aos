@@ -525,6 +525,12 @@ def main() -> int:
         action="store_true",
         help="Skip writing to the drafts log.",
     )
+    parser.add_argument(
+        "--enhance",
+        choices=["raw", "clean", "elevated"],
+        default=None,
+        help="Style enhancement level (overrides person default).",
+    )
 
     args = parser.parse_args()
 
@@ -617,6 +623,25 @@ def main() -> int:
     if person_id:
         context_msgs = _pull_context(person_id, limit=10)
 
+    # ── Style intelligence ────────────────────────────────────────
+    style_info = {}
+    if person_id:
+        try:
+            import sqlite3 as _sql
+            _pconn = _sql.connect(str(Path.home() / ".aos" / "data" / "people.db"))
+            _pconn.row_factory = _sql.Row
+            from core.engine.comms.style.profiles import load_style_profile
+            _sprofile = load_style_profile(person_id, _pconn)
+            if _sprofile:
+                style_info = {
+                    "has_style": True,
+                    "active_mode": "",
+                    "enhancement": args.enhance or _sprofile.get("enhancement_default", "clean"),
+                }
+            _pconn.close()
+        except Exception:
+            pass
+
     # ── Preview / draft ───────────────────────────────────────────
     preview = {
         "status": "preview",
@@ -631,6 +656,8 @@ def main() -> int:
     }
     if context_msgs:
         preview["context"] = context_msgs
+    if style_info:
+        preview["style_info"] = style_info
 
     if not args.no_draft:
         draft_status = "preview" if args.dry_run else "drafted"

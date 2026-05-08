@@ -250,3 +250,32 @@ CREATE INDEX idx_queue_pending ON intelligence_queue(status, surface_after, prio
 CREATE INDEX idx_rel_a ON relationships(person_a_id);
 
 CREATE INDEX idx_rel_b ON relationships(person_b_id);
+
+CREATE TABLE IF NOT EXISTS style_profiles (
+    person_id         TEXT PRIMARY KEY REFERENCES people(id),
+    computed_at       INTEGER NOT NULL,
+    sample_size       INTEGER NOT NULL,
+    recompute_after   INTEGER NOT NULL,
+    language_mix      TEXT,
+    romanized_ar      INTEGER DEFAULT 0,
+    signs_off         INTEGER DEFAULT 0,
+    uses_periods      INTEGER DEFAULT 0,
+    response_style    TEXT,
+    enhancement_default TEXT DEFAULT 'clean',
+    prose_summary     TEXT,
+    style_markers     TEXT
+);
+
+CREATE TABLE IF NOT EXISTS style_modes (
+    person_id          TEXT NOT NULL REFERENCES people(id),
+    mode_name          TEXT NOT NULL,
+    weight             REAL NOT NULL,
+    signature          TEXT NOT NULL,
+    exemplar_ids       TEXT NOT NULL,
+    topic_correlations TEXT,
+    PRIMARY KEY (person_id, mode_name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_style_profiles_recompute ON style_profiles(recompute_after);
+
+CREATE INDEX IF NOT EXISTS idx_style_modes_person ON style_modes(person_id);

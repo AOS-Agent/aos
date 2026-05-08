@@ -181,6 +181,13 @@ jobs:
     tier: 4
     description: Computes communication patterns and trends
 
+  compute-style-intelligence:
+    command: python3 ~/aos/core/bin/crons/compute-style-intelligence
+    at: "05:45"
+    timeout: 300
+    tier: 4
+    description: Computes per-relationship style profiles for message drafting
+
   comms-graduation:
     command: python3 ~/aos/core/engine/comms/graduation/runner.py
     at: "06:00"
