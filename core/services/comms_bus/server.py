@@ -3,8 +3,9 @@
 Lightweight health and control server (stdlib only).
 
 Endpoints:
-    GET  /health    — Bus health: adapters, consumers, poll stats
-    POST /poll      — Trigger an immediate poll cycle
+    GET  /health     — Bus health: adapters, consumers, poll stats
+    GET  /api/stats  — Live ingestion stats per channel (for dashboards)
+    POST /poll       — Trigger an immediate poll cycle
 """
 
 from __future__ import annotations
@@ -28,6 +29,8 @@ class CommsBusHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/health":
             self._respond_json(self._health())
+        elif self.path == "/api/stats":
+            self._respond_json(self._stats())
         else:
             self._respond_json({"error": "Not found"}, 404)
 
@@ -58,6 +61,14 @@ class CommsBusHandler(BaseHTTPRequestHandler):
         if self.daemon:
             health.update(self.daemon.health())
         return health
+
+    def _stats(self) -> dict:
+        if not self.daemon:
+            return {"error": "Bus not initialized"}
+        return {
+            "timestamp": datetime.now().isoformat(),
+            **self.daemon.stats(),
+        }
 
     def _respond_json(self, data: dict, status: int = 200):
         body = json.dumps(data, indent=2, default=str).encode()

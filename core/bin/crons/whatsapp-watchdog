@@ -1,0 +1,178 @@
+#!/usr/bin/env python3
+"""WhatsApp bridge watchdog — runs every minute via scheduler.
+
+Checks the whatsmeow bridge health and takes action:
+1. If bridge process is dead → restart LaunchAgent
+2. If bridge is running but disconnected → log gap, attempt restart after 3 consecutive failures
+3. If bridge needs QR pairing → alert operator via Telegram
+4. Tracks connection gaps for visibility
+
+State file: ~/.aos/data/whatsapp-watchdog.json
+"""
+
+import json
+import os
+import subprocess
+import sys
+import urllib.request
+from datetime import datetime, timezone
+from pathlib import Path
+
+BRIDGE_URL = "http://127.0.0.1:7601"
+STATE_FILE = Path.home() / ".aos" / "data" / "whatsapp-watchdog.json"
+LAUNCH_AGENT = "com.aos.whatsmeow"
+
+# How many consecutive disconnects before auto-restart
+RESTART_THRESHOLD = 3
+# How many consecutive disconnects before alerting
+ALERT_THRESHOLD = 5
+
+
+def load_state() -> dict:
+    if STATE_FILE.exists():
+        try:
+            return json.loads(STATE_FILE.read_text())
+        except Exception:
+            pass
+    return {
+        "consecutive_disconnects": 0,
+        "last_connected": None,
+        "last_disconnected": None,
+        "total_restarts": 0,
+        "gaps": [],  # [{start, end, duration_minutes}]
+        "last_alert": None,
+        "last_check": None,
+    }
+
+
+def save_state(state: dict):
+    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    STATE_FILE.write_text(json.dumps(state, indent=2))
+
+
+def check_bridge() -> dict:
+    """Check bridge health. Returns {running, connected, needs_qr}."""
+    try:
+        resp = urllib.request.urlopen(f"{BRIDGE_URL}/health", timeout=5)
+        data = json.loads(resp.read())
+        connected = data.get("connected", False)
+
+        # Check if QR is needed by looking at the QR endpoint
+        needs_qr = False
+        try:
+            qr_resp = urllib.request.urlopen(f"{BRIDGE_URL}/qr", timeout=3)
+            qr_html = qr_resp.read().decode()
+            # If QR page returns valid HTML with QR data, pairing is needed
+            needs_qr = "QRCode.toCanvas" in qr_html and not connected
+        except Exception:
+            pass
+
+        return {"running": True, "connected": connected, "needs_qr": needs_qr}
+    except Exception:
+        return {"running": False, "connected": False, "needs_qr": False}
+
+
+def restart_bridge():
+    """Restart the whatsmeow LaunchAgent."""
+    subprocess.run(["launchctl", "stop", LAUNCH_AGENT], capture_output=True)
+    import time
+    time.sleep(2)
+    subprocess.run(["launchctl", "start", LAUNCH_AGENT], capture_output=True)
+
+
+def alert_operator(message: str):
+    """Send alert via Telegram if configured."""
+    try:
+        secret_cmd = str(Path.home() / "aos" / "core" / "bin" / "cli" / "agent-secret")
+        token = subprocess.run(
+            [secret_cmd, "get", "TELEGRAM_BOT_TOKEN"],
+            capture_output=True, text=True
+        ).stdout.strip()
+        chat_id = subprocess.run(
+            [secret_cmd, "get", "TELEGRAM_CHAT_ID"],
+            capture_output=True, text=True
+        ).stdout.strip()
+
+        if token and chat_id:
+            data = json.dumps({"chat_id": chat_id, "text": message}).encode()
+            req = urllib.request.Request(
+                f"https://api.telegram.org/bot{token}/sendMessage",
+                data=data,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            urllib.request.urlopen(req, timeout=10)
+    except Exception:
+        pass  # Best effort
+
+
+def main():
+    state = load_state()
+    now = datetime.now(timezone.utc).isoformat()
+    state["last_check"] = now
+
+    status = check_bridge()
+
+    if status["connected"]:
+        # Bridge is healthy
+        if state["consecutive_disconnects"] > 0:
+            # We just reconnected — close the gap
+            gap_start = state.get("last_disconnected")
+            if gap_start:
+                state["gaps"].append({
+                    "start": gap_start,
+                    "end": now,
+                    "duration_minutes": round(
+                        (datetime.fromisoformat(now) - datetime.fromisoformat(gap_start)).total_seconds() / 60
+                    ),
+                })
+                # Keep last 50 gaps
+                state["gaps"] = state["gaps"][-50:]
+
+            print(f"WhatsApp reconnected after {state['consecutive_disconnects']} checks")
+
+        state["consecutive_disconnects"] = 0
+        state["last_connected"] = now
+        save_state(state)
+        return
+
+    # Bridge is NOT connected
+    state["consecutive_disconnects"] += 1
+
+    if state["consecutive_disconnects"] == 1:
+        state["last_disconnected"] = now
+
+    if not status["running"]:
+        # Process is dead — restart immediately
+        print(f"WhatsApp bridge process dead — restarting")
+        restart_bridge()
+        state["total_restarts"] += 1
+        save_state(state)
+        return
+
+    if status["needs_qr"]:
+        # Bridge needs QR pairing — alert operator
+        if state["consecutive_disconnects"] >= ALERT_THRESHOLD:
+            last_alert = state.get("last_alert")
+            # Don't spam — alert at most every 30 minutes
+            if not last_alert or (datetime.fromisoformat(now) - datetime.fromisoformat(last_alert)).total_seconds() > 1800:
+                alert_operator(
+                    "⚠️ WhatsApp bridge needs QR re-pairing.\n"
+                    f"Disconnected for {state['consecutive_disconnects']} minutes.\n"
+                    f"Scan QR at: http://localhost:7601/qr"
+                )
+                state["last_alert"] = now
+                print(f"WhatsApp needs QR — alerted operator")
+    elif state["consecutive_disconnects"] >= RESTART_THRESHOLD:
+        # Disconnected but not needing QR — try restart
+        print(f"WhatsApp disconnected {state['consecutive_disconnects']} times — restarting")
+        restart_bridge()
+        state["total_restarts"] += 1
+        # Reset counter after restart to give it a chance
+        state["consecutive_disconnects"] = 0
+
+    save_state(state)
+
+
+if __name__ == "__main__":
+    main()

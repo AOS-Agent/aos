@@ -25,6 +25,13 @@ jobs:
     tier: 1
     description: Checks services are running, restarts if needed
 
+  whatsapp-watchdog:
+    command: python3 ~/aos/core/bin/crons/whatsapp-watchdog
+    every: 1m
+    timeout: 30
+    tier: 1
+    description: Monitors WhatsApp bridge — auto-restart on disconnect, alerts on QR needed
+
   check-update:
     command: bash ~/aos/core/bin/crons/check-update
     every: 2h
