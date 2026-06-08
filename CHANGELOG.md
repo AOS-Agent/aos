@@ -2,6 +2,14 @@
 
 All notable changes to AOS. Release notes sent via Telegram after each 4am update.
 
+## v0.6.1 — 2026-06-08
+
+Summary: Close the harness-update gap so new Claude models and features land automatically.
+
+- Added `core/bin/crons/harness-update` — runs `npm update -g @anthropic-ai/claude-code` daily at 04:15, right after the AOS framework auto-update at 04:00. Notifies via Telegram on version change.
+- Added `harness-update` entry to `config/crons.yaml` (tier 1, daily).
+- Fixes the silent drift where AOS kept itself current but let the Claude Code harness fall behind, blocking access to newer models like Opus 4.8 from `/model`.
+
 ## v0.6.0 — 2026-03-28
 
 System revamp — restructured `core/` for navigability, hardened infrastructure, added tests and documentation.
