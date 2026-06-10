@@ -585,11 +585,80 @@ SPM automatically. Only the app shell needs a regen when its files change.
 - Adding a Swift file to `__TARGET__Core/Sources` needs NO project edit.
 - Don't hand-edit the `.xcodeproj` (it's generated + gitignored).
 - App Store Connect app names are globally unique.
+
+## Swift 6 isolation & cross-platform (read before adding UI)
+
+The package uses **MainActor default isolation** — every closure/func is
+`@MainActor` unless marked otherwise. This crashes at runtime if a framework
+calls your code on a background thread.
+
+- **Dynamic `UIColor` providers must be `nonisolated`.** SwiftUI resolves
+  dynamic colors on a background render thread → a MainActor provider traps
+  (`_dispatch_assert_queue_fail`). See `Shared/PlatformShims.swift`
+  (`Color.adaptive`) — it's already `nonisolated`; follow that pattern.
+- **Extension callbacks are nonisolated.** Don't apply MainActor default
+  isolation to extension targets; don't store non-Sendable statics.
+- **`swift test` builds for the macOS host.** Guard iOS-only APIs with
+  `#if os(iOS)` (`topBarLeading`, CoreLocation, AVAudioSession, ActivityKit,
+  ManagedSettings/FamilyControls, CoreHaptics). Use the shims in
+  `PlatformShims.swift` (`.inlineNavTitle()`, `.hiddenNavBarBackground()`)
+  instead of the raw iOS-only nav modifiers.
+- **Don't run `xcodebuild` and `swift test` at the same time** (build-DB lock).
+- **`DateFormatter` AM/PM uses U+202F** — normalize it in test assertions.
 """
 
 AI_AGENTS_NOTE = r"""  AI/         Foundation Models: AIService, @Generable types, AIDemoView"""
 
 CLAUDE_MD = r"""See [AGENTS.md](AGENTS.md).
+"""
+
+PLATFORM_SHIMS = r"""import SwiftUI
+
+// Cross-platform shims + isolation-safe helpers.
+//
+// The package uses MainActor default isolation, so every closure is @MainActor
+// unless marked otherwise. Two consequences these helpers handle:
+//  1. `swift test` builds for the macOS host — iOS-only nav modifiers break it.
+//  2. Frameworks call some closures on background threads — those must be
+//     `nonisolated` or they trap at runtime (`_dispatch_assert_queue_fail`).
+
+public extension View {
+    /// `.navigationBarTitleDisplayMode(.inline)` on iOS; no-op elsewhere.
+    @ViewBuilder func inlineNavTitle() -> some View {
+        #if os(iOS)
+        self.navigationBarTitleDisplayMode(.inline)
+        #else
+        self
+        #endif
+    }
+
+    /// Hides the navigation bar's toolbar background on iOS; no-op elsewhere.
+    @ViewBuilder func hiddenNavBarBackground() -> some View {
+        #if os(iOS)
+        self.toolbarBackground(.hidden, for: .navigationBar)
+        #else
+        self
+        #endif
+    }
+}
+
+public extension Color {
+    /// A light/dark adaptive color.
+    ///
+    /// `nonisolated` is REQUIRED: UIKit/SwiftUI invoke the dynamic-color
+    /// provider on background render threads. Under MainActor default isolation
+    /// a MainActor-isolated provider traps (`EXC_BREAKPOINT`) when resolved
+    /// off the main thread.
+    nonisolated static func adaptive(light: Color, dark: Color) -> Color {
+        #if canImport(UIKit)
+        return Color(uiColor: UIColor { trait in
+            trait.userInterfaceStyle == .light ? UIColor(light) : UIColor(dark)
+        })
+        #else
+        return dark
+        #endif
+    }
+}
 """
 
 README_MD = r"""# __APP_NAME__
@@ -677,6 +746,7 @@ def main():
         os.path.join(src, "App", "RootView.swift"): ROOT_VIEW,
         os.path.join(src, "Features", "Home", "HomeStore.swift"): HOME_STORE,
         os.path.join(src, "Features", "Home", "HomeView.swift"): HOME_VIEW,
+        os.path.join(src, "Shared", "PlatformShims.swift"): PLATFORM_SHIMS,
         os.path.join(proj, core, "Tests", "%sTests" % core, "HomeStoreTests.swift"): EXAMPLE_TEST,
         # fastlane
         os.path.join(proj, "fastlane", "Fastfile"): FASTFILE,

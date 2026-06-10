@@ -121,12 +121,107 @@ it automatically once processed.
 - **Real SwiftUI features** → `axiom-swiftui`. **Rejections/metadata** →
   `axiom-shipping`.
 
-## Gotchas
+## Battle-tested lessons (codified from shipping real apps)
 
-- **App name uniqueness**: ASC names are globally unique. If `produce` fails
-  on a name conflict, ask for a different display name (bundle ID can stay).
-- **First external TestFlight build** needs Beta App Review; internal testers
-  (≤100) get it immediately.
-- **Placeholder icon** is a solid gradient — replace before public release.
-- **AI apps require iOS 26** and an Apple-Intelligence-capable device (A17
-  Pro+); the app still builds and runs with AI gracefully disabled elsewhere.
+### Swift 6 MainActor default isolation — the #1 source of bugs
+The package ships with `.defaultIsolation(MainActor.self)`. That makes EVERY
+closure/func MainActor-isolated unless marked otherwise — which crashes at
+runtime when a framework calls your code on a background thread.
+- **Dynamic `UIColor` providers MUST be `nonisolated`.** A `Color.adaptive`
+  helper using `UIColor { trait in … }` will trap (`EXC_BREAKPOINT /
+  _dispatch_assert_queue_fail`) because SwiftUI resolves dynamic colors on a
+  background render thread. Mark the helper `nonisolated`. (The scaffold's
+  DesignSystem already does this — keep it.)
+- **Extension callbacks are nonisolated** (DeviceActivityMonitor, ShieldAction).
+  Don't apply MainActor default isolation to extension targets, and don't store
+  non-Sendable statics (e.g. `ManagedSettingsStore.Name` → make it a computed
+  `var`, not a `static let`).
+- When something runs off-main (Core Location delegate, audio callbacks),
+  extract primitives BEFORE hopping to `@MainActor`.
+
+### Cross-platform test host (macOS) — guard iOS-only APIs
+`swift test` builds the package for the **macOS host** (fast), so any iOS-only
+API breaks it. The scaffold bundles `PlatformShims.swift` (`inlineNavTitle()`,
+`hiddenNavBarBackground()`); USE THEM instead of `.navigationBarTitleDisplayMode`
+/ `.toolbarBackground(.hidden, for: .navigationBar)`. Guard with `#if os(iOS)`:
+`ToolbarItemPlacement.topBarLeading`, `CoreLocation` auth/heading, `AVAudioSession`,
+`ActivityKit`/`ActivityAttributes`, `ManagedSettings`/`FamilyControls`, `CHHapticEngine`.
+(Alternative if this tax gets heavy: drop `.macOS` from `Package.swift` platforms
+and run tests on the iOS Simulator — slower but no guards. Default keeps macOS.)
+
+### Other gotchas that cost real time
+- **`DateFormatter` AM/PM uses U+202F** (narrow no-break space), so test
+  assertions like `== "4:42 AM"` fail invisibly. Normalize `\u{202F}`→space in
+  test helpers, or use `dateFormat`.
+- **Don't run `xcodebuild` and `swift test` concurrently** — they fight over the
+  build DB ("database is locked"). Run sequentially.
+- **App icon**: AI-generated icons often come with rounded corners + white
+  margins. Apple needs **full-bleed, square, NO alpha**. Crop to the content,
+  flatten alpha onto an opaque background, verify under a rounded mask. For
+  iOS 26, the premium path is a layered icon via **Icon Composer** (no baked
+  corners/shadows).
+- **Custom fonts**: register in `project.yml` `info.properties.UIAppFonts`
+  (filenames). Reference by the **PostScript name**, not the filename. Verify
+  glyph/tashkīl coverage with fonttools before trusting an Arabic font.
+- **App name uniqueness**: ASC names are globally unique. On conflict, add
+  keywords ("App: Salah Focus") — the home-screen name (CFBundleDisplayName)
+  can stay short.
+- **AI apps require iOS 26** + an Apple-Intelligence-capable device (A17 Pro+);
+  the app still builds/runs with AI gracefully disabled elsewhere.
+
+## Adding app extensions (widgets, Screen Time, etc.)
+The scaffold generates app + Core package only. For extensions:
+- Add each as a `type: app-extension` target in `project.yml` with its own
+  `PRODUCT_BUNDLE_IDENTIFIER` (strict child of the app's), `entitlements`, and
+  `info.NSExtension` (point identifier + principal class). Add it to the app
+  target's `dependencies` (auto-embeds).
+- **Do NOT set MainActor default isolation on extensions** (callbacks are
+  nonisolated). Keep them tiny — DeviceActivityMonitor has a ~6 MB budget.
+- Share state via an **App Group** (register once in the portal; add the
+  capability + identical `application-groups` entitlement to ALL targets).
+- A **lean shared module** (App-Group + helpers, no SwiftUI/GRDB) linked by the
+  extensions, while the app links the full Core, keeps extensions small.
+- Build features fast with **parallel agents**, each owning one module folder —
+  the package-centric architecture makes this conflict-free.
+
+## Shipping realities (App Store Connect / fastlane)
+- **Bundle IDs** can be created via the ASC API (`POST /v1/bundleIds`) with the
+  `.p8` — fast, no clicking.
+- **Creating the App Store Connect app record needs interactive Apple-ID auth**
+  — `fastlane produce` with only the API key asks for a username. Either set
+  `SPACESHIP_CONNECT_API_KEY_ID/ISSUER_ID/KEY_FILEPATH` env vars, or create the
+  record in the ASC web UI (the API-key alone can't create a brand-new app).
+- **Two account-holder legal gates block NEW-app submission** (not internal
+  TestFlight builds, but eventual release): the updated **Apple Developer
+  Program License Agreement** must be accepted, and **EU trader status (DSA)**
+  provided. These are the operator's to do — never accept legal terms for them.
+- **Family Controls / Screen Time**: the distribution entitlement is requested
+  via an **account-level web form** (developer.apple.com/contact/request/
+  family-controls-distribution) — in 2026 it's a single "Get Entitlement"
+  acknowledgment, then you enable the capability per App ID. **TestFlight
+  (even internal) requires the distribution entitlement** (dev entitlement only
+  works from Xcode on your own device). Internal testers skip Beta App Review.
+- **App Group identifier field auto-prefixes `group.`** in the portal — type
+  only the rest, or you get `group.group.…`.
+
+## Optional: AI-generated visual identity (OpenRouter)
+For a premium look, generate a coherent asset set at build time:
+- Endpoint: `POST https://openrouter.ai/api/v1/chat/completions` with
+  `"modalities":["image","text"]`; image returns as a base64 data URL.
+- **Always set `max_tokens`** (e.g. 1500 for 1K, ~8000 for 2K) — the default
+  reserves the model max and trips a 402 when the key's daily credit is low.
+- **Coherence**: generate a master "style frame" first, then condition every
+  other asset on it (reference image) + a verbatim locked style-prefix.
+- **Icon prompt must say full-bleed** ("fill the entire square edge to edge, no
+  border, no rounded corners") or the model draws an icon-of-an-icon.
+- Read `OPENROUTER_API_KEY` from Keychain; never hardcode.
+- **Authenticity for Islamic/cultural apps**: no figurative imagery, and NEVER
+  AI-generate Arabic/scripture (models mangle letterforms) — use real fonts.
+
+## Verifying screens headlessly
+Bake a debug launch-arg convention into the app (`-uiTestSeed` to skip
+permission-gated onboarding with seeded data; `-uiTab home|history|…` to boot
+into a screen), then capture with `xcrun simctl launch <udid> <bundle> -uiTestSeed
+-uiTab home` + `xcrun simctl io <udid> screenshot`. Lets agents screenshot every
+screen without tapping (GUI automation of the Simulator is often blocked by
+missing Accessibility permission).
