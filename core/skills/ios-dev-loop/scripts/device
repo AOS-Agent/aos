@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# device — build, install, and launch this app on the operator's iPhone.
+# Part of the AOS iOS dev loop (ios-dev-loop skill). Self-discovering:
+# first connected device, first scheme; override via env.
+#
+# Usage:
+#   script/device [--no-build]
+#   DEVICE_ID=<udid> script/device     # pick a specific device
+#
+# One-time setup on a new phone: plug in via USB, tap "Trust", enable
+# Developer Mode (Settings → Privacy & Security), keep it UNLOCKED the
+# first time (the developer disk image can't mount on a locked phone).
+# After that, this works over Wi-Fi with the phone in your pocket.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+SCHEME="${SCHEME:-}"
+DEVICE_ID="${DEVICE_ID:-}"
+
+BUILD=1
+[[ "${1:-}" == "--no-build" ]] && { BUILD=0; shift; }
+
+# ─── Device discovery ────────────────────────────────────────────────────
+if [[ -z "$DEVICE_ID" ]]; then
+  DEVICE_ID=$(xcrun devicectl list devices 2>/dev/null | awk '/connected/{print $(NF-2); exit}')
+fi
+if [[ -z "$DEVICE_ID" ]]; then
+  echo "No iPhone connected. Plug in via USB once (Trust + Developer Mode)," >&2
+  echo "after which Wi-Fi deploys work too. Then re-run script/device." >&2
+  exit 1
+fi
+if xcrun devicectl list devices 2>/dev/null | grep -q "no DDI"; then
+  echo "⚠️  Phone is paired but the developer disk image isn't mounted —" >&2
+  echo "   unlock the phone and re-run." >&2
+  exit 1
+fi
+
+# ─── Project discovery ──────────────────────────────────────────────────
+[[ -f project.yml ]] && command -v xcodegen >/dev/null && xcodegen generate >/dev/null
+WS=$(find . -maxdepth 1 -name "*.xcworkspace" | head -1)
+PJ=$(find . -maxdepth 1 -name "*.xcodeproj" | head -1)
+if [[ -n "$WS" ]]; then CONTAINER=(-workspace "$WS"); else CONTAINER=(-project "${PJ:?no .xcodeproj or .xcworkspace here}"); fi
+[[ -n "$SCHEME" ]] || SCHEME=$(xcodebuild "${CONTAINER[@]}" -list 2>/dev/null | awk '/Schemes:/{f=1;next} f&&NF{print $1;exit}')
+
+# ─── Build → install → launch ───────────────────────────────────────────
+if [[ $BUILD -eq 1 ]]; then
+  xcodebuild "${CONTAINER[@]}" -scheme "$SCHEME" -configuration Debug \
+    -destination 'generic/platform=iOS' -allowProvisioningUpdates build 2>&1 | tail -2
+fi
+SETTINGS=$(xcodebuild "${CONTAINER[@]}" -scheme "$SCHEME" -configuration Debug \
+  -destination 'generic/platform=iOS' -showBuildSettings 2>/dev/null)
+APP="$(awk -F' = ' '/ BUILT_PRODUCTS_DIR/{print $2; exit}' <<<"$SETTINGS")/$(awk -F' = ' '/ FULL_PRODUCT_NAME/{print $2; exit}' <<<"$SETTINGS")"
+BUNDLE_ID=$(awk -F' = ' '/ PRODUCT_BUNDLE_IDENTIFIER/{print $2; exit}' <<<"$SETTINGS")
+
+xcrun devicectl device install app --device "$DEVICE_ID" "$APP" >/dev/null
+xcrun devicectl device process launch --terminate-existing --device "$DEVICE_ID" "$BUNDLE_ID" >/dev/null
+echo "✅ $BUNDLE_ID deployed to device $DEVICE_ID"
