@@ -773,6 +773,18 @@ def main():
     for s in ("gen", "build", "test", "ship"):
         os.chmod(os.path.join(proj, "script", s), 0o755)
 
+    # iOS dev loop (ios-dev-loop skill): every new app is born with the
+    # snap/device iteration scripts. Raw copy — they self-discover scheme,
+    # bundle id, and devices, so no placeholder rendering is needed.
+    loop_scripts = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                "..", "..", "ios-dev-loop", "scripts")
+    for s in ("snap", "device"):
+        src_path = os.path.join(loop_scripts, s)
+        if os.path.exists(src_path):
+            with open(src_path) as f:
+                write(os.path.join(proj, "script", s), f.read())
+            os.chmod(os.path.join(proj, "script", s), 0o755)
+
     write_icon_png(os.path.join(proj, target, "Assets.xcassets", "AppIcon.appiconset", "icon-1024.png"))
 
     # generate the Xcode project

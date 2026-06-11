@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# snap — capture any screen/state of this app on the simulator, fast.
+# Part of the AOS iOS dev loop (ios-dev-loop skill). Self-discovering:
+# works out of the box on any single-app Xcode project; override via env.
+#
+# Usage:
+#   script/snap [--no-build] [route] [extra launch args…]
+#   script/snap                       # default screen
+#   script/snap --no-build home       # re-snap without rebuilding (~15s)
+#   SIM="iPhone 16 Pro" script/snap   # pick a specific simulator
+#
+# Output: build/snaps/<route>-<timestamp>.png  (path printed on last line)
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+# ─── Overrides (set in env, or hardcode for this project) ───────────────
+SCHEME="${SCHEME:-}"          # default: first scheme in the project
+SIM="${SIM:-}"                # default: a booted iPhone, else newest iPhone
+SNAP_DELAY="${SNAP_DELAY:-3}" # seconds to let the UI settle before capture
+
+BUILD=1
+[[ "${1:-}" == "--no-build" ]] && { BUILD=0; shift; }
+ROUTE="${1:-default}"; [[ $# -gt 0 ]] && shift
+
+# ─── Routes → launch arguments (EDIT ME per project) ────────────────────
+# Wire each route to your app's debug launch args (e.g. -uiTestSeed,
+# -uiTab journey). Unknown routes pass through as raw launch args.
+ARGS=()
+case "$ROUTE" in
+  default) ;;
+  *) ARGS+=("$ROUTE") ;;
+esac
+ARGS+=("$@")
+
+# ─── Project discovery ──────────────────────────────────────────────────
+[[ -f project.yml ]] && command -v xcodegen >/dev/null && xcodegen generate >/dev/null
+WS=$(find . -maxdepth 1 -name "*.xcworkspace" | head -1)
+PJ=$(find . -maxdepth 1 -name "*.xcodeproj" | head -1)
+if [[ -n "$WS" ]]; then CONTAINER=(-workspace "$WS"); else CONTAINER=(-project "${PJ:?no .xcodeproj or .xcworkspace here}"); fi
+[[ -n "$SCHEME" ]] || SCHEME=$(xcodebuild "${CONTAINER[@]}" -list 2>/dev/null | awk '/Schemes:/{f=1;next} f&&NF{print $1;exit}')
+
+# ─── Simulator discovery: prefer $SIM, else a booted iPhone, else boot one ──
+if [[ -n "$SIM" ]]; then
+  UDID=$(xcrun simctl list devices available | awk -F '[()]' -v n="$SIM" '$0 ~ n" \\(" {print $2; exit}')
+else
+  UDID=$(xcrun simctl list devices booted | awk -F '[()]' '/iPhone/{print $2; exit}')
+  [[ -n "$UDID" ]] || UDID=$(xcrun simctl list devices available | awk -F '[()]' '/iPhone/{u=$2} END{print u}')
+fi
+[[ -n "$UDID" ]] || { echo "no iPhone simulator found (set SIM=<name>)" >&2; exit 1; }
+xcrun simctl bootstatus "$UDID" -b >/dev/null
+
+# ─── Build → install → launch → capture ─────────────────────────────────
+if [[ $BUILD -eq 1 ]]; then
+  xcodebuild "${CONTAINER[@]}" -scheme "$SCHEME" -configuration Debug \
+    -destination "id=$UDID" build 2>&1 | tail -2
+fi
+SETTINGS=$(xcodebuild "${CONTAINER[@]}" -scheme "$SCHEME" -configuration Debug \
+  -destination "id=$UDID" -showBuildSettings 2>/dev/null)
+APP="$(awk -F' = ' '/ BUILT_PRODUCTS_DIR/{print $2; exit}' <<<"$SETTINGS")/$(awk -F' = ' '/ FULL_PRODUCT_NAME/{print $2; exit}' <<<"$SETTINGS")"
+BUNDLE_ID=$(awk -F' = ' '/ PRODUCT_BUNDLE_IDENTIFIER/{print $2; exit}' <<<"$SETTINGS")
+
+xcrun simctl install "$UDID" "$APP"
+xcrun simctl terminate "$UDID" "$BUNDLE_ID" 2>/dev/null || true
+sleep 1   # terminate is async — racing it can relaunch the old instance
+if [[ ${#ARGS[@]} -gt 0 ]]; then
+  xcrun simctl launch "$UDID" "$BUNDLE_ID" "${ARGS[@]}" >/dev/null
+else
+  xcrun simctl launch "$UDID" "$BUNDLE_ID" >/dev/null
+fi
+sleep "$SNAP_DELAY"
+
+mkdir -p build/snaps
+OUT="build/snaps/${ROUTE//[^a-zA-Z0-9_-]/_}-$(date +%H%M%S).png"
+# CoreSimulator may not have permission to write outside ~/ (e.g. external
+# volumes, TCC) — always stage via /tmp, then copy.
+TMP="$(mktemp -u /tmp/snap-XXXXXX).png"
+xcrun simctl io "$UDID" screenshot "$TMP" >/dev/null 2>&1
+cp -X "$TMP" "$OUT" 2>/dev/null || cp "$TMP" "$OUT"
+rm -f "$TMP"
+echo "$OUT"
