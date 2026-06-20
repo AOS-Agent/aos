@@ -24,6 +24,17 @@ logger = logging.getLogger(__name__)
 AOS_DIR = Path.home() / "aos"
 QMD_BIN = Path.home() / ".bun" / "bin" / "qmd"
 
+# The single global capture door for the Idea Pipeline. Captures from the bridge
+# append one tagged line here (write-only); the triage skill drains it later.
+TRIAGE_INBOX = Path.home() / "vault" / "knowledge" / "triage" / "inbox.md"
+
+# Trigger words stripped from the front of a capture. Matched as whole leading
+# words (case-insensitive), so a bare trigger with no body strips to empty.
+# Longest-first so "jot down" / "note:" win over their shorter prefixes.
+_INBOX_TRIGGER_RE = re.compile(
+    r"^\s*(?:jot\s+down|remember|capture|inbox|note)\s*:?\s+", re.IGNORECASE
+)
+
 # ── Intent Definitions ────────────────────────────────
 # Each intent: list of patterns, handler function name
 # Patterns are checked case-insensitively against the raw message text.
@@ -443,30 +454,86 @@ def handle_done_task(text: str) -> str:
         return f"Error completing task: {e}"
 
 
-def handle_inbox(text: str) -> str:
-    """Capture text to the v2 work inbox."""
-    text_lower = text.lower().strip()
+def _strip_inbox_trigger(text: str) -> str:
+    """Strip a leading capture trigger word (capture/note/remember/...) and
+    collapse the remainder to a single clean line."""
+    stripped = _INBOX_TRIGGER_RE.sub("", text, count=1)
+    # Collapse any internal newlines/runs of whitespace to single spaces.
+    return re.sub(r"\s+", " ", stripped).strip()
 
-    for prefix in ("remember ", "note: ", "note ", "jot down ", "capture ", "inbox "):
-        if text_lower.startswith(prefix):
-            content = text[len(prefix):].strip()
-            break
-    else:
-        content = text.strip()
 
-    if not content:
+# Imperative/to-do verbs that signal a `task` rather than an `idea`. Matched
+# either at the very start of the title or right after a leading "to " (the
+# residue of "remember to …").
+_TASK_VERBS = (
+    r"call|email|text|message|buy|book|schedule|send|pay|fix|finish|"
+    r"follow up|remind|ask|check|review|update|renew|cancel|order"
+)
+_TASK_LEAD_RE = re.compile(rf"^(?:to\s+)?(?:{_TASK_VERBS})\b", re.IGNORECASE)
+
+
+def _guess_capture_type(title: str) -> str:
+    """Best-effort type guess for a captured line.
+
+    Defaults to ``idea``; falls back to ``task`` when the text reads like a
+    to-do. Triage refines this later, so a rough guess is fine.
+    """
+    t = title.lower()
+    if re.search(r"\bbug\b|broken|crash(es|ed|ing)?|doesn'?t work|not working|fails?\b", t):
+        return "bug"
+    # To-do-shaped phrasing → task. Leading imperative verb is the strongest signal.
+    if _TASK_LEAD_RE.match(t):
+        return "task"
+    if re.search(r"\bneed to\b|\bshould\b|\btodo\b|\bto-?do\b", t):
+        return "task"
+    return "idea"
+
+
+def format_triage_line(
+    text: str,
+    *,
+    source: str = "telegram",
+    project: str = "?",
+    now: str | None = None,
+) -> str:
+    """Format one triage-inbox line for a captured thought.
+
+    Matches the capture skill's format exactly:
+
+        - <ISO8601> · [<type> · <project> · <area?> · <sev?>] · src:<source> · <title>
+
+    The trigger word is stripped from the title; ``type`` is guessed (default
+    ``idea``, or ``task`` for to-do-shaped text); ``project`` defaults to ``?``
+    (triage resolves it). ``area`` and ``sev`` are omitted (triage refines).
+    Pure/testable — no I/O.
+    """
+    from datetime import datetime
+
+    title = _strip_inbox_trigger(text)
+    ctype = _guess_capture_type(title)
+    ts = now if now is not None else datetime.now().strftime("%Y-%m-%dT%H:%M")
+    return f"- {ts} · [{ctype} · {project}] · src:{source} · {title}"
+
+
+def handle_inbox(text: str, source: str = "telegram") -> str:
+    """Capture text to the global triage inbox (the Idea Pipeline's one door).
+
+    Appends a tagged one-line entry to ``~/vault/knowledge/triage/inbox.md``
+    (write-only — never reads the inbox back). ``source`` is ``telegram`` for
+    typed messages; callers that know a capture came from a transcribed voice
+    note can pass ``source="voice"``.
+    """
+    title = _strip_inbox_trigger(text)
+    if not title:
         return "Please provide something to capture. Example: inbox look into Redis"
 
+    line = format_triage_line(text, source=source)
+
     try:
-        result = subprocess.run(
-            ["/opt/homebrew/bin/python3", str(AOS_DIR / "core" / "work" / "cli.py"), "inbox", content],
-            capture_output=True, text=True, timeout=10,
-        )
-        if result.returncode == 0:
-            output = result.stdout.strip()
-            return f"Captured: {output}"
-        else:
-            return f"Could not capture: {result.stderr[:200]}"
+        TRIAGE_INBOX.parent.mkdir(parents=True, exist_ok=True)
+        with open(TRIAGE_INBOX, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+        return f"Captured: {title}"
     except Exception as e:
         return f"Error capturing: {e}"
 
@@ -1135,8 +1202,14 @@ HANDLERS["handle_draft_feedback"] = handle_draft_feedback
 HANDLERS["handle_proposals"] = handle_proposals
 
 
-def dispatch(text: str) -> str | None:
-    """Classify and handle a message. Returns reply text or None."""
+def dispatch(text: str, source: str = "telegram") -> str | None:
+    """Classify and handle a message. Returns reply text or None.
+
+    ``source`` records where the message came from (``telegram`` for typed
+    messages, ``voice`` for transcribed voice notes). It is forwarded to
+    handlers that accept it (currently the inbox capture handler) so the
+    captured line is tagged with the right ``src:``.
+    """
     intent_name, handler_name = classify(text)
     if not intent_name or not handler_name:
         return None
@@ -1148,6 +1221,11 @@ def dispatch(text: str) -> str | None:
 
     logger.info(f"Intent matched: {intent_name} → {handler_name}")
     try:
+        # Forward `source` only to handlers that accept it (keeps the simple
+        # `handler(text)` contract intact for everything else).
+        import inspect
+        if "source" in inspect.signature(handler).parameters:
+            return handler(text, source=source)
         return handler(text)
     except Exception as e:
         logger.error(f"Intent handler {handler_name} failed: {e}")
