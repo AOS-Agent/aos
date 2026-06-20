@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS projects (
     path            TEXT,
     goal            TEXT,
     done_when       TEXT,
+    short_id        TEXT,   -- user-facing handle / scoped task-id prefix (e.g. dod -> dod#1)
     telegram_bot_key    TEXT,
     telegram_chat_key   TEXT,
     telegram_forum_topic INTEGER,
@@ -63,6 +64,9 @@ CREATE TABLE IF NOT EXISTS projects (
     modified_by     TEXT,
     modified_at     TEXT
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_short_id
+    ON projects(short_id) WHERE short_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS goals (
     id              TEXT PRIMARY KEY,

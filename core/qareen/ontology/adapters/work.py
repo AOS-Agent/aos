@@ -128,15 +128,78 @@ class WorkAdapter(Adapter):
 
     # ── ID Generation (private) ──────────────────────────
 
-    def _project_prefix(self, project_id: str | None) -> str:
-        """Derive short prefix from project ID.
+    def _projects_has_short_id(self) -> bool:
+        """Whether projects.short_id exists (migration 046). Cached per conn.
 
-        aos -> aos, aos-v2 -> aos, None -> t (unaffiliated).
+        Lets the adapter run against a pre-migration DB without crashing.
+        """
+        cached = getattr(self, "_has_short_id_col", None)
+        if cached is None:
+            cols = {
+                r[1] for r in self._conn.execute("PRAGMA table_info(projects)")
+            }
+            cached = "short_id" in cols
+            self._has_short_id_col = cached
+        return cached
+
+    def _resolve_project_id(self, value: str | None) -> str | None:
+        """Resolve a --project argument to the canonical projects.id.
+
+        The argument may be either the canonical id (e.g. "p1", "aos") or a
+        project's short_id (e.g. "dod"). Returns the canonical id so it can be
+        used as the tasks.project_id foreign key. Matching is by id first,
+        then by short_id. If no project matches, the value is returned
+        unchanged (e.g. None stays None; an as-yet-uncreated slug passes
+        through so legacy id==slug flows keep working).
+        """
+        if not value:
+            return value
+        # Canonical id match (the common, fast path).
+        if self._conn.execute(
+            "SELECT 1 FROM projects WHERE id = ?", (value,)
+        ).fetchone():
+            return value
+        # short_id alias match. On a pre-migration DB (no short_id column,
+        # added by migration 046) fall back to id-only resolution.
+        if not self._projects_has_short_id():
+            return value
+        row = self._conn.execute(
+            "SELECT id FROM projects WHERE short_id = ?", (value,)
+        ).fetchone()
+        if row:
+            return row["id"]
+        return value
+
+    def _project_prefix(self, project_id: str | None) -> str:
+        """Derive the scoped task-id prefix for a --project argument.
+
+        Prefers the project's short_id (so a project with short_id "dod" gets
+        dod#1 tasks even though its canonical id is "p1"). Falls back to the
+        canonical id with version suffixes stripped (aos-v2 -> aos). None ->
+        t (unaffiliated). Accepts either a canonical id or a short_id as input.
         """
         if not project_id:
             return "t"
-        clean = re.sub(r'[-_]v\d+$', '', project_id)
-        return clean
+        # Look up by id or short_id; prefer the project's own short_id.
+        # On a pre-migration DB without the short_id column, derive the prefix
+        # from the id alone (legacy behavior).
+        if self._projects_has_short_id():
+            row = self._conn.execute(
+                "SELECT id, short_id FROM projects WHERE id = ? OR short_id = ?",
+                (project_id, project_id),
+            ).fetchone()
+        else:
+            row = self._conn.execute(
+                "SELECT id, NULL AS short_id FROM projects WHERE id = ?",
+                (project_id,),
+            ).fetchone()
+        if row and row["short_id"]:
+            base = row["short_id"]
+        elif row:
+            base = row["id"]
+        else:
+            base = project_id
+        return re.sub(r'[-_]v\d+$', '', base)
 
     def _next_scoped_id(self, prefix: str) -> str:
         """Generate next project-scoped ID: aos#1, aos#2, chief#1, t#1, etc."""
@@ -693,6 +756,10 @@ class WorkAdapter(Adapter):
 
     def _create_task(self, task: Task) -> Task:
         now = datetime.now().isoformat()
+        # Resolve the project handle (id or short_id) to the canonical
+        # projects.id so the project_id foreign key always points at a real
+        # parent row. Without this, --project <short_id> violated the FK.
+        task.project = self._resolve_project_id(task.project)
         self._conn.execute(
             "INSERT OR REPLACE INTO tasks "
             "(id, title, status, priority, project_id, description, "
@@ -821,6 +888,7 @@ class WorkAdapter(Adapter):
             path=row["path"],
             goal=row["goal"],
             done_when=row["done_when"],
+            short_id=(row["short_id"] if "short_id" in row.keys() else None),
             telegram_bot_key=row["telegram_bot_key"],
             telegram_chat_key=row["telegram_chat_key"],
             telegram_forum_topic=row["telegram_forum_topic"],
@@ -848,28 +916,55 @@ class WorkAdapter(Adapter):
 
     def _create_project(self, project: Project) -> Project:
         now = datetime.now().isoformat()
-        self._conn.execute(
-            "INSERT OR REPLACE INTO projects "
-            "(id, title, description, status, path, goal, done_when, "
-            " telegram_bot_key, telegram_chat_key, telegram_forum_topic, "
-            " stages, current_stage, version, modified_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)",
-            (
-                project.id,
-                project.title,
-                project.description,
-                project.status,
-                project.path,
-                project.goal,
-                project.done_when,
-                project.telegram_bot_key,
-                project.telegram_chat_key,
-                project.telegram_forum_topic,
-                _json_dumps(project.stages),
-                project.current_stage,
-                now,
-            ),
-        )
+        if self._projects_has_short_id():
+            self._conn.execute(
+                "INSERT OR REPLACE INTO projects "
+                "(id, title, description, status, path, goal, done_when, short_id, "
+                " telegram_bot_key, telegram_chat_key, telegram_forum_topic, "
+                " stages, current_stage, version, modified_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)",
+                (
+                    project.id,
+                    project.title,
+                    project.description,
+                    project.status,
+                    project.path,
+                    project.goal,
+                    project.done_when,
+                    project.short_id,
+                    project.telegram_bot_key,
+                    project.telegram_chat_key,
+                    project.telegram_forum_topic,
+                    _json_dumps(project.stages),
+                    project.current_stage,
+                    now,
+                ),
+            )
+        else:
+            # Pre-migration DB (no short_id column): omit it so creation still
+            # works. Migration 046 backfills short_id once it runs.
+            self._conn.execute(
+                "INSERT OR REPLACE INTO projects "
+                "(id, title, description, status, path, goal, done_when, "
+                " telegram_bot_key, telegram_chat_key, telegram_forum_topic, "
+                " stages, current_stage, version, modified_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)",
+                (
+                    project.id,
+                    project.title,
+                    project.description,
+                    project.status,
+                    project.path,
+                    project.goal,
+                    project.done_when,
+                    project.telegram_bot_key,
+                    project.telegram_chat_key,
+                    project.telegram_forum_topic,
+                    _json_dumps(project.stages),
+                    project.current_stage,
+                    now,
+                ),
+            )
         self._conn.commit()
         return project
 

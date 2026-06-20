@@ -263,6 +263,10 @@ class Project:
     path: str | None = None  # filesystem path if applicable
     goal: str | None = None
     done_when: str | None = None
+    # User-facing handle used as the scoped task-id prefix (e.g. "dod" ->
+    # dod#1) and as an alias for --project resolution. Distinct from the
+    # canonical `id` (e.g. "p1"). None means tasks are prefixed by `id`.
+    short_id: str | None = None
 
     # Telegram routing
     telegram_bot_key: str | None = None
