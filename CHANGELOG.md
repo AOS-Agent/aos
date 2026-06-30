@@ -11,6 +11,8 @@ Summary: Repaired the self-update system on release-converted machines — it ha
 - Added a release-aware update path — check-update now detects release vs git installs and drives release-system updates through release-manager (create + activate) off the source repo, instead of a git pull against the read-only release symlink.
 - Changed phase-2 deploy to be install-aware — it computes changed services from the source repo on release installs (where ~/aos has no .git) and reads the new commit hash from the handoff.
 - Changed update state writes to pass values via the environment instead of interpolating them into inline Python, hardening against commit messages that contain quotes.
+- Fixed release-manager activate/rollback never switching the ~/aos symlink on macOS — `mv -f` followed the symlink into the read-only release dir ("Permission denied"). They now use a shared `_swap_link` helper (atomic `mv -fT` on Linux, `ln -sfn` fallback on macOS, matching convert()). This means auto-update could not have applied a release on any macOS machine.
+- Fixed release-manager's release validator reporting false "fails to parse" warnings — it now parse-checks scripts in memory instead of letting py_compile try to write bytecode into the read-only release dir.
 
 ## v0.6.0 — 2026-03-28
 

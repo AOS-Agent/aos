@@ -46,6 +46,29 @@ mkdir -p "$RELEASES_DIR" "$STATE_DIR"
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
 
+# ── Symlink swap ────────────────────────────────────────────────────────────
+#
+# Point ~/aos at a release directory. ~/aos is always a symlink in the release
+# system, and release dirs are read-only (chmod a-w).
+#
+# The naive `mv -f tmp ~/aos` is WRONG on macOS/BSD: when the destination is a
+# symlink to a directory, BSD `mv` follows it and moves the source INTO that
+# (read-only) directory → "Permission denied", so activation never switches.
+# GNU `mv -T` replaces atomically without following; BSD `mv` has no -T. So we
+# try `mv -fT` first (atomic on Linux) and fall back to `ln -sfn`, which
+# replaces the symlink in place — the same approach convert() already uses.
+_swap_link() {
+    local target_dir="$1"
+    local tmp_link="${AOS_LINK}.new.$$"
+    ln -sfn "$target_dir" "$tmp_link"
+    if mv -fT "$tmp_link" "$AOS_LINK" 2>/dev/null; then
+        return 0
+    fi
+    # BSD/macOS: -T unsupported. Clean up and replace the symlink directly.
+    rm -f "$tmp_link"
+    ln -sfn "$target_dir" "$AOS_LINK"
+}
+
 # ── Lock management ────────────────────────────────────────────────────────
 
 acquire_lock() {
@@ -165,7 +188,9 @@ activate() {
     for script in "$release_dir"/core/bin/cli/* "$release_dir"/core/bin/crons/* "$release_dir"/core/bin/internal/*; do
         [ -f "$script" ] || continue
         if head -1 "$script" 2>/dev/null | grep -q python; then
-            if ! python3 -c "import py_compile; py_compile.compile('$script', doraise=True)" 2>/dev/null; then
+            # Parse-check in memory. py_compile would try to write a .pyc into
+            # the release dir, which is read-only (chmod a-w) → false failures.
+            if ! python3 -c "compile(open('$script','rb').read(), '$script', 'exec')" 2>/dev/null; then
                 log "WARN: Script $(basename "$script") fails to parse"
                 ((parse_fail++))
             fi
@@ -188,10 +213,8 @@ activate() {
         echo "$current" > "$PREV_FILE"
     fi
 
-    # Atomic symlink switch
-    local tmp_link="${AOS_LINK}.new.$$"
-    ln -sfn "$release_dir" "$tmp_link"
-    mv -f "$tmp_link" "$AOS_LINK"
+    # Switch ~/aos → new release (handles macOS symlink-to-dir correctly)
+    _swap_link "$release_dir"
 
     # Record deployed hash
     local version_hash
@@ -229,10 +252,8 @@ rollback() {
         echo "$current" > "$PREV_FILE"
     fi
 
-    # Atomic switch
-    local tmp_link="${AOS_LINK}.new.$$"
-    ln -sfn "$prev_dir" "$tmp_link"
-    mv -f "$tmp_link" "$AOS_LINK"
+    # Switch ~/aos → previous release (handles macOS symlink-to-dir correctly)
+    _swap_link "$prev_dir"
 
     log "Rolled back: ~/aos → $prev_dir"
 }
