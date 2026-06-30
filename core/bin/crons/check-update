@@ -25,11 +25,81 @@ set +e
 AOS_DIR="$HOME/aos"
 STATE_FILE="$HOME/.aos/data/update-state.json"
 HANDOFF_FILE="$HOME/.aos/data/update-handoff.json"
+DEPLOYED_HASH_FILE="$HOME/.aos/data/deployed-hash"
 LOG_PREFIX="[$(date '+%Y-%m-%d %H:%M:%S')]"
+
+# Exported so the env-based python heredocs below can read them safely
+# (avoids interpolating arbitrary strings like commit messages into code).
+export AOS_DIR STATE_FILE HANDOFF_FILE DEPLOYED_HASH_FILE
 
 mkdir -p "$(dirname "$STATE_FILE")"
 
 log() { echo "$LOG_PREFIX $*"; }
+
+# ── Install-type detection ───────────────────────────────────────────────────
+#
+# Two install shapes:
+#   release — ~/aos is a symlink → ~/aos-releases/<version>/ (no .git inside).
+#             Updates flow through release-manager (create + activate), driven
+#             from a source git repo at ~/project/aos or ~/.aos/repo.
+#   git     — ~/aos is a real git clone. Updates flow through git pull.
+
+detect_install() {
+    if [[ -L "$AOS_DIR" && ! -d "$AOS_DIR/.git" ]]; then
+        echo "release"
+    elif [[ -d "$AOS_DIR/.git" ]]; then
+        echo "git"
+    else
+        echo "unknown"
+    fi
+}
+
+# Find the source git repo for release-system updates.
+# Mirrors release-manager's _find_repo: dev machines first, then fleet.
+find_repo() {
+    if [[ -d "$HOME/project/aos/.git" ]]; then
+        echo "$HOME/project/aos"
+    elif [[ -d "$HOME/.aos/repo/.git" ]]; then
+        echo "$HOME/.aos/repo"
+    else
+        echo ""
+    fi
+}
+
+# ── State writers (env-based — no string interpolation into code) ────────────
+
+_write_state() {
+    # $1=status  $2=local_hash  $3=remote_hash
+    STATUS="$1" LOCAL="$2" REMOTE="$3" python3 - <<'PY'
+import json, datetime, os
+state = {
+    "last_check": datetime.datetime.now().isoformat(),
+    "status": os.environ.get("STATUS", "unknown"),
+    "local": os.environ.get("LOCAL", ""),
+    "remote": os.environ.get("REMOTE", ""),
+}
+with open(os.environ["STATE_FILE"], "w") as f:
+    json.dump(state, f, indent=2)
+PY
+}
+
+_write_state_update() {
+    # $1=local_hash  $2=remote_hash  $3=behind  $4=changes (newline-separated)
+    LOCAL="$1" REMOTE="$2" BEHIND="$3" CHANGES="$4" python3 - <<'PY'
+import json, datetime, os
+changes = [c for c in os.environ.get("CHANGES", "").strip().split("\n") if c]
+state = {
+    "last_check": datetime.datetime.now().isoformat(),
+    "status": "update_available",
+    "local": os.environ.get("LOCAL", ""),
+    "remote": os.environ.get("REMOTE", ""),
+    "behind": int(os.environ.get("BEHIND", "0") or 0),
+    "changes": changes,
+}
+with open(os.environ["STATE_FILE"], "w") as f:
+    json.dump(state, f, indent=2)
+PY
+}
 
 # ── Telegram notification (best-effort) ──────────────────────────────────────
 
@@ -47,87 +117,254 @@ notify() {
 }
 
 # ── Check for updates ────────────────────────────────────────────────────────
+#
+# IMPORTANT: check() and its variants ALWAYS exit 0 for any non-catastrophic
+# state — up-to-date, update-available, offline, or misconfigured. "Nothing to
+# do" is not a cron failure. The result is recorded in the state file for the
+# dashboard / `aos status`; it is never signalled via a non-zero exit code.
+# (Returning 1 here is what generated ~1000 false "cron failed" alerts on
+# release-system machines, where ~/aos has no git remote.)
 
 check() {
-    cd "$AOS_DIR" || { log "ERROR: AOS dir not found"; exit 1; }
+    local itype
+    itype=$(detect_install)
+    case "$itype" in
+        release) check_release ;;
+        git)     check_git ;;
+        *)
+            log "Unknown install type (~/aos is neither a git clone nor a release symlink) — skipping check"
+            _write_state "unknown_install" "" ""
+            ;;
+    esac
+    return 0
+}
+
+# Returns 0 (true) if an update is available, 1 (false) otherwise.
+# Side effect: refreshes the state file. Used by both check and apply.
+update_available() {
+    local itype
+    itype=$(detect_install)
+    if [[ "$itype" == "release" ]]; then
+        check_release
+    else
+        check_git
+    fi
+    # Re-read the freshly written state file for the verdict.
+    python3 - <<'PY'
+import json, os, sys
+try:
+    s = json.load(open(os.environ["STATE_FILE"]))
+except Exception:
+    sys.exit(1)
+sys.exit(0 if s.get("status") == "update_available" else 1)
+PY
+}
+
+# ── Release-system check (drives off the source repo, compares deployed hash) ─
+
+check_release() {
+    local repo deployed_hash cur_version
+    repo=$(find_repo)
+    deployed_hash=$(cat "$DEPLOYED_HASH_FILE" 2>/dev/null || echo "")
+    cur_version=$(cat "$AOS_DIR/VERSION" 2>/dev/null || echo "unknown")
+
+    if [[ -z "$repo" ]]; then
+        log "Release system but no source repo found (checked ~/project/aos, ~/.aos/repo) — cannot check for updates"
+        _write_state "no_source_repo" "$deployed_hash" "$deployed_hash"
+        return 0
+    fi
+
+    git -C "$repo" fetch origin main --quiet 2>/dev/null || {
+        log "WARN: git fetch failed in $repo (network?)"
+        _write_state "offline" "$deployed_hash" "$deployed_hash"
+        return 0
+    }
+
+    local remote_hash
+    remote_hash=$(git -C "$repo" rev-parse origin/main 2>/dev/null || echo "")
+    if [[ -z "$remote_hash" ]]; then
+        log "WARN: could not resolve origin/main in $repo"
+        _write_state "check_error" "$deployed_hash" "$deployed_hash"
+        return 0
+    fi
+
+    if [[ "$deployed_hash" == "$remote_hash" ]]; then
+        log "Up to date ($cur_version)"
+        _write_state "up_to_date" "$deployed_hash" "$remote_hash"
+        return 0
+    fi
+
+    local behind changes
+    behind=$(git -C "$repo" rev-list --count "$deployed_hash..$remote_hash" 2>/dev/null || echo 0)
+    changes=$(git -C "$repo" log --oneline "$deployed_hash..$remote_hash" 2>/dev/null | head -5)
+    log "Update available: $behind new commit(s)"
+    _write_state_update "$deployed_hash" "$remote_hash" "$behind" "$changes"
+    return 0
+}
+
+# ── Git-clone check (legacy path — git pull installs) ────────────────────────
+
+check_git() {
+    cd "$AOS_DIR" || { log "ERROR: AOS dir not found"; _write_state "no_aos_dir" "" ""; return 0; }
 
     local remote
     remote=$(git remote 2>/dev/null | head -1)
     if [[ -z "$remote" ]]; then
         log "No git remote configured — skipping update check"
-        return 1
+        _write_state "no_remote" "" ""
+        return 0
     fi
 
     git fetch "$remote" --quiet 2>/dev/null || {
         log "WARN: git fetch failed (network?)"
-        return 1
+        _write_state "offline" "" ""
+        return 0
     }
 
-    local branch
+    local branch local_hash remote_hash
     branch=$(git branch --show-current 2>/dev/null || echo "main")
-    local local_hash remote_hash
-    local_hash=$(git rev-parse HEAD 2>/dev/null)
-    remote_hash=$(git rev-parse "$remote/$branch" 2>/dev/null)
+    local_hash=$(git rev-parse HEAD 2>/dev/null || echo "")
+    remote_hash=$(git rev-parse "$remote/$branch" 2>/dev/null || echo "")
 
     if [[ -z "$remote_hash" ]]; then
         log "WARN: could not resolve remote branch"
-        return 1
+        _write_state "check_error" "$local_hash" ""
+        return 0
     fi
 
     if [[ "$local_hash" == "$remote_hash" ]]; then
         log "Up to date"
-        python3 -c "
-import json, datetime
-state = {
-    'last_check': datetime.datetime.now().isoformat(),
-    'status': 'up_to_date',
-    'local': '$local_hash',
-    'remote': '$remote_hash',
-}
-with open('$STATE_FILE', 'w') as f:
-    json.dump(state, f, indent=2)
-"
+        _write_state "up_to_date" "$local_hash" "$remote_hash"
         return 0
     fi
 
-    local ahead behind
-    ahead=$(git rev-list --count "$remote/$branch..HEAD" 2>/dev/null || echo 0)
+    local behind changes
     behind=$(git rev-list --count "HEAD..$remote/$branch" 2>/dev/null || echo 0)
-
-    local changes
     changes=$(git log --oneline "HEAD..$remote/$branch" 2>/dev/null | head -5)
-
     log "Update available: $behind new commit(s)"
-
-    python3 -c "
-import json, datetime
-state = {
-    'last_check': datetime.datetime.now().isoformat(),
-    'status': 'update_available',
-    'local': '$local_hash',
-    'remote': '$remote_hash',
-    'behind': $behind,
-    'ahead': $ahead,
-    'changes': '''$changes'''.strip().split('\n'),
-}
-with open('$STATE_FILE', 'w') as f:
-    json.dump(state, f, indent=2)
-"
-
-    return 0  # update available — not a failure (status written to state file)
+    _write_state_update "$local_hash" "$remote_hash" "$behind" "$changes"
+    return 0
 }
 
-# ── Phase 1: Pull code and hand off to new script ───────────────────────────
+# ── Phase 1: install the new code, then hand off to phase 2 ──────────────────
 #
-# This function does the MINIMUM possible work with the old code:
-# 1. git pull
-# 2. Write a handoff file with context for phase 2
-# 3. exec the NEW version of this script with --continue
+# Both apply paths do the MINIMUM with the old code, then exec the NEW script:
+#   git path     — git pull, then exec ~/aos/.../check-update --continue
+#   release path — release-manager create + activate (switches the ~/aos
+#                  symlink to the new release), then exec the NEW script.
 #
-# After exec, the old code is gone. Phase 2 runs entirely from disk.
+# After exec, the old in-memory code is gone and phase 2 (deploy) runs entirely
+# from the freshly installed code on disk. This solves the bootstrapping
+# problem — the old script never drives its own deployment.
 
 apply() {
-    log "Phase 1: pulling code..."
+    local itype
+    itype=$(detect_install)
+    case "$itype" in
+        release) apply_release ;;
+        git)     apply_git ;;
+        *)
+            log "ERROR: unknown install type — cannot apply update"
+            notify "⚠️ Update failed: ~/aos is neither a git clone nor a release symlink."
+            return 1
+            ;;
+    esac
+}
+
+# Write the phase-2 handoff file. Args via env to avoid code interpolation.
+_write_handoff() {
+    # $1=install_type $2=old_hash $3=new_hash $4=old_version $5=new_version $6=repo
+    ITYPE="$1" OLD_HASH="$2" NEW_HASH="$3" OLD_VERSION="$4" NEW_VERSION="$5" REPO="$6" \
+    python3 - <<'PY'
+import json, datetime, os
+handoff = {
+    "triggered_at": datetime.datetime.now().isoformat(),
+    "install_type": os.environ.get("ITYPE", "git"),
+    "old_hash": os.environ.get("OLD_HASH", ""),
+    "new_hash": os.environ.get("NEW_HASH", ""),
+    "old_version": os.environ.get("OLD_VERSION", "unknown"),
+    "new_version": os.environ.get("NEW_VERSION", "unknown"),
+    "repo": os.environ.get("REPO", ""),
+}
+with open(os.environ["HANDOFF_FILE"], "w") as f:
+    json.dump(handoff, f, indent=2)
+PY
+}
+
+# ── Release-system apply (create + activate a new immutable release) ─────────
+
+apply_release() {
+    log "Phase 1 (release): building + activating new release..."
+
+    local repo
+    repo=$(find_repo)
+    if [[ -z "$repo" ]]; then
+        log "ERROR: no source repo found — cannot build a release"
+        notify "⚠️ Update failed: no source repo (~/project/aos or ~/.aos/repo). Cannot self-update."
+        return 1
+    fi
+
+    local rm="$AOS_DIR/core/bin/internal/release-manager"
+    if [[ ! -x "$rm" && ! -f "$rm" ]]; then
+        log "ERROR: release-manager not found at $rm"
+        return 1
+    fi
+
+    local old_hash old_version
+    old_hash=$(cat "$DEPLOYED_HASH_FILE" 2>/dev/null || echo "")
+    old_version=$(cat "$AOS_DIR/VERSION" 2>/dev/null || echo "unknown")
+
+    git -C "$repo" fetch origin main --quiet 2>/dev/null || {
+        log "ERROR: git fetch failed in $repo"
+        notify "⚠️ System update failed (git fetch). Will retry next cycle."
+        return 1
+    }
+
+    local new_hash new_version release_name
+    new_hash=$(git -C "$repo" rev-parse origin/main 2>/dev/null || echo "")
+    if [[ -z "$new_hash" ]]; then
+        log "ERROR: could not resolve origin/main in $repo"
+        return 1
+    fi
+
+    if [[ "$old_hash" == "$new_hash" ]]; then
+        log "Already at $new_hash — nothing to apply"
+        return 0
+    fi
+
+    new_version=$(git -C "$repo" show origin/main:VERSION 2>/dev/null || echo "unknown")
+    # Release name matches release-manager's formula: <version>-<7-char hash>
+    release_name="${new_version}-${new_hash:0:7}"
+
+    # Build the immutable release (idempotent — no-op if it already exists).
+    log "Creating release $release_name ..."
+    if ! bash "$rm" create >/dev/null 2>&1; then
+        log "ERROR: release-manager create failed"
+        notify "⚠️ Update failed during release build. Will retry next cycle."
+        return 1
+    fi
+
+    # Activate it (validates the new release, then atomically switches ~/aos
+    # and records the new deployed hash).
+    log "Activating $release_name ..."
+    if ! bash "$rm" activate "$release_name" >/dev/null 2>&1; then
+        log "ERROR: release-manager activate failed for $release_name"
+        notify "⚠️ Update failed during activation of $release_name. Still on previous release."
+        return 1
+    fi
+
+    _write_handoff "release" "$old_hash" "$new_hash" "$old_version" "$new_version" "$repo"
+
+    log "Release $release_name active ($old_version → $new_version). Handing off to new script..."
+
+    # ~/aos now points at the new release — exec runs the NEW code.
+    exec "$AOS_DIR/core/bin/crons/check-update" --continue
+}
+
+# ── Git-clone apply (legacy path — git pull installs) ────────────────────────
+
+apply_git() {
+    log "Phase 1 (git): pulling code..."
 
     cd "$AOS_DIR" || exit 1
 
@@ -135,9 +372,9 @@ apply() {
     old_hash=$(git rev-parse HEAD 2>/dev/null)
     old_version=$(cat "$AOS_DIR/VERSION" 2>/dev/null || echo "unknown")
 
-    local pull_output
+    local pull_output pull_status
     pull_output=$(git pull --ff-only origin main 2>&1)
-    local pull_status=$?
+    pull_status=$?
 
     if [[ $pull_status -ne 0 ]]; then
         log "git pull failed — clearing dirty state and retrying"
@@ -152,26 +389,15 @@ apply() {
         fi
     fi
 
-    local new_version
+    local new_hash new_version
+    new_hash=$(git rev-parse HEAD 2>/dev/null)
     new_version=$(cat "$AOS_DIR/VERSION" 2>/dev/null || echo "unknown")
 
-    # Write handoff for phase 2
-    python3 -c "
-import json, datetime
-handoff = {
-    'triggered_at': datetime.datetime.now().isoformat(),
-    'old_hash': '$old_hash',
-    'old_version': '$old_version',
-    'new_version': '$new_version',
-}
-with open('$HANDOFF_FILE', 'w') as f:
-    json.dump(handoff, f, indent=2)
-"
+    _write_handoff "git" "$old_hash" "$new_hash" "$old_version" "$new_version" "$AOS_DIR"
 
     log "Code pulled ($old_version → $new_version). Handing off to new script..."
 
     # Replace this process with the NEW version of this script from disk.
-    # The old in-memory code is gone after this line.
     exec "$AOS_DIR/core/bin/crons/check-update" --continue
 }
 
@@ -190,15 +416,18 @@ deploy() {
         return 0
     fi
 
-    local old_hash old_version new_version
-    old_hash=$(python3 -c "import json; print(json.load(open('$HANDOFF_FILE'))['old_hash'])" 2>/dev/null)
-    old_version=$(python3 -c "import json; print(json.load(open('$HANDOFF_FILE'))['old_version'])" 2>/dev/null)
-    new_version=$(python3 -c "import json; print(json.load(open('$HANDOFF_FILE'))['new_version'])" 2>/dev/null)
+    local install_type old_hash new_hash old_version new_version repo
+    install_type=$(python3 -c "import json; print(json.load(open('$HANDOFF_FILE')).get('install_type','git'))" 2>/dev/null)
+    old_hash=$(python3 -c "import json; print(json.load(open('$HANDOFF_FILE')).get('old_hash',''))" 2>/dev/null)
+    new_hash=$(python3 -c "import json; print(json.load(open('$HANDOFF_FILE')).get('new_hash',''))" 2>/dev/null)
+    old_version=$(python3 -c "import json; print(json.load(open('$HANDOFF_FILE')).get('old_version','unknown'))" 2>/dev/null)
+    new_version=$(python3 -c "import json; print(json.load(open('$HANDOFF_FILE')).get('new_version','unknown'))" 2>/dev/null)
+    repo=$(python3 -c "import json; print(json.load(open('$HANDOFF_FILE')).get('repo',''))" 2>/dev/null)
 
     # Delete handoff BEFORE destructive work — idempotency guard.
     rm -f "$HANDOFF_FILE"
 
-    log "Phase 2: deploying $old_version → $new_version"
+    log "Phase 2 ($install_type): deploying $old_version → $new_version"
 
     # Auto-convert to release system if still a git clone
     if [ -d "$AOS_DIR/.git" ] && [ -f "$AOS_DIR/core/bin/internal/release-manager" ]; then
@@ -241,12 +470,22 @@ deploy() {
         bash "$AOS_DIR/core/bin/cli/aos" "$cmd" 2>/dev/null || true
     done
 
-    # Auto-discover which services changed and rebuild their venvs
-    local changed_services
-    changed_services=$(git diff --name-only "$old_hash..HEAD" 2>/dev/null \
-        | grep -E "core/services/[^/]+/(pyproject\.toml|[^/]+\.py)" \
-        | sed 's|core/services/\([^/]*\)/.*|\1|' \
-        | sort -u || true)
+    # Auto-discover which services changed and rebuild their venvs.
+    # Release installs have no .git in ~/aos, so diff in the source repo using
+    # the old/new hashes from the handoff. Git installs diff in ~/aos directly.
+    local changed_services=""
+    if [[ -n "$old_hash" && -n "$new_hash" ]]; then
+        local diff_cmd
+        if [[ "$install_type" == "release" && -d "$repo/.git" ]]; then
+            diff_cmd=(git -C "$repo" diff --name-only "$old_hash..$new_hash")
+        else
+            diff_cmd=(git diff --name-only "$old_hash..HEAD")
+        fi
+        changed_services=$("${diff_cmd[@]}" 2>/dev/null \
+            | grep -E "core/services/[^/]+/(pyproject\.toml|[^/]+\.py)" \
+            | sed 's|core/services/\([^/]*\)/.*|\1|' \
+            | sort -u || true)
+    fi
 
     if [[ -n "$changed_services" ]]; then
         log "Code/deps changed in: $changed_services"
@@ -288,21 +527,21 @@ deploy() {
     local release_notes
     release_notes=$(_extract_release_notes "$new_version")
 
-    local new_hash
-    new_hash=$(git rev-parse HEAD 2>/dev/null)
-    python3 -c "
-import json, datetime
+    # new_hash comes from the handoff (release installs have no .git in ~/aos).
+    [[ -z "$new_hash" ]] && new_hash=$(git rev-parse HEAD 2>/dev/null || echo "")
+    VERSION="$new_version" NEW_HASH="$new_hash" python3 - <<'PY'
+import json, datetime, os
 state = {
-    'last_check': datetime.datetime.now().isoformat(),
-    'last_update': datetime.datetime.now().isoformat(),
-    'status': 'up_to_date',
-    'version': '$new_version',
-    'local': '$new_hash',
-    'remote': '$new_hash',
+    "last_check": datetime.datetime.now().isoformat(),
+    "last_update": datetime.datetime.now().isoformat(),
+    "status": "up_to_date",
+    "version": os.environ.get("VERSION", "unknown"),
+    "local": os.environ.get("NEW_HASH", ""),
+    "remote": os.environ.get("NEW_HASH", ""),
 }
-with open('$STATE_FILE', 'w') as f:
+with open(os.environ["STATE_FILE"], "w") as f:
     json.dump(state, f, indent=2)
-"
+PY
 
     log "Update complete: $new_version"
 
@@ -452,11 +691,11 @@ if s.get('last_update'):
 
 case "${1:-}" in
     --apply)
-        check
-        result=$?
-        if [[ $result -eq 2 ]]; then
+        # Apply only if an update is actually available. update_available()
+        # refreshes the state file and returns 0 (true) when behind.
+        if update_available; then
             apply
-        elif [[ $result -eq 0 ]]; then
+        else
             log "Already up to date"
         fi
         ;;
@@ -467,6 +706,9 @@ case "${1:-}" in
         status
         ;;
     *)
+        # Plain check (the every-2h cron). Always exits 0 — see note above check().
         check
         ;;
 esac
+
+exit 0
