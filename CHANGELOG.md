@@ -2,6 +2,16 @@
 
 All notable changes to AOS. Release notes sent via Telegram after each 4am update.
 
+## v0.6.1 — 2026-06-30
+
+Summary: Repaired the self-update system on release-converted machines — it had been silently broken since the release-system rollout, generating ~1000 false "cron failed" alerts and never actually applying updates.
+
+- Fixed check-update reporting a cron failure on every run on release-system installs (~/aos is a symlink with no git remote) — this produced nearly 1000 false "cron failed" Telegram alerts. A "nothing to do" check now exits 0, not 1.
+- Fixed the `--apply` path being dead code — `check()` never returned the sentinel `apply()` waited for, so `aos update` and the 4am auto-update cron never applied anything, even on git installs.
+- Added a release-aware update path — check-update now detects release vs git installs and drives release-system updates through release-manager (create + activate) off the source repo, instead of a git pull against the read-only release symlink.
+- Changed phase-2 deploy to be install-aware — it computes changed services from the source repo on release installs (where ~/aos has no .git) and reads the new commit hash from the handoff.
+- Changed update state writes to pass values via the environment instead of interpolating them into inline Python, hardening against commit messages that contain quotes.
+
 ## v0.6.0 — 2026-03-28
 
 System revamp — restructured `core/` for navigability, hardened infrastructure, added tests and documentation.
