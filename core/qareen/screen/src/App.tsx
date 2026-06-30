@@ -18,6 +18,7 @@ const Automations = lazy(() => import('@/pages/Automations'));
 const Org = lazy(() => import('@/pages/Org'));
 const Skills = lazy(() => import('@/pages/Skills'));
 const Integrations = lazy(() => import('@/pages/Integrations'));
+const Sentinel = lazy(() => import('@/pages/Sentinel'));
 
 // ── Sub-views ──
 const Sessions = lazy(() => import('@/pages/Sessions'));
@@ -82,11 +83,16 @@ export default function App() {
         <Route path="/calendar" element={<Calendar />} />
 
         <Route path="/approvals" element={<Approvals />} />
+        <Route path="/sentinel" element={<Sentinel />} />
 
         <Route path="/automations" element={<Automations />} />
         <Route path="/automations/new" element={<AutomationArchitect />} />
         <Route path="/automations/:id" element={<AutomationEditor />} />
         <Route path="/automations/:id/edit" element={<AutomationEditor />} />
+
+        {/* Catch-all: unknown / deep-linked / typo'd URLs redirect home instead of
+            rendering a blank screen (e.g. /today, which has no route). */}
+        <Route path="*" element={<Navigate to="/" replace />} />
 
       </Route>
     </Routes>

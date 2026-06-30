@@ -185,7 +185,7 @@ export function SessionEndReview({
                 >
                   <Check className="w-3.5 h-3.5 text-green shrink-0" />
                   <span className="type-label text-text-secondary truncate">{task.title}</span>
-                  {task.metadata.priority && (
+                  {Boolean(task.metadata.priority) && (
                     <span className="type-tiny text-text-quaternary shrink-0">
                       P{String(task.metadata.priority)}
                     </span>

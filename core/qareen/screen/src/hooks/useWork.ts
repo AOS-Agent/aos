@@ -45,6 +45,27 @@ export interface Project {
   title: string;
   status: string;
   goal?: string;
+  /** Linked git repo path (projects.path). Presence gates the Git cockpit view. */
+  path?: string | null;
+  task_count?: number;
+  done_count?: number;
+  active_count?: number;
+}
+
+export interface KeyResult {
+  title: string;
+  progress: number;
+  target: number;
+}
+
+export interface Goal {
+  id: string;
+  title: string;
+  status?: string;
+  description?: string;
+  weight?: number;
+  project?: string;
+  key_results?: KeyResult[];
 }
 
 export interface WorkData {

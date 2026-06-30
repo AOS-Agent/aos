@@ -31,6 +31,8 @@
     <dict>
         <key>PATH</key>
         <string>/opt/homebrew/bin:__HOME__/.bun/bin:__HOME__/.local/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>AOS_QAREEN_HOST</key>
+        <string>0.0.0.0</string>
     </dict>
 </dict>
 </plist>

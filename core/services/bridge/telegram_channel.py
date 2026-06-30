@@ -960,10 +960,20 @@ class TelegramChannel:
             )
 
         # Prepend transcript as context for Claude (it sees what you said).
-        transcript_prefix = f"[Voice transcript: {text}]\n\n"
+        # Voice notes are usually brain-dumps, so steer Chief to the ramble skill
+        # (organize speech into tasks/ideas/notes, propose before creating) — while
+        # still letting it handle a direct command/question normally. Chief decides.
+        transcript_prefix = (
+            "[Voice note from operator — transcript below. If this is a brain-dump of "
+            "thoughts / ideas / tasks (one or more areas of life), invoke the `ramble` "
+            "skill: classify into tasks, ideas, thoughts and vault notes, propose the "
+            "breakdown, and get approval before creating anything. If it is clearly a "
+            "direct command or question, just handle it normally — don't force a ramble.]"
+            "\n\n"
+        )
         prompt = transcript_prefix + text
 
-        # If topic has a dedicated agent, prepend dispatch
+        # If topic has a dedicated agent, prepend dispatch (overrides ramble steer)
         if topic_agent and not text.lower().startswith(("ask ", "tell ", "@")):
             prompt = f"ask {topic_agent} to {text}"
 

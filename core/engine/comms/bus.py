@@ -88,6 +88,7 @@ class MessageBus:
             ("core.comms.consumers.people_intel", "PeopleIntelConsumer"),
             ("core.comms.consumers.pattern_update", "PatternUpdateConsumer"),
             ("core.comms.consumers.media_enrichment", "MediaEnrichmentConsumer"),
+            ("core.comms.consumers.trigger_detector", "TriggerDetectorConsumer"),
             ("core.comms.orchestrator", "CommsOrchestrator"),
         ]
         for mod_path, cls_name in _consumer_classes:

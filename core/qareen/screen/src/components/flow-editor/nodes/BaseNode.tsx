@@ -1,6 +1,6 @@
 import { memo, type ReactNode } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
-import type { FlowNodeData } from '../types';
+import type { FlowNode } from '../types';
 
 import {
   Clock, Send, Mail, Calendar, Sheet, Globe,
@@ -26,8 +26,7 @@ const ICONS: Record<string, typeof Zap> = {
   workflow: Workflow,
 };
 
-interface BaseNodeProps extends NodeProps {
-  data: FlowNodeData;
+interface BaseNodeProps extends NodeProps<FlowNode> {
   inputs: number;
   outputs: number;
 }

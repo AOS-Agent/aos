@@ -11,7 +11,7 @@ export interface CronJob {
   duration_s: number | null;
   run_count: number;
   last_failure: string | null;
-  status: 'ok' | 'failed' | 'unknown';
+  status: 'ok' | 'failed' | 'unknown' | 'stale' | 'pending' | 'disabled';
 }
 
 async function fetchCrons(): Promise<CronJob[]> {

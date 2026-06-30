@@ -1,5 +1,5 @@
 """
-Migration 034: person_classification + classification_feedback tables.
+Migration 047: person_classification + classification_feedback tables.
 
 Adds the persistence layer for Phase 4 of the People Intelligence
 subsystem. See docs/plans/2026-04-06-people-intelligence-v2.md and
@@ -117,7 +117,7 @@ def up() -> bool:
 
 if __name__ == "__main__":
     if check():
-        print("Migration 034 already applied")
+        print("Migration 047 already applied")
     else:
         success = up()
         print("Done" if success else "Failed")

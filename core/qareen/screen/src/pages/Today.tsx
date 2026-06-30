@@ -1,22 +1,29 @@
 /**
- * Today — the main Work landing page.
+ * Today — the Work landing.
  *
- * Shows the full hierarchy from high level to low level:
- *   Goals (where you're going) → Projects (what you're building) → Tasks (what to do now)
+ * Organized by AREA (each Goal is an area: AOS, Deen Over Dunya, …). Every area
+ * carries a color identity that propagates to its project cards and task rows, so
+ * affiliation is always visible. Areas collapse so you can focus one at a time.
  *
- * This is the morning briefing view — everything you need at a glance.
+ *   Area (Goal) → Projects → Tasks
  */
 
 import { useState } from 'react';
-import { ChevronDown, ChevronRight, Target, FolderOpen, User } from 'lucide-react';
-import { useWork, type Task } from '@/hooks/useWork';
+import { ChevronDown, ChevronRight } from 'lucide-react';
+import { useWork, type Task, type Project } from '@/hooks/useWork';
 import { useUpdateTask } from '@/hooks/useTasks';
-import { useMetrics } from '@/hooks/useMetrics';
-import { StatusDot } from '@/components/primitives/StatusDot';
+import { useTaskOverlay } from '@/components/tasks/TaskOverlayContext';
 import { TaskStatus } from '@/lib/types';
+import { areaTone, taskGoalId, type AreaTone } from '@/lib/areaStyle';
 import { format, isPast, isToday, isTomorrow, differenceInDays } from 'date-fns';
 
-const PRI: Record<number, string> = { 1: '#FF453A', 2: '#D9730D', 3: '#6B6560', 4: '#0A84FF', 5: '#4A4540' };
+interface Goal {
+  id: string;
+  title: string;
+  description?: string;
+  status?: string;
+  key_results?: Array<{ title: string; current: number; target: number }>;
+}
 
 function formatDue(iso: string) {
   const d = new Date(iso);
@@ -27,171 +34,185 @@ function formatDue(iso: string) {
   return days <= 7 ? { text: `in ${days}d`, overdue: false } : { text: format(d, 'MMM d'), overdue: false };
 }
 
-function TaskRow({ task, onToggle }: { task: Task; onToggle: () => void }) {
+function TaskRow({ task, tone, showProject, onToggle }: { task: Task; tone: AreaTone; showProject?: boolean; onToggle: () => void }) {
+  const { openTask } = useTaskOverlay();
   const done = task.status === 'done';
   const due = task.due ? formatDue(task.due) : null;
   return (
-    <div className="flex items-center gap-3 h-10 px-2 rounded-lg hover:bg-bg-secondary transition-colors duration-75 group">
-      <button onClick={onToggle}
+    <div
+      onClick={() => openTask(task.id)}
+      className="flex items-center gap-3 h-10 px-2 rounded-lg cursor-pointer hover:bg-bg-secondary transition-colors duration-75 group"
+    >
+      <button
+        onClick={e => { e.stopPropagation(); onToggle(); }}
+        aria-label={done ? 'Mark not done' : 'Mark done'}
         className="w-[16px] h-[16px] rounded-full border-[1.5px] flex items-center justify-center shrink-0 cursor-pointer"
-        style={{ borderColor: done ? '#30D158' : 'rgba(255,245,235,0.15)', backgroundColor: done ? '#30D158' : 'transparent' }}>
-        {done && <svg width="8" height="6" viewBox="0 0 10 8" fill="none"><path d="M1 4L3.5 6.5L9 1" stroke="#0D0B09" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>}
+        style={{ borderColor: done ? '#30D158' : 'rgba(255,245,235,0.15)', backgroundColor: done ? '#30D158' : 'transparent' }}
+      >
+        {done && <svg width="8" height="6" viewBox="0 0 10 8" fill="none"><path d="M1 4L3.5 6.5L9 1" stroke="#0D0B09" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>}
       </button>
-      <div className="w-[5px] h-[5px] rounded-full shrink-0" style={{ backgroundColor: PRI[task.priority] }} />
-      <span className={`flex-1 min-w-0 text-[13px] truncate ${done ? 'text-text-quaternary line-through' : 'text-text-secondary'}`}>{task.title}</span>
-      <div className="flex items-center gap-2 text-[10px] text-text-quaternary opacity-0 group-hover:opacity-100 transition-opacity duration-75">
-        {task.project && <span>{task.project}</span>}
+      {/* area dot — color = which area this task belongs to */}
+      <span className={`w-[6px] h-[6px] rounded-full shrink-0 ${tone.dot}`} />
+      <span className={`flex-1 min-w-0 text-[15px] truncate ${done ? 'text-text-quaternary line-through' : 'text-text-secondary'}`}>{task.title}</span>
+      <div className="flex items-center gap-2 text-[12px] text-text-quaternary opacity-0 group-hover:opacity-100 transition-opacity duration-75">
+        {showProject && task.project && <span>{task.project}</span>}
         {due && <span className={due.overdue ? 'text-red' : ''}>{due.text}</span>}
       </div>
     </div>
   );
 }
 
-export default function TodayPage() {
+export default function TodayPage({ onProjectClick }: { onProjectClick?: (projectId: string) => void }) {
   const { data, isLoading } = useWork();
   const update = useUpdateTask();
   const now = new Date();
 
-  const tasks = data?.tasks ?? [];
-  const projects = data?.projects ?? [];
-  const goals = (data?.goals ?? []) as Array<{ id: string; title: string; description?: string; status?: string; key_results?: Array<{ title: string; current: number; target: number }> }>;
+  const tasks = (data?.tasks ?? []) as Task[];
+  const projects = (data?.projects ?? []) as Project[];
+  const goals = (data?.goals ?? []) as Goal[];
 
   const notDone = (t: Task) => t.status !== 'done' && t.status !== 'cancelled';
   const overdue = tasks.filter(t => t.due && isPast(new Date(t.due)) && !isToday(new Date(t.due)) && notDone(t));
-  const todayTasks = tasks.filter(t => t.due && isToday(new Date(t.due)) && notDone(t));
   const activeTasks = tasks.filter(t => t.status === 'active');
   const todoCount = tasks.filter(t => t.status === 'todo').length;
   const doneToday = tasks.filter(t => t.status === 'done' && t.completed && isToday(new Date(t.completed)));
 
+  const toggleDone = (t: Task, to: TaskStatus) => update.mutate({ id: t.id, data: { status: to } });
+
+  // ── Build areas from goals ──
+  const areas = goals
+    .map((goal, i) => {
+      const tone = areaTone(goal.id, i);
+      const areaProjects = projects.filter(p => p.goal === goal.id);
+      const total = areaProjects.reduce((s, p) => s + (p.task_count ?? 0), 0);
+      const done = areaProjects.reduce((s, p) => s + (p.done_count ?? 0), 0);
+      const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+      const activeInArea = activeTasks.filter(t => taskGoalId(t, projects) === goal.id);
+      return { goal, tone, areaProjects, total, done, pct, activeInArea };
+    })
+    .filter(a => a.areaProjects.length > 0 || a.activeInArea.length > 0)
+    .sort((a, b) => b.activeInArea.length - a.activeInArea.length || b.total - a.total);
+
+  const toneFor = (t: Task) => {
+    const gid = taskGoalId(t, projects);
+    const idx = goals.findIndex(g => g.id === gid);
+    return areaTone(gid, idx < 0 ? 0 : idx);
+  };
+
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const toggle = (id: string) => setCollapsed(prev => {
+    const next = new Set(prev);
+    next.has(id) ? next.delete(id) : next.add(id);
+    return next;
+  });
   const [showDone, setShowDone] = useState(false);
 
-  if (isLoading) return <div className="flex items-center justify-center h-full"><p className="text-text-quaternary">Loading...</p></div>;
+  if (isLoading) return <div className="flex items-center justify-center h-full"><p className="text-text-quaternary">Loading…</p></div>;
 
   return (
     <div className="h-full overflow-y-auto">
-      <div className="max-w-[640px] mx-auto px-4 py-6">
+      <div className="max-w-[880px] mx-auto px-6 py-8">
         {/* Header */}
-        <h2 className="text-[24px] font-[600] text-text mb-0.5">Today</h2>
-        <p className="text-[13px] text-text-tertiary mb-8">{format(now, 'EEEE, MMMM d')}</p>
+        <h2 className="text-[26px] font-[600] text-text mb-0.5">Today</h2>
+        <p className="text-[15px] text-text-tertiary mb-6">{format(now, 'EEEE, MMMM d')}</p>
 
-        {/* ── Summary stats ── */}
-        <div className="flex items-center gap-6 mb-8 text-[12px]">
+        {/* Summary stats */}
+        <div className="flex items-center gap-6 mb-8 text-[14px]">
           {overdue.length > 0 && <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-red" /><span className="text-red font-[510]">{overdue.length} overdue</span></div>}
           <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-blue" /><span className="text-text-tertiary">{activeTasks.length} active</span></div>
           <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-text-quaternary" /><span className="text-text-tertiary">{todoCount} todo</span></div>
           {doneToday.length > 0 && <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-green" /><span className="text-green">{doneToday.length} done today</span></div>}
         </div>
 
-        {/* ── Goals (highest level) ── */}
-        {goals.length > 0 && (
-          <div className="mb-8">
-            <div className="flex items-center gap-2 mb-3">
-              <Target className="w-4 h-4 text-text-quaternary" />
-              <h3 className="text-[12px] font-[590] text-text-tertiary uppercase tracking-[0.04em]">Goals</h3>
-              <span className="text-[10px] font-mono text-text-quaternary">{goals.length}</span>
-            </div>
-            <div className="space-y-2">
-              {goals.map(goal => {
-                const krs = goal.key_results ?? [];
-                const progress = krs.length > 0
-                  ? Math.round(krs.reduce((sum, kr) => sum + (kr.target > 0 ? kr.current / kr.target : 0), 0) / krs.length * 100)
-                  : 0;
-                return (
-                  <div key={goal.id} className="px-3 py-2.5 rounded-lg bg-bg-secondary border border-border">
-                    <div className="flex items-center justify-between mb-1.5">
-                      <span className="text-[13px] font-[510] text-text-secondary">{goal.title}</span>
-                      <span className="text-[10px] font-mono text-text-quaternary">{progress}%</span>
-                    </div>
-                    <div className="h-1 bg-bg-tertiary rounded-full overflow-hidden">
-                      <div className={`h-full rounded-full ${progress >= 100 ? 'bg-green' : progress >= 50 ? 'bg-accent' : 'bg-yellow'}`} style={{ width: `${progress}%` }} />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* ── Active Projects ── */}
-        {projects.length > 0 && (
-          <div className="mb-8">
-            <div className="flex items-center gap-2 mb-3">
-              <FolderOpen className="w-4 h-4 text-text-quaternary" />
-              <h3 className="text-[12px] font-[590] text-text-tertiary uppercase tracking-[0.04em]">Projects</h3>
-              <span className="text-[10px] font-mono text-text-quaternary">{projects.length}</span>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {projects.map(proj => {
-                const projTasks = tasks.filter(t => t.project === proj.id || t.project === proj.title);
-                const doneCount = projTasks.filter(t => t.status === 'done').length;
-                const total = projTasks.length;
-                const pct = total > 0 ? Math.round((doneCount / total) * 100) : 0;
-                return (
-                  <div key={proj.id} className="px-3 py-2 rounded-lg bg-bg-secondary border border-border min-w-[140px]">
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-[12px] font-[510] text-text-secondary">{proj.title}</span>
-                      <span className="text-[9px] font-mono text-text-quaternary">{doneCount}/{total}</span>
-                    </div>
-                    <div className="h-1 bg-bg-tertiary rounded-full overflow-hidden">
-                      <div className={`h-full rounded-full ${pct >= 100 ? 'bg-green' : 'bg-accent'}`} style={{ width: `${pct}%` }} />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* ── Overdue ── */}
+        {/* ── Overdue (cross-area alert) ── */}
         {overdue.length > 0 && (
-          <div className="mb-5">
-            <div className="flex items-center gap-2 px-2 mb-1">
-              <h3 className="text-[10px] font-[590] uppercase tracking-[0.06em] text-red">Overdue</h3>
-              <span className="text-[10px] font-mono text-text-quaternary">{overdue.length}</span>
+          <div className="mb-8">
+            <div className="flex items-center gap-2 px-1 mb-1.5">
+              <h3 className="text-[12px] font-[590] uppercase tracking-[0.06em] text-red">Overdue</h3>
+              <span className="text-[12px] font-mono text-text-quaternary">{overdue.length}</span>
             </div>
-            {overdue.map(t => <TaskRow key={t.id} task={t} onToggle={() => update.mutate({ id: t.id, data: { status: TaskStatus.DONE } })} />)}
+            {overdue.map(t => <TaskRow key={t.id} task={t} tone={toneFor(t)} showProject onToggle={() => toggleDone(t, TaskStatus.DONE)} />)}
           </div>
         )}
 
-        {/* ── Due Today ── */}
-        {todayTasks.length > 0 && (
-          <div className="mb-5">
-            <div className="flex items-center gap-2 px-2 mb-1">
-              <h3 className="text-[10px] font-[590] uppercase tracking-[0.06em] text-text-quaternary">Due today</h3>
-              <span className="text-[10px] font-mono text-text-quaternary">{todayTasks.length}</span>
-            </div>
-            {todayTasks.map(t => <TaskRow key={t.id} task={t} onToggle={() => update.mutate({ id: t.id, data: { status: TaskStatus.DONE } })} />)}
-          </div>
-        )}
+        {/* ── Areas ── */}
+        {areas.map(area => {
+          const isCollapsed = collapsed.has(area.goal.id);
+          return (
+            <div key={area.goal.id} className="mb-7">
+              {/* Area header */}
+              <button onClick={() => toggle(area.goal.id)} className="w-full flex items-center gap-2.5 mb-3 cursor-pointer">
+                {isCollapsed ? <ChevronRight className="w-3.5 h-3.5 text-text-quaternary shrink-0" /> : <ChevronDown className="w-3.5 h-3.5 text-text-quaternary shrink-0" />}
+                <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${area.tone.dot}`} />
+                <span className="text-[17px] font-[600] text-text truncate">{area.goal.title}</span>
+                <span className="flex-1" />
+                <span className="text-[12px] font-mono text-text-quaternary shrink-0">{area.total} task{area.total === 1 ? '' : 's'}</span>
+                <span className={`text-[13px] font-mono font-[510] shrink-0 ${area.tone.text}`}>{area.pct}%</span>
+              </button>
 
-        {/* ── In Progress ── */}
-        {activeTasks.length > 0 && (
-          <div className="mb-5">
-            <div className="flex items-center gap-2 px-2 mb-1">
-              <h3 className="text-[10px] font-[590] uppercase tracking-[0.06em] text-text-quaternary">In progress</h3>
-              <span className="text-[10px] font-mono text-text-quaternary">{activeTasks.length}</span>
+              {/* Collapsible body */}
+              <div className="grid transition-[grid-template-rows] duration-200 ease-out" style={{ gridTemplateRows: isCollapsed ? '0fr' : '1fr' }}>
+                <div className="overflow-hidden">
+                  <div className="pl-6">
+                    {/* Project cards */}
+                    {area.areaProjects.length > 0 && (
+                      <div className="flex flex-wrap gap-2 mb-3">
+                        {area.areaProjects.map(proj => {
+                          const total = proj.task_count ?? 0;
+                          const done = proj.done_count ?? 0;
+                          const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+                          return (
+                            <button
+                              key={proj.id}
+                              onClick={() => onProjectClick?.(proj.id)}
+                              className="px-3 py-2 rounded-lg bg-bg-secondary border border-border min-w-[150px] text-left hover:bg-bg-tertiary transition-colors duration-75 cursor-pointer"
+                            >
+                              <div className="flex items-center gap-2 mb-1.5">
+                                <span className={`w-[5px] h-[5px] rounded-full shrink-0 ${area.tone.dot}`} />
+                                <span className="text-[14px] font-[510] text-text-secondary truncate flex-1">{proj.title}</span>
+                                <span className="text-[11px] font-mono text-text-quaternary shrink-0">{done}/{total}</span>
+                              </div>
+                              <div className="h-1 bg-bg-tertiary rounded-full overflow-hidden">
+                                <div className={`h-full rounded-full ${area.tone.dot}`} style={{ width: `${pct}%` }} />
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {/* Active tasks in this area */}
+                    {area.activeInArea.length > 0 ? (
+                      <div className="mb-1">
+                        {area.activeInArea.map(t => <TaskRow key={t.id} task={t} tone={area.tone} onToggle={() => toggleDone(t, TaskStatus.DONE)} />)}
+                      </div>
+                    ) : (
+                      <p className="text-[13px] text-text-quaternary px-2 py-1.5">Nothing active here right now.</p>
+                    )}
+                  </div>
+                </div>
+              </div>
             </div>
-            {activeTasks.map(t => <TaskRow key={t.id} task={t} onToggle={() => update.mutate({ id: t.id, data: { status: TaskStatus.DONE } })} />)}
-          </div>
-        )}
+          );
+        })}
 
         {/* ── Completed today ── */}
         {doneToday.length > 0 && (
           <div className="mt-6 pt-4 border-t border-border">
             <button onClick={() => setShowDone(!showDone)} className="flex items-center gap-2 px-2 cursor-pointer">
               {showDone ? <ChevronDown className="w-3 h-3 text-text-quaternary" /> : <ChevronRight className="w-3 h-3 text-text-quaternary" />}
-              <span className="text-[10px] font-[590] uppercase tracking-[0.06em] text-green">Completed today</span>
-              <span className="text-[10px] font-mono text-text-quaternary">{doneToday.length}</span>
+              <span className="text-[12px] font-[590] uppercase tracking-[0.06em] text-green">Completed today</span>
+              <span className="text-[12px] font-mono text-text-quaternary">{doneToday.length}</span>
             </button>
-            {showDone && doneToday.map(t => <TaskRow key={t.id} task={t} onToggle={() => update.mutate({ id: t.id, data: { status: TaskStatus.TODO } })} />)}
+            {showDone && doneToday.map(t => <TaskRow key={t.id} task={t} tone={toneFor(t)} onToggle={() => toggleDone(t, TaskStatus.TODO)} />)}
           </div>
         )}
 
         {/* Empty state */}
-        {overdue.length === 0 && todayTasks.length === 0 && activeTasks.length === 0 && goals.length === 0 && (
+        {areas.length === 0 && overdue.length === 0 && (
           <div className="py-16 text-center">
-            <p className="text-[15px] text-text-quaternary opacity-50">Nothing on the plate.</p>
-            <p className="text-[11px] text-text-quaternary opacity-30 mt-1">Goals, projects, and tasks will appear here.</p>
+            <p className="text-[17px] text-text-quaternary opacity-50">Nothing on the plate.</p>
+            <p className="text-[13px] text-text-quaternary opacity-30 mt-1">Areas, projects, and tasks will appear here.</p>
           </div>
         )}
       </div>

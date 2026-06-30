@@ -167,7 +167,7 @@ function LocationField({
   const [open, setOpen] = useState(false);
   const [detecting, setDetecting] = useState(false);
   const [saved, setSaved] = useState(false);
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>();
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const wrapperRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => { setQuery(value); }, [value]);
@@ -352,7 +352,7 @@ function ProfileCard() {
   );
 
   const saveLocation = useCallback(
-    (city: string, tz: string, _lat: number, _lng: number) => {
+    (city: string, tz: string) => {
       updateOp.mutate({ timezone: tz } as any);
       // City is stored via the location object — for now save timezone which is what the system uses
     },

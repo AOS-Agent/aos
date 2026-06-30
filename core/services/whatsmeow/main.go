@@ -498,33 +498,80 @@ func main() {
 	// Connect to WhatsApp
 	if client.Store.ID == nil {
 		// Need to pair — show QR code, available at http://127.0.0.1:7601/qr
-		qrChan, _ := client.GetQRChannel(context.Background())
-		err = client.Connect()
-		if err != nil {
-			log.Fatalf("Failed to connect: %v", err)
-		}
-		log.Printf("QR code available at http://127.0.0.1:%s/qr", port)
-
-		for evt := range qrChan {
-			if evt.Event == "code" {
-				qrMu.Lock()
-				lastQRCode = evt.Code
-				qrMu.Unlock()
-				os.WriteFile(filepath.Join(dataDir, "qr.txt"), []byte(evt.Code), 0644)
-				fmt.Println("\n=== Scan this QR code with WhatsApp ===")
-				fmt.Printf("Or open: http://127.0.0.1:%s/qr\n", port)
-				qrterminal.GenerateHalfBlock(evt.Code, qrterminal.L, os.Stdout)
-				fmt.Println("=======================================\n")
-			} else {
-				log.Printf("QR event: %s", evt.Event)
+		// Retry loop: if QR expires or fails, try again (up to 5 attempts)
+		maxAttempts := 5
+		for attempt := 1; attempt <= maxAttempts; attempt++ {
+			log.Printf("QR pairing attempt %d/%d", attempt, maxAttempts)
+			qrChan, _ := client.GetQRChannel(context.Background())
+			err = client.Connect()
+			if err != nil {
+				log.Printf("Failed to connect (attempt %d): %v", attempt, err)
+				time.Sleep(10 * time.Second)
+				continue
 			}
+			log.Printf("QR code available at http://127.0.0.1:%s/qr", port)
+
+			paired := false
+			for evt := range qrChan {
+				if evt.Event == "code" {
+					qrMu.Lock()
+					lastQRCode = evt.Code
+					qrMu.Unlock()
+					os.WriteFile(filepath.Join(dataDir, "qr.txt"), []byte(evt.Code), 0644)
+					log.Printf("New QR code generated (attempt %d) — scan at http://127.0.0.1:%s/qr", attempt, port)
+					qrterminal.GenerateHalfBlock(evt.Code, qrterminal.L, os.Stdout)
+				} else if evt.Event == "success" {
+					log.Printf("QR pairing successful!")
+					paired = true
+				} else if evt.Event == "timeout" {
+					log.Printf("QR timed out (attempt %d/%d)", attempt, maxAttempts)
+				} else {
+					log.Printf("QR event: %s (attempt %d/%d)", evt.Event, attempt, maxAttempts)
+				}
+			}
+
+			if paired || (client.Store.ID != nil && client.IsConnected()) {
+				log.Printf("Successfully paired as %s", client.Store.ID.User)
+				break
+			}
+
+			// Not paired — disconnect and retry
+			client.Disconnect()
+			if attempt < maxAttempts {
+				log.Printf("Retrying QR pairing in 5 seconds...")
+				time.Sleep(5 * time.Second)
+				// Re-create client for clean state
+				deviceStore, _ = container.GetFirstDevice(context.Background())
+				client = whatsmeow.NewClient(deviceStore, waLog.Noop)
+				client.AddEventHandler(eventHandler)
+			}
+		}
+
+		if client.Store.ID == nil {
+			log.Printf("QR pairing failed after %d attempts. Waiting for manual pairing via /pair endpoint.", maxAttempts)
+			// Don't exit — keep HTTP server running so /pair can be used
 		}
 	} else {
 		err = client.Connect()
 		if err != nil {
-			log.Fatalf("Failed to connect: %v", err)
+			log.Printf("Failed to connect: %v — will retry in background", err)
+			// Don't fatal — let the HTTP server run and retry
+			go func() {
+				for i := 0; i < 10; i++ {
+					time.Sleep(30 * time.Second)
+					log.Printf("Reconnect attempt %d...", i+1)
+					err = client.Connect()
+					if err == nil {
+						log.Printf("Reconnected as %s", client.Store.ID.User)
+						return
+					}
+					log.Printf("Reconnect failed: %v", err)
+				}
+				log.Printf("Gave up reconnecting after 10 attempts")
+			}()
+		} else {
+			log.Printf("Connected as %s", client.Store.ID.User)
 		}
-		log.Printf("Connected as %s", client.Store.ID.User)
 	}
 
 	// Wait for shutdown

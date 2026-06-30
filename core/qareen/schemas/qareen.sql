@@ -820,3 +820,30 @@ CREATE INDEX IF NOT EXISTS idx_tasks_template ON tasks(template_id) WHERE templa
 CREATE VIRTUAL TABLE IF NOT EXISTS tasks_fts USING fts5(
     title, description, content=tasks, content_rowid=rowid
 );
+
+-- ============================================================
+-- REMOTE ACCESS (Cloudflare tunnel + Access)
+-- ============================================================
+-- Single logical row (id='singleton') tracking the provisioning state of the
+-- Qareen Cloudflare tunnel + Access configuration. NO secrets stored here: the
+-- CF API token and the cloudflared run-token live ONLY in the macOS Keychain.
+-- allowed_emails is JSON TEXT. status: disconnected | provisioning | connected | error.
+
+CREATE TABLE IF NOT EXISTS remote_access (
+    id              TEXT PRIMARY KEY DEFAULT 'singleton',
+    status          TEXT NOT NULL DEFAULT 'disconnected',
+    hostname        TEXT,
+    domain          TEXT,
+    zone_id         TEXT,
+    account_id      TEXT,
+    tunnel_id       TEXT,
+    dns_record_id   TEXT,
+    access_app_id   TEXT,
+    access_aud      TEXT,
+    policy_id       TEXT,
+    idp_id          TEXT,
+    allowed_emails  TEXT,
+    created_at      TEXT,
+    updated_at      TEXT,
+    error_message   TEXT
+);

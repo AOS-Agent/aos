@@ -468,7 +468,7 @@ function N8nAutomationCard({
     }
     setIsRunning(false);
   };
-  const statusColors: Record<string, string> = {
+  const statusColors: Record<string, StatusDotColor> = {
     active: 'green', draft: 'gray', paused: 'yellow', error: 'red', archived: 'gray',
   };
   const sc = statusColors[automation.status] || 'gray';

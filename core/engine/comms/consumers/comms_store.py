@@ -34,6 +34,14 @@ _PEOPLE_PATHS = [
     Path.home() / "project" / "aos" / "core" / "engine" / "people",
 ]
 
+# comms.db schema — applied on first connect so fresh installs have tables.
+# comms.sql is fully idempotent (CREATE ... IF NOT EXISTS), so this is safe to
+# run every startup. Runtime path first, then dev workspace.
+_SCHEMA_PATHS = [
+    Path.home() / "aos" / "core" / "qareen" / "schemas" / "comms.sql",
+    Path.home() / "project" / "aos" / "core" / "qareen" / "schemas" / "comms.sql",
+]
+
 
 def _ensure_people_path():
     for path in _PEOPLE_PATHS:
@@ -78,12 +86,31 @@ class CommsStoreConsumer(Consumer):
     @property
     def conn(self) -> sqlite3.Connection | None:
         if self._conn is None:
-            if not COMMS_DB.exists():
-                log.warning("comms.db not found at %s", COMMS_DB)
+            try:
+                # Fresh installs won't have comms.db yet. Create it and apply the
+                # idempotent schema so the store actually writes instead of silently
+                # no-opping. No-op on existing DBs.
+                COMMS_DB.parent.mkdir(parents=True, exist_ok=True)
+                self._conn = sqlite3.connect(str(COMMS_DB))
+                self._conn.execute("PRAGMA journal_mode=WAL")
+                self._ensure_schema(self._conn)
+            except Exception as e:
+                log.warning("Could not open/initialize comms.db at %s: %s", COMMS_DB, e)
+                self._conn = None
                 return None
-            self._conn = sqlite3.connect(str(COMMS_DB))
-            self._conn.execute("PRAGMA journal_mode=WAL")
         return self._conn
+
+    def _ensure_schema(self, conn: sqlite3.Connection) -> None:
+        """Apply the idempotent comms.sql schema so tables exist on fresh installs."""
+        for schema_path in _SCHEMA_PATHS:
+            if schema_path.exists():
+                try:
+                    conn.executescript(schema_path.read_text())
+                    conn.commit()
+                except Exception as e:
+                    log.warning("Could not apply comms schema from %s: %s", schema_path, e)
+                return
+        log.warning("comms.sql not found in any of %s", [str(p) for p in _SCHEMA_PATHS])
 
     def _resolve_person(self, sender: str, channel: str) -> str | None:
         """Resolve a sender handle to a person_id. Cached per session."""

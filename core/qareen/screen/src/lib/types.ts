@@ -295,6 +295,16 @@ export interface OperatorResponse {
   email?: string
   locale?: string
   location?: { city?: string; name?: string; latitude?: number; longitude?: number }
+  preferences?: OperatorPreferences
+}
+
+export interface OperatorPreferences {
+  morning_briefing_time?: string
+  evening_checkin_time?: string
+  focus_hours_start?: string
+  focus_hours_end?: string
+  quiet_hours_start?: string
+  quiet_hours_end?: string
 }
 
 export interface UpdateOperatorRequest {
@@ -944,7 +954,7 @@ export interface PipelineListResponse {
   pipelines: PipelineDefinitionSchema[]
 }
 
-export interface PipelineRunResponse {
+export interface PipelineRunRecord {
   id: string
   pipeline_id: string
   status: PipelineStage
@@ -957,7 +967,7 @@ export interface PipelineRunResponse {
 }
 
 export interface PipelineRunListResponse {
-  runs: PipelineRunResponse[]
+  runs: PipelineRunRecord[]
   total: number
 }
 

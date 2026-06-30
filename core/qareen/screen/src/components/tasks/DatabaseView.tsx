@@ -122,9 +122,9 @@ function AssigneeCell({ task }: { task: Task }) {
 
 // ── Main ─────────────────────────────────────────────────────────────────
 
-export function DatabaseView({ tasks, onSelect, selectedId, projects = [], groupBy = '', visibleCols }: {
+export function DatabaseView({ tasks, onSelect, selectedId, projects = [], groupBy = '', onGroupByChange, visibleCols }: {
   tasks: Task[]; onSelect: (t: Task) => void; selectedId?: string; projects?: string[];
-  groupBy?: string; visibleCols?: Set<string>;
+  groupBy?: string; onGroupByChange?: (g: string) => void; visibleCols?: Set<string>;
 }) {
   const upd = useUpdateTask();
   const [sort, setSort] = useState<SortKey>({ field: 'priority', dir: 'asc' });
@@ -219,7 +219,7 @@ export function DatabaseView({ tasks, onSelect, selectedId, projects = [], group
             <ArrowDown className="w-3 h-3" />Sort descending
           </button>
           <div className="border-t border-border my-1" />
-          <button onClick={() => { setGroupBy(colMenu.colId === groupBy ? '' : colMenu.colId); setColMenu(null); }}
+          <button onClick={() => { onGroupByChange?.(colMenu.colId === groupBy ? '' : colMenu.colId); setColMenu(null); }}
             className="flex items-center gap-2 w-full px-3 py-1.5 text-[11px] text-text-tertiary hover:bg-bg-secondary cursor-pointer">
             {groupBy === colMenu.colId ? 'Ungroup' : 'Group by this'}
           </button>

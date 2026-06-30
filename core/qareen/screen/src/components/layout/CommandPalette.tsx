@@ -22,6 +22,7 @@ import {
   List,
   LayoutGrid,
   Filter,
+  Radar,
   type LucideIcon,
 } from 'lucide-react';
 import { useUIStore } from '@/store/ui';
@@ -42,6 +43,7 @@ const NAV_ITEMS: NavEntry[] = [
   { label: 'Go to Vault', href: '/vault', icon: Library, keywords: ['docs', 'notes', 'knowledge'] },
   { label: 'Go to Agents', href: '/agents', icon: Bot, keywords: ['agent', 'ai'] },
   { label: 'Go to Approvals', href: '/approvals', icon: ShieldCheck, keywords: ['approve', 'pending'] },
+  { label: 'Go to Sentinel', href: '/sentinel', icon: Radar, keywords: ['sentinel', 'agent', 'autonomous', 'monitor', 'triggers'] },
   { label: 'Go to System', href: '/system', icon: Activity, keywords: ['health', 'services'] },
   { label: 'Go to Analytics', href: '/analytics', icon: BarChart3, keywords: ['stats', 'chart'] },
   { label: 'Go to People', href: '/people', icon: Users, keywords: ['contacts', 'person'] },

@@ -1,5 +1,6 @@
 import { Calendar as CalendarIcon, Clock, Sun, Moon, Coffee, Sunrise } from 'lucide-react';
 import { useOperator } from '@/hooks/useConfig';
+import type { OperatorPreferences } from '@/lib/types';
 import { EmptyState, SectionHeader, SkeletonRows } from '@/components/primitives';
 
 function ScheduleBlock({ label, time, icon, description }: { label: string; time: string; icon: React.ReactNode; description?: string }) {
@@ -21,7 +22,7 @@ function TodaySchedule() {
   if (isLoading) return <SkeletonRows count={4} />;
   if (!op) return <p className="text-[12px] text-text-quaternary">Operator config not loaded.</p>;
 
-  const prefs = op.preferences || {};
+  const prefs: OperatorPreferences = op.preferences ?? {};
   const blocks: { label: string; time: string; icon: React.ReactNode; description?: string }[] = [];
 
   if (prefs.morning_briefing_time) {

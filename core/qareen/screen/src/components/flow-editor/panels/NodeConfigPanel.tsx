@@ -168,7 +168,7 @@ function ConnectionSection({ n8nType, credentials }: { n8nType: string; credenti
 
 export default function NodeConfigPanel() {
   const { selectedNodeId, nodes, updateNodeData, setSelectedNode, mode } = useFlowEditor();
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>();
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const selectedNode = nodes.find((n) => n.id === selectedNodeId);
   if (!selectedNode) return null;
@@ -258,7 +258,7 @@ export default function NodeConfigPanel() {
       <ConnectionSection n8nType={data.n8nType} credentials={data.credentials} />
 
       {/* Agent dispatch details */}
-      {data.n8nType === 'aos.agentDispatch' && data.parameters?.agent_id && (
+      {data.n8nType === 'aos.agentDispatch' && data.parameters?.agent_id != null && (
         <div className="mt-4 pt-3 border-t border-border">
           <span className="text-[10px] font-[590] text-text-quaternary uppercase tracking-[0.06em] block mb-2">
             Agent

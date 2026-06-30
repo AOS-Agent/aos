@@ -45,7 +45,7 @@ def check() -> bool:
     return True
 
 
-def run() -> str:
+def up() -> str:
     results = []
 
     # 1. Convert credential files

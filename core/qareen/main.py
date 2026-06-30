@@ -838,6 +838,7 @@ _api_routers = [
     ("qareen.api.notifications", "notifications"),
     ("qareen.api.automations", "automations"),
     ("qareen.api.work", "work"),
+    ("qareen.api.initiatives", "initiatives"),
     ("qareen.api.config", "config"),
     ("qareen.api.agents", "agents"),
     ("qareen.api.skills", "skills"),
@@ -863,6 +864,8 @@ _api_routers = [
     ("qareen.api.models", "models"),
     ("qareen.api.chat", "chat"),
     ("qareen.api.conversations", "conversations"),
+    ("qareen.api.sentinel", "sentinel"),
+    ("qareen.api.git", "git"),
 ]
 
 for module_path, name in _api_routers:

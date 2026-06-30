@@ -83,7 +83,7 @@ def check() -> bool:
         conn.close()
 
 
-def apply() -> str:
+def up() -> str:
     if not DB_PATH.exists():
         return "Skipped: qareen.db does not exist yet"
 

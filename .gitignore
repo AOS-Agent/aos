@@ -46,3 +46,7 @@ execution_log/
 .inflight.json
 *.jsonl
 core/.vite/
+
+# Compiled Go binaries — built per-machine into ~/.aos/, never committed
+core/services/whatsmeow/whatsmeow-new
+core/services/whatsmeow/whatsmeow-bridge

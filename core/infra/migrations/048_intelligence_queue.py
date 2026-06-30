@@ -1,5 +1,5 @@
 """
-Migration 037: intelligence_queue dedup index for People Intelligence nudges.
+Migration 048: intelligence_queue dedup index for People Intelligence nudges.
 
 The `intelligence_queue` table itself was created by a legacy code path
 (no migration of record, table is empty in operator DBs). This migration
@@ -120,7 +120,7 @@ def up() -> bool:
 
 if __name__ == "__main__":
     if check():
-        print("Migration 037 already applied")
+        print("Migration 048 already applied")
     else:
         success = up()
         print("Done" if success else "Failed")

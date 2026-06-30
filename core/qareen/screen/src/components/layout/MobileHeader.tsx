@@ -5,7 +5,7 @@ import {
   Menu, X,
   CheckSquare, Bot, ShieldCheck, Calendar,
   FolderKanban, Library, Users,
-  Activity, BarChart3, Settings, Mic,
+  Activity, BarChart3, Settings, Mic, Radar,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -14,6 +14,7 @@ const SCREEN_NAMES: Record<string, string> = {
   tasks: 'Tasks',
   agents: 'Agents',
   approvals: 'Approvals',
+  sentinel: 'Sentinel',
   calendar: 'Calendar',
   projects: 'Projects',
   vault: 'Vault',
@@ -48,6 +49,7 @@ const NAV_GROUPS: NavGroup[] = [
     label: 'Agents',
     items: [
       { label: 'Agents', href: '/agents', icon: Bot, live: true },
+      { label: 'Sentinel', href: '/sentinel', icon: Radar, live: true },
       { label: 'Approvals', href: '/approvals', icon: ShieldCheck },
     ],
   },

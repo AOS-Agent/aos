@@ -108,9 +108,20 @@ def cmd_migrate():
             log_migration(num, name, "skipped", "Already applied")
             continue
 
-        # Run migration
+        # Run migration. Convention is up(), but older migrations (023, 029–037)
+        # used apply()/run(). Tolerate all three so a fresh install — which runs the
+        # full history from zero — doesn't crash the whole chain on a legacy name.
         try:
-            result = mod.up()
+            entrypoint = (
+                getattr(mod, "up", None)
+                or getattr(mod, "apply", None)
+                or getattr(mod, "run", None)
+            )
+            if entrypoint is None:
+                print("       ✗ No entrypoint (expected up/apply/run)")
+                log_migration(num, name, "error", "no up/apply/run entrypoint")
+                return False
+            result = entrypoint()
             if result is False:
                 print("       ✗ Failed")
                 log_migration(num, name, "failed")

@@ -623,7 +623,7 @@ async def list_tasks(
     responses = [_task_to_response(t) for t in tasks]
 
     return JSONResponse({
-        "tasks": [r.model_dump() for r in responses],
+        "tasks": [r.model_dump(mode="json") for r in responses],
         "total": total,
         "limit": limit,
         "offset": offset,
