@@ -580,6 +580,10 @@ def cmd_projects(args):
     if args and args[0] == "create":
         return _cmd_project_create(args[1:])
 
+    # Subcommand: project path — set the filesystem path used for cwd detection
+    if args and args[0] == "path":
+        return _cmd_project_path(args[1:])
+
     projects = engine.get_all_projects()
     if not projects:
         print("No projects.")
@@ -636,6 +640,27 @@ def _read_initiative_status(slug: str) -> str | None:
         return status
     except Exception:
         return None
+
+
+def _cmd_project_path(args):
+    """Set a project's filesystem path.
+
+    Usage: projects path <project_id> <path>
+
+    The stored path is what detect_project_from_cwd matches against, so tasks
+    created inside that directory auto-assign to the project. The path is
+    expanded and made absolute; symlinks are resolved at match time.
+    """
+    if len(args) < 2:
+        print("Usage: projects path <project_id> <path>")
+        sys.exit(1)
+    project_id = args[0]
+    path = os.path.abspath(os.path.expanduser(args[1]))
+    updated = engine.update_project(project_id, path=path)
+    if updated is None:
+        print(f"No such project: {project_id}")
+        sys.exit(1)
+    print(f"Set path for {project_id}: {path}")
 
 
 def _cmd_project_create(args):

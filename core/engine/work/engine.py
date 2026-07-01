@@ -494,7 +494,9 @@ def resolve_task_in_project(query_str: str, project_id: str = None) -> dict | No
 
 # ── Context Detection ─────────────────────────────────
 
-# Directory -> project mapping
+# Legacy directory -> project mapping.
+# Only consulted for projects that have NO `path` set in the database
+# (see detect_project_from_cwd). Kept for backward compatibility.
 _PROJECT_DIRS = {
     "aos": "aos",
     "nuchay": "nuchay",
@@ -502,25 +504,90 @@ _PROJECT_DIRS = {
 }
 
 
+def _project_paths() -> list[tuple[str, str]]:
+    """Return (id, path) for every project with a non-empty `path` in qareen.db.
+
+    Reuses the module's shared connection (_db). Any DB error yields an empty
+    list so detection can fall back to the legacy map. Never raises.
+    """
+    try:
+        conn = _db()
+        rows = conn.execute(
+            "SELECT id, path FROM projects "
+            "WHERE path IS NOT NULL AND TRIM(path) != ''"
+        ).fetchall()
+        return [(row["id"], row["path"]) for row in rows]
+    except Exception:
+        return []
+
+
+def _path_contains(parent: Path, child: Path) -> bool:
+    """True if child is equal to, or nested inside, parent."""
+    try:
+        child.relative_to(parent)
+        return True
+    except ValueError:
+        return False
+
+
 def detect_project_from_cwd(cwd: str = None) -> str | None:
-    """Detect project from current working directory."""
+    """Detect the project that owns a working directory.
+
+    Resolution order:
+      1. DB-driven (primary): match `cwd` against each project's `path` column
+         in qareen.db. Both the project path and `cwd` are resolved to real
+         paths, which collapses the `~/project` -> `/Volumes/AOS-X/project`
+         symlink so either form matches. When several projects contain `cwd`,
+         the one whose path is the LONGEST match (most components) wins, so a
+         nested repo beats its parent.
+      2. Legacy fallback: the hardcoded `_PROJECT_DIRS` directory-name map, for
+         projects that have no `path` set. Only reached when the DB pass finds
+         nothing.
+
+    Defensive by design: this runs on every task creation, so any DB, path, or
+    resolve error is swallowed and detection falls through to the legacy map
+    (and ultimately None). It must never raise.
+
+    Signature is stable: detect_project_from_cwd(cwd: str = None) -> str | None
+    """
     if cwd is None:
         cwd = os.getcwd()
-    dir_name = Path(cwd).name
 
-    # Direct mapping
-    if dir_name in _PROJECT_DIRS:
-        return _PROJECT_DIRS[dir_name]
+    # 1. DB-driven path matching (primary) — longest match wins.
+    try:
+        cwd_real = Path(cwd).expanduser().resolve()
+        best_id: str | None = None
+        best_depth = -1
+        for proj_id, proj_path in _project_paths():
+            try:
+                proj_real = Path(proj_path).expanduser().resolve()
+            except (OSError, RuntimeError, ValueError):
+                continue
+            if not _path_contains(proj_real, cwd_real):
+                continue
+            depth = len(proj_real.parts)
+            if depth > best_depth:
+                best_depth = depth
+                best_id = proj_id
+        if best_id is not None:
+            return best_id
+    except Exception:
+        # Never let detection crash task creation — fall through to legacy map.
+        pass
 
-    # Check if cwd is inside a known project directory
-    cwd_path = Path(cwd)
-    for dir_name, project_id in _PROJECT_DIRS.items():
-        project_path = Path.home() / dir_name
-        try:
-            cwd_path.relative_to(project_path)
-            return project_id
-        except ValueError:
-            continue
+    # 2. Legacy hardcoded fallback (projects with no `path` set).
+    try:
+        dir_name = Path(cwd).name
+        if dir_name in _PROJECT_DIRS:
+            return _PROJECT_DIRS[dir_name]
+
+        cwd_path = Path(cwd)
+        for name, project_id in _PROJECT_DIRS.items():
+            project_path = Path.home() / name
+            if _path_contains(project_path, cwd_path):
+                return project_id
+    except Exception:
+        pass
 
     return None
 
