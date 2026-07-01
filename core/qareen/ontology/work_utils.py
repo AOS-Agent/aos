@@ -162,21 +162,35 @@ class ProjectContext:
         if cwd is None:
             cwd = os.getcwd()
 
-        cwd_path = Path(cwd).resolve()
+        try:
+            cwd_path = Path(cwd).expanduser().resolve()
+        except (OSError, RuntimeError, ValueError):
+            cwd_path = Path(cwd)
 
-        # 1. Query projects from the adapter and match by path
+        # 1. Query projects from the adapter and match by path.
+        #    When several projects contain cwd, the LONGEST match wins so a
+        #    nested repo beats its parent.
         projects = self._get_all_projects()
+        best_id: str | None = None
+        best_depth = -1
         for proj in projects:
             proj_path_str = proj.get("path") if isinstance(proj, dict) else getattr(proj, "path", None)
             if not proj_path_str:
                 continue
-            proj_path = Path(proj_path_str).expanduser().resolve()
+            try:
+                proj_path = Path(proj_path_str).expanduser().resolve()
+            except (OSError, RuntimeError, ValueError):
+                continue
             try:
                 cwd_path.relative_to(proj_path)
-                proj_id = proj["id"] if isinstance(proj, dict) else proj.id
-                return proj_id
             except ValueError:
                 continue
+            depth = len(proj_path.parts)
+            if depth > best_depth:
+                best_depth = depth
+                best_id = proj["id"] if isinstance(proj, dict) else proj.id
+        if best_id is not None:
+            return best_id
 
         # 2. Fall back to directory name matching against project IDs
         dir_name = cwd_path.name
