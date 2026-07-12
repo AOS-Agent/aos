@@ -34,6 +34,13 @@ DEFAULT_TIMEOUT = 120  # seconds
 UPTIME_LOG       = HOME / ".aos" / "logs" / "uptime.log"
 LAST_BOOT_FILE   = LOGS_DIR / ".last-boot"
 
+# Failure alerting: notify the operator via Telegram once a job has failed
+# this many times in a row (1 = alert on the first nonzero exit). Debounced
+# to at most one alert per job per ALERT_DEBOUNCE_SECONDS so a nightly-failing
+# cron can't spam. Debounce state is persisted in status.json (under ~/.aos).
+ALERT_AFTER_FAILURES = 1
+ALERT_DEBOUNCE_SECONDS = 86400  # 24h
+
 # ── Reboot Detection ─────────────────────────────────────────────────────────
 
 def check_reboot():
@@ -386,10 +393,7 @@ def run_job(name: str, job: dict, status: dict):
     entry["run_count"]   = entry.get("run_count", 0) + 1
 
     # Determine success — check success_codes in job config (default: [0])
-    success_codes = job.get("success_codes", [0])
-    if not isinstance(success_codes, list):
-        success_codes = [0]
-    is_success = exit_code in success_codes
+    is_success = _job_succeeded(exit_code, job.get("success_codes"))
 
     if not is_success:
         entry["last_failure"] = run_ts
@@ -414,42 +418,44 @@ def run_job(name: str, job: dict, status: dict):
 
 # ── Failure alerting ─────────────────────────────────────────────────────────
 
-def _maybe_alert_failure(name: str, entry: dict, log_file: Path):
-    """Send Telegram alert after 3 consecutive failures. Max once per day per job."""
-    consecutive = entry.get("consecutive_failures", 0)
-    if consecutive < 3:
-        return
+def _job_succeeded(exit_code: int, success_codes) -> bool:
+    """Return True if exit_code counts as success for this job.
 
-    # Throttle: max once per day per job
-    last_alert = entry.get("last_alert")
-    if last_alert:
-        try:
-            last_dt = datetime.fromisoformat(last_alert)
-            if (datetime.now() - last_dt).total_seconds() < 86400:
-                return
-        except ValueError:
-            pass
+    Only exit 0 is success by default; jobs may override with a `success_codes`
+    list in crons.yaml. A missing/malformed override falls back to [0].
+    """
+    if not isinstance(success_codes, list) or not success_codes:
+        success_codes = [0]
+    return exit_code in success_codes
 
-    # Get last line of log for context
-    last_line = ""
+
+def _tail_log_lines(log_file: Path, n: int = 5) -> list:
+    """Return up to the last n meaningful lines of a job log.
+
+    Skips the scheduler's own `--- ... ---` START/END/TIMEOUT markers so the
+    operator sees the real error output rather than the framing.
+    """
     try:
         with open(log_file) as f:
             lines = f.readlines()
-            for line in reversed(lines):
-                stripped = line.strip()
-                if stripped and not stripped.startswith("---"):
-                    last_line = stripped[:200]
-                    break
     except Exception:
-        pass
+        return []
+    meaningful = [
+        ln.rstrip() for ln in lines
+        if ln.strip() and not ln.strip().startswith("---")
+    ]
+    return meaningful[-n:]
 
-    msg = (
-        f"⚠ Cron '{name}' has failed {consecutive} times in a row.\n"
-        f"Last error: {last_line}"
-    )
 
+def _send_telegram(text: str):
+    """Send a Telegram message to the operator. Best-effort.
+
+    Returns True on success, False if Telegram credentials are missing (graceful
+    skip — machines without Telegram configured shouldn't error), or None if a
+    send was attempted but failed. Reads secrets via the agent-secret CLI.
+    """
+    agent_secret = HOME / "aos" / "core" / "bin" / "agent-secret"
     try:
-        agent_secret = HOME / "aos" / "core" / "bin" / "agent-secret"
         token = subprocess.run(
             [str(agent_secret), "get", "TELEGRAM_BOT_TOKEN"],
             capture_output=True, text=True, timeout=5,
@@ -458,17 +464,63 @@ def _maybe_alert_failure(name: str, entry: dict, log_file: Path):
             [str(agent_secret), "get", "TELEGRAM_CHAT_ID"],
             capture_output=True, text=True, timeout=5,
         ).stdout.strip()
-        if token and chat_id:
-            data = json.dumps({"chat_id": chat_id, "text": msg}).encode()
-            req = urllib.request.Request(
-                f"https://api.telegram.org/bot{token}/sendMessage",
-                data=data, headers={"Content-Type": "application/json"}, method="POST",
-            )
-            urllib.request.urlopen(req, timeout=10)
-            entry["last_alert"] = ts()
-            log(f"{name}: sent failure alert (consecutive: {consecutive})")
-    except Exception as e:
-        log(f"{name}: alert send failed — {e}")
+    except Exception:
+        return None
+    if not token or not chat_id:
+        return False  # Telegram not configured — graceful skip
+    try:
+        data = json.dumps({"chat_id": chat_id, "text": text}).encode()
+        req = urllib.request.Request(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            data=data, headers={"Content-Type": "application/json"}, method="POST",
+        )
+        urllib.request.urlopen(req, timeout=10)
+        return True
+    except Exception:
+        return None
+
+
+def _maybe_alert_failure(name: str, entry: dict, log_file: Path):
+    """Telegram-alert the operator when a cron job fails.
+
+    Fires once the job has failed ALERT_AFTER_FAILURES times in a row (1 = the
+    first nonzero exit), then debounces to at most one alert per job per
+    ALERT_DEBOUNCE_SECONDS. The alert carries the job name, exit code,
+    consecutive-failure count, and the last few log lines for context.
+    Debounce state (last_alert) is persisted by the caller into status.json.
+    """
+    consecutive = entry.get("consecutive_failures", 0)
+    if consecutive < ALERT_AFTER_FAILURES:
+        return
+
+    # Debounce: at most one alert per job per window.
+    last_alert = entry.get("last_alert")
+    if last_alert:
+        try:
+            last_dt = datetime.fromisoformat(last_alert)
+            if (datetime.now() - last_dt).total_seconds() < ALERT_DEBOUNCE_SECONDS:
+                return
+        except ValueError:
+            pass
+
+    exit_code = entry.get("exit_code")
+    tail = _tail_log_lines(log_file, 5)
+    tail_text = "\n".join(tail) if tail else "(no log output)"
+    plural = "s" if consecutive != 1 else ""
+    msg = (
+        f"⚠ Cron '{name}' failed (exit {exit_code}), "
+        f"{consecutive} time{plural} in a row.\n"
+        f"Last log lines:\n{tail_text}"
+    )
+
+    result = _send_telegram(msg)
+    if result is True:
+        entry["last_alert"] = ts()
+        log(f"{name}: sent failure alert (consecutive: {consecutive})")
+    elif result is False:
+        log(f"{name}: failure alert skipped — Telegram not configured")
+    else:
+        log(f"{name}: failure alert send failed")
 
 
 def prune_ghost_jobs(jobs: dict, status: dict):
