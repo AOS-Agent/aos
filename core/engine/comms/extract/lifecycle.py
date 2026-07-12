@@ -177,7 +177,7 @@ def _run_patterns():
 def _run_graduation():
     """Run graduation evaluator after patterns."""
     try:
-        _people = str(Path.home() / ".aos" / "services" / "people")
+        _people = str(next((p / "people" for p in Path(__file__).resolve().parents if p.name == "engine"), Path.home() / "aos" / "core" / "engine" / "people"))
         if _people not in sys.path:
             sys.path.insert(0, _people)
         _grad = str(Path.home() / "project" / "aos" / "core" / "comms" / "graduation")

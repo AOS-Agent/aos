@@ -31,7 +31,7 @@ import sys
 import time
 from pathlib import Path
 
-_PEOPLE_SERVICE = Path.home() / ".aos" / "services" / "people"
+_PEOPLE_SERVICE = next((p / "people" for p in Path(__file__).resolve().parents if p.name == "engine"), Path.home() / "aos" / "core" / "engine" / "people")
 if str(_PEOPLE_SERVICE) not in sys.path:
     sys.path.insert(0, str(_PEOPLE_SERVICE))
 

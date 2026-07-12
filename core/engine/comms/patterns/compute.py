@@ -27,7 +27,7 @@ from datetime import datetime
 from pathlib import Path
 
 # People DB access
-_PEOPLE_SERVICE = Path.home() / ".aos" / "services" / "people"
+_PEOPLE_SERVICE = next((p / "people" for p in Path(__file__).resolve().parents if p.name == "engine"), Path.home() / "aos" / "core" / "engine" / "people")
 sys.path.insert(0, str(_PEOPLE_SERVICE))
 
 import db as people_db

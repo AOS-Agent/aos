@@ -20,7 +20,7 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-_PEOPLE_SERVICE = Path.home() / ".aos" / "services" / "people"
+_PEOPLE_SERVICE = next((p / "people" for p in Path(__file__).resolve().parents if p.name == "engine"), Path.home() / "aos" / "core" / "engine" / "people")
 AUTONOMOUS_LOG = Path.home() / ".aos" / "work" / "comms" / "autonomous_log.jsonl"
 TRUST_PATH = Path.home() / ".aos" / "config" / "trust.yaml"
 MIN_CONFIDENCE = 0.85

@@ -20,7 +20,7 @@ from ..models import Message
 
 log = logging.getLogger(__name__)
 
-_PEOPLE_SERVICE = Path.home() / ".aos" / "services" / "people"
+_PEOPLE_SERVICE = next((p / "people" for p in Path(__file__).resolve().parents if p.name == "engine"), Path.home() / "aos" / "core" / "engine" / "people")
 _RECOMPUTE_THRESHOLD = 5  # Only recompute after 5+ new interactions
 
 

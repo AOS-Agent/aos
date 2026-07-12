@@ -26,7 +26,7 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-_PEOPLE_SERVICE = Path.home() / ".aos" / "services" / "people"
+_PEOPLE_SERVICE = next((p / "people" for p in Path(__file__).resolve().parents if p.name == "engine"), Path.home() / "aos" / "core" / "engine" / "people")
 PENDING_DRAFTS = Path.home() / ".aos" / "work" / "comms" / "pending_drafts.json"
 TRUST_PATH = Path.home() / ".aos" / "config" / "trust.yaml"
 
