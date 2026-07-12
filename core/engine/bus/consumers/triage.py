@@ -30,7 +30,7 @@ from ..event import Event
 log = logging.getLogger(__name__)
 
 # People DB
-_PEOPLE_SERVICE = Path.home() / ".aos" / "services" / "people"
+_PEOPLE_SERVICE = next((p / "people" for p in Path(__file__).resolve().parents if p.name == "engine"), Path.home() / "aos" / "core" / "engine" / "people")
 
 # Triage state — tracks unanswered messages
 _TRIAGE_FILE = Path.home() / ".aos" / "work" / "triage-state.json"
