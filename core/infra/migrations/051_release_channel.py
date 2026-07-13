@@ -1,5 +1,5 @@
 """
-Migration 023: Release channels (edge/stable).
+Migration 051: Release channels (edge/stable).
 
 The update path now reads ~/.aos/config/channel to decide which git ref this
 machine tracks (edge → origin/main, stable → the `stable` tag). Absence of the
