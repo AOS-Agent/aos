@@ -2,7 +2,9 @@
 Migration 057: Deploy crawler service (crawl4ai + MCP) for web research.
 
 (Renumbered from 027 during release-train wave 3 promotion; see 056's
-docstring for why the renumber is load-bearing, not cosmetic.)
+docstring for why the renumber is load-bearing, not cosmetic. Also
+added a network preflight + one retry with backoff on the Playwright
+Chromium download — see up().)
 
 The crawler service gives all AOS agents the ability to crawl web pages,
 extract structured data, and deep-crawl sites — headlessly, via MCP or CLI.
@@ -20,7 +22,9 @@ DESCRIPTION = "Deploy crawler service (crawl4ai + MCP) for web research"
 
 import os
 import shutil
+import socket
 import subprocess
+import time
 from pathlib import Path
 
 HOME = Path.home()
@@ -37,6 +41,40 @@ SEED_DIR = CRAWLER_DIR / "seed-schemas"
 
 def _run(cmd: list[str], timeout: int = 300) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+
+
+def _network_reachable(host: str = "pypi.org", port: int = 443, timeout: float = 5.0) -> bool:
+    """Cheap reachability probe before starting a multi-minute download.
+
+    pip install and the Playwright Chromium download both use a bare
+    300s timeout with no retry — on a genuinely offline machine that's
+    5 minutes wasted per step before failing. A quick preflight fails
+    fast with a clear message instead.
+    """
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def _run_with_retry(
+    cmd: list[str], timeout: int = 300, retries: int = 1, backoff: float = 5.0
+) -> subprocess.CompletedProcess:
+    """Run cmd, retrying up to `retries` times with linear backoff on failure.
+
+    Used for the Playwright Chromium download specifically — it's the
+    largest download in this migration and the most likely to trip a
+    transient network failure on a slow link.
+    """
+    attempt = 0
+    while True:
+        result = _run(cmd, timeout=timeout)
+        if result.returncode == 0 or attempt >= retries:
+            return result
+        attempt += 1
+        print(f"  Retrying in {backoff:.0f}s (attempt {attempt + 1}/{retries + 1})...")
+        time.sleep(backoff)
 
 
 def check() -> bool:
@@ -71,6 +109,11 @@ def up() -> bool:
         print(f"  Venv already exists at {CRAWLER_VENV}")
 
     # 2. Install dependencies
+    if not _network_reachable():
+        print("  ERROR: network unreachable (couldn't reach pypi.org:443).")
+        print("  pip install and the Playwright download both need network access.")
+        return False
+
     print("  Installing crawler dependencies...")
     if not REQUIREMENTS.exists():
         print(f"  ERROR: requirements.txt not found at {REQUIREMENTS}")
@@ -85,15 +128,16 @@ def up() -> bool:
         return False
     print("  Dependencies installed")
 
-    # 3. Install Playwright Chromium
+    # 3. Install Playwright Chromium — the largest download here, so it
+    # gets one retry with backoff on top of the network preflight above.
     print("  Installing Playwright Chromium browser...")
     playwright_bin = CRAWLER_VENV / "bin" / "playwright"
     if playwright_bin.exists():
-        result = _run([str(playwright_bin), "install", "chromium"], timeout=300)
+        result = _run_with_retry([str(playwright_bin), "install", "chromium"], timeout=300)
         if result.returncode != 0:
             print(f"  WARNING: Playwright install issue: {result.stderr}")
             # Try via python module
-            result = _run(
+            result = _run_with_retry(
                 [str(CRAWLER_PYTHON), "-m", "playwright", "install", "chromium"],
                 timeout=300,
             )
@@ -101,7 +145,7 @@ def up() -> bool:
                 print(f"  ERROR: Playwright chromium install failed: {result.stderr}")
                 return False
     else:
-        result = _run(
+        result = _run_with_retry(
             [str(CRAWLER_PYTHON), "-m", "playwright", "install", "chromium"],
             timeout=300,
         )
