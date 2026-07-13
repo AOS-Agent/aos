@@ -3,6 +3,7 @@ from .claude_md import GlobalClaudeMdCheck, RootClaudeMdCheck
 from .context_freshness import ContextFreshnessCheck
 from .dead_code import DeadCodeCheck
 from .deployment_health import DeploymentHealthCheck
+from .dev_browser import DevBrowserCheck
 from .disk_smart import DiskSmartCheck
 from .google_workspace import GoogleWorkspaceCheck
 from .hooks import HooksPathCheck
@@ -11,6 +12,7 @@ from .instance_hygiene import InstanceHygieneCheck
 from .launchagents import LaunchAgentPythonCheck
 from .log_location import LogLocationCheck
 from .mcp_location import McpLocationCheck
+from .n8n import N8nServiceCheck
 from .runtime_protection import RuntimeProtectionCheck
 from .storage_layout import StorageLayoutCheck
 from .symlinks import AgentSymlinkCheck, RuleSymlinkCheck, SkillSymlinkCheck
@@ -48,6 +50,13 @@ ALL_CHECKS = [
 
     # Services — transcriber running and healthy
     TranscriberServiceCheck,
+
+    # Services — n8n automation engine running and healthy
+    N8nServiceCheck,
+
+    # Tooling — dev-browser binary for Chrome automation (blueprint,
+    # clone-website, dissect, frontend-craft, harvest skills; reverser agent)
+    DevBrowserCheck,
 
     # Initiative pipeline + Bridge v2 infrastructure
     InitiativeDirectoriesCheck,
