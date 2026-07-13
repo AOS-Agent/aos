@@ -111,13 +111,22 @@ def cmd_migrate():
         # Run migration
         try:
             result = mod.up()
-            if result is False:
-                print("       ✗ Failed")
-                log_migration(num, name, "failed")
-                return False
-            print("       ✓ Done")
-            save_version(num)
-            log_migration(num, name, "applied")
+            if result is True or result is None:
+                print("       ✓ Done")
+                save_version(num)
+                log_migration(num, name, "applied")
+                continue
+
+            # Contract: success is True or None. ANY other return value —
+            # False, an error string, 0, etc. — is a failure. Older
+            # migrations sometimes returned a human-readable error string
+            # instead of raising or returning False; that used to slip past
+            # `result is False` and get logged as applied, silently
+            # advancing the watermark past a migration that never ran.
+            detail = "" if result is False else str(result)
+            print(f"       ✗ Failed{f': {detail}' if detail else ''}")
+            log_migration(num, name, "failed", detail)
+            return False
         except Exception as e:
             print(f"       ✗ Error: {e}")
             log_migration(num, name, "error", str(e))
