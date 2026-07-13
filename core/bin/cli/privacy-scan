@@ -15,7 +15,10 @@ What it looks for:
   (c) phone numbers    — generic shapes (10-15 digits, +prefixed or separator-
                          grouped; a bare unbroken digit run is treated as a
                          numeric/hex code constant, not a phone number — see
-                         _looks_like_code_constant())
+                         _looks_like_code_constant()). A digit run glued onto
+                         a preceding word via hyphens (a model ID, package
+                         version, container tag) is also exempted — see
+                         _looks_like_versioned_identifier().
   (d) api-key strings  — long base64/hex constants that look like secrets
 
 Note on instance-data references: matching bare ~/.aos/data or vault/log *paths*
@@ -210,6 +213,28 @@ def _looks_like_code_constant(raw: str) -> bool:
     return not raw.startswith("+") and re.fullmatch(r"\d+", raw) is not None
 
 
+def _looks_like_versioned_identifier(content: str, start: int, end: int) -> bool:
+    """True if a PHONE_RE match sits inside a larger hyphen-glued identifier
+    token that also contains letters — a model ID (``claude-haiku-4-5-
+    20251001``), package name, or container tag, not a phone number.
+
+    Extends outward from the match through ``[\\w-]`` (no whitespace) to
+    find the full contiguous token, then checks for a letter outside the
+    matched digit span. A real phone number is never glued directly onto a
+    preceding word via a bare hyphen with no space — it's either freestanding
+    (quoted, after a colon/equals with a space) or itself all digits and
+    separators, so this can't false-negative a genuine phone number the way
+    a domain- or content-based allowlist would.
+    """
+    s = start
+    while s > 0 and re.match(r"[\w\-]", content[s - 1]):
+        s -= 1
+    e = end
+    while e < len(content) and re.match(r"[\w\-]", content[e]):
+        e += 1
+    return any(c.isalpha() for c in content[s:e])
+
+
 def scan_diff(diff_text: str, denylist):
     hits = []
     for path, lineno, content in iter_added_lines(diff_text):
@@ -240,6 +265,8 @@ def scan_diff(diff_text: str, denylist):
                 if len(digits) < 10 or len(digits) > 15:
                     continue
                 if _looks_like_code_constant(raw):
+                    continue
+                if _looks_like_versioned_identifier(content, m.start(1), m.end(1)):
                     continue
                 if not overlaps(m.start(), m.end()):
                     hits.append(Hit(path, lineno, "phone", digits))
