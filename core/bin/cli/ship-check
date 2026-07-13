@@ -635,6 +635,43 @@ fi
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 9. PRIVACY — operator personal data must never ship
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# AOS auto-updates on friends' machines. Names, emails, phones, contacts, and
+# private-log content must never leak into framework code. privacy-scan reads
+# the instance-only denylist (~/.aos/config/privacy-denylist.txt) and the
+# generic patterns; matched personal strings are redacted to category+hash.
+echo ""
+echo "Privacy"
+echo "───────"
+
+privacy_scan="$DEV/core/bin/cli/privacy-scan"
+if [[ -x "$privacy_scan" ]]; then
+    # Choose what to scan. Default: the diff-to-ship (origin/main..HEAD).
+    # --all: the whole tree, as an all-additions diff against the empty tree.
+    EMPTY_TREE="4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+    if [[ "${1:-}" == "--all" ]]; then
+        scan_ref="$EMPTY_TREE"
+    else
+        scan_ref="origin/main..HEAD"
+    fi
+    scan_output=$( cd "$DEV" && "$privacy_scan" "$scan_ref" 2>&1 )
+    scan_rc=$?
+    if [[ $scan_rc -eq 0 ]]; then
+        pass "No operator personal data in diff-to-ship"
+    elif [[ $scan_rc -eq 1 ]]; then
+        # Show findings (already redacted by the scanner) indented under the check.
+        echo "$scan_output" | sed 's/^/    /'
+        fail "Operator personal data found in diff-to-ship (see above)"
+    else
+        warn "privacy-scan could not run (rc=$scan_rc): ${scan_output:-unknown error}"
+    fi
+else
+    warn "privacy-scan not found at $privacy_scan — personal-data gate skipped"
+fi
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Summary
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 echo ""
