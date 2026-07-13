@@ -66,6 +66,42 @@ find_repo() {
     fi
 }
 
+# ── Release channels ─────────────────────────────────────────────────────────
+#
+# The channel (~/.aos/config/channel, default "stable") decides which git ref
+# this machine tracks:
+#   edge   → origin/main HEAD          (operator, same-day)
+#   stable → the `stable` tag's commit (friends, promoted releases only)
+# All the resolution rules live in core/lib/channels.py so they stay testable;
+# the functions below just supply it the two candidate hashes and read back the
+# target. If the stable tag doesn't exist yet, channels.py falls back to main.
+
+CHANNELS_LIB="$AOS_DIR/core/lib/channels.py"
+
+read_channel() {
+    python3 "$CHANNELS_LIB" channel 2>/dev/null || echo "stable"
+}
+
+# Fetch origin/main plus the stable tag into a repo. The stable tag MOVES on
+# promotion, so it must be force-updated locally (+refs/tags/...). Returns
+# non-zero only if the mandatory main fetch fails (tag fetch is best-effort).
+_fetch_channel_refs() {
+    local repo="$1"
+    git -C "$repo" fetch origin main --quiet 2>/dev/null || return 1
+    git -C "$repo" fetch origin "+refs/tags/stable:refs/tags/stable" --quiet 2>/dev/null || true
+    return 0
+}
+
+# Echo TAB-separated: channel  ref  target_hash  fellback(0|1)  reason
+# Assumes _fetch_channel_refs already ran against $repo.
+_resolve_channel_target() {
+    local repo="$1"
+    local main_hash stable_hash
+    main_hash=$(git -C "$repo" rev-parse origin/main 2>/dev/null || echo "")
+    stable_hash=$(git -C "$repo" rev-parse -q --verify "refs/tags/stable^{commit}" 2>/dev/null || echo "")
+    python3 "$CHANNELS_LIB" resolve "$main_hash" "$stable_hash" 2>/dev/null
+}
+
 # ── State writers (env-based — no string interpolation into code) ────────────
 
 _write_state() {
@@ -174,22 +210,24 @@ check_release() {
         return 0
     fi
 
-    git -C "$repo" fetch origin main --quiet 2>/dev/null || {
+    _fetch_channel_refs "$repo" || {
         log "WARN: git fetch failed in $repo (network?)"
         _write_state "offline" "$deployed_hash" "$deployed_hash"
         return 0
     }
 
-    local remote_hash
-    remote_hash=$(git -C "$repo" rev-parse origin/main 2>/dev/null || echo "")
+    # Resolve which ref this machine's channel tracks.
+    local channel ref remote_hash fellback reason
+    IFS=$'\t' read -r channel ref remote_hash fellback reason < <(_resolve_channel_target "$repo")
     if [[ -z "$remote_hash" ]]; then
-        log "WARN: could not resolve origin/main in $repo"
+        log "WARN: could not resolve $ref in $repo (channel: $channel)"
         _write_state "check_error" "$deployed_hash" "$deployed_hash"
         return 0
     fi
+    [[ "$fellback" == "1" ]] && log "NOTE (stable): $reason"
 
     if [[ "$deployed_hash" == "$remote_hash" ]]; then
-        log "Up to date ($cur_version)"
+        log "Up to date ($cur_version, channel: $channel)"
         _write_state "up_to_date" "$deployed_hash" "$remote_hash"
         return 0
     fi
@@ -197,7 +235,7 @@ check_release() {
     local behind changes
     behind=$(git -C "$repo" rev-list --count "$deployed_hash..$remote_hash" 2>/dev/null || echo 0)
     changes=$(git -C "$repo" log --oneline "$deployed_hash..$remote_hash" 2>/dev/null | head -5)
-    log "Update available: $behind new commit(s)"
+    log "Update available on '$channel': $behind new commit(s)"
     _write_state_update "$deployed_hash" "$remote_hash" "$behind" "$changes"
     return 0
 }
@@ -220,28 +258,30 @@ check_git() {
         _write_state "offline" "" ""
         return 0
     }
+    # Keep the (movable) stable tag current for channel resolution.
+    git fetch "$remote" "+refs/tags/stable:refs/tags/stable" --quiet 2>/dev/null || true
 
-    local branch local_hash remote_hash
-    branch=$(git branch --show-current 2>/dev/null || echo "main")
+    local local_hash channel ref remote_hash fellback reason
     local_hash=$(git rev-parse HEAD 2>/dev/null || echo "")
-    remote_hash=$(git rev-parse "$remote/$branch" 2>/dev/null || echo "")
+    IFS=$'\t' read -r channel ref remote_hash fellback reason < <(_resolve_channel_target "$AOS_DIR")
 
     if [[ -z "$remote_hash" ]]; then
-        log "WARN: could not resolve remote branch"
+        log "WARN: could not resolve channel ref '$ref' (channel: $channel)"
         _write_state "check_error" "$local_hash" ""
         return 0
     fi
+    [[ "$fellback" == "1" ]] && log "NOTE (stable): $reason"
 
     if [[ "$local_hash" == "$remote_hash" ]]; then
-        log "Up to date"
+        log "Up to date (channel: $channel)"
         _write_state "up_to_date" "$local_hash" "$remote_hash"
         return 0
     fi
 
     local behind changes
-    behind=$(git rev-list --count "HEAD..$remote/$branch" 2>/dev/null || echo 0)
-    changes=$(git log --oneline "HEAD..$remote/$branch" 2>/dev/null | head -5)
-    log "Update available: $behind new commit(s)"
+    behind=$(git rev-list --count "$local_hash..$remote_hash" 2>/dev/null || echo 0)
+    changes=$(git log --oneline "$local_hash..$remote_hash" 2>/dev/null | head -5)
+    log "Update available on '$channel': $behind new commit(s)"
     _write_state_update "$local_hash" "$remote_hash" "$behind" "$changes"
     return 0
 }
@@ -314,40 +354,46 @@ apply_release() {
     old_hash=$(cat "$DEPLOYED_HASH_FILE" 2>/dev/null || echo "")
     old_version=$(cat "$AOS_DIR/VERSION" 2>/dev/null || echo "unknown")
 
-    git -C "$repo" fetch origin main --quiet 2>/dev/null || {
+    _fetch_channel_refs "$repo" || {
         log "ERROR: git fetch failed in $repo"
         notify "⚠️ System update failed (git fetch). Will retry next cycle."
         return 1
     }
 
-    local new_hash new_version release_name
-    new_hash=$(git -C "$repo" rev-parse origin/main 2>/dev/null || echo "")
+    # Resolve the channel target — edge builds from origin/main, stable builds
+    # from the stable tag (or main until the first promotion exists).
+    local channel ref new_hash fellback reason
+    IFS=$'\t' read -r channel ref new_hash fellback reason < <(_resolve_channel_target "$repo")
     if [[ -z "$new_hash" ]]; then
-        log "ERROR: could not resolve origin/main in $repo"
+        log "ERROR: could not resolve channel ref '$ref' in $repo (channel: $channel)"
         return 1
     fi
+    [[ "$fellback" == "1" ]] && log "NOTE (stable): $reason"
 
     if [[ "$old_hash" == "$new_hash" ]]; then
-        log "Already at $new_hash — nothing to apply"
+        log "Already at $new_hash (channel: $channel) — nothing to apply"
         return 0
     fi
 
-    new_version=$(git -C "$repo" show origin/main:VERSION 2>/dev/null || echo "unknown")
+    local new_version release_name
+    new_version=$(git -C "$repo" show "$new_hash:VERSION" 2>/dev/null || echo "unknown")
     # Release name matches release-manager's formula: <version>-<7-char hash>
     release_name="${new_version}-${new_hash:0:7}"
 
-    # Build the immutable release (idempotent — no-op if it already exists).
-    log "Creating release $release_name ..."
-    if ! bash "$rm" create >/dev/null 2>&1; then
+    # Build the immutable release from the channel's ref (idempotent — no-op if
+    # it already exists).
+    log "Creating release $release_name from $ref (channel: $channel) ..."
+    if ! bash "$rm" create "$ref" >/dev/null 2>&1; then
         log "ERROR: release-manager create failed"
         notify "⚠️ Update failed during release build. Will retry next cycle."
         return 1
     fi
 
     # Activate it (validates the new release, then atomically switches ~/aos
-    # and records the new deployed hash).
+    # and records the new deployed hash). Pass the exact target hash so the
+    # deployed-hash records the channel commit, not origin/main.
     log "Activating $release_name ..."
-    if ! bash "$rm" activate "$release_name" >/dev/null 2>&1; then
+    if ! bash "$rm" activate "$release_name" "$new_hash" >/dev/null 2>&1; then
         log "ERROR: release-manager activate failed for $release_name"
         notify "⚠️ Update failed during activation of $release_name. Still on previous release."
         return 1
@@ -372,19 +418,39 @@ apply_git() {
     old_hash=$(git rev-parse HEAD 2>/dev/null)
     old_version=$(cat "$AOS_DIR/VERSION" 2>/dev/null || echo "unknown")
 
-    local pull_output pull_status
-    pull_output=$(git pull --ff-only origin main 2>&1)
-    pull_status=$?
+    _fetch_channel_refs "$AOS_DIR" || {
+        log "ERROR: git fetch failed"
+        notify "⚠️ System update failed (git fetch). Will retry next cycle."
+        return 1
+    }
 
-    if [[ $pull_status -ne 0 ]]; then
-        log "git pull failed — clearing dirty state and retrying"
+    local channel ref target_hash fellback reason
+    IFS=$'\t' read -r channel ref target_hash fellback reason < <(_resolve_channel_target "$AOS_DIR")
+    if [[ -z "$target_hash" ]]; then
+        log "ERROR: could not resolve channel ref '$ref' (channel: $channel)"
+        return 1
+    fi
+    [[ "$fellback" == "1" ]] && log "NOTE (stable): $reason"
+
+    if [[ "$channel" == "edge" ]]; then
+        # Edge tracks main — fast-forward pull, clearing any drift on retry.
+        if ! git merge --ff-only "$target_hash" 2>/dev/null; then
+            log "ff-only advance failed — clearing dirty state and retrying"
+            git checkout -- . 2>/dev/null
+            if ! git merge --ff-only "$target_hash" 2>/dev/null; then
+                log "ERROR: could not advance to $target_hash"
+                notify "⚠️ System update failed (git advance). Will retry next cycle."
+                return 1
+            fi
+        fi
+    else
+        # Stable tracks a tag that lags main — hard-reset the framework clone to
+        # the promoted commit (~/aos is read-only at runtime, so a reset is safe
+        # and matches the existing dirty-state handling).
         git checkout -- . 2>/dev/null
-        # shellcheck disable=SC2034
-        pull_output=$(git pull --ff-only origin main 2>&1)
-        pull_status=$?
-        if [[ $pull_status -ne 0 ]]; then
-            log "ERROR: git pull failed after reset"
-            notify "⚠️ System update failed (git pull). Will retry next cycle."
+        if ! git reset --hard "$target_hash" 2>/dev/null; then
+            log "ERROR: could not reset to stable commit $target_hash"
+            notify "⚠️ System update failed (stable reset). Will retry next cycle."
             return 1
         fi
     fi

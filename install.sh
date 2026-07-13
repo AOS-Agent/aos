@@ -1383,6 +1383,18 @@ TRUST
         _skip "Trust configuration"
     fi
 
+    # Set release channel to stable on fresh installs. Friends ride the safe
+    # lane (promoted releases only); the operator's machine is flipped to edge
+    # separately (`aos channel edge`). Absence already means stable, so this is
+    # only an explicit marker — never overwrite an existing choice.
+    if [[ ! -f "$USER_DIR/config/channel" ]]; then
+        mkdir -p "$USER_DIR/config"
+        echo "stable" > "$USER_DIR/config/channel"
+        _ok "Release channel set to 'stable'"
+    else
+        _skip "Release channel ($(cat "$USER_DIR/config/channel" 2>/dev/null | tr -d '[:space:]'))"
+    fi
+
     # Sync skills — prompt for developer mode
     _step "Installing skills..."
     echo ""

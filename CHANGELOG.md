@@ -2,6 +2,19 @@
 
 All notable changes to AOS. Release notes sent via Telegram after each 4am update.
 
+## v0.6.2 — 2026-07-13
+
+Summary: Two-lane release channels — the operator rides `edge` (origin/main, same-day) while friend machines ride `stable` (promoted releases only), so day-to-day churn no longer lands on other people's machines at 4am.
+
+- Added release channels — a machine's `~/.aos/config/channel` (edge|stable) decides which git ref the update path tracks. Absent or unrecognised resolves to `stable`, so every existing machine lands on the safe lane with zero action.
+- Added the `stable` git tag as the stable pointer — stable-channel machines update to the tag's commit instead of origin/main. Until the first promotion the tag is absent, and stable gracefully falls back to main so nothing strands.
+- Added `aos promote` — verifies the running release has soaked ≥ N days (default 2, `--force` to override), runs ship-check + self-test, prints an explicit plan, then moves and pushes the `stable` tag (a tag-only push, never main) and posts a Telegram note.
+- Added `aos channel [edge|stable]` — show or set this machine's channel.
+- Changed release-manager `create [ref]` and `activate <ver> [hash]` to build from an arbitrary ref and record an explicit deployed hash, so stable machines deploy the tag commit rather than main HEAD.
+- Changed fresh installs to write `channel = stable` explicitly.
+- Added migration 023 — normalizes an invalid channel file to `stable` (never overwrites a valid edge/stable choice).
+- Added core/lib/channels.py (pure resolution + promotion-guard logic) with 29 unit tests.
+
 ## v0.6.1 — 2026-06-30
 
 Summary: Repaired the self-update system on release-converted machines — it had been silently broken since the release-system rollout, generating ~1000 false "cron failed" alerts and never actually applying updates.
