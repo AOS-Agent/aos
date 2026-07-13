@@ -12,8 +12,8 @@
 # Releases are chmod a-w after creation. The symlink switch is atomic.
 #
 # Usage:
-#   release-manager create              Create release from origin/main
-#   release-manager activate <version>  Switch ~/aos to a release
+#   release-manager create [ref]        Create release from a ref (default origin/main)
+#   release-manager activate <ver> [h]  Switch ~/aos to a release (record hash h if given)
 #   release-manager rollback            Switch to the previous release
 #   release-manager list                Show all releases
 #   release-manager prune [keep]        Keep last N releases (default 5)
@@ -94,20 +94,30 @@ trap release_lock EXIT
 # ── Create a new release ───────────────────────────────────────────────────
 
 create() {
+    # Build from an arbitrary ref (default origin/main). The channel system
+    # passes the stable tag for stable-channel machines; edge passes main.
+    local ref="${1:-origin/main}"
+
     if [ ! -d "$DEV_REPO/.git" ]; then
         log "ERROR: Dev repo not found at $DEV_REPO"
         exit 1
     fi
 
-    log "Fetching origin/main..."
+    log "Fetching origin/main (+ stable tag)..."
     cd "$DEV_REPO"
     git fetch origin main --quiet 2>/dev/null || {
         log "ERROR: git fetch failed (network?)"
         exit 1
     }
+    # The stable tag moves on promotion — keep the local copy current.
+    git fetch origin "+refs/tags/stable:refs/tags/stable" --quiet 2>/dev/null || true
 
     local remote_hash
-    remote_hash=$(git rev-parse origin/main 2>/dev/null)
+    remote_hash=$(git rev-parse "$ref" 2>/dev/null)
+    if [ -z "$remote_hash" ]; then
+        log "ERROR: could not resolve ref '$ref'"
+        exit 1
+    fi
 
     # Check if already deployed
     local deployed_hash
@@ -117,9 +127,9 @@ create() {
         return 0
     fi
 
-    # Determine version from VERSION file at origin/main
+    # Determine version from VERSION file at the target ref
     local version
-    version=$(git show origin/main:VERSION 2>/dev/null || echo "unknown")
+    version=$(git show "$remote_hash:VERSION" 2>/dev/null || echo "unknown")
     local release_name
     release_name="${version}-$(echo "$remote_hash" | head -c 7)"
     local release_dir="$RELEASES_DIR/$release_name"
@@ -130,14 +140,14 @@ create() {
         return 0
     fi
 
-    log "Creating release $release_name..."
+    log "Creating release $release_name from $ref..."
     acquire_lock
 
-    # Extract origin/main into a new release directory
+    # Extract the target commit into a new release directory
     local tmpdir
     tmpdir=$(mktemp -d)
     cd "$DEV_REPO"
-    git archive origin/main | tar -xf - -C "$tmpdir"
+    git archive "$remote_hash" | tar -xf - -C "$tmpdir"
 
     # Move to releases dir
     mv "$tmpdir" "$release_dir"
@@ -153,9 +163,13 @@ create() {
 
 activate() {
     local target="${1:-}"
+    # Optional explicit commit hash to record as deployed. The channel system
+    # passes the exact channel target so deployed-hash reflects the stable tag
+    # commit, not origin/main. Falls back to origin/main when omitted.
+    local explicit_hash="${2:-}"
     if [ -z "$target" ]; then
         log "ERROR: No version specified"
-        echo "Usage: release-manager activate <version>"
+        echo "Usage: release-manager activate <version> [hash]"
         exit 1
     fi
 
@@ -216,10 +230,13 @@ activate() {
     # Switch ~/aos → new release (handles macOS symlink-to-dir correctly)
     _swap_link "$release_dir"
 
-    # Record deployed hash
-    local version_hash
-    cd "$DEV_REPO"
-    version_hash=$(git rev-parse origin/main 2>/dev/null || echo "unknown")
+    # Record deployed hash. Its mtime doubles as this release's deploy time,
+    # which `aos promote` reads as the promotion soak clock.
+    local version_hash="$explicit_hash"
+    if [ -z "$version_hash" ]; then
+        cd "$DEV_REPO"
+        version_hash=$(git rev-parse origin/main 2>/dev/null || echo "unknown")
+    fi
     echo "$version_hash" > "$HASH_FILE"
 
     log "Activated: $target"
@@ -467,8 +484,8 @@ convert() {
 # ── Main ───────────────────────────────────────────────────────────────────
 
 case "${1:-help}" in
-    create)   create ;;
-    activate) activate "${2:-}" ;;
+    create)   create "${2:-}" ;;
+    activate) activate "${2:-}" "${3:-}" ;;
     rollback) rollback ;;
     list)     list_releases ;;
     prune)    prune "${2:-5}" ;;
@@ -478,8 +495,8 @@ case "${1:-help}" in
         echo "Usage: release-manager <command>"
         echo ""
         echo "Commands:"
-        echo "  create              Create release from origin/main"
-        echo "  activate <version>  Switch ~/aos to a release"
+        echo "  create [ref]        Create release from a ref (default origin/main)"
+        echo "  activate <ver> [h]  Switch ~/aos to a release (record hash h if given)"
         echo "  rollback            Switch to previous release"
         echo "  list                Show all releases"
         echo "  prune [N]           Keep last N releases (default 5)"
