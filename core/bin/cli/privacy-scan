@@ -12,7 +12,10 @@ What it looks for:
                          (case-insensitive; word-boundary for name-like terms;
                           terms < 4 chars skipped to avoid absurd matches)
   (b) email addresses  — anyone's, generic pattern
-  (c) phone numbers    — generic shapes (10-15 digits)
+  (c) phone numbers    — generic shapes (10-15 digits, +prefixed or separator-
+                         grouped; a bare unbroken digit run is treated as a
+                         numeric/hex code constant, not a phone number — see
+                         _looks_like_code_constant())
   (d) api-key strings  — long base64/hex constants that look like secrets
 
 Note on instance-data references: matching bare ~/.aos/data or vault/log *paths*
@@ -188,6 +191,25 @@ def looks_key_like(token: str) -> bool:
     return has_digit and (has_lower and has_upper)
 
 
+def _looks_like_code_constant(raw: str) -> bool:
+    """True if a PHONE_RE match is a bare numeric/hex code constant rather
+    than a phone number: magic numbers (2**32, byte counts), hash-derived
+    integers, or a digit run lifted from inside a longer hex token (a commit
+    SHA, a UUID segment). A hex literal's ``0x``/``0X`` prefix already fails
+    PHONE_RE's own word-boundary lookbehind, so that case never reaches here
+    — this only needs to catch the shapes that slip past it.
+
+    Real phone numbers are essentially always either international-prefixed
+    (``+...``) or grouped with separators (spaces, dashes, dots, parens) —
+    that's true of every number in this operator's own denylist. A bare,
+    unbroken run of digits with neither is exactly as likely to be a numeric
+    constant as a phone number, so it's treated as non-phone-shaped. Known
+    phone numbers (denylist-listed, regardless of formatting) are still
+    caught separately by the denylist pass above this one.
+    """
+    return not raw.startswith("+") and re.fullmatch(r"\d+", raw) is not None
+
+
 def scan_diff(diff_text: str, denylist):
     hits = []
     for path, lineno, content in iter_added_lines(diff_text):
@@ -213,8 +235,11 @@ def scan_diff(diff_text: str, denylist):
         # (c) phones — require 10-15 digits, skip denylist-covered spans & lockfiles
         if not lockish:
             for m in PHONE_RE.finditer(content):
-                digits = re.sub(r"\D", "", m.group(1))
+                raw = m.group(1)
+                digits = re.sub(r"\D", "", raw)
                 if len(digits) < 10 or len(digits) > 15:
+                    continue
+                if _looks_like_code_constant(raw):
                     continue
                 if not overlaps(m.start(), m.end()):
                     hits.append(Hit(path, lineno, "phone", digits))

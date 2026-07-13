@@ -152,6 +152,45 @@ def test_generic_phone():
     assert any(h.category == "phone" for h in hits)
 
 
+def test_bare_numeric_code_constant_not_flagged_as_phone():
+    # A bare, unformatted 10-digit run in an arithmetic expression (e.g. a
+    # PRNG's 2**32 normalization divisor) is a numeric constant, not a phone
+    # number — it has no '+' prefix and no separators.
+    two_to_the_32 = "4294967296"
+    diff = make_diff(
+        "core/foo.py",
+        [f"return ((t = t ^ (t >>> 15)) >>> 0) / {two_to_the_32}"],
+    )
+    hits = ps.scan_diff(diff, [])
+    assert not any(h.category == "phone" for h in hits)
+
+
+def test_hex_literal_and_uuid_segment_not_flagged_as_phone():
+    # A 0x-prefixed hex literal never matches (word-boundary blocks it), and
+    # a bare all-decimal segment lifted from inside a dash-separated UUID
+    # must also not be flagged — same "bare digit run" shape as a phone
+    # number, but it's a UUID fragment, not a formatted phone.
+    diff = make_diff(
+        "core/foo.py",
+        [
+            "seed = 0x1234567890",
+            'request_id = "123e4567-e89b-12d3-a456-426614174000"',
+        ],
+    )
+    hits = ps.scan_diff(diff, [])
+    assert not any(h.category == "phone" for h in hits)
+
+
+def test_real_looking_phone_still_flagged():
+    # A realistically-formatted phone number (international prefix, grouped
+    # digits) must still trip the gate — the fix above narrows the pattern,
+    # it doesn't gut it.
+    fake_real_phone = "+1-416-" + "555-0199"
+    diff = make_diff("core/foo.py", [f'support_line = "{fake_real_phone}"'])
+    hits = ps.scan_diff(diff, [])
+    assert any(h.category == "phone" for h in hits)
+
+
 def test_bare_instance_path_is_not_flagged():
     # A path reference is not personal data; framework code uses these roots.
     diff = make_diff("core/foo.py", ['db = open("~/.aos/data/people.db")'])
