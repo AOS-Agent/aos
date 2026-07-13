@@ -1,0 +1,342 @@
+#!/usr/bin/env python3
+"""privacy-denylist-refresh — regenerate the instance-only privacy denylist.
+
+Gathers the operator's personal identifiers from instance data and writes them
+to ~/.aos/config/privacy-denylist.txt, one term per line. The denylist is used
+by `privacy-scan` (wired into ship-check) to block personal data from leaking
+into shipped framework code.
+
+Sources (all read-only):
+  - ~/.aos/config/operator.yaml   → operator name, nickname
+  - ~/.aos/config/accounts.yaml   → operator name, emails (primary + per-context)
+  - ~/.aos/data/people.db         → self record emails/phones, top-50 contact names
+
+Derived:
+  - personal domains from every collected email (generic providers excluded)
+  - extra personal domains from the optional instance file
+    ~/.aos/config/privacy-domains.txt (one per line) — for domains the operator
+    owns but doesn't have an email at. Framework code hardcodes NO operator
+    domains; that would itself be a personal-data leak (privacy-scan would flag
+    it), so operator-specific domains live in instance config.
+
+THIS FILE'S OUTPUT NEVER SHIPS. It lives only under ~/.aos/ (instance layer)
+and is regenerated per machine. The scanner reads it locally; it is never
+committed and never scanned as shippable content.
+
+Usage:
+  privacy-denylist-refresh            # write ~/.aos/config/privacy-denylist.txt
+  privacy-denylist-refresh --dry-run  # print to stdout, don't write
+  privacy-denylist-refresh --out PATH # write to a specific path
+
+Exit: 0 on success, 1 on error.
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import sqlite3
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+try:
+    import yaml
+except ImportError:
+    print("error: PyYAML not available", file=sys.stderr)
+    sys.exit(1)
+
+HOME = Path(os.path.expanduser("~"))
+OPERATOR_YAML = HOME / ".aos/config/operator.yaml"
+ACCOUNTS_YAML = HOME / ".aos/config/accounts.yaml"
+PEOPLE_DB = HOME / ".aos/data/people.db"
+DEFAULT_OUT = HOME / ".aos/config/privacy-denylist.txt"
+# Optional instance file: extra operator-owned domains, one per line. Keeps
+# operator-specific domains out of shipped framework code.
+EXTRA_DOMAINS_FILE = HOME / ".aos/config/privacy-domains.txt"
+
+TOP_CONTACTS = 50
+
+# Email providers that are shared by millions — their bare domains must never
+# go on the denylist or they would false-positive on the whole world. The full
+# operator address at such a provider is still protected as a whole email term.
+GENERIC_EMAIL_DOMAINS = {
+    "gmail.com", "googlemail.com", "outlook.com", "hotmail.com", "live.com",
+    "yahoo.com", "yahoo.co.uk", "icloud.com", "me.com", "mac.com",
+    "proton.me", "protonmail.com", "pm.me", "aol.com", "gmx.com",
+    "hey.com", "fastmail.com", "zoho.com", "msn.com",
+}
+
+
+
+def load_yaml(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    try:
+        with open(path) as f:
+            return yaml.safe_load(f) or {}
+    except Exception as e:  # noqa: BLE001 — config may be malformed; degrade gracefully
+        print(f"warning: could not parse {path}: {e}", file=sys.stderr)
+        return {}
+
+
+def name_tokens(name: str) -> list[str]:
+    """Split a full name into individual tokens >= 4 chars (drops particles)."""
+    out = []
+    for tok in name.replace("-", " ").split():
+        tok = tok.strip(".,")
+        if len(tok) >= 4:
+            out.append(tok)
+    return out
+
+
+def gather_names(operator: dict, accounts: dict, self_row: tuple | None) -> list[str]:
+    names: list[str] = []
+
+    def add(v):
+        if v and isinstance(v, str):
+            v = v.strip()
+            if v:
+                names.append(v)
+
+    add(operator.get("name"))
+    add(operator.get("nickname"))
+    add((accounts.get("operator") or {}).get("name"))
+
+    if self_row:
+        canonical, display, nickname = self_row
+        for v in (canonical, display, nickname):
+            add(v)
+
+    # Also add individual tokens of the operator's full name — leaks often show
+    # up as just a first or last name, not the full canonical form.
+    for base in list(names):
+        for tok in name_tokens(base):
+            names.append(tok)
+
+    return names
+
+
+def gather_emails(accounts: dict, self_emails: list[str]) -> list[str]:
+    emails: list[str] = []
+
+    def add(v):
+        if v and isinstance(v, str) and "@" in v:
+            emails.append(v.strip().lower())
+
+    op = accounts.get("operator") or {}
+    add(op.get("primary_email"))
+
+    for ctx in (accounts.get("contexts") or {}).values():
+        if not isinstance(ctx, dict):
+            continue
+        acct = ctx.get("accounts") or {}
+        # Any account value that looks like an email (google:, etc.)
+        for v in acct.values():
+            add(v)
+
+    for v in self_emails:
+        add(v)
+
+    return emails
+
+
+def load_extra_domains() -> list[str]:
+    """Read operator-owned domains from the optional instance file."""
+    out: list[str] = []
+    if not EXTRA_DOMAINS_FILE.exists():
+        return out
+    for raw in EXTRA_DOMAINS_FILE.read_text(errors="replace").splitlines():
+        line = raw.strip()
+        if line and not line.startswith("#"):
+            out.append(line.lower())
+    return out
+
+
+def derive_domains(emails: list[str]) -> list[str]:
+    domains: list[str] = []
+    for e in emails:
+        if "@" in e:
+            dom = e.rsplit("@", 1)[1].strip().lower()
+            if dom and dom not in GENERIC_EMAIL_DOMAINS:
+                domains.append(dom)
+    for d in load_extra_domains():
+        if d not in GENERIC_EMAIL_DOMAINS:
+            domains.append(d)
+    return domains
+
+
+def read_people_db(db_path: Path):
+    """Return (self_row, self_emails, self_phones, contact_names).
+
+    self_row is (canonical_name, display_name, nickname) for the is_self record
+    or None. Opened strictly read-only.
+    """
+    self_row = None
+    self_emails: list[str] = []
+    self_phones: list[str] = []
+    contact_names: list[str] = []
+
+    if not db_path.exists():
+        print(f"warning: {db_path} not found — skipping contacts/self identifiers",
+              file=sys.stderr)
+        return self_row, self_emails, self_phones, contact_names
+
+    uri = f"file:{db_path}?mode=ro"
+    try:
+        conn = sqlite3.connect(uri, uri=True)
+    except sqlite3.Error as e:
+        print(f"warning: could not open {db_path} read-only: {e}", file=sys.stderr)
+        return self_row, self_emails, self_phones, contact_names
+
+    try:
+        cur = conn.cursor()
+
+        self_id = None
+        try:
+            r = cur.execute(
+                "SELECT id, canonical_name, display_name, nickname "
+                "FROM people WHERE is_self = 1 LIMIT 1"
+            ).fetchone()
+            if r:
+                self_id = r[0]
+                self_row = (r[1], r[2], r[3])
+        except sqlite3.Error:
+            pass
+
+        if self_id:
+            try:
+                for (val,) in cur.execute(
+                    "SELECT value FROM person_identifiers "
+                    "WHERE person_id = ? AND type = 'email'",
+                    (self_id,),
+                ):
+                    if val:
+                        self_emails.append(val)
+            except sqlite3.Error:
+                pass
+            try:
+                for val, norm in cur.execute(
+                    "SELECT value, normalized FROM person_identifiers "
+                    "WHERE person_id = ? AND type = 'phone'",
+                    (self_id,),
+                ):
+                    for v in (val, norm):
+                        if v and len(str(v).strip()) >= 4:
+                            self_phones.append(str(v).strip())
+            except sqlite3.Error:
+                pass
+
+        # Top contacts by importance (1=inner circle) then recency, excluding
+        # self and archived. canonical_name only — read-only.
+        try:
+            rows = cur.execute(
+                "SELECT canonical_name FROM people "
+                "WHERE is_archived = 0 AND is_self = 0 "
+                "AND canonical_name IS NOT NULL AND TRIM(canonical_name) != '' "
+                "ORDER BY importance ASC, updated_at DESC "
+                "LIMIT ?",
+                (TOP_CONTACTS,),
+            ).fetchall()
+            for (n,) in rows:
+                contact_names.append(n.strip())
+        except sqlite3.Error as e:
+            print(f"warning: could not read contacts: {e}", file=sys.stderr)
+    finally:
+        conn.close()
+
+    return self_row, self_emails, self_phones, contact_names
+
+
+def dedup_preserve(items: list[str]) -> list[str]:
+    seen = set()
+    out = []
+    for it in items:
+        key = it.strip().lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        out.append(it.strip())
+    return out
+
+
+def build(dry_run: bool) -> str:
+    operator = load_yaml(OPERATOR_YAML)
+    accounts = load_yaml(ACCOUNTS_YAML)
+    self_row, self_emails, self_phones, contacts = read_people_db(PEOPLE_DB)
+
+    names = dedup_preserve(gather_names(operator, accounts, self_row))
+    emails = dedup_preserve(gather_emails(accounts, self_emails))
+    phones = dedup_preserve(self_phones)
+    domains = dedup_preserve(derive_domains(emails))
+    contacts = dedup_preserve(contacts)
+
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    lines: list[str] = []
+    a = lines.append
+
+    a("# AOS Privacy Denylist")
+    a(f"# Generated: {ts} by privacy-denylist-refresh")
+    a("#")
+    a("# INSTANCE-ONLY. This file must NEVER be committed or shipped.")
+    a("# It lists the operator's personal identifiers so privacy-scan can block")
+    a("# them from leaking into framework code. Regenerate with:")
+    a("#   privacy-denylist-refresh")
+    a("#")
+    a("# Format: one term per line. Lines starting with # are comments.")
+    a("# '# == category: X ==' markers tag the category the scanner reports.")
+    a("")
+
+    def section(cat: str, header: str, items: list[str]):
+        a(f"# == category: {cat} ==")
+        a(f"# {header} ({len(items)})")
+        for it in items:
+            a(it)
+        a("")
+
+    section("name", "Operator names, nicknames, name tokens", names)
+    section("email", "Operator email addresses", emails)
+    section("phone", "Operator phone numbers", phones)
+    section("domain", "Personal domains (generic providers excluded)", domains)
+    section("contact", f"Top {TOP_CONTACTS} contact names", contacts)
+
+    content = "\n".join(lines) + "\n"
+
+    counts = (f"names={len(names)} emails={len(emails)} phones={len(phones)} "
+              f"domains={len(domains)} contacts={len(contacts)}")
+    if dry_run:
+        print(content, end="")
+        print(f"\n# [dry-run] would write: {counts}", file=sys.stderr)
+    else:
+        print(f"denylist: {counts}", file=sys.stderr)
+
+    return content
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description="Regenerate the privacy denylist.")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="print to stdout, do not write")
+    ap.add_argument("--out", type=Path, default=DEFAULT_OUT,
+                    help=f"output path (default: {DEFAULT_OUT})")
+    args = ap.parse_args()
+
+    content = build(dry_run=args.dry_run)
+    if args.dry_run:
+        return 0
+
+    out = args.out
+    out.parent.mkdir(parents=True, exist_ok=True)
+    tmp = out.with_suffix(out.suffix + ".tmp")
+    tmp.write_text(content)
+    try:
+        os.chmod(tmp, 0o600)  # personal data — owner-only
+    except OSError:
+        pass
+    tmp.replace(out)
+    print(f"wrote {out}", file=sys.stderr)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

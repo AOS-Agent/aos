@@ -1,0 +1,313 @@
+#!/usr/bin/env python3
+"""privacy-scan — block operator personal data from shipping.
+
+Scans the *added* lines of a git diff for personal data and returns a non-zero
+exit if any is found. Wired into ship-check as a blocking gate so that AOS —
+which auto-updates on friends' machines — never carries the operator's private
+information into framework code.
+
+What it looks for:
+  (a) denylist terms   — the operator's names, emails, phones, personal domains,
+                         and top contacts, read from ~/.aos/config/privacy-denylist.txt
+                         (case-insensitive; word-boundary for name-like terms;
+                          terms < 4 chars skipped to avoid absurd matches)
+  (b) email addresses  — anyone's, generic pattern
+  (c) phone numbers    — generic shapes (10-15 digits)
+  (d) api-key strings  — long base64/hex constants that look like secrets
+
+Note on instance-data references: matching bare ~/.aos/data or vault/log *paths*
+was deliberately dropped. Framework code references those roots constantly and
+legitimately (they are AOS's data dirs), so a path check produces only false
+positives — a path like ~/vault/log/2026-07-12.md carries a date, not personal
+data. What actually leaks is the *content* of those files (names, contacts,
+emails, phones), which the denylist and the email/phone patterns already catch.
+
+REDACTION: the matched personal string is NEVER printed. Output shows the
+category and a short SHA-256 of the matched text so a human can correlate the
+finding without the tool itself leaking the secret.
+
+Usage:
+  privacy-scan                    # scan staged changes (git diff --cached)
+  privacy-scan <ref-range>        # e.g. origin/main..HEAD  (or any git diff arg)
+  privacy-scan --denylist PATH    # override denylist location
+  privacy-scan --help
+
+Exit codes:
+  0  clean
+  1  personal data found (block the ship)
+  2  usage / environment error (not a git repo, etc.)
+
+If the denylist is missing (e.g. a fresh install that never ran
+privacy-denylist-refresh) the denylist checks are skipped with a warning; the
+generic pattern checks still run.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+DEFAULT_DENYLIST = Path(os.path.expanduser("~")) / ".aos/config/privacy-denylist.txt"
+
+MIN_TERM_LEN = 4
+
+# ── Generic patterns ────────────────────────────────────────────────────────
+EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
+
+# Phone shapes: optional +, groups of digits with separators, >= 10 digits total.
+# The character class is broad; a digit-count check downstream rejects noise.
+PHONE_RE = re.compile(
+    r"(?<![\w.])(\+?\d[\d\s().\-]{8,}\d)(?![\w])"
+)
+
+# API-key-ish: a quoted long token from the base64/hex/url-safe alphabet.
+APIKEY_RE = re.compile(r"""['"]([A-Za-z0-9+/=_\-]{40,})['"]""")
+
+# Files/paths where long hashes and personal references are expected & benign.
+DOC_SUFFIXES = {".md", ".markdown", ".rst", ".txt"}
+# Machine-generated dependency manifests: full of hash/base64 blobs whose digit
+# runs trip the phone/key heuristics but are never personal data. Skipped for
+# the generic email/phone/api-key patterns (denylist terms still checked).
+LOCK_NAMES = {
+    "go.sum", "go.mod", "package-lock.json", "yarn.lock", "pnpm-lock.yaml",
+    "uv.lock", "poetry.lock", "cargo.lock", "package.resolved", "gemfile.lock",
+    "composer.lock", "flake.lock",
+}
+LOCK_SUFFIXES = {".lock", ".sum"}
+HASH_CONTEXT_RE = re.compile(
+    r"\b(sha1|sha256|sha512|md5|hash|integrity|checksum|digest|revision|commit)\b",
+    re.IGNORECASE,
+)
+
+
+class Hit:
+    __slots__ = ("path", "line", "category", "digest")
+
+    def __init__(self, path: str, line: int, category: str, matched: str):
+        self.path = path
+        self.line = line
+        self.category = category
+        self.digest = hashlib.sha256(matched.lower().encode()).hexdigest()[:10]
+
+    def key(self):
+        return (self.path, self.line, self.category, self.digest)
+
+
+# ── Denylist ────────────────────────────────────────────────────────────────
+def load_denylist(path: Path):
+    """Parse the denylist into a list of (compiled_regex, category, term_hash).
+
+    Terms < MIN_TERM_LEN chars are skipped. Name-like terms (letters/spaces) get
+    word-boundary anchoring to avoid matching inside larger words; terms with
+    punctuation (emails, phones, domains) match as escaped substrings.
+    """
+    entries = []
+    if not path.exists():
+        return entries, False
+
+    category = "denylist"
+    for raw in path.read_text(errors="replace").splitlines():
+        line = raw.strip()
+        m = re.match(r"#\s*==\s*category:\s*([a-z0-9_\-]+)\s*==", line, re.IGNORECASE)
+        if m:
+            category = m.group(1).lower()
+            continue
+        if not line or line.startswith("#"):
+            continue
+        term = line
+        if len(term) < MIN_TERM_LEN:
+            continue
+        escaped = re.escape(term)
+        # Name-like: only word chars, spaces, and simple name punctuation.
+        if re.fullmatch(r"[\w][\w .'\-]*[\w]", term):
+            pattern = r"(?<!\w)" + escaped + r"(?!\w)"
+        else:
+            pattern = escaped
+        try:
+            rx = re.compile(pattern, re.IGNORECASE)
+        except re.error:
+            continue
+        entries.append((rx, f"denylist:{category}", term))
+    return entries, True
+
+
+# ── Diff parsing ────────────────────────────────────────────────────────────
+def iter_added_lines(diff_text: str):
+    """Yield (path, new_line_number, content) for every added ('+') diff line."""
+    path = None
+    new_lineno = 0
+    for line in diff_text.splitlines():
+        if line.startswith("+++ "):
+            p = line[4:].strip()
+            if p == "/dev/null":
+                path = None
+            else:
+                # Strip a/ b/ prefix and optional tab-suffixed metadata.
+                p = p.split("\t", 1)[0]
+                if p.startswith("b/") or p.startswith("a/"):
+                    p = p[2:]
+                path = p
+            continue
+        if line.startswith("--- "):
+            continue
+        if line.startswith("@@"):
+            m = re.search(r"\+(\d+)", line)
+            new_lineno = int(m.group(1)) if m else 0
+            continue
+        if line.startswith("+"):
+            if path is not None:
+                yield path, new_lineno, line[1:]
+            new_lineno += 1
+        elif line.startswith("-"):
+            continue
+        else:
+            # context line (starts with space) or diff header noise
+            if line.startswith(" ") or line == "":
+                new_lineno += 1
+
+
+def is_doc(path: str) -> bool:
+    return Path(path).suffix.lower() in DOC_SUFFIXES
+
+
+def is_lockish(path: str) -> bool:
+    name = Path(path).name.lower()
+    return name in LOCK_NAMES or Path(name).suffix in LOCK_SUFFIXES
+
+
+def looks_key_like(token: str) -> bool:
+    """A real key mixes letter cases and digits; a git sha or word won't."""
+    has_lower = any(c.islower() for c in token)
+    has_upper = any(c.isupper() for c in token)
+    has_digit = any(c.isdigit() for c in token)
+    return has_digit and (has_lower and has_upper)
+
+
+def scan_diff(diff_text: str, denylist):
+    hits = []
+    for path, lineno, content in iter_added_lines(diff_text):
+        spans = []  # (start, end) ranges already claimed by denylist matches
+
+        # (a) denylist terms
+        for rx, category, term in denylist:
+            for m in rx.finditer(content):
+                spans.append((m.start(), m.end()))
+                hits.append(Hit(path, lineno, category, term))
+
+        def overlaps(s, e):
+            return any(not (e <= a or s >= b) for a, b in spans)
+
+        lockish = is_lockish(path)
+
+        # (b) emails — skip if already covered by a denylist hit or a lockfile
+        if not lockish:
+            for m in EMAIL_RE.finditer(content):
+                if not overlaps(m.start(), m.end()):
+                    hits.append(Hit(path, lineno, "email", m.group(0)))
+
+        # (c) phones — require 10-15 digits, skip denylist-covered spans & lockfiles
+        if not lockish:
+            for m in PHONE_RE.finditer(content):
+                digits = re.sub(r"\D", "", m.group(1))
+                if len(digits) < 10 or len(digits) > 15:
+                    continue
+                if not overlaps(m.start(), m.end()):
+                    hits.append(Hit(path, lineno, "phone", digits))
+
+        # (d) api-key-shaped constants — skip docs, lock files, and hash contexts
+        if not is_doc(path) and not lockish and not HASH_CONTEXT_RE.search(content):
+            for m in APIKEY_RE.finditer(content):
+                token = m.group(1)
+                if looks_key_like(token):
+                    hits.append(Hit(path, lineno, "api-key", token))
+
+    # Deduplicate identical findings
+    seen = set()
+    unique = []
+    for h in hits:
+        if h.key() not in seen:
+            seen.add(h.key())
+            unique.append(h)
+    return unique
+
+
+# ── Git ─────────────────────────────────────────────────────────────────────
+def get_diff(ref_arg: str | None):
+    """Return diff text. ref_arg None → staged (--cached); else `git diff <arg>`."""
+    base = ["git", "diff", "--no-color", "--no-ext-diff"]
+    if ref_arg:
+        cmd = base + [ref_arg]
+    else:
+        cmd = base + ["--cached"]
+    try:
+        out = subprocess.run(
+            cmd, capture_output=True, text=True, check=False
+        )
+    except FileNotFoundError:
+        print("error: git not found", file=sys.stderr)
+        sys.exit(2)
+    if out.returncode != 0:
+        sys.stderr.write(out.stderr)
+        print("error: git diff failed (not a repo, or bad ref?)", file=sys.stderr)
+        sys.exit(2)
+    return out.stdout
+
+
+# ── Reporting ───────────────────────────────────────────────────────────────
+def report(hits):
+    if not hits:
+        print("privacy-scan: clean — no personal data in diff")
+        return 0
+
+    hits.sort(key=lambda h: (h.path, h.line, h.category))
+    print(f"privacy-scan: {len(hits)} finding(s) — matched strings redacted\n")
+    for h in hits:
+        print(f"  {h.path}:{h.line}  [{h.category}]  sha256:{h.digest}")
+
+    by_cat: dict[str, int] = {}
+    by_file: dict[str, int] = {}
+    for h in hits:
+        by_cat[h.category] = by_cat.get(h.category, 0) + 1
+        by_file[h.path] = by_file.get(h.path, 0) + 1
+    print("\n  By category:")
+    for cat in sorted(by_cat):
+        print(f"    {cat}: {by_cat[cat]}")
+    print("  By file:")
+    for f in sorted(by_file):
+        print(f"    {f}: {by_file[f]}")
+    return 1
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(
+        description="Scan a git diff for operator personal data.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    ap.add_argument("ref", nargs="?", default=None,
+                    help="git diff ref/range (default: staged changes)")
+    ap.add_argument("--denylist", type=Path, default=DEFAULT_DENYLIST,
+                    help=f"denylist path (default: {DEFAULT_DENYLIST})")
+    args = ap.parse_args()
+
+    denylist, present = load_denylist(args.denylist)
+    if not present:
+        print(f"privacy-scan: warning — denylist not found at {args.denylist}; "
+              "running generic checks only (run privacy-denylist-refresh to enable "
+              "denylist matching)", file=sys.stderr)
+
+    diff_text = get_diff(args.ref)
+    if not diff_text.strip():
+        print("privacy-scan: clean — empty diff")
+        return 0
+
+    hits = scan_diff(diff_text, denylist)
+    return report(hits)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
