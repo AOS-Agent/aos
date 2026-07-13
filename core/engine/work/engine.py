@@ -122,6 +122,41 @@ def _resolve_db_path():
 
 DB_PATH = _resolve_db_path()
 
+# ── Session-table routing (temporary until aos#131) ─────────────────────────
+# sessions/session_tasks remain Qareen-owned (qareen.db) until phase 2 of the
+# kernel/experience split migrates them. Pre-cutover the resolved work DB IS
+# qareen.db, so the same connection serves both. Post-cutover (work.db), the
+# session tables exist only in qareen.db — route session reads/writes there.
+# Single-writer stays true: session tables are only ever written in qareen.db.
+_SESSION_FALLBACK_CONN = None
+
+
+def _session_conn(conn):
+    """Return a connection containing the session tables, or None.
+
+    None means: degrade gracefully (skip session enrichment/linking). This
+    happens under AOS_WORK_DB injection (tests/sandboxes must never touch the
+    real qareen.db) or when qareen.db does not exist.
+    """
+    global _SESSION_FALLBACK_CONN
+    try:
+        conn.execute("SELECT 1 FROM session_tasks LIMIT 1")
+        return conn
+    except sqlite3.OperationalError:
+        pass
+    if os.environ.get("AOS_WORK_DB"):
+        return None  # injected environment — never escape to the real instance DB
+    if _SESSION_FALLBACK_CONN is None:
+        qdb = Path.home() / ".aos" / "data" / "qareen.db"
+        if not qdb.exists():
+            return None
+        c = sqlite3.connect(str(qdb))
+        c.row_factory = sqlite3.Row
+        _SESSION_FALLBACK_CONN = c
+    return _SESSION_FALLBACK_CONN
+
+
+
 LOCK_FILE = WORK_DIR / ".work.lock"
 
 
@@ -223,14 +258,15 @@ def _row_to_task(row: sqlite3.Row) -> dict:
             handoff["blockers"] = blockers
         task["handoff"] = handoff
 
-    # Load session links from session_tasks table
-    sess_rows = conn.execute(
+    # Load session links from session_tasks table (Qareen-owned until aos#131)
+    _sc0 = _session_conn(conn)
+    sess_rows = _sc0.execute(
         "SELECT st.session_id, s.started_at, s.outcome "
         "FROM session_tasks st "
         "LEFT JOIN sessions s ON st.session_id = s.id "
         "WHERE st.task_id = ?",
         (task_id,)
-    ).fetchall()
+    ).fetchall() if _sc0 is not None else []
     if sess_rows:
         sessions = []
         for sr in sess_rows:
@@ -1143,14 +1179,21 @@ def delete_task(task_id: str) -> bool:
 
     # Delete subtasks first
     conn.execute("DELETE FROM task_handoffs WHERE task_id IN (SELECT id FROM tasks WHERE parent_id = ?)", (task_id,))
-    conn.execute("DELETE FROM session_tasks WHERE task_id IN (SELECT id FROM tasks WHERE parent_id = ?)", (task_id,))
+    _sc = _session_conn(conn)
+    subtask_ids = [r[0] for r in conn.execute("SELECT id FROM tasks WHERE parent_id = ?", (task_id,)).fetchall()]
+    if _sc is not None:
+        for _sid in subtask_ids:
+            _sc.execute("DELETE FROM session_tasks WHERE task_id = ?", (_sid,))
     conn.execute("DELETE FROM tasks WHERE parent_id = ?", (task_id,))
 
     # Delete the task itself
     conn.execute("DELETE FROM task_handoffs WHERE task_id = ?", (task_id,))
-    conn.execute("DELETE FROM session_tasks WHERE task_id = ?", (task_id,))
+    if _sc is not None:
+        _sc.execute("DELETE FROM session_tasks WHERE task_id = ?", (task_id,))
     conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
     conn.commit()
+    if _sc is not None and _sc is not conn:
+        _sc.commit()
     return True
 
 
@@ -1734,17 +1777,22 @@ def link_session_to_task(task_id: str, session_id: str, outcome: str = None,
     if not row:
         return None
 
-    # Use session_tasks table for linking
-    existing = conn.execute(
+    # Use session_tasks table for linking (Qareen-owned until aos#131)
+    _sc = _session_conn(conn)
+    if _sc is None:
+        return None  # no session store available (injected env) — skip link
+    existing = _sc.execute(
         "SELECT 1 FROM session_tasks WHERE session_id = ? AND task_id = ?",
         (session_id, task_id),
     ).fetchone()
 
     if not existing:
-        conn.execute(
+        _sc.execute(
             "INSERT INTO session_tasks (session_id, task_id, relation) VALUES (?, ?, 'worked_on')",
             (session_id, task_id),
         )
+        if _sc is not conn:
+            _sc.commit()
 
     # Also ensure a sessions row exists (lightweight)
     sess_exists = conn.execute(
