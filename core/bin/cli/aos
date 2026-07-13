@@ -48,6 +48,37 @@ case "${1:-help}" in
         bash "$AOS_DIR/core/bin/crons/check-update" "${2:---status}"
         ;;
 
+    channel)
+        # Show or set this machine's release channel (edge|stable).
+        CHANNEL_FILE="$HOME/.aos/config/channel"
+        if [[ -z "${2:-}" ]]; then
+            resolved=$(python3 "$AOS_DIR/core/lib/channels.py" channel 2>/dev/null || echo "stable")
+            if [[ -f "$CHANNEL_FILE" ]]; then
+                echo "Channel: $resolved  (from $CHANNEL_FILE)"
+            else
+                echo "Channel: $resolved  (default — no channel file; friends stay on stable)"
+            fi
+        else
+            new=$(echo "$2" | tr '[:upper:]' '[:lower:]')
+            if [[ "$new" != "edge" && "$new" != "stable" ]]; then
+                echo "Usage: aos channel [edge|stable]"
+                exit 1
+            fi
+            mkdir -p "$(dirname "$CHANNEL_FILE")"
+            echo "$new" > "$CHANNEL_FILE"
+            echo "Channel set to '$new' ($CHANNEL_FILE)"
+            [[ "$new" == "edge" ]] && echo "  This machine now tracks origin/main (same-day updates)."
+            [[ "$new" == "stable" ]] && echo "  This machine now tracks promoted releases only."
+        fi
+        ;;
+
+    promote)
+        # Promote the running release to the stable channel (moves + pushes the
+        # stable tag). All guards live in the promote script.
+        shift
+        bash "$AOS_DIR/core/bin/cli/aos-promote" "$@"
+        ;;
+
     rollback)
         bash "$AOS_DIR/core/bin/internal/release-manager" rollback
         # Re-run sync after rollback
@@ -958,6 +989,8 @@ sys.exit(0 if errors == 0 else 1)
         echo "  start           Open editor with Claude Code ready"
         echo "  update          Pull latest + migrate + sync"
         echo "  check-update    Check if updates are available"
+        echo "  channel         Show or set release channel (aos channel edge|stable)"
+        echo "  promote         Promote running release to stable (moves stable tag)"
         echo "  status          Show migration version + pending"
         echo "  self-test       Validate system health"
         echo "  test            Run full verification test suite"

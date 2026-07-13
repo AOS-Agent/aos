@@ -1,0 +1,194 @@
+#!/usr/bin/env bash
+# aos-promote — promote the currently-running release to the `stable` channel.
+#
+# Two-lane releases: the operator rides `edge` (origin/main, same-day); friends
+# ride `stable` (the `stable` git tag, updated only by promotion). Promotion
+# moves the `stable` tag to the commit THIS machine is currently running and
+# pushes it, so friend machines pick it up at their next 4am update.
+#
+# Guards, in order:
+#   1. Soak — the running release must have been deployed ≥ N days ago
+#      (default 2; --days N to change, --force to override with confirmation).
+#   2. The running commit must actually be an ancestor of origin/main.
+#   3. ship-check must pass (blocking failures) and self-test must be clean.
+#   4. The operator confirms an explicit plan (type "yes").
+#
+# Promotion IS the operator-approved push — but only of the `stable` tag, never
+# of main, and never a branch. It prints exactly what it will do and requires a
+# typed yes before touching the remote.
+#
+# Usage:
+#   aos promote            Promote running release to stable (with all guards)
+#   aos promote --days 3   Require a 3-day soak instead of 2
+#   aos promote --force    Skip the soak guard (still asks for confirmation)
+
+set -uo pipefail
+
+AOS_DIR="$HOME/aos"
+CHANNELS_LIB="$AOS_DIR/core/lib/channels.py"
+HASH_FILE="$HOME/.aos/data/deployed-hash"
+SHIP_CHECK="$AOS_DIR/core/bin/cli/ship-check"
+
+MIN_DAYS=2
+FORCE=0
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --days) MIN_DAYS="${2:-2}"; shift 2 ;;
+        --force) FORCE=1; shift ;;
+        -h|--help)
+            sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'
+            exit 0 ;;
+        *) echo "Unknown option: $1"; echo "Run 'aos promote --help'"; exit 1 ;;
+    esac
+done
+
+log() { echo "  $*"; }
+die() { echo "  ✗ $*" >&2; exit 1; }
+
+# ── Locate the source repo (where the tag lives + gets pushed from) ──────────
+find_repo() {
+    if [[ -d "$HOME/project/aos/.git" ]]; then
+        echo "$HOME/project/aos"
+    elif [[ -d "$HOME/.aos/repo/.git" ]]; then
+        echo "$HOME/.aos/repo"
+    else
+        echo ""
+    fi
+}
+
+REPO=$(find_repo)
+[[ -z "$REPO" ]] && die "No source repo found (checked ~/project/aos, ~/.aos/repo). Cannot push a tag."
+
+echo ""
+echo "AOS — Promote to stable"
+echo "───────────────────────"
+
+# ── The candidate: the commit THIS machine is running ────────────────────────
+DEPLOYED_HASH=$(cat "$HASH_FILE" 2>/dev/null || echo "")
+[[ -z "$DEPLOYED_HASH" ]] && die "No deployed-hash recorded ($HASH_FILE). Is this a release-system machine?"
+
+CHANNEL=$(python3 "$CHANNELS_LIB" channel 2>/dev/null || echo "stable")
+RUNNING_VERSION=$(cat "$AOS_DIR/VERSION" 2>/dev/null || echo "unknown")
+
+log "Channel of this machine:   $CHANNEL"
+log "Running version:           $RUNNING_VERSION"
+log "Candidate commit:          ${DEPLOYED_HASH:0:12}"
+
+if [[ "$CHANNEL" != "edge" ]]; then
+    log "NOTE: this machine is not on 'edge' — promoting the commit it currently runs anyway."
+fi
+
+# ── Guard 1: soak time (deployed-hash mtime = deploy time) ───────────────────
+# The mtime of the deployed-hash file is written by release-manager at
+# activation, so it is when the running release was actually deployed here.
+if command -v stat >/dev/null 2>&1; then
+    DEPLOYED_AT=$(stat -f %m "$HASH_FILE" 2>/dev/null || stat -c %Y "$HASH_FILE" 2>/dev/null || echo "")
+else
+    DEPLOYED_AT=""
+fi
+NOW=$(date +%s)
+
+GUARD_OUT=$(python3 "$CHANNELS_LIB" guard "${DEPLOYED_AT:--}" "$NOW" "$MIN_DAYS" "$FORCE")
+GUARD_RC=$?
+IFS=$'\t' read -r ALLOWED SOAK REASON <<< "$GUARD_OUT"
+log "Soak:                      ${REASON}"
+if [[ "$GUARD_RC" -ne 0 || "$ALLOWED" != "1" ]]; then
+    die "Soak guard failed. Wait longer, pass --days, or --force."
+fi
+
+# ── Guard 2: candidate must be on origin/main ────────────────────────────────
+log "Fetching origin/main + stable tag..."
+git -C "$REPO" fetch origin main --quiet 2>/dev/null || die "git fetch failed (network?)."
+git -C "$REPO" fetch origin "+refs/tags/stable:refs/tags/stable" --quiet 2>/dev/null || true
+
+if ! git -C "$REPO" cat-file -e "${DEPLOYED_HASH}^{commit}" 2>/dev/null; then
+    die "Candidate commit ${DEPLOYED_HASH:0:12} not found in $REPO."
+fi
+if ! git -C "$REPO" merge-base --is-ancestor "$DEPLOYED_HASH" origin/main 2>/dev/null; then
+    die "Candidate commit is not an ancestor of origin/main — refusing to promote off-main code."
+fi
+
+CURRENT_STABLE=$(git -C "$REPO" rev-parse -q --verify "refs/tags/stable^{commit}" 2>/dev/null || echo "")
+if [[ -z "$CURRENT_STABLE" ]]; then
+    log "Current stable tag:        (none — this is the first promotion)"
+elif [[ "$CURRENT_STABLE" == "$DEPLOYED_HASH" ]]; then
+    die "stable already points at ${DEPLOYED_HASH:0:12} — nothing to promote."
+else
+    STABLE_VERSION=$(git -C "$REPO" show "$CURRENT_STABLE:VERSION" 2>/dev/null | tr -d '[:space:]' || echo "unknown")
+    log "Current stable tag:        ${CURRENT_STABLE:0:12} ($STABLE_VERSION)"
+    AHEAD=$(git -C "$REPO" rev-list --count "$CURRENT_STABLE..$DEPLOYED_HASH" 2>/dev/null || echo "?")
+    log "Promotion advances stable: $AHEAD commit(s)"
+fi
+
+# ── Guard 3: ship-check + self-test ──────────────────────────────────────────
+echo ""
+echo "Running ship-check..."
+echo "─────────────────────"
+if [[ -x "$SHIP_CHECK" || -f "$SHIP_CHECK" ]]; then
+    bash "$SHIP_CHECK"
+    SC_RC=$?
+    if [[ "$SC_RC" -eq 1 ]]; then
+        [[ "$FORCE" -eq 1 ]] && log "ship-check FAILED — overridden by --force" || die "ship-check reported blocking failures. Fix them or --force."
+    elif [[ "$SC_RC" -eq 2 ]]; then
+        log "ship-check passed with warnings."
+    else
+        log "ship-check clean."
+    fi
+else
+    log "ship-check not found — skipping (unexpected)."
+fi
+
+echo ""
+echo "Running self-test..."
+echo "────────────────────"
+SELFTEST_OUT=$(bash "$AOS_DIR/core/bin/cli/aos" self-test 2>&1)
+echo "$SELFTEST_OUT" | tail -3
+if echo "$SELFTEST_OUT" | grep -q "check(s) failed"; then
+    [[ "$FORCE" -eq 1 ]] && log "self-test FAILED — overridden by --force" || die "self-test reported failures. Fix them or --force."
+else
+    log "self-test clean."
+fi
+
+# ── Guard 4: explicit confirmation ───────────────────────────────────────────
+NEW_VERSION=$(git -C "$REPO" show "$DEPLOYED_HASH:VERSION" 2>/dev/null | tr -d '[:space:]' || echo "$RUNNING_VERSION")
+echo ""
+echo "  This will:"
+echo "    • move the 'stable' tag → ${DEPLOYED_HASH:0:12} ($NEW_VERSION)"
+echo "    • push the tag to origin (this is the operator-approved push)"
+echo "    • friend (stable) machines update to it at their next 4am cycle"
+echo ""
+printf "  Type 'yes' to promote: "
+read -r CONFIRM
+if [[ "$CONFIRM" != "yes" ]]; then
+    echo "  Aborted — nothing pushed."
+    exit 1
+fi
+
+# ── Do it: move the tag locally, then push just that tag (forced move) ───────
+echo ""
+log "Moving stable tag → ${DEPLOYED_HASH:0:12}..."
+git -C "$REPO" tag -f stable "$DEPLOYED_HASH" >/dev/null 2>&1 || die "Failed to move stable tag locally."
+
+log "Pushing stable tag to origin..."
+# +refs/tags/stable is a forced update of the TAG only — never main, never a branch.
+if ! git -C "$REPO" push origin "+refs/tags/stable" 2>&1 | sed 's/^/    /'; then
+    die "Tag push failed. Local tag moved; re-run to retry the push."
+fi
+log "✓ Promoted $NEW_VERSION (${DEPLOYED_HASH:0:12}) to stable."
+
+# ── Telegram note (best-effort) ──────────────────────────────────────────────
+notify() {
+    local msg="$1" bot_token chat_id
+    bot_token=$("$AOS_DIR/core/bin/cli/agent-secret" get TELEGRAM_BOT_TOKEN 2>/dev/null) || return 0
+    chat_id=$("$AOS_DIR/core/bin/cli/agent-secret" get TELEGRAM_CHAT_ID 2>/dev/null) || return 0
+    [[ -z "$bot_token" || -z "$chat_id" ]] && return 0
+    curl -s --max-time 10 -X POST "https://api.telegram.org/bot${bot_token}/sendMessage" \
+        -H "Content-Type: application/json" \
+        -d "{\"chat_id\": ${chat_id}, \"text\": \"${msg}\", \"parse_mode\": \"HTML\"}" \
+        > /dev/null 2>&1 || true
+}
+notify "✅ Promoted <b>${NEW_VERSION}</b> to stable — friend machines update at their next 4am."
+
+echo ""
+echo "  Done."
