@@ -18,7 +18,7 @@ allowed-tools: Bash, Read, Glob, Grep, Edit, Write, AskUserQuestion
 The loop: **edit → snap → judge → show → device**. The agent carries the
 inner loop (build, screenshot, self-verify); the operator enters only for
 taste calls and the final feel-check on real hardware. TestFlight is for
-distributing to *other people* — never for testing your own change.
+distributing to *other people* — never for testing a change to the app being built.
 
 ## Phase 0 — Detect (always run first)
 

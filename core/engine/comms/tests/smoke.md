@@ -13,15 +13,15 @@ Expected: Returns messages from comms.db via FTS5. Multiple channels (WhatsApp, 
 ## Test 2: Person-scoped message search
 
 ```
-What has Mama sent me in the last 30 days?
+What has Boss sent me in the last 30 days?
 ```
 
-Expected: Resolves "Mama" via alias → person_id → queries comms.db by person_id. Shows messages with timestamps and channels.
+Expected: Resolves "Boss" via alias → person_id → queries comms.db by person_id. Shows messages with timestamps and channels.
 
 ## Test 3: Conversation context pull
 
 ```
-Show me my recent conversation with Zeeshan Bari.
+Show me my recent conversation with Jordan Rivera.
 ```
 
 Expected: Pulls last ~10 messages from comms.db for that person. Shows both inbound and outbound. Chronological order.
@@ -45,10 +45,10 @@ Expected: Hits `localhost:4099/health`. Shows adapters (which available), consum
 ## Test 6: Cross-channel person timeline
 
 ```
-Build me a timeline of all communication with Fahad Khan across every channel.
+Build me a timeline of all communication with Sam Park across every channel.
 ```
 
-Expected: Queries comms.db WHERE person_id = (resolved). Returns messages from WhatsApp, iMessage, email — unified. May surface duplicate person issue (Fahad Khan / Fahd Khan).
+Expected: Queries comms.db WHERE person_id = (resolved). Returns messages from WhatsApp, iMessage, email — unified. May surface duplicate person issue (Sam Park / Sam Parke).
 
 ## Test 7: Topic search (post-enrichment)
 
@@ -61,7 +61,7 @@ Expected: Queries message_entities WHERE entity_type = 'topic' AND entity_id LIK
 ## Test 8: Outbound message lands in comms.db
 
 ```
-message-person --to "Zeeshan Bari" --text "test message from smoke test" --dry-run --json
+message-person --to "Jordan Rivera" --text "test message from smoke test" --dry-run --json
 ```
 
 Then verify: `sqlite3 ~/.aos/data/comms.db "SELECT COUNT(*) FROM messages WHERE direction = 'outbound' AND content LIKE '%smoke test%';"`

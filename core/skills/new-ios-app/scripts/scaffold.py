@@ -540,7 +540,7 @@ Thin app shell over a local Swift Package.
 
 - `__TARGET__/` — app shell ONLY: `@main`, assets, Info.plist, entitlements.
   No business logic lives here.
-- `__TARGET__Core/` — the real code, as a Swift Package. This is your
+- `__TARGET__Core/` — the real code, as a Swift Package. This is the
   primary workspace. It's SwiftUI-capable but has no app-target coupling,
   so it builds and tests fast.
 
@@ -590,7 +590,7 @@ SPM automatically. Only the app shell needs a regen when its files change.
 
 The package uses **MainActor default isolation** — every closure/func is
 `@MainActor` unless marked otherwise. This crashes at runtime if a framework
-calls your code on a background thread.
+calls that code on a background thread.
 
 - **Dynamic `UIColor` providers must be `nonisolated`.** SwiftUI resolves
   dynamic colors on a background render thread → a MainActor provider traps
