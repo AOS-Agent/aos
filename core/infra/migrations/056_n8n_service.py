@@ -24,6 +24,7 @@ DESCRIPTION = "Install n8n automation engine as a managed AOS service"
 import json
 import os
 import secrets
+import socket
 import subprocess
 import time
 from pathlib import Path
@@ -47,6 +48,27 @@ def _has_n8n() -> bool:
     return _run(["which", "n8n"], timeout=5).returncode == 0
 
 
+def _has_npm() -> bool:
+    """Check npm is on PATH before attempting an install.
+
+    Without this, a missing npm surfaces as a raw FileNotFoundError from
+    deep inside `npm install -g n8n`, caught only by the migration
+    runner's generic exception handler. Checking first lets us fail with
+    a clear, actionable message instead of a stderr blob.
+    """
+    try:
+        return _run(["npm", "--version"], timeout=10).returncode == 0
+    except FileNotFoundError:
+        return False
+
+
+def _port_open(port: int, host: str = "127.0.0.1", timeout: float = 1.0) -> bool:
+    """Return True if something is already listening on host:port."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(timeout)
+        return s.connect_ex((host, port)) == 0
+
+
 def _has_api_key() -> bool:
     """Check if N8N_API_KEY exists in Keychain."""
     result = _run([str(AGENT_SECRET), "get", "N8N_API_KEY"], timeout=5)
@@ -64,7 +86,15 @@ def _is_healthy() -> bool:
 
 
 def check() -> bool:
-    """Applied if n8n data dir exists, binary available, plist deployed."""
+    """Applied if n8n data dir exists, binary available, plist deployed, and healthy.
+
+    The health check aligns this with core/infra/reconcile/checks/n8n.py's
+    check(), which is the real ongoing-health backstop (it re-kickstarts
+    on drift after the migration has run once). Adding it here too is
+    consistency, not a substitute — the migration only ever runs once,
+    gated by the version watermark, so it can't replace the reconcile
+    check's repeated monitoring.
+    """
     if not N8N_DATA_DIR.exists():
         return False
     if not _has_n8n():
@@ -72,6 +102,8 @@ def check() -> bool:
     if not PLIST_PATH.exists():
         return False
     if not _has_api_key():
+        return False
+    if not _is_healthy():
         return False
     return True
 
@@ -87,6 +119,10 @@ def up() -> bool:
 
     # 2. Install n8n via npm if not present
     if not _has_n8n():
+        if not _has_npm():
+            print("  ERROR: npm not found on PATH. n8n requires Node.js/npm to install")
+            print("  (e.g. `brew install node`) — install that first, then retry.")
+            return False
         print("  Installing n8n via npm (this may take a minute)...")
         result = _run(["npm", "install", "-g", "n8n"], timeout=300)
         if result.returncode != 0:
@@ -123,6 +159,19 @@ def up() -> bool:
     PLIST_PATH.write_text(plist_content)
     print(f"  Deployed plist to {PLIST_PATH}")
 
+    # 5.5 Port-conflict pre-check. n8n binds :5678; something else already
+    # listening there (not our own about-to-be-restarted n8n) means the
+    # bootstrap below will bind-fail, /healthz will never respond, the
+    # 30s wait times out, and up() would otherwise return True anyway —
+    # a silent, permanent unhealthy state (the reconcile check would keep
+    # re-kickstarting a service that can never come up). Distinguish that
+    # from "still starting" and fail loudly here instead.
+    if _port_open(5678) and not _is_healthy():
+        print("  ERROR: port 5678 is already in use by something other than n8n.")
+        print("  Free the port (or reconfigure n8n's port) before retrying —")
+        print("  n8n cannot bind and would otherwise time out silently.")
+        return False
+
     # 6. Bootstrap and start the service
     uid = os.getuid()
     domain = f"gui/{uid}"
@@ -149,7 +198,13 @@ def up() -> bool:
             print(f"  n8n healthy after {(i + 1) * 2}s")
             return True
 
-    print("  WARNING: n8n not healthy after 30s — check ~/.aos/logs/n8n.err.log")
-    # Return True anyway — the service may still be starting up.
-    # The reconcile check will handle ongoing health monitoring.
+    if _port_open(5678):
+        print("  WARNING: n8n not healthy after 30s, but port 5678 is bound —")
+        print("  likely still starting. Check ~/.aos/logs/n8n.err.log.")
+    else:
+        print("  WARNING: n8n not healthy after 30s and port 5678 is not bound —")
+        print("  the process likely failed to start. Check ~/.aos/logs/n8n.err.log.")
+    # Return True anyway in both cases — the reconcile check
+    # (core/infra/reconcile/checks/n8n.py) owns ongoing health monitoring
+    # and will keep retrying/notifying past this point.
     return True
