@@ -1,0 +1,177 @@
+"""
+Migration 054: Deploy Qareen as the primary AOS service on port 4096.
+
+Qareen is the unified intelligence core — FastAPI backend + React frontend.
+It replaces the old dashboard service (which only served an HTML template).
+
+Steps:
+1. Create venv at ~/.aos/services/qareen/.venv/
+2. Install Python dependencies from requirements.txt
+3. Initialize database schemas (qareen.sql)
+4. Ensure models directory exists for Silero VAD
+5. Stop old dashboard service
+6. Deploy LaunchAgent plist from template
+7. Start Qareen on port 4096
+8. Wait for health check
+
+Numbering note: this shipped as migration 026 on the unshipped
+council-substrate branch (see core/infra/migrations/050_work_db_ownership.py
+for the full renumbering rationale). Renumbered to 054 to land after main's
+001-052 (and after 053, the Qareen Tasks data model upgrade it depends on).
+"""
+
+DESCRIPTION = "Deploy Qareen service (replaces dashboard on port 4096)"
+
+import os
+import sqlite3
+import subprocess
+import time
+from pathlib import Path
+
+HOME = Path.home()
+AOS_ROOT = HOME / "aos"
+QAREEN_DIR = AOS_ROOT / "core" / "qareen"
+QAREEN_VENV = HOME / ".aos" / "services" / "qareen" / ".venv"
+QAREEN_PYTHON = QAREEN_VENV / "bin" / "python"
+REQUIREMENTS = QAREEN_DIR / "requirements.txt"
+SCHEMA_SQL = QAREEN_DIR / "schemas" / "qareen.sql"
+DB_PATH = HOME / ".aos" / "data" / "qareen.db"
+MODELS_DIR = HOME / ".aos" / "models"
+LOG_DIR = HOME / ".aos" / "logs"
+
+PLIST_NAME = "com.aos.qareen"
+PLIST_PATH = HOME / "Library" / "LaunchAgents" / f"{PLIST_NAME}.plist"
+TEMPLATE_PATH = AOS_ROOT / "config" / "launchagents" / f"{PLIST_NAME}.plist.template"
+
+OLD_DASHBOARD_PLIST = "com.aos.dashboard"
+OLD_DASHBOARD_PATH = HOME / "Library" / "LaunchAgents" / f"{OLD_DASHBOARD_PLIST}.plist"
+
+HEALTH_URL = "http://127.0.0.1:4096/api/health"
+
+
+def _run(cmd: list[str], timeout: int = 120) -> subprocess.CompletedProcess:
+    return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+
+
+def _is_healthy() -> bool:
+    """Check if Qareen health endpoint responds on port 4096."""
+    try:
+        from urllib.request import urlopen
+        with urlopen(HEALTH_URL, timeout=5) as resp:
+            return resp.status == 200
+    except Exception:
+        return False
+
+
+def check() -> bool:
+    """Applied if qareen venv exists, plist is deployed, and health endpoint responds."""
+    if not QAREEN_VENV.exists():
+        return False
+    if not PLIST_PATH.exists():
+        return False
+    if not _is_healthy():
+        return False
+    return True
+
+
+def up() -> bool:
+    """Deploy Qareen as the primary AOS service."""
+
+    # 1. Create venv
+    QAREEN_VENV.parent.mkdir(parents=True, exist_ok=True)
+    if not QAREEN_PYTHON.exists():
+        print("  Creating Qareen venv...")
+        result = _run(["python3", "-m", "venv", str(QAREEN_VENV)])
+        if result.returncode != 0:
+            print(f"  ERROR: venv creation failed: {result.stderr}")
+            return False
+        print(f"  Created venv at {QAREEN_VENV}")
+    else:
+        print(f"  Venv already exists at {QAREEN_VENV}")
+
+    # 2. Install dependencies
+    print("  Installing Qareen dependencies...")
+    if not REQUIREMENTS.exists():
+        print(f"  ERROR: requirements.txt not found at {REQUIREMENTS}")
+        return False
+
+    result = _run(
+        [str(QAREEN_PYTHON), "-m", "pip", "install", "-q", "-r", str(REQUIREMENTS)],
+        timeout=300,
+    )
+    if result.returncode != 0:
+        print(f"  ERROR: pip install failed: {result.stderr}")
+        return False
+    print("  Dependencies installed")
+
+    # 3. Initialize database schemas
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    if SCHEMA_SQL.exists():
+        print("  Initializing Qareen database schemas...")
+        try:
+            conn = sqlite3.connect(str(DB_PATH))
+            conn.executescript(SCHEMA_SQL.read_text())
+            conn.close()
+            print(f"  Database initialized at {DB_PATH}")
+        except Exception as e:
+            print(f"  WARNING: Schema init error (may already exist): {e}")
+    else:
+        print(f"  WARNING: Schema file not found at {SCHEMA_SQL}")
+
+    # 4. Ensure models directory exists (for Silero VAD)
+    MODELS_DIR.mkdir(parents=True, exist_ok=True)
+    print(f"  Models directory ready at {MODELS_DIR}")
+
+    # 5. Ensure log directory exists
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+    # 6. Stop old dashboard if running on port 4096
+    uid = os.getuid()
+    old_service = f"gui/{uid}/{OLD_DASHBOARD_PLIST}"
+    result = _run(["launchctl", "bootout", old_service], timeout=10)
+    if result.returncode == 0:
+        print("  Stopped old dashboard service")
+        time.sleep(1)
+    else:
+        print("  Old dashboard not running (OK)")
+
+    # 7. Deploy LaunchAgent from template
+    if not TEMPLATE_PATH.exists():
+        print(f"  ERROR: Plist template not found at {TEMPLATE_PATH}")
+        return False
+
+    template = TEMPLATE_PATH.read_text()
+    plist_content = template.replace("__HOME__", str(HOME))
+    PLIST_PATH.parent.mkdir(parents=True, exist_ok=True)
+    PLIST_PATH.write_text(plist_content)
+    print(f"  Deployed plist to {PLIST_PATH}")
+
+    # 8. Start Qareen
+    domain = f"gui/{uid}"
+    service = f"gui/{uid}/{PLIST_NAME}"
+
+    # Bootout first (ignore failure — may not be registered)
+    _run(["launchctl", "bootout", service], timeout=10)
+    time.sleep(1)
+
+    # Bootstrap
+    result = _run(["launchctl", "bootstrap", domain, str(PLIST_PATH)], timeout=10)
+    if result.returncode != 0:
+        print(f"  WARNING: bootstrap returned {result.returncode}: {result.stderr}")
+
+    # Kickstart
+    _run(["launchctl", "kickstart", "-k", service], timeout=10)
+    print("  Qareen LaunchAgent started")
+
+    # 9. Wait for health
+    print("  Waiting for Qareen to become healthy...")
+    for i in range(20):
+        time.sleep(2)
+        if _is_healthy():
+            print(f"  Qareen healthy after {(i + 1) * 2}s on port 4096")
+            return True
+
+    print("  WARNING: Qareen not healthy after 40s — check ~/.aos/logs/qareen.err.log")
+    # Return True — service may still be initializing.
+    # Reconcile check will handle ongoing monitoring.
+    return True

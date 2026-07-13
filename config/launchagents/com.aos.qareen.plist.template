@@ -3,13 +3,19 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.aos.dashboard</string>
+    <string>com.aos.qareen</string>
     <key>WorkingDirectory</key>
-    <string>__HOME__/aos/core/services/dashboard</string>
+    <string>__HOME__/aos/core</string>
     <key>ProgramArguments</key>
     <array>
-        <string>__HOME__/.aos/services/dashboard/.venv/bin/python</string>
-        <string>__HOME__/aos/core/services/dashboard/main.py</string>
+        <string>__HOME__/.aos/services/qareen/.venv/bin/python</string>
+        <string>-m</string>
+        <string>uvicorn</string>
+        <string>qareen.main:app</string>
+        <string>--host</string>
+        <string>0.0.0.0</string>
+        <string>--port</string>
+        <string>4096</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
@@ -18,13 +24,15 @@
     <key>ThrottleInterval</key>
     <integer>5</integer>
     <key>StandardOutPath</key>
-    <string>__HOME__/.aos/logs/dashboard.out.log</string>
+    <string>__HOME__/.aos/logs/qareen.out.log</string>
     <key>StandardErrorPath</key>
-    <string>__HOME__/.aos/logs/dashboard.err.log</string>
+    <string>__HOME__/.aos/logs/qareen.err.log</string>
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
         <string>/opt/homebrew/bin:__HOME__/.bun/bin:__HOME__/.local/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>AOS_QAREEN_HOST</key>
+        <string>0.0.0.0</string>
     </dict>
 </dict>
 </plist>

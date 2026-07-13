@@ -58,7 +58,7 @@ def _get_running_services() -> list[str]:
 
             # Known port mappings
             known_ports = {
-                "dashboard": "4096",
+                "qareen": "4096",
                 "listen": "7600",
                 "whatsmeow": "7601",
                 "eventd": "4097",
