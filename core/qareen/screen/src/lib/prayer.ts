@@ -116,11 +116,19 @@ export function getPrayerPeriodInfo(schedule: PrayerSchedule, now: Date = new Da
   const period = currentPrayerPeriod(schedule, now)
   const meta = PERIOD_META[period]
   const next = NEXT_PRAYER_MAP[period]
-  const nextTime = schedule[next.key]
+  let nextTime = schedule[next.key]
 
-  let minutesUntilNext = Math.round((nextTime.getTime() - now.getTime()) / 60_000)
-  // If next prayer is tomorrow's Fajr, we'd get a huge number — cap display
-  if (minutesUntilNext < 0) minutesUntilNext = 0
+  // During Isha the next prayer is Fajr, but `schedule` holds *today's* Fajr,
+  // which is already in the past — so the countdown clamps to 0 and the chip
+  // reads "Fajr now" all night. Roll over to tomorrow's schedule so the
+  // countdown is real.
+  if (nextTime.getTime() <= now.getTime()) {
+    const tomorrow = new Date(now.getTime() + 24 * 60 * 60_000)
+    const tomorrowSchedule = calcPrayerSchedule(DEFAULT_COORDS.latitude, DEFAULT_COORDS.longitude, tomorrow)
+    nextTime = tomorrowSchedule[next.key]
+  }
+
+  const minutesUntilNext = Math.max(0, Math.round((nextTime.getTime() - now.getTime()) / 60_000))
 
   return {
     period,

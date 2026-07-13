@@ -278,20 +278,49 @@ export interface WorkResponse {
 
 export interface OperatorResponse {
   name: string
+  nickname?: string
+  prompt?: string
+  timezone: string
+  language: string
+  agent_name: string
+  trust_default?: TrustLevel
+  morning_briefing: string
+  evening_checkin: string
+  quiet_hours_start: string
+  quiet_hours_end: string
+  business_type?: string
+  role?: string
+  // Fields from accounts/extended config (may not always be present)
   handle?: string
   email?: string
-  timezone?: string
   locale?: string
-  preferences: Record<string, any>
+  location?: { city?: string; name?: string; latitude?: number; longitude?: number }
+  preferences?: OperatorPreferences
+}
+
+export interface OperatorPreferences {
+  morning_briefing_time?: string
+  evening_checkin_time?: string
+  focus_hours_start?: string
+  focus_hours_end?: string
+  quiet_hours_start?: string
+  quiet_hours_end?: string
 }
 
 export interface UpdateOperatorRequest {
   name?: string
-  handle?: string
-  email?: string
+  nickname?: string
+  prompt?: string
   timezone?: string
-  locale?: string
-  preferences?: Record<string, any>
+  language?: string
+  agent_name?: string
+  trust_default?: TrustLevel
+  morning_briefing?: string
+  evening_checkin?: string
+  quiet_hours_start?: string
+  quiet_hours_end?: string
+  business_type?: string
+  role?: string
 }
 
 export interface AccountsResponse {
@@ -405,67 +434,317 @@ export interface CronListResponse {
 export interface PersonResponse {
   id: string
   name: string
-  aliases?: string[]
-  channels?: Record<string, string>
-  tags?: string[]
+  importance: number
+  privacy_level: number
+  tags: string[]
+  aliases: string[]
+  channels: Record<string, string>
+  organization?: string
+  role?: string
+  city?: string
   notes?: string
-  last_interaction?: string
-  created_at: string
-  updated_at?: string
+  birthday?: string
+  how_met?: string
+  last_contact?: string
+  days_since_contact?: number
+  relationship_trend?: string // 'growing' | 'stable' | 'drifting'
+  projects: string[]
 }
 
 export interface PersonListResponse {
   people: PersonResponse[]
   total: number
+  page: number
+  per_page: number
+  has_more: boolean
 }
 
 export interface InteractionSchema {
   id: string
-  person_id: string
   channel: string
-  direction: MessageDirection
+  direction: string // 'inbound' | 'outbound'
   summary?: string
-  timestamp: string
-  message_id?: string
+  timestamp?: string
+  message_count: number
 }
 
 export interface RelationshipSchema {
-  person_id: string
-  related_person_id: string
-  type: string
-  strength?: number
-  notes?: string
+  link_type: string
+  target_type: string
+  target_id: string
+  target_name?: string
+}
+
+export interface ChannelPresence {
+  channel: string
+  identifier: string
+  last_message_at?: string
+  available: boolean
 }
 
 export interface PersonDetailResponse extends PersonResponse {
+  email?: string
+  phone?: string
+  comms_trust_level: number
   interactions: InteractionSchema[]
   relationships: RelationshipSchema[]
-  task_mentions: string[]
-  vault_mentions: string[]
+  presence: ChannelPresence[]
+}
+
+export interface ChannelMessage {
+  id: string
+  channel: string
+  sender: string
+  text: string
+  timestamp?: string
+  from_me: boolean
+  media_type: string
+  has_media: boolean
+}
+
+export interface PersonMessagesResponse {
+  person_id: string
+  messages: ChannelMessage[]
+  presence: ChannelPresence[]
+  total: number
+  has_more: boolean
+}
+
+export interface SendMessageResponse {
+  success: boolean
+  channel: string
+  recipient: string
+  message: string
 }
 
 export interface UpdatePersonRequest {
   name?: string
-  aliases?: string[]
-  channels?: Record<string, string>
+  importance?: number
+  privacy_level?: number
   tags?: string[]
-  notes?: string
-}
-
-export interface PersonSearchRequest {
-  query: string
-  tags?: string[]
-  limit?: number
+  organization?: string
+  role?: string
+  city?: string
+  email?: string
+  phone?: string
+  how_met?: string
+  birthday?: string
 }
 
 export interface PersonSurfaceItem {
   person: PersonResponse
   reason: string
-  score: number
+  urgency: number
+  suggested_action?: string
 }
 
 export interface PersonSurfaceResponse {
-  items: PersonSurfaceItem[]
+  surfaces: PersonSurfaceItem[]
+  total: number
+}
+
+export interface TimelineEntry {
+  id: string
+  type: string // 'interaction' | 'message' | 'task_mention' | 'vault_mention'
+  channel?: string
+  direction?: string
+  summary?: string
+  timestamp?: string
+  message_count: number
+  metadata?: Record<string, unknown>
+}
+
+export interface TimelineResponse {
+  person_id: string
+  entries: TimelineEntry[]
+  total: number
+  has_more: boolean
+}
+
+export interface ContactSourceInfo {
+  id: string
+  name: string
+  type: string // 'apple' | 'google' | 'whatsapp' | 'telegram'
+  available: boolean
+  estimated_count: number
+  status: string // 'ready' | 'unavailable' | 'error' | 'not_configured'
+  description: string
+}
+
+export interface ContactSourcesResponse {
+  sources: ContactSourceInfo[]
+  total_available: number
+  people_count: number
+}
+
+export interface ImportResponse {
+  source_id: string
+  imported: number
+  updated: number
+  skipped: number
+  message: string
+}
+
+// -----------------------------------------------------------------------------
+// Orbit Visualization
+// -----------------------------------------------------------------------------
+
+export interface OrbitNode {
+  id: string
+  name: string
+  importance: number
+  interaction_count: number
+  trend?: string
+  organization?: string
+  days_since?: number
+}
+
+export interface OrbitResponse {
+  nodes: OrbitNode[]
+  total: number
+}
+
+// -----------------------------------------------------------------------------
+// People Health
+// -----------------------------------------------------------------------------
+
+export interface PipelineStatus {
+  name: string
+  last_run?: string
+  stale: boolean
+  stale_days: number
+  description: string
+  can_trigger: boolean
+}
+
+export interface ChannelHealth {
+  channel: string
+  connected: boolean
+  configured: boolean
+  contact_count: number
+  detail: string
+}
+
+export interface DataQuality {
+  total_contacts: number
+  with_interactions: number
+  with_metadata: number
+  with_identifiers: number
+  enrichment_pct: number
+  importance_dist: Record<string, number>
+  needs_enrichment: number
+}
+
+export interface HealthIssue {
+  severity: string // 'info' | 'warning' | 'error'
+  message: string
+  action?: string
+  action_id?: string
+}
+
+export interface PeopleHealthResponse {
+  healthy: boolean
+  data_quality: DataQuality
+  pipelines: PipelineStatus[]
+  channels: ChannelHealth[]
+  integrations: Array<{ name: string; status: string; configured?: string }>
+  issues: HealthIssue[]
+}
+
+export interface PipelineRunResponse {
+  pipeline: string
+  started: boolean
+  message: string
+  output: string
+}
+
+// Circles
+export interface CircleResponse {
+  id: string
+  name: string
+  category?: string
+  subcategory?: string
+  source?: string
+  confidence: number
+  member_count: number
+}
+export interface CircleListResponse {
+  circles: CircleResponse[]
+  total: number
+}
+export interface CircleMemberResponse {
+  person_id: string
+  name: string
+  importance: number
+  role_in_circle?: string
+  confidence: number
+}
+export interface CircleDetailResponse {
+  circle: CircleResponse
+  members: CircleMemberResponse[]
+}
+
+// Hygiene
+export interface HygieneIssueResponse {
+  id: string
+  action_type: string
+  person_a_id?: string
+  person_a_name?: string
+  person_b_id?: string
+  person_b_name?: string
+  confidence: number
+  reason?: string
+  proposed_data?: Record<string, unknown>
+  status: string
+  created_at?: string
+}
+export interface HygieneListResponse {
+  issues: HygieneIssueResponse[]
+  total: number
+}
+export interface HygieneStatsResponse {
+  total_pending: number
+  by_type: Record<string, number>
+  total_resolved: number
+}
+
+// Organizations
+export interface OrgResponse {
+  id: string
+  name: string
+  type?: string
+  domain?: string
+  industry?: string
+  city?: string
+  member_count: number
+}
+export interface OrgListResponse {
+  organizations: OrgResponse[]
+  total: number
+}
+export interface OrgMemberResponse {
+  person_id: string
+  name: string
+  role?: string
+  department?: string
+  importance: number
+}
+export interface OrgDetailResponse {
+  organization: OrgResponse
+  members: OrgMemberResponse[]
+}
+
+// Family Tree
+export interface FamilyEdge {
+  source_id: string
+  source_name: string
+  target_id: string
+  target_name: string
+  relationship: string
+}
+export interface FamilyTreeResponse {
+  edges: FamilyEdge[]
+  total: number
 }
 
 // -----------------------------------------------------------------------------
@@ -510,6 +789,36 @@ export interface VaultSearchRequest {
   collection?: string
   limit?: number
   min_score?: number
+}
+
+// Knowledge Pipeline
+// -----------------------------------------------------------------------------
+
+export interface PipelineStageInfo {
+  stage: number
+  label: string
+  count: number
+  stale_count: number
+  items: VaultSearchResult[]
+}
+
+export interface PipelineStatsResponse {
+  stages: PipelineStageInfo[]
+  total_documents: number
+  unprocessed_captures: number
+  synthesis_opportunities: number
+  stale_decisions: number
+}
+
+export interface RelatedDocumentsResponse {
+  path: string
+  explicit_links: { path: string; title: string; relationship: string }[]
+  semantic_neighbors: { path: string; title: string; score: number; collection: string }[]
+}
+
+export interface VaultFileUpdate {
+  frontmatter?: Record<string, unknown>
+  body?: string
 }
 
 // -----------------------------------------------------------------------------
@@ -645,7 +954,7 @@ export interface PipelineListResponse {
   pipelines: PipelineDefinitionSchema[]
 }
 
-export interface PipelineRunResponse {
+export interface PipelineRunRecord {
   id: string
   pipeline_id: string
   status: PipelineStage
@@ -658,7 +967,7 @@ export interface PipelineRunResponse {
 }
 
 export interface PipelineRunListResponse {
-  runs: PipelineRunResponse[]
+  runs: PipelineRunRecord[]
   total: number
 }
 

@@ -1,7 +1,27 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { CreateTaskRequest, UpdateTaskRequest } from '@/lib/types';
+import type { Task } from '@/hooks/useWork';
 
 const API = '/api';
+
+/**
+ * Full task list for a single project — NOT capped (the global /api/work caps at
+ * 200, which starves large projects). Used by ProjectDetail so the visible list
+ * matches the authoritative counts.
+ */
+export function useProjectTasks(projectId: string | null | undefined) {
+  return useQuery({
+    queryKey: ['project-tasks', projectId],
+    enabled: !!projectId,
+    staleTime: 30_000,
+    queryFn: async (): Promise<Task[]> => {
+      const res = await fetch(`${API}/tasks?project=${encodeURIComponent(projectId!)}&limit=2000`);
+      if (!res.ok) throw new Error(`Project tasks failed: ${res.status}`);
+      const d = await res.json();
+      return Array.isArray(d.tasks) ? d.tasks : [];
+    },
+  });
+}
 
 export function useCreateTask() {
   const qc = useQueryClient();
@@ -17,6 +37,7 @@ export function useCreateTask() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['work'] });
+      qc.invalidateQueries({ queryKey: ['project-tasks'] });
     },
   });
 }
@@ -35,6 +56,7 @@ export function useUpdateTask() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['work'] });
+      qc.invalidateQueries({ queryKey: ['project-tasks'] });
     },
   });
 }
@@ -49,6 +71,7 @@ export function useDeleteTask() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['work'] });
+      qc.invalidateQueries({ queryKey: ['project-tasks'] });
     },
   });
 }

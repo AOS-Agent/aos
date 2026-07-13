@@ -85,6 +85,21 @@ export function useSSE() {
         } catch {}
       });
 
+      es.addEventListener('execution', (e) => {
+        queryClient.invalidateQueries({ queryKey: ['executions'] });
+        try {
+          const data = JSON.parse(e.data);
+          addEvent({
+            id: data.id ?? crypto.randomUUID(),
+            type: 'execution',
+            source: data.agent_id ?? 'execution',
+            message: `${data.agent_id ?? 'unknown'} → ${data.provider}/${data.model} (${data.status})`,
+            data,
+            timestamp: data.timestamp ?? new Date().toISOString(),
+          });
+        } catch {}
+      });
+
       es.onerror = () => {
         setConnected(false);
         es.close();

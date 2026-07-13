@@ -540,3 +540,280 @@ async def delete_inbox_item(
     }, actor="operator")
     if not result.get("success"):
         return JSONResponse({"error": result.get("error", "Unknown error")}, status_code=400)
+
+
+# ---------------------------------------------------------------------------
+# Task list with server-side filtering, sorting, pagination
+# ---------------------------------------------------------------------------
+
+
+@router.get("/tasks")
+async def list_tasks(
+    request: Request,
+    status: str | None = None,
+    priority: str | None = None,
+    project: str | None = None,
+    assignee: str | None = None,
+    search: str | None = None,
+    due_before: str | None = None,
+    due_after: str | None = None,
+    overdue: bool = False,
+    sort: str | None = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> JSONResponse:
+    """List tasks with server-side filtering, sorting, and pagination.
+
+    Query params:
+      status=todo,active       Multi-value status filter
+      priority=1,2             Multi-value priority filter
+      project=nuchay           Project filter
+      assignee=alex            Assignee filter
+      search=keyword           Full-text search
+      due_before=2026-04-10    Due date range
+      due_after=2026-04-01
+      overdue=true             Overdue only
+      sort=priority:asc,due_at:asc   Sort keys
+      limit=100                Page size
+      offset=0                 Offset
+    """
+    ontology = getattr(request.app.state, "ontology", None)
+    if not ontology:
+        return JSONResponse({"tasks": [], "total": 0})
+
+    # Build filters dict for the adapter
+    filters: dict[str, Any] = {}
+    if status:
+        filters["status"] = status.split(",")
+    if priority:
+        filters["priority"] = [int(p) for p in priority.split(",")]
+    if project:
+        filters["project_id"] = project
+    if assignee:
+        filters["assigned_to"] = assignee
+    if search:
+        filters["search"] = search
+
+    # Fetch from ontology (adapter handles filtering)
+    tasks = ontology.list(ObjectType.TASK, filters=filters, limit=limit, offset=offset)
+
+    # Post-filter for date ranges (adapter may not support these)
+    from datetime import datetime
+    if due_before:
+        tasks = [t for t in tasks if t.due and t.due <= due_before]
+    if due_after:
+        tasks = [t for t in tasks if t.due and t.due >= due_after]
+    if overdue:
+        now = datetime.now().isoformat()
+        tasks = [t for t in tasks if t.due and t.due < now and t.status not in ("done", "cancelled")]
+
+    # Sort
+    if sort:
+        for sort_key in reversed(sort.split(",")):
+            parts = sort_key.strip().split(":")
+            field = parts[0]
+            direction = parts[1] if len(parts) > 1 else "asc"
+            reverse = direction == "desc"
+            try:
+                tasks.sort(key=lambda t: getattr(t, field, "") or "", reverse=reverse)
+            except Exception:
+                pass
+
+    total = len(tasks)
+    responses = [_task_to_response(t) for t in tasks]
+
+    return JSONResponse({
+        "tasks": [r.model_dump(mode="json") for r in responses],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    })
+
+
+@router.get("/tasks/{task_id}", response_model=None)
+async def get_task(
+    request: Request,
+    task_id: str = Path(..., description="Task ID"),
+) -> TaskResponse | JSONResponse:
+    """Get a single task with full detail."""
+    ontology = getattr(request.app.state, "ontology", None)
+    if not ontology:
+        return JSONResponse({"error": "System starting up"}, status_code=503)
+
+    task = ontology.get(ObjectType.TASK, task_id)
+    if not task:
+        return JSONResponse({"error": f"Task not found: {task_id}"}, status_code=404)
+
+    return _task_to_response(task)
+
+
+# ---------------------------------------------------------------------------
+# Comments
+# ---------------------------------------------------------------------------
+
+
+@router.get("/tasks/{task_id}/comments")
+async def list_comments(
+    request: Request,
+    task_id: str = Path(..., description="Task ID"),
+) -> JSONResponse:
+    """List comments on a task."""
+    ontology = getattr(request.app.state, "ontology", None)
+    if not ontology:
+        return JSONResponse({"comments": []})
+
+    # Direct DB query for comments
+    db = getattr(ontology, "_work_adapter", None)
+    if not db or not hasattr(db, "conn"):
+        return JSONResponse({"comments": []})
+
+    try:
+        cursor = db.conn.execute(
+            "SELECT id, entity_type, entity_id, parent_id, author_id, author_type, body, created_at, modified_at, is_edited "
+            "FROM comments WHERE entity_type = 'task' AND entity_id = ? ORDER BY created_at ASC",
+            (task_id,),
+        )
+        comments = [
+            {
+                "id": row[0], "entity_type": row[1], "entity_id": row[2],
+                "parent_id": row[3], "author_id": row[4], "author_type": row[5],
+                "body": row[6], "created_at": row[7], "modified_at": row[8], "is_edited": bool(row[9]),
+            }
+            for row in cursor.fetchall()
+        ]
+        return JSONResponse({"comments": comments})
+    except Exception as e:
+        logger.error(f"Failed to list comments: {e}")
+        return JSONResponse({"comments": []})
+
+
+@router.post("/tasks/{task_id}/comments", status_code=status.HTTP_201_CREATED)
+async def create_comment(
+    request: Request,
+    task_id: str = Path(..., description="Task ID"),
+) -> JSONResponse:
+    """Add a comment to a task."""
+    ontology = getattr(request.app.state, "ontology", None)
+    if not ontology:
+        return JSONResponse({"error": "System starting up"}, status_code=503)
+
+    body = await request.json()
+    comment_body = body.get("body", "").strip()
+    if not comment_body:
+        return JSONResponse({"error": "Comment body is required"}, status_code=400)
+
+    author_id = body.get("author_id", "operator")
+    author_type = body.get("author_type", "operator")
+
+    db = getattr(ontology, "_work_adapter", None)
+    if not db or not hasattr(db, "conn"):
+        return JSONResponse({"error": "Database not available"}, status_code=503)
+
+    import uuid
+    from datetime import datetime
+    comment_id = str(uuid.uuid4())[:8]
+    now = datetime.now().isoformat()
+
+    try:
+        db.conn.execute(
+            "INSERT INTO comments (id, entity_type, entity_id, author_id, author_type, body, created_at) "
+            "VALUES (?, 'task', ?, ?, ?, ?, ?)",
+            (comment_id, task_id, author_id, author_type, comment_body, now),
+        )
+        db.conn.commit()
+        return JSONResponse({
+            "id": comment_id, "entity_type": "task", "entity_id": task_id,
+            "author_id": author_id, "author_type": author_type,
+            "body": comment_body, "created_at": now,
+        }, status_code=201)
+    except Exception as e:
+        logger.error(f"Failed to create comment: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+# ---------------------------------------------------------------------------
+# Activity stream (history + comments unified)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/tasks/{task_id}/activity")
+async def get_activity(
+    request: Request,
+    task_id: str = Path(..., description="Task ID"),
+) -> JSONResponse:
+    """Get unified activity stream: field changes + comments."""
+    ontology = getattr(request.app.state, "ontology", None)
+    if not ontology:
+        return JSONResponse({"activity": []})
+
+    db = getattr(ontology, "_work_adapter", None)
+    if not db or not hasattr(db, "conn"):
+        return JSONResponse({"activity": []})
+
+    try:
+        activity = []
+
+        # History entries
+        cursor = db.conn.execute(
+            "SELECT field_name, old_value, new_value, actor, actor_type, timestamp "
+            "FROM entity_history WHERE entity_type = 'task' AND entity_id = ? "
+            "ORDER BY timestamp ASC",
+            (task_id,),
+        )
+        for row in cursor.fetchall():
+            activity.append({
+                "type": "change", "field": row[0], "old_value": row[1],
+                "new_value": row[2], "actor": row[3], "actor_type": row[4],
+                "timestamp": row[5],
+            })
+
+        # Comments
+        cursor = db.conn.execute(
+            "SELECT id, author_id, author_type, body, created_at "
+            "FROM comments WHERE entity_type = 'task' AND entity_id = ? "
+            "ORDER BY created_at ASC",
+            (task_id,),
+        )
+        for row in cursor.fetchall():
+            activity.append({
+                "type": "comment", "id": row[0], "actor": row[1],
+                "actor_type": row[2], "body": row[3], "timestamp": row[4],
+            })
+
+        # Sort by timestamp
+        activity.sort(key=lambda a: a.get("timestamp", ""))
+
+        return JSONResponse({"activity": activity})
+    except Exception as e:
+        logger.error(f"Failed to get activity: {e}")
+        return JSONResponse({"activity": []})
+
+
+# ---------------------------------------------------------------------------
+# Statuses
+# ---------------------------------------------------------------------------
+
+
+@router.get("/statuses")
+async def list_statuses(request: Request) -> JSONResponse:
+    """List all status definitions grouped by category."""
+    ontology = getattr(request.app.state, "ontology", None)
+    if not ontology:
+        return JSONResponse({"statuses": []})
+
+    db = getattr(ontology, "_work_adapter", None)
+    if not db or not hasattr(db, "conn"):
+        return JSONResponse({"statuses": []})
+
+    try:
+        cursor = db.conn.execute(
+            "SELECT id, name, category, color, position, is_default FROM statuses ORDER BY position ASC"
+        )
+        statuses = [
+            {"id": r[0], "name": r[1], "category": r[2], "color": r[3], "position": r[4], "is_default": bool(r[5])}
+            for r in cursor.fetchall()
+        ]
+        return JSONResponse({"statuses": statuses})
+    except Exception as e:
+        logger.error(f"Failed to list statuses: {e}")
+        return JSONResponse({"statuses": []})

@@ -43,18 +43,28 @@ export function SessionEndReview({
   const [saveToVault, setSaveToVault] = useState(true)
   const [loading, setLoading] = useState(true)
 
-  // Fetch session summary from backend
+  // Fetch session summary from backend (the end endpoint generates it)
   useEffect(() => {
     let cancelled = false
 
     async function fetchSummary() {
       try {
-        const res = await fetch(`/companion/session/${session.id}/summary`)
+        // Get session data which includes summary_json from the end flow
+        const res = await fetch(`/companion/session/${session.id}`)
         if (res.ok && !cancelled) {
-          const data = await res.json()
+          const sessionData = await res.json()
+          const data = typeof sessionData.summary_json === 'string'
+            ? JSON.parse(sessionData.summary_json || '{}')
+            : (sessionData.summary_json || {})
+
           setSummary(data)
-          // Build editable summary text from key points
+
+          // Build editable summary text — AI summary first, then structured points
           const parts: string[] = []
+          if (data.executive_summary) {
+            parts.push(data.executive_summary)
+            parts.push('')
+          }
           if (data.key_points?.length) {
             parts.push('Key Points:')
             data.key_points.forEach((p: string) => parts.push(`- ${p}`))
@@ -77,9 +87,6 @@ export function SessionEndReview({
             if (b.type === 'note' || b.type === 'insight') points.push(b.text)
           })
         })
-        const tasks = approvals
-          .filter((a) => a.type === 'task' && a.status === 'approved')
-          .map((a) => a.title)
         const decisions = approvals
           .filter((a) => a.type === 'decision' && a.status === 'approved')
           .map((a) => a.title)
@@ -94,18 +101,6 @@ export function SessionEndReview({
           decisions.forEach((d) => fallbackParts.push(`- ${d}`))
         }
         setSummaryText(fallbackParts.join('\n') || 'Session ended.')
-        setSummary({
-          key_points: points.slice(0, 10),
-          tasks,
-          ideas: [],
-          decisions,
-          stats: {
-            duration_seconds: 0,
-            segment_count: 0,
-            note_count: noteGroups.reduce((n, g) => n + g.bullets.length, 0),
-            approval_count: approvals.filter((a) => a.status === 'approved').length,
-          },
-        })
       } finally {
         if (!cancelled) setLoading(false)
       }
@@ -190,7 +185,7 @@ export function SessionEndReview({
                 >
                   <Check className="w-3.5 h-3.5 text-green shrink-0" />
                   <span className="type-label text-text-secondary truncate">{task.title}</span>
-                  {task.metadata.priority && (
+                  {Boolean(task.metadata.priority) && (
                     <span className="type-tiny text-text-quaternary shrink-0">
                       P{String(task.metadata.priority)}
                     </span>

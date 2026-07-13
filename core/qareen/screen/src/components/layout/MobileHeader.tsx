@@ -4,8 +4,8 @@ import { Link } from 'react-router-dom';
 import {
   Menu, X,
   CheckSquare, Bot, ShieldCheck, Calendar,
-  FolderKanban, Brain, Library, Users,
-  Activity, GitBranch, MessageCircle, BarChart3, Settings, Mic,
+  FolderKanban, Library, Users,
+  Activity, BarChart3, Settings, Mic, Radar,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -14,17 +14,15 @@ const SCREEN_NAMES: Record<string, string> = {
   tasks: 'Tasks',
   agents: 'Agents',
   approvals: 'Approvals',
+  sentinel: 'Sentinel',
   calendar: 'Calendar',
   projects: 'Projects',
-  memory: 'Memory',
   vault: 'Vault',
   people: 'People',
   system: 'System',
-  pipelines: 'Pipelines',
   analytics: 'Analytics',
-  config: 'Config',
-  channels: 'Channels',
-  chief: 'Chief',
+  settings: 'Settings',
+  chat: 'Chat',
   meeting: 'Meeting',
 };
 
@@ -45,13 +43,13 @@ const NAV_GROUPS: NavGroup[] = [
     label: 'Knowledge',
     items: [
       { label: 'Vault', href: '/vault', icon: Library },
-      { label: 'Memory', href: '/memory', icon: Brain },
     ],
   },
   {
     label: 'Agents',
     items: [
       { label: 'Agents', href: '/agents', icon: Bot, live: true },
+      { label: 'Sentinel', href: '/sentinel', icon: Radar, live: true },
       { label: 'Approvals', href: '/approvals', icon: ShieldCheck },
     ],
   },
@@ -59,7 +57,6 @@ const NAV_GROUPS: NavGroup[] = [
     label: 'System',
     items: [
       { label: 'System', href: '/system', icon: Activity, live: true },
-      { label: 'Pipelines', href: '/pipelines', icon: GitBranch },
     ],
   },
   {
@@ -67,8 +64,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { label: 'Analytics', href: '/analytics', icon: BarChart3 },
       { label: 'People', href: '/people', icon: Users },
-      { label: 'Config', href: '/config', icon: Settings },
-      { label: 'Channels', href: '/channels', icon: MessageCircle },
+      { label: 'Settings', href: '/settings', icon: Settings },
     ],
   },
 ];

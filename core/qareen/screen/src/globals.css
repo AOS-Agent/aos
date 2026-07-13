@@ -77,6 +77,11 @@
   --color-active:   rgba(255, 245, 235, 0.08);
   --color-selected: rgba(255, 245, 235, 0.12);
 
+  /* === Glass — translucent surfaces === */
+  --glass-bg:     rgba(30, 26, 22, 0.60);
+  --glass-border: rgba(255, 245, 235, 0.06);
+  --glass-shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
+
   /* === Border Radius === */
   --radius-xs:   3px;
   --radius-sm:   5px;
@@ -125,7 +130,7 @@ html {
 body {
   color: var(--color-text);
   background: var(--color-bg);
-  font-family: var(--font-serif);
+  font-family: var(--font-sans);
   font-size: 14px;
   line-height: 1.6;
   letter-spacing: 0em;
@@ -133,11 +138,9 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* UI elements stay sans-serif — menus, buttons, labels, inputs, nav */
-nav, button, [role="button"], input, select, textarea, label,
-kbd, code, pre, th, .type-overline, .type-tiny, .type-label, .type-caption {
-  font-family: var(--font-sans);
-  letter-spacing: -0.008em;
+/* Mono elements */
+kbd, code, pre {
+  font-family: var(--font-mono);
 }
 
 /* === Touch Interaction === */
@@ -194,16 +197,29 @@ a, button, [role="button"], input, select, textarea, label {
   --color-border-secondary: rgba(56, 50, 43, 0.12);
   --color-border-tertiary:  rgba(56, 50, 43, 0.18);
 
+  --color-accent:       #C4660A;
+  --color-accent-hover: #D9770E;
+  --color-accent-muted: #FAF0E5;
+  --color-accent-subtle: rgba(196, 102, 10, 0.10);
+
   --color-hover:    rgba(56, 50, 43, 0.04);
   --color-active:   rgba(56, 50, 43, 0.08);
   --color-selected: rgba(56, 50, 43, 0.12);
 
-  --color-green:       #2D8A50;
-  --color-green-muted: #E8F5EE;
-  --color-yellow:      #B8860E;
-  --color-yellow-muted:#FBF5E0;
-  --color-red:         #B84840;
-  --color-red-muted:   #FCE8E7;
+  --color-green:        #2D8A50;
+  --color-green-muted:  #E8F5EE;
+  --color-yellow:       #B8860E;
+  --color-yellow-muted: #FBF5E0;
+  --color-orange:       #D9730D;
+  --color-orange-muted: #FAE8D5;
+  --color-red:          #B84840;
+  --color-red-muted:    #FCE8E7;
+  --color-blue:         #2968A8;
+  --color-blue-muted:   #E0EEF8;
+  --color-purple:       #7A58A8;
+  --color-purple-muted: #EEE8F5;
+  --color-teal:         #288090;
+  --color-teal-muted:   #E0F0F5;
 
   --color-tag-gray:      #7A7570;
   --color-tag-gray-bg:   #EDEAE5;
@@ -223,6 +239,11 @@ a, button, [role="button"], input, select, textarea, label {
   --color-tag-teal-bg:   #E0F2F5;
   --color-tag-pink:      #A04878;
   --color-tag-pink-bg:   #F5E5EE;
+
+  /* === Glass — light mode: frosted white === */
+  --glass-bg:     rgba(247, 244, 240, 0.70);
+  --glass-border: rgba(56, 50, 43, 0.08);
+  --glass-shadow: 0 2px 12px rgba(38, 28, 18, 0.08);
 
   --shadow-low:    0px 1px 2px rgba(38, 28, 18, 0.06), 0px 0px 0px 1px rgba(38, 28, 18, 0.04);
   --shadow-medium: 0px 2px 8px rgba(38, 28, 18, 0.09), 0px 0px 0px 1px rgba(38, 28, 18, 0.04);
@@ -266,7 +287,11 @@ a, button, [role="button"], input, select, textarea, label {
 .meeting-prose td { padding: 6px 8px; color: var(--color-text-tertiary); border-bottom: 1px solid var(--color-border); }
 .meeting-prose tr:last-child td { border-bottom: none; }
 
-/* Chief chat cursor blink */
+/* Hide scrollbar utility */
+.scrollbar-none { scrollbar-width: none; -ms-overflow-style: none; }
+.scrollbar-none::-webkit-scrollbar { display: none; }
+
+/* Chat cursor blink */
 @keyframes blink {
   0%, 100% { opacity: 1; }
   50% { opacity: 0; }

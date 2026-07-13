@@ -2,16 +2,34 @@ import { useQuery } from '@tanstack/react-query';
 
 const API = '/api';
 
+export interface TaskHandoff {
+  state: string;
+  next_step: string;
+  files: string[];
+  decisions: string[];
+  blockers: string[];
+  session_id?: string;
+  timestamp?: string;
+}
+
 export interface Task {
   id: string;
   title: string;
   status: 'todo' | 'active' | 'waiting' | 'done' | 'cancelled';
   priority: number;
   project: string | null;
+  description: string | null;
+  assigned_to: string | null;
+  created_by: string | null;
   created: string;
+  started: string | null;
   completed: string | null;
+  due: string | null;
   tags: string[];
+  parent_id: string | null;
   subtasks?: Task[];
+  handoff?: TaskHandoff | null;
+  recurrence: string | null;
   source?: string;
 }
 
@@ -27,6 +45,27 @@ export interface Project {
   title: string;
   status: string;
   goal?: string;
+  /** Linked git repo path (projects.path). Presence gates the Git cockpit view. */
+  path?: string | null;
+  task_count?: number;
+  done_count?: number;
+  active_count?: number;
+}
+
+export interface KeyResult {
+  title: string;
+  progress: number;
+  target: number;
+}
+
+export interface Goal {
+  id: string;
+  title: string;
+  status?: string;
+  description?: string;
+  weight?: number;
+  project?: string;
+  key_results?: KeyResult[];
 }
 
 export interface WorkData {

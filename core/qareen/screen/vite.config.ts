@@ -2,6 +2,10 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'path'
 
+// Dev mode: VITE_API_PORT overrides the backend target (default: 4096 runtime)
+const API_PORT = process.env.VITE_API_PORT ?? '4096'
+const API_TARGET = `http://localhost:${API_PORT}`
+
 export default defineConfig({
   plugins: [
     react(),
@@ -19,7 +23,7 @@ export default defineConfig({
     allowedHosts: true, // Allow all hosts (Tailscale, IP, hostname)
     proxy: {
       '/api/stream': {
-        target: 'http://localhost:7700',
+        target: API_TARGET,
         changeOrigin: true,
         // SSE requires no buffering and no timeout
         configure: (proxy) => {
@@ -31,15 +35,15 @@ export default defineConfig({
         },
       },
       '/api': {
-        target: 'http://localhost:7700',
+        target: API_TARGET,
         changeOrigin: true,
       },
       '/ws': {
-        target: 'http://localhost:7700',
+        target: API_TARGET,
         ws: true,
       },
       '/companion/stream': {
-        target: 'http://localhost:7700',
+        target: API_TARGET,
         changeOrigin: true,
         configure: (proxy) => {
           proxy.on('proxyRes', (proxyRes) => {
@@ -48,14 +52,8 @@ export default defineConfig({
           });
         },
       },
-      // CENTCOM meetings data lives on the companion service (port 7603)
-      '/companion/meetings': {
-        target: 'http://localhost:7603',
-        changeOrigin: true,
-        rewrite: (path) => path.replace('/companion/meetings', '/meetings'),
-      },
       '/companion': {
-        target: 'http://localhost:7700',
+        target: API_TARGET,
         changeOrigin: true,
       },
     },

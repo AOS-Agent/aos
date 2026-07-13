@@ -149,7 +149,7 @@ export const ApprovalItemComponent = memo(function ApprovalItemComponent({
               onClick={cancelUndo}
               className="type-label text-accent hover:text-accent-hover transition-colors"
             >
-              Undo
+              Undo<kbd className="ml-1 text-[9px] opacity-50 hidden md:inline">U</kbd>
             </button>
           </div>
           <div className="w-full h-1 bg-bg-tertiary rounded-full overflow-hidden">
@@ -239,7 +239,7 @@ export const ApprovalItemComponent = memo(function ApprovalItemComponent({
               "
             >
               <Check className="w-3 h-3" />
-              Approve
+              Approve<kbd className="ml-1 text-[9px] opacity-50 hidden md:inline">A</kbd>
             </button>
             <button
               onClick={() => onEdit(item.id)}
@@ -253,10 +253,11 @@ export const ApprovalItemComponent = memo(function ApprovalItemComponent({
               "
             >
               <Pencil className="w-3 h-3" />
-              Edit
+              Edit<kbd className="ml-1 text-[9px] opacity-50 hidden md:inline">E</kbd>
             </button>
             <button
               onClick={handleDismiss}
+              title="Dismiss (D)"
               className="
                 h-7 px-2 rounded-xs
                 inline-flex items-center justify-center

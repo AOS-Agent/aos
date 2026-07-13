@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// HTTP client for the AOS Qareen API (proxied via Vite to :7603)
+// HTTP client for the AOS Qareen API (proxied via Vite to :4096)
 // ---------------------------------------------------------------------------
 
 const API_BASE = "/api";

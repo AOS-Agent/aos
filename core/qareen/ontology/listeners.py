@@ -6,10 +6,10 @@ fire-and-forget safe (never crashes), and logs exceptions.
 
 Listeners:
   on_task_activity        — Appends to ~/.aos/work/activity.yaml
-  on_task_dashboard_notify — POSTs event to dashboard SSE endpoint
+  on_task_sse_notify      — Emits work event to EventBus → SSE clients
   on_task_github_sync      — Creates/closes GitHub issues for aos project
   on_task_initiative_sync  — Checks off initiative doc checkboxes
-  on_task_cascade_notify   — Notifies dashboard when parent auto-completes
+  on_task_cascade_notify   — Notifies Qareen when parent auto-completes
 """
 
 from __future__ import annotations
@@ -22,7 +22,6 @@ import os
 import re
 import subprocess
 import tempfile
-import urllib.request
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -46,8 +45,10 @@ WORK_DIR = Path.home() / ".aos" / "work"
 ACTIVITY_FILE = WORK_DIR / "activity.yaml"
 MAX_ACTIVITY = 100
 
-DASHBOARD_URL = "http://127.0.0.1:4096"
 AOS_REPO = "hishamalhadi/aos"
+
+# Module-level bus reference — set by register_listeners()
+_bus: EventBus | None = None
 
 # Map event_type to human-readable action names for the activity log
 _ACTION_MAP = {
@@ -267,24 +268,25 @@ async def on_task_activity(event: Event) -> None:
         logger.exception("on_task_activity failed for %s", event.event_type)
 
 
-async def on_task_dashboard_notify(event: Event) -> None:
-    """POST event data to dashboard for instant SSE push.
+async def on_task_sse_notify(event: Event) -> None:
+    """Emit work event directly to EventBus for SSE broadcast.
 
     Handles: task.* (all task events).
-    Fire-and-forget, 1 second timeout, silent on failure.
+    The SSEManager subscribes to "*" on the bus, so any event emitted
+    here reaches all connected browser clients instantly.
     """
+    if _bus is None:
+        return
     try:
-        data = json.dumps(_event_to_notify_dict(event)).encode()
-        req = urllib.request.Request(
-            f"{DASHBOARD_URL}/api/work/notify",
-            data=data,
-            headers={"Content-Type": "application/json"},
-            method="POST",
+        data = _event_to_notify_dict(event)
+        notify_event = Event(
+            event_type="work.notify",
+            source="ontology",
+            payload=data,
         )
-        # urlopen is blocking — run in thread
-        await asyncio.to_thread(urllib.request.urlopen, req, timeout=1)
+        await _bus.emit(notify_event)
     except Exception:
-        pass  # Dashboard may not be running — silent
+        logger.debug("SSE notify failed for %s", event.event_type)
 
 
 async def on_task_github_sync(event: Event) -> None:
@@ -332,9 +334,9 @@ async def on_task_initiative_sync(event: Event) -> None:
     try:
         await asyncio.to_thread(_sync_initiative_checkbox_sync, event)
 
-        # If checkbox was synced, notify the dashboard
+        # If checkbox was synced, notify via EventBus
         source_ref = event.payload.get("source_ref")
-        if source_ref:
+        if source_ref and _bus is not None:
             notify_data = {
                 "action": "initiative_update",
                 "title": event.title or "",
@@ -342,19 +344,14 @@ async def on_task_initiative_sync(event: Event) -> None:
                 "task_id": event.task_id or "",
                 "ts": datetime.now().isoformat(),
             }
-            data = json.dumps(notify_data).encode()
-            req = urllib.request.Request(
-                f"{DASHBOARD_URL}/api/work/notify",
-                data=data,
-                headers={"Content-Type": "application/json"},
-                method="POST",
-            )
             try:
-                await asyncio.to_thread(
-                    urllib.request.urlopen, req, timeout=1
-                )
+                await _bus.emit(Event(
+                    event_type="work.notify",
+                    source="ontology",
+                    payload=notify_data,
+                ))
             except Exception:
-                pass  # Dashboard may not be running
+                pass
     except Exception:
         logger.exception(
             "on_task_initiative_sync failed for %s", event.event_type
@@ -362,11 +359,11 @@ async def on_task_initiative_sync(event: Event) -> None:
 
 
 async def on_task_cascade_notify(event: Event) -> None:
-    """Notify dashboard when a parent task auto-completed via subtask cascade.
+    """Notify Qareen when a parent task auto-completed via subtask cascade.
 
     On task.completed: if event.payload indicates a parent auto-completed
     (parent_auto_completed=True, parent_id, parent_title present), emit
-    a phase_completed initiative event to the dashboard.
+    a phase_completed initiative event to Qareen.
     """
     if not isinstance(event, TaskCompleted):
         return
@@ -378,7 +375,7 @@ async def on_task_cascade_notify(event: Event) -> None:
         if not parent_id:
             return
 
-        # A parent task was auto-completed — notify dashboard
+        # A parent task was auto-completed — notify via EventBus
         notify_data = {
             "action": "phase_completed",
             "title": parent_title or parent_id,
@@ -388,17 +385,15 @@ async def on_task_cascade_notify(event: Event) -> None:
         if parent_project:
             notify_data["project"] = parent_project
 
-        data = json.dumps(notify_data).encode()
-        req = urllib.request.Request(
-            f"{DASHBOARD_URL}/api/work/notify",
-            data=data,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        try:
-            await asyncio.to_thread(urllib.request.urlopen, req, timeout=1)
-        except Exception:
-            pass  # Dashboard may not be running
+        if _bus is not None:
+            try:
+                await _bus.emit(Event(
+                    event_type="work.notify",
+                    source="ontology",
+                    payload=notify_data,
+                ))
+            except Exception:
+                pass
 
         logger.info(
             "Cascade notify: parent %s auto-completed via %s",
@@ -419,14 +414,17 @@ def register_listeners(bus: EventBus) -> None:
     Call this once during system startup to connect side effects
     to task lifecycle events.
     """
+    global _bus
+    _bus = bus
+
     # Activity logging — all task events
     bus.subscribe("task.created", on_task_activity)
     bus.subscribe("task.completed", on_task_activity)
     bus.subscribe("task.updated", on_task_activity)
     bus.subscribe("task.deleted", on_task_activity)
 
-    # Dashboard SSE push — all task events (wildcard)
-    bus.subscribe("task.*", on_task_dashboard_notify)
+    # SSE push — all task events (wildcard)
+    bus.subscribe("task.*", on_task_sse_notify)
 
     # GitHub issue sync — create and complete only
     bus.subscribe("task.created", on_task_github_sync)

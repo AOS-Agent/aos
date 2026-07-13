@@ -354,3 +354,18 @@ class NightShiftCompleted(Event):
     cards_rebuilt: int = 0
     duration_minutes: float | None = None
     errors: tuple[str, ...] = ()
+
+
+# ---------------------------------------------------------------------------
+# Remote access events
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class RemoteAccessProgress(Event):
+    """Emitted during remote access provisioning to stream step-by-step progress."""
+
+    event_type: str = "remote_access.progress"
+    step: str = ""
+    status: str = ""
+    message: str = ""
+    detail: str = ""

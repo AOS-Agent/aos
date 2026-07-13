@@ -71,6 +71,12 @@ class VoiceManager:
         self._stt_engine: str = "none"  # "parakeet", "whisper", or "none"
         self._stt_model = None
         self._stt_streamer = None
+        # Resolve whisper model from registry (fallback to base)
+        try:
+            from infra.models.resolve import resolve_stt
+            self._whisper_repo = resolve_stt("fast")
+        except Exception:
+            self._whisper_repo = "mlx-community/whisper-base-mlx"
 
         # Audio recording to session WAV file
         self._recording = False
@@ -331,9 +337,12 @@ class VoiceManager:
 
             if self._stt_model is None:
                 t0 = time.time()
-                self._stt_model = pm.from_pretrained(
-                    "mlx-community/parakeet-tdt-0.6b-v3"
-                )
+                try:
+                    from infra.models.resolve import resolve_stt
+                    _parakeet_repo = resolve_stt("parakeet")
+                except Exception:
+                    _parakeet_repo = "mlx-community/parakeet-tdt-0.6b-v3"
+                self._stt_model = pm.from_pretrained(_parakeet_repo)
                 logger.info("Parakeet model loaded in %.1fs", time.time() - t0)
 
             import tempfile
@@ -371,7 +380,7 @@ class VoiceManager:
             t0 = time.time()
             result = mlx_whisper.transcribe(
                 audio,
-                path_or_hf_repo="mlx-community/whisper-base-mlx",
+                path_or_hf_repo=self._whisper_repo,
                 language="en",
             )
             text = result.get("text", "").strip()

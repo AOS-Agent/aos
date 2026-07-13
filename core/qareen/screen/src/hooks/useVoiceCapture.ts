@@ -10,25 +10,20 @@ import { useLiveMic } from './useLiveMic'
 
 function getWsUrl(): string {
   const { hostname, protocol, port } = window.location
-  const isSecure = protocol === 'https:'
-  const wsProto = isSecure ? 'wss:' : 'ws:'
+  const wsProto = protocol === 'https:' ? 'wss:' : 'ws:'
 
   // Dev server (Vite proxy handles /ws/audio → backend)
-  if (hostname === 'localhost' || hostname === '127.0.0.1') {
-    // Use Vite dev server port if available, otherwise direct to backend
-    if (port === '5173') {
-      return `ws://${hostname}:${port}/ws/audio`
-    }
-    return `ws://localhost:7700/ws/audio`
+  if (port === '5173') {
+    return `ws://${hostname}:${port}/ws/audio`
   }
 
-  // Over network (Tailscale HTTPS) — use dedicated WSS proxy on port 7604
-  if (isSecure) {
+  // HTTPS over network (Tailscale) — use dedicated WSS proxy on port 7604
+  if (protocol === 'https:') {
     return `wss://${hostname}:7604/ws/audio`
   }
 
-  // HTTP over network — connect directly
-  return `${wsProto}//${hostname}:7700/ws/audio`
+  // Same origin (production — qareen serves both API and SPA on :4096)
+  return `${wsProto}//${hostname}:${port}/ws/audio`
 }
 
 async function checkMicAvailable(): Promise<{ available: boolean; error?: string }> {

@@ -19,6 +19,7 @@ from .schemas import (
     IntegrationsResponse,
     IntegrationSummary,
     KeyResultSchema,
+    LocationResponse,
     OperatorResponse,
     UpdateOperatorRequest,
 )
@@ -60,19 +61,43 @@ async def get_operator(request: Request) -> OperatorResponse:
     data = _load_yaml(config_path)
 
     comms = data.get("communication", {})
+    daily = data.get("daily_loop", {})
+    loc_data = data.get("location", {})
+    trust_data = data.get("trust", {})
+    prayer_data = data.get("prayer", {})
+
+    # Build location if present
+    location = None
+    if loc_data and isinstance(loc_data, dict):
+        location = LocationResponse(
+            city=loc_data.get("city"),
+            name=loc_data.get("name"),
+            latitude=loc_data.get("latitude"),
+            longitude=loc_data.get("longitude"),
+        )
 
     return OperatorResponse(
         name=data.get("name", "Operator"),
+        nickname=data.get("nickname"),
+        prompt=comms.get("prompt", data.get("prompt")),
         timezone=data.get("timezone", "America/Chicago"),
         language=comms.get("language", data.get("language", "en")),
         agent_name=data.get("agent_name", "chief"),
-        morning_briefing=data.get("morning_briefing", "06:00"),
-        evening_checkin=data.get("evening_checkin", "21:00"),
-        quiet_hours_start=data.get("quiet_hours_start", "23:00"),
-        quiet_hours_end=data.get("quiet_hours_end", "06:00"),
+        # Schedule: check nested daily_loop first, then flat keys
+        morning_briefing=daily.get("morning_briefing", data.get("morning_briefing", "06:00")),
+        evening_checkin=str(daily.get("evening_checkin", data.get("evening_checkin", "21:00"))),
+        quiet_hours_start=str(daily.get("quiet_hours_start", data.get("quiet_hours_start", "23:00"))),
+        quiet_hours_end=str(daily.get("quiet_hours_end", data.get("quiet_hours_end", "06:00"))),
         business_type=data.get("business_type"),
         role=data.get("role"),
+        location=location,
+        handle=data.get("handle"),
+        email=data.get("email"),
+        locale=data.get("locale"),
     )
+
+
+_DAILY_LOOP_KEYS = {"morning_briefing", "evening_checkin", "quiet_hours_start", "quiet_hours_end"}
 
 
 @router.patch("/operator", response_model=OperatorResponse)
@@ -83,10 +108,15 @@ async def update_operator(body: UpdateOperatorRequest, request: Request) -> Oper
 
     updates = body.model_dump(exclude_none=True)
     for key, val in updates.items():
-        if key == "language":
+        if key in ("language", "prompt"):
             if "communication" not in data:
                 data["communication"] = {}
-            data["communication"]["language"] = val
+            data["communication"][key] = val
+        elif key in _DAILY_LOOP_KEYS:
+            # Schedule fields live under daily_loop in the YAML
+            if "daily_loop" not in data:
+                data["daily_loop"] = {}
+            data["daily_loop"][key] = val
         elif hasattr(val, "value"):
             data[key] = val.value
         else:
@@ -225,3 +255,90 @@ async def get_integrations(request: Request) -> IntegrationsResponse:
         total=len(integrations),
         active_count=active,
     )
+
+
+@router.get("/connections")
+async def get_connections(request: Request):
+    """Rich account data grouped by context — for the Connections settings page."""
+    config_path = AOS_DATA / "config" / "accounts.yaml"
+    data = _load_yaml(config_path)
+
+    contexts_raw = data.get("contexts", {})
+    accounts_raw = data.get("accounts", {})
+
+    contexts = []
+    for ctx_id, ctx in contexts_raw.items():
+        if not isinstance(ctx, dict):
+            continue
+        # Build account list for this context
+        ctx_accounts = []
+        for provider, identifier in (ctx.get("accounts") or {}).items():
+            # Look up the full account entry
+            provider_data = accounts_raw.get(provider, {})
+            entries = provider_data.get("entries", {})
+            entry = entries.get(identifier, {}) if isinstance(entries, dict) else {}
+
+            ctx_accounts.append({
+                "provider": provider,
+                "identifier": str(identifier),
+                "label": entry.get("label", ""),
+                "trust": entry.get("trust", "open"),
+                "services": entry.get("services", []),
+                "note": entry.get("note"),
+            })
+
+        contexts.append({
+            "id": ctx_id,
+            "label": ctx.get("label", ctx_id),
+            "description": ctx.get("description", ""),
+            "default": ctx.get("default", False),
+            "accounts": ctx_accounts,
+        })
+
+    return {
+        "contexts": contexts,
+        "total_accounts": sum(len(c["accounts"]) for c in contexts),
+    }
+
+
+# Default notification preferences — all on unless explicitly disabled
+_DEFAULT_NOTIFICATIONS = {
+    "morning_briefing": True,
+    "evening_checkin": True,
+    "weekly_digest": True,
+    "learning_tips": True,
+    "service_alerts": True,
+    "update_notifications": True,
+    "session_summaries": True,
+}
+
+
+@router.get("/notifications")
+async def get_notifications(request: Request):
+    """Read notification preferences from operator.yaml."""
+    config_path = AOS_DATA / "config" / "operator.yaml"
+    data = _load_yaml(config_path)
+    saved = data.get("notifications", {})
+    # Merge defaults with saved preferences
+    prefs = {**_DEFAULT_NOTIFICATIONS, **saved}
+    return {"notifications": prefs}
+
+
+@router.patch("/notifications")
+async def update_notifications(request: Request):
+    """Update notification preferences. Body: { "key": true/false }."""
+    config_path = AOS_DATA / "config" / "operator.yaml"
+    data = _load_yaml(config_path)
+    body = await request.json()
+
+    if "notifications" not in data:
+        data["notifications"] = {}
+
+    for key, val in body.items():
+        if key in _DEFAULT_NOTIFICATIONS and isinstance(val, bool):
+            data["notifications"][key] = val
+
+    _save_yaml(config_path, data)
+    saved = data.get("notifications", {})
+    prefs = {**_DEFAULT_NOTIFICATIONS, **saved}
+    return {"notifications": prefs}

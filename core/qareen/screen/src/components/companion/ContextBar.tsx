@@ -65,7 +65,17 @@ export function ContextBar() {
     }
     tick()
     const id = setInterval(tick, 30000)
-    return () => clearInterval(id)
+    // Background tabs/PWAs freeze timers, so on resume the bar can show a
+    // stale time (e.g. "11:26 PM" mid-afternoon). Recompute the moment the
+    // tab becomes visible or regains focus.
+    const onResume = () => { if (document.visibilityState === 'visible') tick() }
+    document.addEventListener('visibilitychange', onResume)
+    window.addEventListener('focus', onResume)
+    return () => {
+      clearInterval(id)
+      document.removeEventListener('visibilitychange', onResume)
+      window.removeEventListener('focus', onResume)
+    }
   }, [])
 
   // Weather — fetch once, cache 10min
@@ -98,8 +108,7 @@ export function ContextBar() {
         border border-border/40
         shadow-[0_2px_12px_rgba(0,0,0,0.3)]
         text-[11px] tracking-wide
-        font-[var(--font-sans)]
-      " style={{ fontFamily: 'var(--font-sans)' }}>
+      ">
         {/* Time */}
         <span className="text-text-secondary font-[510] tabular-nums">
           {formatTime(now)}
@@ -121,7 +130,9 @@ export function ContextBar() {
             </span>
             <Dot />
             <span className="text-text-tertiary font-[450]">
-              {prayer.nextPrayer} in {formatCountdown(prayer.minutesUntilNext)}
+              {prayer.minutesUntilNext <= 0
+                ? `${prayer.nextPrayer} now`
+                : `${prayer.nextPrayer} in ${formatCountdown(prayer.minutesUntilNext)}`}
             </span>
           </>
         )}
