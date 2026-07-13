@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import json
 import re
+import os
 import sqlite3
+from pathlib import Path
 import uuid
 from datetime import date, datetime
 from typing import Any
@@ -558,6 +560,30 @@ class WorkAdapter(Adapter):
             return None
         return self._row_to_task(row)
 
+
+    def _session_conn(self):
+        """Connection containing sessions/session_tasks (Qareen-owned until aos#131).
+
+        Post-cutover (work.db) the session tables live only in qareen.db; route
+        session reads/writes there so session linking keeps working and is only
+        ever written in one place.
+        """
+        try:
+            self._conn.execute("SELECT 1 FROM session_tasks LIMIT 1")
+            return self._conn
+        except sqlite3.OperationalError:
+            pass
+        if os.environ.get("AOS_WORK_DB"):
+            return None  # injected environment — never escape to the real instance DB
+        if getattr(self, "_session_fallback", None) is None:
+            qdb = Path.home() / ".aos" / "data" / "qareen.db"
+            if not qdb.exists():
+                return None
+            c = sqlite3.connect(str(qdb))
+            c.row_factory = sqlite3.Row
+            self._session_fallback = c
+        return self._session_fallback
+
     def _row_to_task(self, row: sqlite3.Row) -> Task:
         """Convert a tasks table row to a Task dataclass."""
         task_id = row["id"]
@@ -582,13 +608,14 @@ class WorkAdapter(Adapter):
         # Load session links
         sessions = []
         try:
-            sess_rows = self._conn.execute(
+            _sc0 = self._session_conn()
+            sess_rows = _sc0.execute(
                 "SELECT st.session_id, s.started_at, s.outcome "
                 "FROM session_tasks st "
                 "LEFT JOIN sessions s ON st.session_id = s.id "
                 "WHERE st.task_id = ?",
                 (task_id,),
-            ).fetchall()
+            ).fetchall() if _sc0 is not None else []
             for sr in sess_rows:
                 entry = {"id": sr["session_id"]}
                 if sr["started_at"]:
@@ -1953,35 +1980,46 @@ class WorkAdapter(Adapter):
 
         now = _now()
 
+        # Sessions are Qareen-owned until aos#131 — route to the DB that has them.
+        _sc = self._session_conn()
+        if _sc is None:
+            self._conn.commit()
+            return self._row_to_task(
+                self._conn.execute(
+                    "SELECT * FROM tasks WHERE id = ?", (task_id,)
+                ).fetchone()
+            )
         # Ensure sessions row exists FIRST (session_tasks has FK to sessions)
-        sess_exists = self._conn.execute(
+        sess_exists = _sc.execute(
             "SELECT 1 FROM sessions WHERE id = ?", (session_id,)
         ).fetchone()
         if not sess_exists:
-            self._conn.execute(
+            _sc.execute(
                 "INSERT INTO sessions (id, status, started_at, task_id, outcome) "
                 "VALUES (?, 'active', ?, ?, ?)",
                 (session_id, now, task_id, outcome),
             )
         elif outcome:
-            self._conn.execute(
+            _sc.execute(
                 "UPDATE sessions SET outcome = ? WHERE id = ?",
                 (outcome, session_id),
             )
 
         # Insert session_tasks link if not present
-        existing = self._conn.execute(
+        existing = _sc.execute(
             "SELECT 1 FROM session_tasks WHERE session_id = ? AND task_id = ?",
             (session_id, task_id),
         ).fetchone()
         if not existing:
-            self._conn.execute(
+            _sc.execute(
                 "INSERT INTO session_tasks (session_id, task_id, relation) "
                 "VALUES (?, ?, 'worked_on')",
                 (session_id, task_id),
             )
 
         self._conn.commit()
+        if _sc is not self._conn:
+            _sc.commit()
         return self._row_to_task(
             self._conn.execute(
                 "SELECT * FROM tasks WHERE id = ?", (task_id,)
