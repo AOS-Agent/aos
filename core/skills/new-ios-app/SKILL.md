@@ -126,7 +126,7 @@ it automatically once processed.
 ### Swift 6 MainActor default isolation — the #1 source of bugs
 The package ships with `.defaultIsolation(MainActor.self)`. That makes EVERY
 closure/func MainActor-isolated unless marked otherwise — which crashes at
-runtime when a framework calls your code on a background thread.
+runtime when a framework calls that code on a background thread.
 - **Dynamic `UIColor` providers MUST be `nonisolated`.** A `Color.adaptive`
   helper using `UIColor { trait in … }` will trap (`EXC_BREAKPOINT /
   _dispatch_assert_queue_fail`) because SwiftUI resolves dynamic colors on a
@@ -200,7 +200,7 @@ The scaffold generates app + Core package only. For extensions:
   family-controls-distribution) — in 2026 it's a single "Get Entitlement"
   acknowledgment, then you enable the capability per App ID. **TestFlight
   (even internal) requires the distribution entitlement** (dev entitlement only
-  works from Xcode on your own device). Internal testers skip Beta App Review.
+  works from Xcode on the developer's own device). Internal testers skip Beta App Review.
 - **App Group identifier field auto-prefixes `group.`** in the portal — type
   only the rest, or you get `group.group.…`.
 

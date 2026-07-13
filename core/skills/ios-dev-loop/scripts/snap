@@ -23,7 +23,7 @@ BUILD=1
 ROUTE="${1:-default}"; [[ $# -gt 0 ]] && shift
 
 # ─── Routes → launch arguments (EDIT ME per project) ────────────────────
-# Wire each route to your app's debug launch args (e.g. -uiTestSeed,
+# Wire each route to the app's debug launch args (e.g. -uiTestSeed,
 # -uiTab journey). Unknown routes pass through as raw launch args.
 ARGS=()
 case "$ROUTE" in

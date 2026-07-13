@@ -14,7 +14,7 @@ description: People DB and ontology — contact resolution, identity, relationsh
 **Key tables:**
 - `people` — 1,148 contacts (canonical_name, importance 1-4, privacy_level)
 - `person_identifiers` — Multi-channel handles (phone, email, wa_jid, telegram_id, slack_user_id)
-- `aliases` — 340+ nicknames, relationships ("my mom", "baba", short names)
+- `aliases` — 340+ nicknames, relationships ("my mom", "the boss", short names)
 - `relationships` — Family/friend graph with strength scores
 - `relationship_state` — Last interaction, drift detection, trajectory
 - `interactions` — Who/when/channel/direction (metadata, not content — content is in comms.db)

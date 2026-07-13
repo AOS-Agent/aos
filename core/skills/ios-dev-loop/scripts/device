@@ -10,7 +10,7 @@
 # One-time setup on a new phone: plug in via USB, tap "Trust", enable
 # Developer Mode (Settings → Privacy & Security), keep it UNLOCKED the
 # first time (the developer disk image can't mount on a locked phone).
-# After that, this works over Wi-Fi with the phone in your pocket.
+# After that, this works over Wi-Fi with the phone in a pocket, nearby.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
