@@ -1,7 +1,8 @@
 """
 AOS Work Engine — Read/write work data.
 
-Data lives in ~/.aos/data/qareen.db (SQLite, canonical store).
+Data lives in the kernel work DB (see backend._resolve_db_path: AOS_WORK_DB
+env -> seeded ~/.aos/data/work.db -> legacy ~/.aos/data/qareen.db).
 Legacy backup at ~/.aos/work/work.yaml (read-only, not written to).
 This module handles CRUD for tasks, projects, goals, threads, and inbox.
 
@@ -103,7 +104,23 @@ ACTIVITY_FILE = WORK_DIR / "activity.yaml"
 LIVE_CONTEXT_FILE = WORK_DIR / ".live-context.json"
 MAX_ACTIVITY = 100  # Keep last N events
 
-DB_PATH = Path.home() / ".aos" / "data" / "qareen.db"
+def _resolve_db_path():
+    """Resolve the work DB via the canonical resolver in backend.py.
+
+    backend.py owns the resolution logic (AOS_WORK_DB env -> seeded work.db ->
+    qareen.db fallback; see migration 050). engine.py must never diverge from
+    it — a second hardcoded path here is how the dashboard would silently read
+    stale data after the kernel store cutover.
+    """
+    import sys as _sys
+    _dir = str(Path(__file__).resolve().parent)
+    if _dir not in _sys.path:
+        _sys.path.insert(0, _dir)
+    import backend as _backend
+    return _backend._resolve_db_path()
+
+
+DB_PATH = _resolve_db_path()
 
 LOCK_FILE = WORK_DIR / ".work.lock"
 
