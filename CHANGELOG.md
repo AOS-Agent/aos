@@ -2,6 +2,19 @@
 
 All notable changes to AOS. Release notes sent via Telegram after each 4am update.
 
+## v0.6.3 — 2026-07-13
+
+Summary: Qareen becomes the primary AOS service on port 4096, retiring the old HTML-template dashboard — full task/work platform, companion mode, sessions, agents config, org chart, and system health, backed by a FastAPI + React app instead of static templates.
+
+- Added the Qareen service (FastAPI + Vite/React) as the AOS web platform on port 4096, replacing the legacy dashboard service.
+- Added the Qareen Tasks 100x data model (statuses, threaded comments, entity history, saved views, task participants, attachments) on top of qareen.db.
+- Added `/api/ingest` endpoints (activity, conversations, session hooks) so external processes (bridge, work engine, hooks) keep working after the dashboard retires.
+- Added migrations 053 (Qareen Tasks data model), 054 (deploy Qareen service), 055 (retire dashboard, create ingest tables) — renumbered from the unshipped council-substrate branch's 023/026/030 (see 050_work_db_ownership.py for the renumbering rationale).
+- Removed the legacy dashboard service (`core/services/dashboard/`) and its LaunchAgent template.
+- Changed service maps in watchdog, the `aos` CLI, and the scheduler from `dashboard`/`com.aos.dashboard` to `qareen`/`com.aos.qareen`.
+- Fixed the migration runner silently recording a migration as applied when `up()` returned an error string instead of raising or returning `False` — the version watermark now only advances on `True`/`None`, and any other return value (or a raised exception) fails the migration and stops the batch.
+- Scope note: this wave ships the Qareen platform shell and service only — automations/n8n, people intelligence, the comms pipeline, the knowledge/vault pipeline, sentinel, and remote access (Cloudflare tunnel) ship in later waves and are not wired into this build.
+
 ## v0.6.2 — 2026-07-13
 
 Summary: Two-lane release channels — the operator rides `edge` (origin/main, same-day) while friend machines ride `stable` (promoted releases only), so day-to-day churn no longer lands on other people's machines at 4am.
