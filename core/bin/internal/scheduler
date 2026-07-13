@@ -73,7 +73,7 @@ def check_reboot():
         log(f"Reboot detected — boot at {boot_key}, uptime {uptime_seconds}s")
 
         # Ensure all LaunchAgents are loaded
-        for la in ["com.aos.bridge", "com.aos.dashboard", "com.aos.listen"]:
+        for la in ["com.aos.bridge", "com.aos.qareen", "com.aos.listen"]:
             result = subprocess.run(["launchctl", "list"], capture_output=True, text=True, timeout=5)
             if la not in result.stdout:
                 plist = HOME / "Library" / "LaunchAgents" / f"{la}.plist"

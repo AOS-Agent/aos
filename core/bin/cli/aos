@@ -817,7 +817,7 @@ p.write_text(json.dumps(s, indent=2) + '\n')
 
         # Delete and rebuild venvs
         echo "  Rebuilding service venvs..."
-        for svc in bridge dashboard listen memory; do
+        for svc in bridge qareen listen memory; do
             rm -rf "$HOME/.aos/services/$svc/.venv"
         done
         bash "$0" deploy
@@ -840,7 +840,7 @@ p.write_text(json.dumps(s, indent=2) + '\n')
 
         # Reload all LaunchAgents
         echo "  Reloading services..."
-        for la in com.aos.scheduler com.aos.bridge com.aos.dashboard com.aos.listen; do
+        for la in com.aos.scheduler com.aos.bridge com.aos.qareen com.aos.listen; do
             launchctl unload "$HOME/Library/LaunchAgents/${la}.plist" 2>/dev/null
             launchctl load "$HOME/Library/LaunchAgents/${la}.plist" 2>/dev/null
         done

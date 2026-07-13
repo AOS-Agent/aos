@@ -182,7 +182,7 @@ fi
 if [[ -z "$SERVICES_LIST" ]]; then
     log "WARNING: Could not parse $STATE_YAML — using hardcoded fallback"
     SERVICES_LIST="bridge|com.aos.bridge|
-dashboard|com.aos.dashboard|http://127.0.0.1:4096/api/health
+qareen|com.aos.qareen|http://127.0.0.1:4096/api/health
 listen|com.aos.listen|http://127.0.0.1:7600/health
 whatsapp|com.agent.whatsmeow|http://127.0.0.1:7601/health"
 fi
