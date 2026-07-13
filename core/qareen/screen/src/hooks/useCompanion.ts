@@ -25,7 +25,8 @@ const SSE_URL = '/companion/stream'
  *   session        — session state updates
  *   note_group     — structured note group
  */
-export function useCompanion() {
+export function useCompanion(options?: { enableRestore?: boolean }) {
+  const enableRestore = options?.enableRestore ?? false
   const addStreamItem = useCompanionStore((s) => s.addStreamItem)
   const addSegment = useCompanionStore((s) => s.addSegment)
   const updateSegment = useCompanionStore((s) => s.updateSegment)
@@ -42,6 +43,10 @@ export function useCompanion() {
   const addApproval = useCompanionStore((s) => s.addApproval)
   const removeApproval = useCompanionStore((s) => s.removeApproval)
   const updateSessionTitle = useCompanionStore((s) => s.updateSessionTitle)
+  const addThread = useCompanionStore((s) => s.addThread)
+  const addUnitToThread = useCompanionStore((s) => s.addUnitToThread)
+  const setActiveThread = useCompanionStore((s) => s.setActiveThread)
+  const updateThreadSummary = useCompanionStore((s) => s.updateThreadSummary)
   const queryClient = useQueryClient()
 
   const retryCount = useRef(0)
@@ -294,6 +299,41 @@ export function useCompanion() {
         case 'companion_session_ended':
           setSession(null)
           break
+        case 'stream.unit': {
+          const u = d
+          addUnitToThread({
+            id: (u.id as string) ?? crypto.randomUUID(),
+            threadId: (u.thread_id as string) ?? '',
+            text: (u.text as string) ?? '',
+            speaker: (u.speaker as string) ?? '',
+            timestamp: (u.timestamp as string) ?? new Date().toISOString(),
+            classification: (u.classification as import('@/store/companion').ThoughtUnit['classification']) ?? 'context',
+            confidence: (u.confidence as number) ?? 0,
+            entities: (u.entities as string[]) ?? [],
+          })
+          break
+        }
+        case 'stream.thread_new': {
+          addThread({
+            id: (d.thread_id as string) ?? crypto.randomUUID(),
+            title: (d.title as string) ?? '',
+            summary: '',
+            isActive: true,
+            firstSeen: new Date().toISOString(),
+            lastSeen: new Date().toISOString(),
+          })
+          break
+        }
+        case 'stream.thread_switch': {
+          if (d.to) setActiveThread(d.to as string)
+          break
+        }
+        case 'stream.thread_update': {
+          if (d.thread_id && d.summary) {
+            updateThreadSummary(d.thread_id as string, d.summary as string)
+          }
+          break
+        }
       }
 
       // Track sequence number
@@ -318,6 +358,10 @@ export function useCompanion() {
       addApproval,
       removeApproval,
       updateSessionTitle,
+      addThread,
+      addUnitToThread,
+      setActiveThread,
+      updateThreadSummary,
       cardToApproval,
       queryClient,
     ],
@@ -345,7 +389,8 @@ export function useCompanion() {
         if (lastSeq > 0) {
           fetch(`/companion/session/events?after=${lastSeq}`)
             .then((r) => (r.ok ? r.json() : []))
-            .then((events: { type: string; data: Record<string, unknown>; seq?: number }[]) => {
+            .then((events: unknown) => {
+              if (!Array.isArray(events)) return
               for (const evt of events) {
                 replayEvent(evt)
               }
@@ -702,6 +747,57 @@ export function useCompanion() {
       } catch { /* malformed event */ }
     })
 
+    // --- Thread visualization (v2) ---
+    es.addEventListener('stream.unit', (e) => {
+      try {
+        const d = JSON.parse(e.data)
+        trackSeq(d)
+        addUnitToThread({
+          id: d.id ?? crypto.randomUUID(),
+          threadId: d.thread_id ?? '',
+          text: d.text ?? '',
+          speaker: d.speaker ?? '',
+          timestamp: d.timestamp ?? new Date().toISOString(),
+          classification: d.classification ?? 'context',
+          confidence: d.confidence ?? 0,
+          entities: d.entities ?? [],
+        })
+      } catch { /* malformed event */ }
+    })
+
+    es.addEventListener('stream.thread_new', (e) => {
+      try {
+        const d = JSON.parse(e.data)
+        trackSeq(d)
+        addThread({
+          id: d.thread_id ?? crypto.randomUUID(),
+          title: d.title ?? '',
+          summary: '',
+          isActive: true,
+          firstSeen: new Date().toISOString(),
+          lastSeen: new Date().toISOString(),
+        })
+      } catch { /* malformed event */ }
+    })
+
+    es.addEventListener('stream.thread_switch', (e) => {
+      try {
+        const d = JSON.parse(e.data)
+        trackSeq(d)
+        if (d.to) setActiveThread(d.to)
+      } catch { /* malformed event */ }
+    })
+
+    es.addEventListener('stream.thread_update', (e) => {
+      try {
+        const d = JSON.parse(e.data)
+        trackSeq(d)
+        if (d.thread_id && d.summary) {
+          updateThreadSummary(d.thread_id, d.summary)
+        }
+      } catch { /* malformed event */ }
+    })
+
     // --- Reconnect on error ---
     es.onerror = () => {
       es.close()
@@ -727,44 +823,145 @@ export function useCompanion() {
     addApproval,
     removeApproval,
     updateSessionTitle,
+    addThread,
+    addUnitToThread,
+    setActiveThread,
+    updateThreadSummary,
     cardToApproval,
     replayEvent,
     queryClient,
   ])
 
   // -------------------------------------------------------------------------
-  // Session lifecycle — resume or start a session on mount
+  // Session lifecycle — check for existing active session on mount
   // -------------------------------------------------------------------------
   const sessionInitialized = useRef(false)
   useEffect(() => {
     if (sessionInitialized.current) return
     sessionInitialized.current = true
 
-    const existingSessionId = useCompanionStore.getState().sessionId
-    if (existingSessionId) {
-      // Verify the existing session is still active
-      fetch('/companion/session')
-        .then((r) => (r.ok ? r.json() : null))
-        .then((data) => {
-          if (data?.session?.status === 'active') {
-            return
-          }
-          return fetch('/companion/session/start', { method: 'POST' })
-            .then((r) => r.json())
-            .then((session) => {
-              if (session?.id) setSessionId(session.id)
-            })
-        })
-        .catch(() => {})
-    } else {
-      fetch('/companion/session/start', { method: 'POST' })
-        .then((r) => r.json())
-        .then((session) => {
-          if (session?.id) setSessionId(session.id)
-        })
-        .catch(() => {})
-    }
+    // Check backend for an active session — don't auto-create one.
+    // Sessions are created explicitly by the user via SessionSetup.
+    fetch('/companion/session')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (data && data.status === 'active') {
+          // Active session exists — set ID so SSE event recovery works.
+          // Full state restore (transcript, notes, cards) handled by the
+          // separate sessionRestored effect below.
+          setSessionId(data.id)
+        }
+      })
+      .catch(() => {})
   }, [setSessionId])
+
+  // -------------------------------------------------------------------------
+  // Restore active session from backend on mount (survives page refresh).
+  // Only enabled on session pages — prevents home page from pulling stale data.
+  // -------------------------------------------------------------------------
+  const sessionRestored = useRef(false)
+  useEffect(() => {
+    if (!enableRestore) return
+    if (sessionRestored.current) return
+    sessionRestored.current = true
+    let cancelled = false
+
+    async function restoreSession() {
+      try {
+        const res = await fetch('/companion/session')
+        if (!res.ok) return
+        const data = await res.json()
+
+        if (cancelled || !data || data.status !== 'active') return
+
+        // Only restore sessions that have actual content — skip empty orphans
+        const hasContent = (data.utterance_count || 0) > 0
+          || (Array.isArray(data.transcript_json) && data.transcript_json.length > 0)
+        if (!hasContent) return
+
+        // Only restore if store has no session (e.g. after page refresh cleared sessionStorage)
+        const storeState = useCompanionStore.getState()
+        if (storeState.session) return
+
+        // Map backend dict → SessionState
+        storeState.setSession({
+          id: data.id,
+          title: data.title || 'Restored Session',
+          type: data.session_type || 'conversation',
+          skill: data.skill ?? null,
+          startedAt: data.started_at,
+          status: 'active',
+          stats: {
+            processed: data.utterance_count || 0,
+            total: data.utterance_count || 0,
+            approved: data.approvals_approved || 0,
+          },
+        })
+
+        // Also set the sessionId for SSE event recovery
+        if (data.id) {
+          storeState.setSessionId(data.id)
+        }
+
+        // Restore transcript segments
+        if (data.transcript_json && Array.isArray(data.transcript_json)) {
+          for (const block of data.transcript_json) {
+            if (cancelled) return
+            storeState.addSegment({
+              id: `restored-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+              speaker: block.speaker || 'You',
+              text: block.text || '',
+              timestamp: block.timestamp || new Date().toISOString(),
+              isProvisional: false,
+            })
+          }
+        }
+
+        // Restore note groups
+        if (data.notes_json && Array.isArray(data.notes_json)) {
+          for (const group of data.notes_json) {
+            if (cancelled) return
+            storeState.addNoteGroup(group)
+          }
+        }
+
+        // Restore cards as approvals
+        if (data.cards_json && Array.isArray(data.cards_json)) {
+          const typeMap: Record<string, 'task' | 'decision' | 'vault' | 'reply' | 'system'> = {
+            task: 'task', decision: 'decision', vault: 'vault',
+            reply: 'reply', system: 'system', suggestion: 'system',
+          }
+          for (const card of data.cards_json) {
+            if (cancelled) return
+            storeState.addCard(card)
+            storeState.addApproval({
+              id: card.id,
+              type: typeMap[card.card_type] ?? 'system',
+              title: card.title,
+              description: card.body,
+              metadata: extractCardMetadata(card),
+              confidence: card.confidence,
+              status: 'pending',
+              createdAt: card.created_at,
+              card: card,
+            })
+          }
+        }
+      } catch {
+        // Silent fail — session restore is best-effort
+      }
+    }
+
+    // Small delay to let SSE connect first
+    const timer = setTimeout(() => {
+      if (!cancelled) restoreSession()
+    }, 500)
+
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [])
 
   // Fetch initial briefing on mount
   const briefingFetched = useRef(false)
@@ -807,6 +1004,8 @@ export function useCompanion() {
     session: useCompanionStore((s) => s.session),
     noteGroups: useCompanionStore((s) => s.noteGroups),
     approvals: useCompanionStore((s) => s.approvals),
+    threads: useCompanionStore((s) => s.threads),
+    activeThreadId: useCompanionStore((s) => s.activeThreadId),
   }
 }
 

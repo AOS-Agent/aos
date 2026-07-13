@@ -270,10 +270,21 @@ class WorkResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class LocationResponse(BaseModel):
+    """Operator location (nested in operator.yaml)."""
+
+    city: str | None = Field(None, description="City name")
+    name: str | None = Field(None, description="Location display name")
+    latitude: float | None = Field(None, description="Latitude")
+    longitude: float | None = Field(None, description="Longitude")
+
+
 class OperatorResponse(BaseModel):
     """Operator configuration (from operator.yaml)."""
 
-    name: str = Field(..., description="Operator name")
+    name: str = Field(..., description="Operator full name")
+    nickname: str | None = Field(None, description="What Qareen calls the operator")
+    prompt: str | None = Field(None, description="Communication preferences — how the operator wants to be spoken to")
     timezone: str = Field("America/Chicago", description="IANA timezone")
     language: str = Field("en", description="Primary language")
     agent_name: str = Field("chief", description="Default agent")
@@ -284,11 +295,15 @@ class OperatorResponse(BaseModel):
     quiet_hours_end: str = Field("06:00", description="Quiet hours end")
     business_type: str | None = Field(None, description="Business type")
     role: str | None = Field(None, description="Operator role")
+    location: LocationResponse | None = Field(None, description="Operator location")
 
 
 class UpdateOperatorRequest(BaseModel):
     """Request body for updating operator config. All fields optional."""
 
+    name: str | None = Field(None, description="New name")
+    nickname: str | None = Field(None, description="New nickname")
+    prompt: str | None = Field(None, description="New communication preferences")
     timezone: str | None = Field(None, description="New timezone")
     language: str | None = Field(None, description="New language")
     agent_name: str | None = Field(None, description="New default agent")
@@ -299,6 +314,7 @@ class UpdateOperatorRequest(BaseModel):
     quiet_hours_end: str | None = Field(None, description="New quiet end")
     business_type: str | None = Field(None, description="New business type")
     role: str | None = Field(None, description="New role")
+    locale: str | None = Field(None, description="New locale")
 
 
 class AccountsResponse(BaseModel):
@@ -340,20 +356,117 @@ class AgentResponse(BaseModel):
 
     id: str = Field(..., description="Agent identifier", examples=["chief"])
     name: str = Field(..., description="Display name")
+    role: str = Field("", description="Agent role title")
     domain: str = Field("", description="Agent's domain of expertise")
     description: str = Field("", description="What this agent does")
     model: str = Field("sonnet", description="LLM model used")
+    color: str = Field("", description="Brand color hex")
+    initials: str = Field("", description="Two-letter display initials")
 
     tools: list[str] = Field(default_factory=list, description="Available tools")
     skills: list[str] = Field(default_factory=list, description="Available skills")
+    mcp_servers: list[str] = Field(default_factory=list, description="Connected MCP servers")
 
     default_trust: TrustLevel = Field(TrustLevel.SURFACE, description="Default trust level")
+    scope: str = Field("global", description="global or project")
+    reports_to: str | None = Field(None, description="Parent agent ID in hierarchy")
+    source: str = Field("catalog", description="system, catalog, or community")
 
     is_system: bool = Field(False, description="System agent (chief, steward, advisor)")
     is_active: bool = Field(True, description="Whether agent is active")
     last_active: datetime | None = Field(None, description="Last activity timestamp")
 
     schedule: dict[str, str] = Field(default_factory=dict, description="Scheduled tasks")
+
+    # Permissions & execution
+    permission_mode: str = Field("default", description="bypassPermissions, default, or plan")
+    max_turns: int | None = Field(None, description="Max conversation turns")
+    effort: str = Field("", description="Reasoning effort: low, medium, high, max")
+
+    # Orchestration
+    can_spawn: list[str] = Field(default_factory=list, description="Agent IDs this agent can dispatch")
+    disallowed_tools: list[str] = Field(default_factory=list, description="Tools to deny")
+    isolation: str = Field("", description="none or worktree")
+    background: bool = Field(False, description="Run in background by default")
+    memory: str = Field("", description="Persistent memory scope: user, project, local")
+
+    # Context & dependencies
+    rules: list[str] = Field(default_factory=list, description="Rule files to load")
+    parameters: dict[str, Any] = Field(default_factory=dict, description="Operator-tunable config")
+    services: list[str] = Field(default_factory=list, description="AOS service dependencies")
+    prerequisites: list[str] = Field(default_factory=list, description="Preflight checks")
+
+    # Failure & data flow
+    on_failure: str = Field("escalate", description="escalate, retry, or degrade")
+    max_retries: int = Field(0, description="Max retries on failure")
+    inputs: list[str] = Field(default_factory=list, description="Data consumed")
+    outputs: list[str] = Field(default_factory=list, description="Data produced")
+
+    # Metadata
+    self_contained: bool = Field(False, description="Can run without external deps")
+    version: str = Field("1.0", description="Agent version")
+    body: str | None = Field(None, description="System prompt body (config endpoint only)")
+
+
+class UpdateAgentConfigRequest(BaseModel):
+    """Partial update for agent config. All fields optional."""
+
+    name: str | None = Field(None, description="Display name")
+    role: str | None = Field(None, description="Agent role title")
+    domain: str | None = Field(None, description="Agent's domain of expertise")
+    description: str | None = Field(None, description="What this agent does")
+    model: str | None = Field(None, description="LLM model used")
+    color: str | None = Field(None, description="Brand color hex")
+    initials: str | None = Field(None, description="Two-letter display initials")
+
+    tools: list[str] | None = Field(None, description="Available tools")
+    skills: list[str] | None = Field(None, description="Available skills")
+    mcp_servers: list[str] | None = Field(None, description="Connected MCP servers")
+
+    default_trust: int | None = Field(None, description="Default trust level")
+    scope: str | None = Field(None, description="global or project")
+    reports_to: str | None = Field(None, description="Parent agent ID in hierarchy")
+
+    schedule: dict[str, str] | None = Field(None, description="Scheduled tasks")
+
+    permission_mode: str | None = Field(None, description="bypassPermissions, default, or plan")
+    max_turns: int | None = Field(None, description="Max conversation turns")
+    effort: str | None = Field(None, description="Reasoning effort: low, medium, high, max")
+
+    can_spawn: list[str] | None = Field(None, description="Agent IDs this agent can dispatch")
+    disallowed_tools: list[str] | None = Field(None, description="Tools to deny")
+    isolation: str | None = Field(None, description="none or worktree")
+    background: bool | None = Field(None, description="Run in background by default")
+    memory: str | None = Field(None, description="Persistent memory scope: user, project, local")
+
+    rules: list[str] | None = Field(None, description="Rule files to load")
+    parameters: dict[str, Any] | None = Field(None, description="Operator-tunable config")
+    services: list[str] | None = Field(None, description="AOS service dependencies")
+    prerequisites: list[str] | None = Field(None, description="Preflight checks")
+
+    on_failure: str | None = Field(None, description="escalate, retry, or degrade")
+    max_retries: int | None = Field(None, description="Max retries on failure")
+    inputs: list[str] | None = Field(None, description="Data consumed")
+    outputs: list[str] | None = Field(None, description="Data produced")
+
+    self_contained: bool | None = Field(None, description="Can run without external deps")
+    version: str | None = Field(None, description="Agent version")
+    body: str | None = Field(None, description="System prompt body")
+
+
+class AgentOptionsResponse(BaseModel):
+    """Options list for agent config dropdowns."""
+
+    items: list[str] = Field(default_factory=list)
+    total: int = Field(0)
+
+
+class AgentHealthResponse(BaseModel):
+    """Health check result for an agent's dependencies."""
+
+    agent_id: str
+    healthy: bool = Field(True)
+    checks: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class AgentListResponse(BaseModel):
@@ -392,6 +505,9 @@ class SkillResponse(BaseModel):
     name: str = Field(..., description="Skill display name")
     description: str = Field("", description="What this skill does")
     triggers: list[str] = Field(default_factory=list, description="Trigger phrases")
+    category: str = Field("domain", description="core, domain, workflow, or integration")
+    allowed_tools: list[str] = Field(default_factory=list, description="Tools this skill can use")
+    body: str | None = Field(None, description="Full SKILL.md body (detail endpoint only)")
     is_active: bool = Field(True, description="Whether skill is enabled")
     source_path: str | None = Field(None, description="Path to SKILL.md")
 
@@ -481,10 +597,18 @@ class PersonResponse(BaseModel):
     importance: int = Field(3, description="Importance level 1-4 (1 = most important)")
     privacy_level: int = Field(0, description="Privacy level 0-3")
     tags: list[str] = Field(default_factory=list, description="Tags")
+    aliases: list[str] = Field(default_factory=list, description="Alternate names")
+    channels: dict[str, str] = Field(
+        default_factory=dict,
+        description="Channel → address mapping (e.g. {'whatsapp': '...', 'email': '...'})",
+    )
 
     organization: str | None = Field(None, description="Organization")
     role: str | None = Field(None, description="Role or title")
     city: str | None = Field(None, description="City")
+    notes: str | None = Field(None, description="Notes about this person")
+    birthday: str | None = Field(None, description="Birthday")
+    how_met: str | None = Field(None, description="How you met")
 
     last_contact: datetime | None = Field(None, description="Last interaction")
     days_since_contact: int | None = Field(None, description="Days since last contact")
@@ -507,10 +631,11 @@ class InteractionSchema(BaseModel):
     """A single interaction/touchpoint with a person."""
 
     id: str = Field(..., description="Interaction ID")
-    channel: ChannelType | None = Field(None, description="Communication channel")
+    channel: str = Field("unknown", description="Communication channel")
     direction: str = Field("inbound", description="inbound or outbound")
-    content_preview: str = Field("", description="Truncated content")
+    summary: str | None = Field(None, description="Interaction summary or content preview")
     timestamp: datetime | None = Field(None, description="When it happened")
+    message_count: int = Field(1, description="Number of messages in this interaction")
 
 
 class RelationshipSchema(BaseModel):
@@ -520,6 +645,15 @@ class RelationshipSchema(BaseModel):
     target_type: str = Field(..., description="Target entity type")
     target_id: str = Field(..., description="Target entity ID")
     target_name: str | None = Field(None, description="Target display name")
+
+
+class ChannelPresenceSchema(BaseModel):
+    """Per-channel presence info for a person."""
+
+    channel: str = Field(..., description="Channel name")
+    identifier: str = Field("", description="Person's ID on this channel")
+    last_message_at: str | None = Field(None, description="Timestamp of last message")
+    available: bool = Field(True, description="Whether the channel adapter is reachable")
 
 
 class PersonDetailResponse(PersonResponse):
@@ -536,6 +670,9 @@ class PersonDetailResponse(PersonResponse):
     )
     relationships: list[RelationshipSchema] = Field(
         default_factory=list, description="Relationship links"
+    )
+    presence: list[ChannelPresenceSchema] = Field(
+        default_factory=list, description="Per-channel presence/last-active info"
     )
 
 
@@ -637,6 +774,26 @@ class VaultSearchRequest(BaseModel):
     collection: str | None = Field(None, description="Limit to collection")
     limit: int = Field(10, description="Max results", ge=1, le=50)
     min_score: float = Field(0.0, description="Minimum relevance score", ge=0.0, le=1.0)
+
+
+class PipelineStageInfo(BaseModel):
+    """Stats for a single pipeline stage."""
+
+    stage: int = Field(..., description="Stage number 1-6")
+    label: str = Field(..., description="Human label")
+    count: int = Field(0, description="Document count")
+    stale_count: int = Field(0, description="Documents older than 30 days without downstream")
+    items: list[VaultSearchResult] = Field(default_factory=list, description="Documents in this stage")
+
+
+class PipelineStatsResponse(BaseModel):
+    """Full pipeline health report."""
+
+    stages: list[PipelineStageInfo] = Field(default_factory=list)
+    total_documents: int = Field(0)
+    unprocessed_captures: int = Field(0, description="Stage 1-2 items older than 7 days")
+    synthesis_opportunities: int = Field(0, description="Research clusters ready for synthesis")
+    stale_decisions: int = Field(0, description="Decisions older than 60 days referenced by newer docs")
 
 
 # ---------------------------------------------------------------------------

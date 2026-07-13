@@ -10,7 +10,7 @@ import { WaveformStrip } from './WaveformStrip'
 // Scrolling transcript with speaker labels, provisional text rendering,
 // auto-scroll, and collapse toggle to waveform strip.
 // Floats on the canvas background — no solid panel, no header bar.
-// Speaker names in serif (Garamond). Timestamps in sans (Inter).
+// All text in Inter (sans).
 // ---------------------------------------------------------------------------
 
 // Operator display name — replace raw pipeline labels
@@ -105,7 +105,7 @@ export function TranscriptPanel() {
             <div className="w-14 h-14 rounded-full bg-bg-secondary/50 flex items-center justify-center">
               <Mic className="w-5 h-5 text-text-quaternary/60" />
             </div>
-            <p className="text-[15px] text-text-quaternary/80 text-center leading-relaxed" style={{ fontFamily: 'var(--font-serif)' }}>
+            <p className="text-[15px] text-text-quaternary/80 text-center leading-relaxed">
               Tap the mic or start speaking
             </p>
           </div>
@@ -161,9 +161,8 @@ export function TranscriptPanel() {
 // ---------------------------------------------------------------------------
 // SegmentRow — a single transcript segment
 //
-// Speaker names use serif font (Garamond) — they're content, not chrome.
-// Timestamps stay in Inter (sans). Text gets generous line height
-// for a book-like reading experience.
+// All text in Inter (sans). Text gets generous line height
+// for a comfortable reading experience.
 // ---------------------------------------------------------------------------
 
 interface SegmentRowProps {
@@ -220,7 +219,7 @@ const SegmentRow = memo(function SegmentRow({
         <div className="flex items-baseline gap-2 mb-1">
           <span
             className={`text-[14px] font-semibold ${speakerColor}`}
-            style={{ fontFamily: 'var(--font-serif)' }}
+           
           >
             {segment.speaker}
           </span>
@@ -234,7 +233,7 @@ const SegmentRow = memo(function SegmentRow({
           text-[14px] leading-[1.7] pr-10 pb-1
           ${segment.isProvisional ? 'text-text-quaternary' : 'text-text-secondary'}
         `}
-        style={{ fontFamily: 'var(--font-serif)' }}
+       
       >
         {segment.text}
       </p>

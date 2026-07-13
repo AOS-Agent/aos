@@ -9,8 +9,14 @@ Single FastAPI process serving:
 
 from __future__ import annotations
 
+try:
+    import setproctitle; setproctitle.setproctitle("aos-qareen")
+except ImportError:
+    pass
+
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
@@ -134,6 +140,15 @@ async def lifespan(app: FastAPI):
         except Exception:
             logger.exception("Failed to wire SSE manager")
 
+    # Wire execution router to EventBus
+    if bus:
+        try:
+            from core.engine.execution.router import wire_bus
+
+            wire_bus(bus)
+        except Exception:
+            logger.debug("Failed to wire execution router to bus")
+
     # Voice manager
     try:
         from qareen.voice.manager import VoiceManager
@@ -169,26 +184,101 @@ async def lifespan(app: FastAPI):
         app.state.session_manager = None
         app.state.intelligence_engine = None
 
+    # Context store — shared qareen memory across all surfaces
+    try:
+        from qareen.intelligence.context_store import QareenContextStore
+
+        app.state.context_store = QareenContextStore()
+        logger.info("Qareen context store initialized")
+    except Exception:
+        logger.exception("Failed to create context store")
+        app.state.context_store = None
+
+    # Stream processor — threads + classifies transcript segments
+    try:
+        from qareen.intelligence.stream_processor import StreamProcessor
+
+        app.state.stream_processor = StreamProcessor(bus=bus)
+        logger.info("Stream processor initialized")
+    except Exception:
+        logger.exception("Failed to create stream processor")
+        app.state.stream_processor = None
+
+    # TTS service — ElevenLabs streaming voice output
+    try:
+        from qareen.voice.tts import TTSService
+
+        tts_service = TTSService()
+        await tts_service.initialize()
+        app.state.tts_service = tts_service
+        logger.info("TTS service initialized (available=%s)", tts_service.available)
+    except Exception:
+        logger.exception("Failed to create TTS service")
+        app.state.tts_service = None
+
     # Wire companion stream to receive voice events from bus.
     # Must happen AFTER intelligence engine so transcripts feed into AI processing.
     if bus:
         try:
             from qareen.api.companion import wire_companion_to_bus
 
-            wire_companion_to_bus(bus, intelligence_engine=intelligence_engine)
+            wire_companion_to_bus(
+                bus,
+                intelligence_engine=intelligence_engine,
+                stream_processor=getattr(app.state, "stream_processor", None),
+            )
         except Exception:
             logger.exception(
                 "Failed to wire companion to bus — companion SSE may be degraded"
             )
 
+    # Background pipelines — subscribe to stream events
+    if bus:
+        context_store = getattr(app.state, "context_store", None)
+        try:
+            from qareen.intelligence.pipelines import (
+                ActionDetectorPipeline,
+                EntityResolverPipeline,
+                ResearchTriggerPipeline,
+                VoiceResponderPipeline,
+            )
+
+            # Entity resolver (optionally with people adapter)
+            people_adapter = None
+            try:
+                from qareen.ontology.adapters.people import PeopleAdapter
+                people_adapter = PeopleAdapter(
+                    db_path=str(AOS_DATA / "data" / "qareen.db")
+                )
+            except Exception:
+                pass
+
+            entity_pipeline = EntityResolverPipeline(
+                bus, context_store, people_adapter=people_adapter
+            )
+            entity_pipeline.wire()
+
+            action_pipeline = ActionDetectorPipeline(bus, context_store)
+            action_pipeline.wire()
+
+            research_pipeline = ResearchTriggerPipeline(bus, context_store)
+            research_pipeline.wire()
+
+            voice_pipeline = VoiceResponderPipeline(bus, context_store)
+            voice_pipeline.wire()
+
+            logger.info("Background pipelines wired (entity, action, research, voice)")
+        except Exception:
+            logger.exception("Failed to wire background pipelines")
+
     # -- Register adapters -----------------------------------------------
 
     if ontology:
         try:
-            from qareen.ontology.adapters.work import WorkAdapter
+            from qareen.ontology.adapters.work import WorkAdapter, resolve_work_db_path
             from qareen.ontology.types import ObjectType
 
-            work_adapter = WorkAdapter(db_path=str(AOS_DATA / "data" / "qareen.db"))
+            work_adapter = WorkAdapter(db_path=str(resolve_work_db_path()))
             ontology.register_adapter(ObjectType.TASK, work_adapter)
             ontology.register_adapter(ObjectType.PROJECT, work_adapter)
             ontology.register_adapter(ObjectType.GOAL, work_adapter)
@@ -222,6 +312,32 @@ async def lifespan(app: FastAPI):
             logger.info("Vault adapter registered (NOTE, DECISION)")
         except Exception:
             logger.exception("Failed to register vault adapter")
+
+        # Comms adapter — MESSAGE, CONVERSATION
+        try:
+            from qareen.ontology.adapters.comms import CommsAdapter
+
+            comms_adapter = CommsAdapter(
+                data_dir=AOS_DATA / "data",
+            )
+            ontology.register_adapter(ObjectType.MESSAGE, comms_adapter)
+            ontology.register_adapter(ObjectType.CONVERSATION, comms_adapter)
+            logger.info("Comms adapter registered (MESSAGE, CONVERSATION)")
+        except Exception:
+            logger.exception("Failed to register comms adapter")
+
+        # Intelligence adapter — CAPTURE (intelligence_briefs + vault captures)
+        try:
+            from qareen.ontology.adapters.intelligence import IntelligenceAdapter
+
+            intelligence_adapter = IntelligenceAdapter(
+                vault_dir=str(VAULT_DIR),
+                qareen_db_path=str(AOS_DATA / "data" / "qareen.db"),
+            )
+            ontology.register_adapter(ObjectType.CAPTURE, intelligence_adapter)
+            logger.info("Intelligence adapter registered (CAPTURE)")
+        except Exception:
+            logger.exception("Failed to register intelligence adapter")
 
     # -- Initialize audit log --------------------------------------------
 
@@ -488,6 +604,20 @@ async def lifespan(app: FastAPI):
         except Exception:
             logger.exception("Failed to start bridge listener")
 
+    # -- WhatsApp desktop watcher (live ChatStorage.sqlite reads) ------------
+    # Polls the macOS WhatsApp Desktop database for new messages and
+    # ingests them directly into comms.db. This is the canonical WhatsApp
+    # ingest path — richer metadata and zero ban risk compared to reading
+    # live events off the whatsmeow bridge.
+
+    whatsapp_watcher_task = None
+    try:
+        from qareen.channels.whatsapp_desktop import start_desktop_watcher
+
+        whatsapp_watcher_task = await start_desktop_watcher(bus)
+    except Exception:
+        logger.exception("Failed to start WhatsApp desktop watcher")
+
     # -- Store in app.state for route access ------------------------------
 
     app.state.ontology = ontology
@@ -496,6 +626,42 @@ async def lifespan(app: FastAPI):
     app.state.action_registry = action_registry
     app.state.pipeline_engine = pipeline_engine
     app.state.version = _read_version()
+
+    # Remote access — Cloudflare tunnel manager (optional, absent-safe)
+    try:
+        from qareen.services.remote_access_state import RemoteAccessState
+        from qareen.services.tunnel_manager import TunnelManager
+
+        remote_access_state = RemoteAccessState()
+        app.state.tunnel_manager = TunnelManager(
+            bus=bus, state=remote_access_state
+        )
+        logger.info("Remote access tunnel manager initialized")
+    except Exception:
+        logger.exception("Failed to create tunnel manager")
+        app.state.tunnel_manager = None
+
+    # n8n automation client (optional — degrades gracefully if unavailable)
+    try:
+        import sys as _sys
+        _sys.path.insert(0, str(Path.home() / "aos" / "core"))
+        from automations.client import N8nClient
+        app.state.n8n_client = N8nClient()
+        logger.info("n8n client initialized")
+
+        # Sync credentials (Google, Telegram) into n8n on startup
+        try:
+            from automations.credentials import sync_all
+            synced = await sync_all(app.state.n8n_client)
+            if synced:
+                logger.info("Credential sync: %s", synced)
+            else:
+                logger.info("Credential sync: all credentials already present")
+        except Exception:
+            logger.exception("Credential sync failed — automations may lack credentials")
+    except Exception:
+        app.state.n8n_client = None
+        logger.info("n8n client not available — automations will use legacy mode")
 
     logger.info("Qareen startup complete")
 
@@ -512,6 +678,14 @@ async def lifespan(app: FastAPI):
         except asyncio.CancelledError:
             pass
         logger.info("Bridge listener stopped")
+
+    if whatsapp_watcher_task and not whatsapp_watcher_task.done():
+        whatsapp_watcher_task.cancel()
+        try:
+            await whatsapp_watcher_task
+        except asyncio.CancelledError:
+            pass
+        logger.info("WhatsApp desktop watcher stopped")
 
     # Close adapter connections
     if ontology:
@@ -581,12 +755,14 @@ async def health() -> dict[str, Any]:
         disk_pct = 0
         disk_free_gb = 0
 
-    # RAM metrics (macOS-native, no psutil dependency)
+    # RAM metrics (macOS-native, no psutil dependency).
+    # Use absolute paths: under launchd the service PATH omits /usr/sbin, so a
+    # bare "sysctl" raises FileNotFoundError and RAM silently reads 0%.
     try:
         import re as _re
         import subprocess as _sp
-        total_mem = int(_sp.check_output(["sysctl", "-n", "hw.memsize"]).strip())
-        vm_out = _sp.check_output(["vm_stat"]).decode()
+        total_mem = int(_sp.check_output(["/usr/sbin/sysctl", "-n", "hw.memsize"]).strip())
+        vm_out = _sp.check_output(["/usr/bin/vm_stat"]).decode()
         # Extract page size from "page size of NNNN bytes"
         ps_match = _re.search(r"page size of (\d+)", vm_out)
         page_size = int(ps_match.group(1)) if ps_match else 16384
@@ -654,11 +830,35 @@ try:
 except ImportError:
     logger.warning("Voice WebSocket router not available")
 
+# TTS WebSocket
+try:
+    from starlette.websockets import WebSocket as StarletteWebSocket
+
+    from qareen.voice.tts import handle_tts_websocket
+
+    @app.websocket("/ws/tts")
+    async def tts_stream(websocket: StarletteWebSocket):
+        await websocket.accept()
+        tts_service = getattr(app.state, "tts_service", None)
+        bus = getattr(app.state, "bus", None)
+        if not tts_service or not tts_service.available:
+            await websocket.close(code=1011, reason="TTS not available")
+            return
+        await handle_tts_websocket(websocket, tts_service, bus)
+
+    logger.info("TTS WebSocket endpoint registered at /ws/tts")
+except ImportError:
+    logger.warning("TTS WebSocket not available")
+
 # API route modules — each is optional
 _api_routers = [
+    ("qareen.api.notifications", "notifications"),
+    ("qareen.api.automations", "automations"),
     ("qareen.api.work", "work"),
+    ("qareen.api.initiatives", "initiatives"),
     ("qareen.api.config", "config"),
     ("qareen.api.agents", "agents"),
+    ("qareen.api.skills", "skills"),
     ("qareen.api.services", "services"),
     ("qareen.api.people", "people"),
     ("qareen.api.vault", "vault"),
@@ -667,7 +867,24 @@ _api_routers = [
     ("qareen.api.metrics", "metrics"),
     ("qareen.api.pipelines", "pipelines"),
     ("qareen.api.companion", "companion"),
-    ("qareen.api.meetings", "meetings"),
+    ("qareen.api.days", "days"),
+    ("qareen.api.connectors", "connectors"),
+    ("qareen.api.integrations", "integrations"),
+    ("qareen.api.intelligence", "intelligence"),
+    ("qareen.api.knowledge", "knowledge"),
+    ("qareen.api.architect", "architect"),
+    ("qareen.api.flow_builder", "flow_builder"),
+    ("qareen.api.assist", "assist"),
+    ("qareen.api.context", "context"),
+    ("qareen.api.executions", "executions"),
+    ("qareen.api.ingest", "ingest"),
+    ("qareen.api.models", "models"),
+    ("qareen.api.chat", "chat"),
+    ("qareen.api.conversations", "conversations"),
+    ("qareen.api.sentinel", "sentinel"),
+    ("qareen.api.git", "git"),
+    ("qareen.api.remote_access", "remote_access"),
+    ("qareen.api.approvals", "approvals"),
 ]
 
 for module_path, name in _api_routers:
@@ -742,7 +959,7 @@ if __name__ == "__main__":
 
     uvicorn.run(
         "qareen.main:app",
-        host="0.0.0.0",
+        host=os.environ.get("AOS_QAREEN_HOST", "0.0.0.0"),
         port=4096,
         reload=True,
         log_level="info",

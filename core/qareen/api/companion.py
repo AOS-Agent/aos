@@ -176,7 +176,7 @@ async def _push_companion_event(event_type: str, data: dict[str, Any]) -> None:
         _companion_queues.pop(conn_id, None)
 
 
-def wire_companion_to_bus(bus, intelligence_engine=None) -> None:
+def wire_companion_to_bus(bus, intelligence_engine=None, stream_processor=None) -> None:
     """Subscribe to voice/transcript events on the main EventBus.
 
     The VoiceManager emits voice_state and transcript events to the main bus.
@@ -215,25 +215,23 @@ def wire_companion_to_bus(bus, intelligence_engine=None) -> None:
                             intelligence_engine.process_input(text, speaker, session["id"])
                         )
 
+                # Feed into stream processor for threading + classification
+                if stream_processor:
+                    try:
+                        from datetime import datetime
+                        asyncio.create_task(
+                            stream_processor.ingest_segment(
+                                text, speaker, datetime.now().isoformat()
+                            )
+                        )
+                    except Exception:
+                        pass
+
     bus.subscribe("voice_state", _forward_to_companion)
     bus.subscribe("transcript", _forward_to_companion)
     logger.info("Companion stream wired to EventBus (voice_state, transcript)")
 
-    # Wire meeting engine to receive transcript events.
-    # This must not break the companion SSE stream if it fails.
-    try:
-        from .meetings import on_transcript_event, wire_meetings_to_companion
-
-        wire_meetings_to_companion(_push_companion_event)
-        bus.subscribe("transcript", on_transcript_event)
-        logger.info("Meeting engine wired to transcript events")
-    except ImportError:
-        logger.info("Meeting module not available — companion SSE will work without meetings")
-    except Exception as e:
-        logger.error(
-            "Meeting engine wiring failed (companion SSE still functional): %s", e,
-            exc_info=True,
-        )
+    # Meeting engine removed — companion sessions handle all session types now.
 
 
 # ---------------------------------------------------------------------------
@@ -545,16 +543,65 @@ async def get_active_session(request: Request) -> JSONResponse:
 @router.get("/companion/sessions")
 async def list_sessions(
     request: Request,
-    limit: int = 20,
+    limit: int = 50,
     offset: int = 0,
     status: str | None = None,
 ) -> JSONResponse:
-    """List all sessions, newest first. Supports pagination and status filter."""
+    """List all sessions, newest first. Returns frontend-ready shape."""
     session_mgr = _get_session_mgr(request)
     if not session_mgr:
         return JSONResponse([])
-    sessions = session_mgr.list_sessions(limit=limit, offset=offset, status=status)
-    return JSONResponse(sessions)
+    raw = session_mgr.list_sessions(limit=limit, offset=offset, status=status)
+
+    result = []
+    for s in raw:
+        started = s.get("started_at", "")
+        ended = s.get("ended_at")
+        # Only report a duration for sessions that actually ended. A session
+        # that was never closed has no ended_at; measuring now - started_at
+        # fabricates absurd durations (e.g. "2260h") for sessions that were
+        # left open weeks ago. Flag those honestly instead.
+        duration = 0
+        ended_cleanly = bool(ended)
+        if started and ended:
+            try:
+                from datetime import datetime as _dt
+                t0 = _dt.fromisoformat(started.replace("Z", "+00:00"))
+                t1 = _dt.fromisoformat(ended.replace("Z", "+00:00"))
+                duration = max(0, int((t1 - t0).total_seconds()))
+            except Exception:
+                pass
+
+        summary_json = s.get("summary_json") or {}
+        summary_preview = ""
+        if isinstance(summary_json, dict):
+            for key in ("summary", "key_points"):
+                v = summary_json.get(key)
+                if isinstance(v, str) and v.strip():
+                    summary_preview = v.strip()[:120]
+                    break
+                if isinstance(v, list) and v:
+                    summary_preview = "; ".join(str(i) for i in v[:3])[:120]
+                    break
+
+        transcript = s.get("transcript_json") or []
+        result.append({
+            "id": s.get("id", ""),
+            "title": s.get("title", ""),
+            "date": started,
+            "duration_seconds": duration,
+            "ended_cleanly": ended_cleanly,
+            "has_transcript": len(transcript) > 0 if isinstance(transcript, list) else False,
+            "has_summary": bool(summary_preview),
+            "audio_path": s.get("audio_path") or "",
+            "summary_preview": summary_preview,
+            "participants": s.get("participants") or [],
+            "status": s.get("status", "ended"),
+            "session_type": s.get("session_type", "conversation"),
+            "skill": s.get("skill"),
+        })
+
+    return JSONResponse(result)
 
 
 @router.get("/companion/sessions/paused")
@@ -865,6 +912,26 @@ async def stop_audio_recording(session_id: str, request: Request) -> JSONRespons
 
 
 # ---------------------------------------------------------------------------
+# Routes — Vault Export
+# ---------------------------------------------------------------------------
+
+@router.post("/companion/session/{session_id}/export-vault")
+async def export_session_to_vault(session_id: str, request: Request) -> JSONResponse:
+    """Export a session to the vault as a markdown capture note."""
+    engine = getattr(request.app.state, "intelligence_engine", None)
+    if not engine:
+        return JSONResponse({"error": "Intelligence engine not available"}, status_code=503)
+
+    try:
+        vault_path = await engine.export_session_to_vault(session_id)
+        if not vault_path:
+            return JSONResponse({"error": "Session not found or export failed"}, status_code=404)
+        return JSONResponse({"session_id": session_id, "vault_path": vault_path, "exported": True})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+# ---------------------------------------------------------------------------
 # Routes — Cards
 # ---------------------------------------------------------------------------
 
@@ -890,7 +957,7 @@ async def _execute_card_action(
             if is_update:
                 result = await registry.execute("complete_task", {
                     "ontology": ontology,
-                    "task_id": card_data.get("task_title", ""),
+                    "task_id": card_data.get("existing_task_id", ""),
                 }, actor="operator")
                 result_data["action"] = "complete_task"
                 result_data["result"] = result

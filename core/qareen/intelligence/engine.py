@@ -112,10 +112,27 @@ class CompanionIntelligenceEngine:
             logger.debug("Auto-title failed for %s: %s", session_id, e)
 
     async def end_session(self, session_id: str) -> dict:
-        """End session, process remaining blocks, return final state."""
+        """End session, process remaining blocks, generate AI summary, return final state."""
         await self._ai_process(session_id, force=True)
         self._session_mgr.end_session(session_id)
         session = self._session_mgr.get_session(session_id)
+
+        # Generate AI executive summary from transcript (async, best-effort)
+        if session:
+            try:
+                ai_summary = await self._generate_ai_summary(session)
+                if ai_summary:
+                    summary = session.get("summary_json", {})
+                    if isinstance(summary, str):
+                        summary = json.loads(summary) if summary else {}
+                    summary["executive_summary"] = ai_summary
+                    self._session_mgr.update_session(
+                        session_id, summary_json=json.dumps(summary, ensure_ascii=False)
+                    )
+                    session = self._session_mgr.get_session(session_id)
+            except Exception as e:
+                logger.debug("AI summary failed for %s: %s", session_id, e)
+
         self._running_context = ""
         self._last_ai_time = 0.0
         if self._push_event:
@@ -124,6 +141,156 @@ class CompanionIntelligenceEngine:
                 "utterance_count": session["utterance_count"] if session else 0,
             })
         return session or {}
+
+    async def _generate_ai_summary(self, session: dict) -> str | None:
+        """Generate an executive summary from the session transcript via Claude."""
+        transcript = session.get("transcript_json", [])
+        if not transcript or len(transcript) < 2:
+            return None
+
+        # Build compact transcript text (cap at ~3000 chars)
+        lines = []
+        for block in transcript:
+            speaker = block.get("speaker", "?")
+            text = block.get("text", "")
+            lines.append(f"{speaker}: {text}")
+        transcript_text = "\n".join(lines)
+        if len(transcript_text) > 3000:
+            transcript_text = transcript_text[:3000] + "\n[...truncated]"
+
+        notes = session.get("notes_json", [])
+        notes_text = ""
+        if isinstance(notes, list) and notes:
+            parts = []
+            for g in notes[:10]:
+                if isinstance(g, dict):
+                    topic = g.get("topic", "Notes")
+                    items = g.get("items", [])
+                    parts.append(f"**{topic}**: " + "; ".join(items[:5]))
+            notes_text = "\n".join(parts)
+
+        prompt = f"""Summarize this conversation session in 2-3 concise sentences. Focus on what was discussed, what was decided, and what actions were taken. Be direct and specific.
+
+Transcript:
+{transcript_text}
+
+{f"Notes extracted:{chr(10)}{notes_text}" if notes_text else ""}
+
+Write only the summary, no preamble."""
+
+        try:
+            return await self._claude_call(prompt, timeout_s=15)
+        except Exception as e:
+            logger.debug("Claude summary call failed: %s", e)
+            return None
+
+    async def export_session_to_vault(self, session_id: str) -> str | None:
+        """Export a session to the vault as a markdown capture note.
+
+        Returns the vault path on success, None on failure.
+        """
+        session = self._session_mgr.get_session(session_id)
+        if not session:
+            return None
+
+        title = session.get("title", "Untitled Session")
+        started = session.get("started_at", "")
+        summary = session.get("summary_json", {})
+        if isinstance(summary, str):
+            summary = json.loads(summary) if summary else {}
+        transcript = session.get("transcript_json", [])
+        notes = session.get("notes_json", [])
+
+        # Build filename
+        date_str = datetime.now().strftime("%Y-%m-%d")
+        slug = re.sub(r"[^a-z0-9]+", "-", title.lower().strip())[:50].strip("-")
+        vault_dir = Path.home() / "vault" / "knowledge" / "captures"
+        vault_dir.mkdir(parents=True, exist_ok=True)
+        filename = f"session-{date_str}-{slug}.md"
+        filepath = vault_dir / filename
+
+        # Build markdown
+        lines = [
+            "---",
+            f'title: "{title}"',
+            "type: session",
+            f"date: {date_str}",
+            f"started_at: {started}",
+            f"stage: 1",
+            f"tags: [session, companion]",
+            "---",
+            "",
+            f"# {title}",
+            "",
+        ]
+
+        # Executive summary
+        exec_summary = summary.get("executive_summary", "")
+        if exec_summary:
+            lines.append(exec_summary)
+            lines.append("")
+
+        # Stats
+        stats = summary.get("stats", {})
+        if stats:
+            duration = stats.get("duration_minutes")
+            tasks = stats.get("tasks_created", 0)
+            approved = stats.get("cards_approved", 0)
+            parts = []
+            if duration:
+                parts.append(f"**Duration:** {duration:.0f}m")
+            if tasks:
+                parts.append(f"**Tasks created:** {tasks}")
+            if approved:
+                parts.append(f"**Cards approved:** {approved}")
+            if parts:
+                lines.append(" | ".join(parts))
+                lines.append("")
+
+        # Key points
+        for section, label in [
+            ("key_points", "Key Points"),
+            ("tasks", "Tasks"),
+            ("decisions", "Decisions"),
+            ("ideas", "Ideas"),
+        ]:
+            items = summary.get(section, [])
+            if items:
+                lines.append(f"## {label}")
+                for item in items:
+                    lines.append(f"- {item}")
+                lines.append("")
+
+        # Notes
+        if isinstance(notes, list) and notes:
+            lines.append("## Notes")
+            for group in notes:
+                if isinstance(group, dict):
+                    topic = group.get("topic", "")
+                    items = group.get("items", [])
+                    if topic:
+                        lines.append(f"### {topic}")
+                    for item in items:
+                        lines.append(f"- {item}")
+            lines.append("")
+
+        # Transcript (collapsed)
+        if transcript and len(transcript) > 0:
+            lines.append("<details>")
+            lines.append("<summary>Full Transcript</summary>")
+            lines.append("")
+            for block in transcript:
+                speaker = block.get("speaker", "?")
+                text = block.get("text", "")
+                ts = block.get("start_time", "")
+                lines.append(f"**{speaker}** ({ts}): {text}")
+                lines.append("")
+            lines.append("</details>")
+
+        content = "\n".join(lines)
+        filepath.write_text(content, encoding="utf-8")
+        logger.info("Exported session to vault: %s", filepath)
+        return str(filepath)
 
     # -- Claude CLI (ported from old engine lines ~342-358) ----------------
 

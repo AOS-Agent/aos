@@ -1,16 +1,18 @@
 import { useLocation } from 'react-router-dom';
 import TransitionLink from '@/components/primitives/TransitionLink';
 import {
-  CheckSquare, Bot, ShieldCheck, Calendar,
-  FolderKanban, Brain, Library, Users,
-  Activity, GitBranch, MessageCircle,
-  BarChart3, Settings, Mic, History,
+  ListTodo, Bot, Bell,
+  Activity, Settings, Mic, MessageSquare,
   Menu, Search, Sun, Moon, X,
+  CalendarDays,
+  Network, Sparkles,
   type LucideIcon,
 } from 'lucide-react';
 import { useUIStore } from '@/store/ui';
 import { useQueryClient } from '@tanstack/react-query';
 import { useRealtimeStore } from '@/store/realtime';
+import { useUnreadCount } from '@/hooks/useNotificationStream';
+import { NotificationTray } from './NotificationTray';
 import { useCallback, useEffect, useState, useRef } from 'react';
 
 // ---------------------------------------------------------------------------
@@ -25,42 +27,33 @@ interface NavGroup { label: string; items: NavItem[]; }
 
 const NAV_GROUPS: NavGroup[] = [
   {
-    label: 'Focus',
+    label: 'Companion',
     items: [
       { label: 'Companion', href: '/', icon: Mic },
-      { label: 'Sessions', href: '/sessions', icon: History },
-      { label: 'Tasks', href: '/tasks', icon: CheckSquare },
-      { label: 'Projects', href: '/projects', icon: FolderKanban },
-      { label: 'Calendar', href: '/calendar', icon: Calendar },
+      { label: 'Chat', href: '/chat', icon: MessageSquare },
     ],
   },
   {
-    label: 'Knowledge',
+    label: 'Focus',
     items: [
-      { label: 'Vault', href: '/vault', icon: Library },
-      { label: 'Memory', href: '/memory', icon: Brain },
-    ],
-  },
-  {
-    label: 'Agents',
-    items: [
-      { label: 'Agents', href: '/agents', icon: Bot },
-      { label: 'Approvals', href: '/approvals', icon: ShieldCheck },
+      { label: 'Work', href: '/work', icon: ListTodo },
+      { label: 'Timeline', href: '/timeline', icon: CalendarDays },
     ],
   },
   {
     label: 'System',
     items: [
       { label: 'System', href: '/system', icon: Activity },
-      { label: 'Pipelines', href: '/pipelines', icon: GitBranch },
+      { label: 'Agents', href: '/agents', icon: Bot },
+      { label: 'Skills', href: '/skills', icon: Sparkles },
+      { label: 'Org Chart', href: '/org', icon: Network },
+      { label: 'Settings', href: '/settings', icon: Settings },
     ],
   },
   {
-    label: 'More',
+    label: 'Review',
     items: [
-      { label: 'Analytics', href: '/analytics', icon: BarChart3 },
-      { label: 'People', href: '/people', icon: Users },
-      { label: 'Channels', href: '/channels', icon: MessageCircle },
+      { label: 'Calendar', href: '/calendar', icon: CalendarDays },
     ],
   },
 ];
@@ -113,10 +106,14 @@ export default function Sidebar() {
       setSidebarOpen(false);
       // Prefetch
       const prefetchMap: Record<string, string[]> = {
-        '/tasks': ['work'],
+        '/work': ['work'],
         '/': ['work', 'services'],
-        '/agents': ['agents'],
-        '/system': ['services', 'crons'],
+        '/people': ['people'],
+        '/vault/knowledge': ['vault-collections'],
+        '/vault/journal': ['vault-collections'],
+        '/vault/logs': ['vault-collections'],
+        '/system': ['services', 'crons', 'agents'],
+        '/settings': ['operator', 'accounts', 'integrations', 'agents'],
       };
       const keys = prefetchMap[href];
       if (keys) keys.forEach((k) => queryClient.prefetchQuery({ queryKey: [k], staleTime: 15_000 }));
@@ -168,11 +165,14 @@ export default function Sidebar() {
   }, [sidebarOpen]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const toggleOpen = useCallback(() => setSidebarOpen(!sidebarOpen), [sidebarOpen, setSidebarOpen]);
+  const { data: unreadCount } = useUnreadCount();
+  const [trayOpen, setTrayOpen] = useState(false);
+  const toggleTray = useCallback(() => setTrayOpen((p) => !p), []);
 
   return (
     <>
-      {/* ── Toggle pill — always visible, same position ── */}
-      <div className="fixed top-3 left-3 z-[320]">
+      {/* ── Top bar — toggle pill + search, always visible ── */}
+      <div className="fixed top-3 left-3 z-[320] flex items-center gap-2">
         <button
           type="button"
           onClick={toggleOpen}
@@ -197,7 +197,49 @@ export default function Sidebar() {
           <span className="text-[12px] font-[510]">{currentPage.label}</span>
           <div className={`w-1.5 h-1.5 rounded-full ml-0.5 ${connected ? 'bg-green' : 'bg-red'}`} />
         </button>
+        {sidebarOpen && (
+          <button
+            type="button"
+            onClick={() => { setSidebarOpen(false); setCommandPaletteOpen(true); }}
+            className="
+              flex items-center gap-1.5 h-8 px-2
+              rounded-full
+              bg-bg-secondary/60 backdrop-blur-md
+              border border-border/40
+              text-text-quaternary hover:text-text-tertiary
+              transition-all duration-150 cursor-pointer
+              shadow-[0_2px_12px_rgba(0,0,0,0.3)]
+            "
+          >
+            <Search className="w-3.5 h-3.5" />
+            <kbd className="text-[10px] bg-bg-tertiary/80 px-1 py-0.5 rounded-[3px]">{'\u2318'}K</kbd>
+          </button>
+        )}
+        {/* Bell — always visible, shows unread badge */}
+        <button
+          type="button"
+          onClick={toggleTray}
+          className="
+            relative flex items-center justify-center w-8 h-8
+            rounded-full
+            bg-bg-secondary/60 backdrop-blur-md
+            border border-border/40
+            text-text-quaternary hover:text-text-tertiary
+            transition-all duration-150 cursor-pointer
+            shadow-[0_2px_12px_rgba(0,0,0,0.3)]
+          "
+        >
+          <Bell className="w-3.5 h-3.5" />
+          {(unreadCount ?? 0) > 0 && (
+            <span className="absolute -top-1 -right-1 min-w-[16px] h-[16px] flex items-center justify-center rounded-full bg-accent text-[9px] font-[600] text-white px-1">
+              {unreadCount! > 99 ? '99+' : unreadCount}
+            </span>
+          )}
+        </button>
       </div>
+
+      {/* Notification tray */}
+      <NotificationTray open={trayOpen} onClose={() => setTrayOpen(false)} />
 
       {/* ── Overlay drawer (mounted while visible OR closing) ── */}
       {visible && (
@@ -222,8 +264,8 @@ export default function Sidebar() {
             "
             style={{ animation: `${closing ? 'slide-out-left' : 'slide-in-left'} 180ms ease-out forwards` }}
           >
-            {/* Spacer for the floating pill above */}
-            <div className="pt-11" />
+            {/* Spacer for the floating pills above */}
+            <div className="pt-12" />
 
             {/* Nav groups */}
             <nav className="flex-1 overflow-y-auto px-2 pb-2">
@@ -261,47 +303,6 @@ export default function Sidebar() {
               ))}
             </nav>
 
-            {/* Bottom utilities */}
-            <div className="shrink-0 border-t border-border/40 px-2 py-2 space-y-px">
-              {/* Status */}
-              <div className="flex items-center gap-2.5 px-2 h-7">
-                <div className={`w-1.5 h-1.5 rounded-full ${connected ? 'bg-green' : 'bg-text-quaternary'}`} />
-                <span className="text-[11px] text-text-quaternary font-[510]">
-                  {connected ? 'Connected' : 'Offline'}
-                </span>
-              </div>
-
-              {/* Search */}
-              <button
-                type="button"
-                onClick={() => { setSidebarOpen(false); setCommandPaletteOpen(true); }}
-                className="flex items-center gap-2.5 w-full px-2 h-7 rounded-[4px] cursor-pointer text-text-tertiary hover:bg-hover hover:text-text-secondary transition-colors"
-              >
-                <Search className="w-3.5 h-3.5" />
-                <span className="text-[12px] font-[510]">Search</span>
-                <kbd className="text-[10px] text-text-quaternary bg-bg-tertiary px-1 py-0.5 rounded-[3px] ml-auto">{'\u2318'}K</kbd>
-              </button>
-
-              {/* Theme */}
-              <button
-                type="button"
-                onClick={toggleTheme}
-                className="flex items-center gap-2.5 w-full px-2 h-7 rounded-[4px] cursor-pointer text-text-tertiary hover:bg-hover hover:text-text-secondary transition-colors"
-              >
-                {theme === 'dark' ? <Sun className="w-3.5 h-3.5" /> : <Moon className="w-3.5 h-3.5" />}
-                <span className="text-[12px] font-[510]">Theme</span>
-              </button>
-
-              {/* Settings */}
-              <TransitionLink
-                href="/settings"
-                onClick={() => handleNav('/settings')}
-                className="flex items-center gap-2.5 w-full px-2 h-7 rounded-[4px] cursor-pointer text-text-tertiary hover:bg-hover hover:text-text-secondary transition-colors"
-              >
-                <Settings className="w-3.5 h-3.5" />
-                <span className="text-[12px] font-[510]">Settings</span>
-              </TransitionLink>
-            </div>
           </div>
 
           {/* Animations */}

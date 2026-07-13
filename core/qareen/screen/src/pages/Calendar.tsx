@@ -1,5 +1,6 @@
 import { Calendar as CalendarIcon, Clock, Sun, Moon, Coffee, Sunrise } from 'lucide-react';
 import { useOperator } from '@/hooks/useConfig';
+import type { OperatorPreferences } from '@/lib/types';
 import { EmptyState, SectionHeader, SkeletonRows } from '@/components/primitives';
 
 function ScheduleBlock({ label, time, icon, description }: { label: string; time: string; icon: React.ReactNode; description?: string }) {
@@ -8,7 +9,7 @@ function ScheduleBlock({ label, time, icon, description }: { label: string; time
       <span className="text-text-quaternary shrink-0">{icon}</span>
       <div className="flex-1 min-w-0">
         <span className="text-[13px] font-[510] text-text-secondary block">{label}</span>
-        {description && <span className="text-[11px] text-text-quaternary font-serif block mt-0.5">{description}</span>}
+        {description && <span className="text-[11px] text-text-quaternary block mt-0.5">{description}</span>}
       </div>
       <span className="text-[13px] font-mono text-text-tertiary tabular-nums shrink-0">{time}</span>
     </div>
@@ -19,9 +20,9 @@ function TodaySchedule() {
   const { data: op, isLoading } = useOperator();
 
   if (isLoading) return <SkeletonRows count={4} />;
-  if (!op) return <p className="text-[12px] text-text-quaternary font-serif">Operator config not loaded.</p>;
+  if (!op) return <p className="text-[12px] text-text-quaternary">Operator config not loaded.</p>;
 
-  const prefs = op.preferences || {};
+  const prefs: OperatorPreferences = op.preferences ?? {};
   const blocks: { label: string; time: string; icon: React.ReactNode; description?: string }[] = [];
 
   if (prefs.morning_briefing_time) {
@@ -86,10 +87,9 @@ export default function CalendarPage() {
   });
 
   return (
-    <div className="bg-bg min-h-full overflow-y-auto">
+    <div className="min-h-full overflow-y-auto">
       <div className="max-w-[640px] mx-auto px-5 md:px-8 py-6 md:py-10">
-        <h1 className="text-[22px] font-[680] text-text tracking-[-0.025em] mb-1">Calendar</h1>
-        <p className="text-[13px] text-text-tertiary mb-8 font-serif">{dateStr}</p>
+        <p className="text-[13px] text-text-tertiary mb-6">{dateStr}</p>
 
         <SectionHeader label="Today's Schedule" icon={<Clock />} />
         <TodaySchedule />

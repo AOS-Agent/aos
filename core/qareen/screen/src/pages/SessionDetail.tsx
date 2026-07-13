@@ -1,18 +1,18 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
-  ArrowLeft, Clock, Users, FileText, MessageSquare,
-  Mic, CheckCircle2, Lightbulb, Loader2,
+  ArrowLeft, Clock,
+  CheckCircle2, Lightbulb, FileText,
+  Loader2,
 } from 'lucide-react'
-import { Button, Badge } from '@/components/primitives'
 import { AudioPlayer } from '@/components/companion/AudioPlayer'
 import { format } from 'date-fns'
 
 // ---------------------------------------------------------------------------
-// SessionDetail — full view of a completed session.
+// SessionDetail — review a completed session.
 //
 // Route: /sessions/:id
-// Data: fetched from /meetings/:id (existing backend endpoint)
+// Data: /companion/session/:id
 // ---------------------------------------------------------------------------
 
 interface TranscriptBlock {
@@ -34,153 +34,194 @@ interface SessionData {
   audio_path: string
 }
 
+function formatDuration(seconds: number): string {
+  if (!seconds || seconds < 0) return '0s'
+  if (seconds < 60) return `${seconds}s`
+  const m = Math.floor(seconds / 60)
+  if (m < 60) return `${m}m`
+  const h = Math.floor(m / 60)
+  return `${h}h ${m % 60}m`
+}
+
+/** Strip markdown boilerplate from old meeting summaries */
+function cleanSummary(raw: string): string {
+  if (!raw) return ''
+  return raw
+    .split('\n')
+    .filter(line => {
+      const trimmed = line.trim()
+      // Drop ALL markdown headers (##, ###)
+      if (/^#{1,4}\s/.test(trimmed)) return false
+      // Drop metadata lines (Duration: X | Date: Y | Participant: Z)
+      if (/^\*?\*?(Duration|Date|Participant|Participants):\*?\*?\s/i.test(trimmed)) return false
+      // Drop HRs
+      if (/^---+\s*$/.test(trimmed)) return false
+      // Drop markdown table syntax (pipes with dashes)
+      if (/^\|[-:\s|]+\|$/.test(trimmed)) return false
+      // Drop markdown table rows
+      if (/^\|.*\|$/.test(trimmed) && trimmed.includes('|')) return false
+      return true
+    })
+    .join('\n')
+    .replace(/^\n+/, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
 export default function SessionDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const [data, setData] = useState<SessionData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [activeTab, setActiveTab] = useState<'summary' | 'transcript' | 'notes'>('summary')
 
   useEffect(() => {
     if (!id) return
     let cancelled = false
-
-    async function load() {
-      try {
-        const res = await fetch(`/meetings/${id}`)
-        if (!res.ok) throw new Error(`HTTP ${res.status}`)
-        const d = await res.json()
-        if (!cancelled) {
-          setData(d)
-          setError(null)
-        }
-      } catch (e) {
-        if (!cancelled) setError(String(e))
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
-    }
-
-    load()
+    fetch(`/companion/session/${id}`)
+      .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() })
+      .then(d => { if (!cancelled) { setData(d); setError(null) } })
+      .catch(e => { if (!cancelled) setError(String(e)) })
+      .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
   }, [id])
+
+  const noteTopics = useMemo(() =>
+    Object.entries(data?.notes || {}).filter(([, items]) => items.length > 0),
+    [data]
+  )
 
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <Loader2 className="w-5 h-5 text-text-quaternary animate-spin" />
+        <Loader2 className="w-4 h-4 text-text-quaternary animate-spin" />
       </div>
     )
   }
 
   if (error || !data) {
     return (
-      <div className="max-w-[820px] mx-auto space-y-4">
-        <button
-          onClick={() => navigate('/sessions')}
-          className="flex items-center gap-1.5 text-text-tertiary hover:text-text type-label transition-colors"
-        >
-          <ArrowLeft className="w-3.5 h-3.5" />
-          Back to Sessions
-        </button>
-        <div className="px-4 py-3 rounded-sm bg-red-muted border border-red/20 text-red type-body">
-          {error ?? 'Session not found.'}
-        </div>
+      <div className="max-w-[720px] mx-auto px-6 pt-10">
+        <BackLink onClick={() => navigate('/sessions')} />
+        <p className="text-[13px] text-text-quaternary mt-6">{error ?? 'Session not found.'}</p>
       </div>
     )
   }
 
   const dateObj = data.date ? new Date(data.date) : null
-  const dateStr = dateObj ? format(dateObj, 'EEEE, MMMM d, yyyy') : ''
+  const dateStr = dateObj ? format(dateObj, 'EEE, MMM d') : ''
   const timeStr = dateObj ? format(dateObj, 'h:mm a') : ''
-  const durationMin = Math.floor((data.duration_seconds || 0) / 60)
   const hasAudio = !!data.audio_path
-
-  const noteTopics = Object.entries(data.notes || {}).filter(
-    ([, items]) => items.length > 0,
-  )
-  const tasks = data.notes?.Tasks || []
-  const ideas = data.notes?.Ideas || []
-  const keyPoints = noteTopics.filter(([k]) => k !== 'Tasks' && k !== 'Ideas')
+  const summary = cleanSummary(data.summary)
+  const tasks = data.notes?.Tasks || data.notes?.tasks || []
+  const ideas = data.notes?.Ideas || data.notes?.ideas || []
+  const keyPoints = noteTopics.filter(([k]) => !['Tasks', 'Ideas', 'tasks', 'ideas'].includes(k))
+  const hasNotes = tasks.length > 0 || ideas.length > 0 || keyPoints.length > 0
+  const hasTranscript = data.transcript?.length > 0
 
   return (
-    <div className="max-w-[820px] mx-auto space-y-6">
-      {/* Back nav */}
-      <button
-        onClick={() => navigate('/sessions')}
-        className="flex items-center gap-1.5 text-text-tertiary hover:text-text type-label transition-colors"
-      >
-        <ArrowLeft className="w-3.5 h-3.5" />
-        Sessions
-      </button>
+    <div className="h-full overflow-y-auto">
+      <div className="max-w-[640px] mx-auto px-6 pt-10 pb-16">
+        <BackLink onClick={() => navigate('/sessions')} />
 
-      {/* Header */}
-      <div className="space-y-3">
-        <h1 className="type-title text-text">{data.title}</h1>
-        <div className="flex items-center gap-3 flex-wrap">
-          {dateStr && (
-            <div className="flex items-center gap-1.5 type-caption text-text-tertiary">
-              <Clock className="w-3.5 h-3.5" />
-              {dateStr} at {timeStr}
-            </div>
+        {/* Title */}
+        <h1 className="text-[18px] font-[600] text-text mt-6 mb-1.5 leading-tight">
+          {data.title}
+        </h1>
+
+        {/* Meta */}
+        <div className="flex items-center gap-2 text-[11px] text-text-quaternary mb-8">
+          <Clock className="w-3 h-3" />
+          <span>{dateStr} at {timeStr}</span>
+          {data.duration_seconds > 0 && (
+            <>
+              <span className="text-border">·</span>
+              <span className="tabular-nums">{formatDuration(data.duration_seconds)}</span>
+            </>
           )}
-          {durationMin > 0 && (
-            <Badge label={`${durationMin}m`} status="neutral" />
-          )}
-          {data.participants && data.participants.length > 1 && (
-            <div className="flex items-center gap-1.5 type-caption text-text-tertiary">
-              <Users className="w-3.5 h-3.5" />
-              {data.participants.join(', ')}
-            </div>
-          )}
-          {hasAudio && <Badge label="Audio" status="info" />}
-          {data.summary && <Badge label="Summary" status="success" />}
-          {data.transcript?.length > 0 && (
-            <Badge label={`${data.transcript.length} segments`} status="neutral" />
+          {hasTranscript && (
+            <>
+              <span className="text-border">·</span>
+              <span className="tabular-nums">{data.transcript.length} segments</span>
+            </>
           )}
         </div>
-      </div>
 
-      {/* Audio player */}
-      {hasAudio && (
-        <div className="space-y-2">
-          <h2 className="type-overline text-text-quaternary tracking-widest">Audio</h2>
-          <AudioPlayer src={`/meetings/${data.id}/audio`} />
-        </div>
-      )}
+        {/* Audio player — compact, no label */}
+        {hasAudio && (
+          <div className="mb-8">
+            <AudioPlayer src={`/companion/session/${data.id}/audio`} />
+          </div>
+        )}
 
-      {/* Tab navigation */}
-      <div className="flex items-center gap-px border-b border-border">
-        <TabButton
-          active={activeTab === 'summary'}
-          onClick={() => setActiveTab('summary')}
-          icon={<FileText className="w-3.5 h-3.5" />}
-          label="Summary"
-          disabled={!data.summary}
-        />
-        <TabButton
-          active={activeTab === 'transcript'}
-          onClick={() => setActiveTab('transcript')}
-          icon={<MessageSquare className="w-3.5 h-3.5" />}
-          label={`Transcript${data.transcript?.length ? ` (${data.transcript.length})` : ''}`}
-          disabled={!data.transcript?.length}
-        />
-        <TabButton
-          active={activeTab === 'notes'}
-          onClick={() => setActiveTab('notes')}
-          icon={<Lightbulb className="w-3.5 h-3.5" />}
-          label={`Notes${noteTopics.length ? ` (${noteTopics.reduce((n, [, v]) => n + v.length, 0)})` : ''}`}
-          disabled={noteTopics.length === 0}
-        />
-      </div>
+        {/* Summary */}
+        {summary && (
+          <div className="mb-8">
+            <div className="space-y-2">
+              {summary.split('\n').filter(l => l.trim()).map((line, i) => {
+                const trimmed = line.trim()
+                // Bullet points
+                if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
+                  const text = trimmed.slice(2)
+                    .replace(/\*\*(.+?)\*\*/g, '$1')
+                    .replace(/\*(.+?)\*/g, '$1')
+                  return (
+                    <div key={i} className="flex items-start gap-2.5 py-0.5">
+                      <div className="w-1 h-1 rounded-full bg-text-quaternary mt-[8px] shrink-0" />
+                      <p className="text-[13px] text-text-secondary leading-relaxed">{text}</p>
+                    </div>
+                  )
+                }
+                // Regular text
+                const text = trimmed
+                  .replace(/\*\*(.+?)\*\*/g, '$1')
+                  .replace(/\*(.+?)\*/g, '$1')
+                return (
+                  <p key={i} className="text-[13px] text-text-secondary leading-relaxed">
+                    {text}
+                  </p>
+                )
+              })}
+            </div>
+          </div>
+        )}
 
-      {/* Tab content */}
-      <div className="min-h-[300px]">
-        {activeTab === 'summary' && <SummaryTab summary={data.summary} />}
-        {activeTab === 'transcript' && <TranscriptTab transcript={data.transcript} />}
-        {activeTab === 'notes' && (
-          <NotesTab keyPoints={keyPoints} tasks={tasks} ideas={ideas} />
+        {/* Notes sections — inline, no tabs */}
+        {hasNotes && (
+          <div className="space-y-6 mb-8">
+            {/* Separator */}
+            <div className="border-t border-border" />
+
+            {tasks.length > 0 && (
+              <NoteSection
+                icon={<CheckCircle2 className="w-3.5 h-3.5 text-green" />}
+                title="Action items"
+                items={tasks}
+                dotColor="bg-green"
+              />
+            )}
+            {ideas.length > 0 && (
+              <NoteSection
+                icon={<Lightbulb className="w-3.5 h-3.5 text-yellow" />}
+                title="Ideas"
+                items={ideas}
+                dotColor="bg-yellow"
+              />
+            )}
+            {keyPoints.map(([topic, items]) => (
+              <NoteSection
+                key={topic}
+                icon={<FileText className="w-3.5 h-3.5 text-text-quaternary" />}
+                title={topic}
+                items={items}
+              />
+            ))}
+          </div>
+        )}
+
+        {/* Transcript — collapsible */}
+        {hasTranscript && (
+          <TranscriptSection transcript={data.transcript} />
         )}
       </div>
     </div>
@@ -188,180 +229,44 @@ export default function SessionDetail() {
 }
 
 // ---------------------------------------------------------------------------
-// Tab button
+// Components
 // ---------------------------------------------------------------------------
 
-function TabButton({
-  active,
-  onClick,
-  icon,
-  label,
-  disabled,
-}: {
-  active: boolean
-  onClick: () => void
-  icon: React.ReactNode
-  label: string
-  disabled?: boolean
-}) {
+function BackLink({ onClick }: { onClick: () => void }) {
   return (
     <button
       onClick={onClick}
-      disabled={disabled}
-      className={`
-        flex items-center gap-1.5 px-3 py-2.5 -mb-px
-        text-[12px] font-[510]
-        border-b-2
-        transition-all duration-[var(--duration-instant)]
-        disabled:opacity-30 disabled:pointer-events-none
-        ${active
-          ? 'border-accent text-text'
-          : 'border-transparent text-text-quaternary hover:text-text-tertiary'}
-      `}
+      className="flex items-center gap-1.5 text-[11px] text-text-quaternary hover:text-text-tertiary transition-colors cursor-pointer"
+      style={{ transitionDuration: 'var(--duration-instant)' }}
     >
-      {icon}
-      {label}
+      <ArrowLeft className="w-3 h-3" />
+      Sessions
     </button>
   )
 }
 
-// ---------------------------------------------------------------------------
-// Summary tab
-// ---------------------------------------------------------------------------
-
-function SummaryTab({ summary }: { summary: string }) {
-  if (!summary) {
-    return (
-      <p className="type-body text-text-quaternary py-8 text-center">
-        No summary available for this session.
-      </p>
-    )
-  }
-
-  return (
-    <div className="meeting-prose py-2">
-      <div dangerouslySetInnerHTML={{ __html: markdownToHtml(summary) }} />
-    </div>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Transcript tab
-// ---------------------------------------------------------------------------
-
-function TranscriptTab({ transcript }: { transcript: TranscriptBlock[] }) {
-  if (!transcript?.length) {
-    return (
-      <p className="type-body text-text-quaternary py-8 text-center">
-        No transcript available.
-      </p>
-    )
-  }
-
-  return (
-    <div className="space-y-0.5 py-2">
-      {transcript.map((block, i) => (
-        <div
-          key={i}
-          className="flex gap-3 px-3 py-2 rounded-xs hover:bg-hover transition-colors group"
-        >
-          {/* Timestamp */}
-          <span className="type-tiny text-text-quaternary font-mono tabular-nums shrink-0 w-[42px] pt-0.5">
-            {block.start_time}
-          </span>
-
-          {/* Speaker + text */}
-          <div className="min-w-0 flex-1">
-            <span
-              className={`type-tiny font-semibold ${
-                block.speaker === 'You' ? 'text-accent' : 'text-blue'
-              }`}
-            >
-              {block.speaker}
-            </span>
-            <p className="type-body text-text-secondary mt-0.5 leading-relaxed">
-              {block.text}
-            </p>
-          </div>
-        </div>
-      ))}
-    </div>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Notes tab
-// ---------------------------------------------------------------------------
-
-function NotesTab({
-  keyPoints,
-  tasks,
-  ideas,
-}: {
-  keyPoints: [string, string[]][]
-  tasks: string[]
-  ideas: string[]
-}) {
-  return (
-    <div className="space-y-6 py-2">
-      {/* Tasks */}
-      {tasks.length > 0 && (
-        <NoteSection
-          title="Action Items"
-          icon={<CheckCircle2 className="w-3.5 h-3.5 text-green" />}
-          items={tasks}
-          color="green"
-        />
-      )}
-
-      {/* Ideas */}
-      {ideas.length > 0 && (
-        <NoteSection
-          title="Ideas"
-          icon={<Lightbulb className="w-3.5 h-3.5 text-yellow" />}
-          items={ideas}
-          color="yellow"
-        />
-      )}
-
-      {/* Key points by topic */}
-      {keyPoints.map(([topic, items]) => (
-        <NoteSection
-          key={topic}
-          title={topic}
-          icon={<FileText className="w-3.5 h-3.5 text-text-tertiary" />}
-          items={items}
-        />
-      ))}
-    </div>
-  )
-}
-
 function NoteSection({
-  title,
   icon,
+  title,
   items,
-  color,
+  dotColor = 'bg-text-quaternary',
 }: {
-  title: string
   icon: React.ReactNode
+  title: string
   items: string[]
-  color?: string
+  dotColor?: string
 }) {
-  const dotColor = color ? `bg-${color}` : 'bg-text-quaternary'
-
   return (
-    <div className="space-y-2">
-      <div className="flex items-center gap-2">
+    <div>
+      <div className="flex items-center gap-2 mb-2">
         {icon}
-        <h3 className="type-heading text-text">{title}</h3>
-        <span className="type-tiny text-text-quaternary">({items.length})</span>
+        <span className="text-[11px] font-[510] text-text-tertiary">{title}</span>
       </div>
-      <div className="space-y-1 pl-1">
+      <div className="space-y-1 pl-6">
         {items.map((item, i) => (
-          <div key={i} className="flex items-start gap-2 py-1">
-            <div className={`w-1.5 h-1.5 rounded-full ${dotColor} mt-[7px] shrink-0`} />
-            <p className="type-body text-text-secondary leading-relaxed">{item}</p>
+          <div key={i} className="flex items-start gap-2 py-0.5">
+            <div className={`w-1 h-1 rounded-full ${dotColor} mt-[8px] shrink-0 opacity-50`} />
+            <p className="text-[13px] text-text-secondary leading-relaxed">{item}</p>
           </div>
         ))}
       </div>
@@ -369,49 +274,51 @@ function NoteSection({
   )
 }
 
-// ---------------------------------------------------------------------------
-// Minimal markdown → HTML (handles headers, bold, bullets, code)
-// ---------------------------------------------------------------------------
+function TranscriptSection({ transcript }: { transcript: TranscriptBlock[] }) {
+  const [expanded, setExpanded] = useState(false)
 
-function markdownToHtml(md: string): string {
-  return md
-    .split('\n')
-    .map((line) => {
-      // Headers
-      if (line.startsWith('### ')) return `<h3>${esc(line.slice(4))}</h3>`
-      if (line.startsWith('## ')) return `<h2>${esc(line.slice(3))}</h2>`
-      if (line.startsWith('# ')) return `<h1>${esc(line.slice(2))}</h1>`
+  return (
+    <div>
+      <div className="border-t border-border mb-4" />
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="flex items-center gap-2 text-[11px] font-[510] text-text-quaternary hover:text-text-tertiary transition-colors cursor-pointer mb-3"
+        style={{ transitionDuration: 'var(--duration-instant)' }}
+      >
+        <span>{expanded ? '▾' : '▸'}</span>
+        <span>Transcript ({transcript.length} segments)</span>
+      </button>
 
-      // Horizontal rule
-      if (/^---+\s*$/.test(line)) return '<hr />'
+      {expanded && (
+        <div className="space-y-px animate-[fadeIn_200ms_ease-out]">
+          {transcript.map((block, i) => (
+            <div
+              key={i}
+              className="flex gap-3 px-2 py-1.5 rounded-[5px] hover:bg-hover transition-colors"
+              style={{ transitionDuration: 'var(--duration-instant)' }}
+            >
+              <span className="text-[10px] text-text-quaternary font-mono tabular-nums shrink-0 w-[38px] pt-0.5">
+                {block.start_time}
+              </span>
+              <div className="min-w-0 flex-1">
+                <span className={`text-[10px] font-[600] ${block.speaker === 'You' ? 'text-accent' : 'text-blue'}`}>
+                  {block.speaker}
+                </span>
+                <p className="text-[12px] text-text-secondary mt-0.5 leading-relaxed">
+                  {block.text}
+                </p>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
-      // Numbered list
-      if (/^\d+\.\s/.test(line)) {
-        const content = line.replace(/^\d+\.\s/, '')
-        return `<li>${inlineFormat(content)}</li>`
-      }
-
-      // Bullet list
-      if (line.startsWith('- ') || line.startsWith('* ')) {
-        return `<li>${inlineFormat(line.slice(2))}</li>`
-      }
-
-      // Empty line
-      if (!line.trim()) return '<br />'
-
-      // Paragraph
-      return `<p>${inlineFormat(line)}</p>`
-    })
-    .join('\n')
-}
-
-function inlineFormat(text: string): string {
-  return esc(text)
-    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*(.+?)\*/g, '<em>$1</em>')
-    .replace(/`(.+?)`/g, '<code>$1</code>')
-}
-
-function esc(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      <style>{`
+        @keyframes fadeIn {
+          from { opacity: 0; }
+          to { opacity: 1; }
+        }
+      `}</style>
+    </div>
+  )
 }

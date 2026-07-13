@@ -1,5 +1,6 @@
 import { Sun, Moon, Calendar, AlertCircle, BarChart3 } from 'lucide-react'
 import type { Briefing } from '@/store/companion'
+import { useOperator } from '@/hooks/useConfig'
 
 // ---------------------------------------------------------------------------
 // BriefingCard — morning or evening briefing in the stream.
@@ -13,6 +14,8 @@ interface BriefingCardProps {
 }
 
 export function BriefingCard({ briefing }: BriefingCardProps) {
+  const { data: op } = useOperator()
+  const displayName = op?.nickname || op?.name?.split(' ')[0]
   const hour = new Date(briefing.timestamp).getHours()
   const isMorning = hour < 12
   const Icon = isMorning ? Sun : Moon
@@ -23,7 +26,7 @@ export function BriefingCard({ briefing }: BriefingCardProps) {
       <div className="flex items-center gap-2 px-3 pt-3 pb-1">
         <Icon className="w-4 h-4 text-accent" />
         <span className="type-label text-text">
-          {isMorning ? 'Good morning' : 'Evening recap'}
+          {isMorning ? `Good morning${displayName ? ', ' + displayName : ''}` : 'Evening recap'}
         </span>
       </div>
 

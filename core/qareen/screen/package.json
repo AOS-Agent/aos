@@ -10,12 +10,16 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@dnd-kit/core": "^6.3.1",
+    "@dnd-kit/sortable": "^10.0.0",
+    "@dnd-kit/utilities": "^3.2.2",
     "@fontsource-variable/eb-garamond": "^5.2.7",
     "@fontsource-variable/inter": "^5.2.8",
     "@react-three/drei": "^10.7.7",
     "@react-three/fiber": "^9.5.0",
     "@tanstack/react-query": "^5",
     "@types/three": "^0.183.1",
+    "@xyflow/react": "^12.10.2",
     "adhan": "^4.4.3",
     "cmdk": "^1.1.1",
     "date-fns": "^4",

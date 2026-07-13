@@ -8,7 +8,7 @@ import { ApprovalItemComponent } from './ApprovalItem'
 //
 // Notes flow freely at top. Approvals appear below with a subtle separator.
 // No solid header bars, no boxes. Content breathes on the dark canvas.
-// Notes in serif (Garamond), metadata and controls in sans (Inter).
+// All text in Inter (sans).
 // ---------------------------------------------------------------------------
 
 interface WorkspacePanelProps {
@@ -44,7 +44,7 @@ export function WorkspacePanel({ onApprove, onStartApproval, onUndo, onDismiss, 
             <FileText className="w-7 h-7 text-text-quaternary/20 mb-4" />
             <p
               className="text-[15px] text-text-quaternary/70 text-center leading-relaxed max-w-[280px]"
-              style={{ fontFamily: 'var(--font-serif)' }}
+             
             >
               Start talking — key points, decisions, and action items will appear here.
             </p>
@@ -85,7 +85,7 @@ export function WorkspacePanel({ onApprove, onStartApproval, onUndo, onDismiss, 
             <Inbox className="w-5 h-5 text-text-quaternary/20 mb-3" />
             <p
               className="text-[13px] text-text-quaternary/60 text-center leading-relaxed"
-              style={{ fontFamily: 'var(--font-serif)' }}
+             
             >
               Actions I propose will appear here for your approval.
             </p>

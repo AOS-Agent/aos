@@ -91,7 +91,6 @@ export function OrbitalPills({
                     : 'text-text-quaternary/60'
                 }
               `}
-              style={{ fontFamily: 'var(--font-sans)' }}
             >
               {mode.label}
             </span>

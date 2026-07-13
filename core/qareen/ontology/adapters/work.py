@@ -8,12 +8,12 @@ and full-text search via the tasks_fts FTS5 table.
 from __future__ import annotations
 
 import json
-import re
 import os
+import re
 import sqlite3
-from pathlib import Path
 import uuid
 from datetime import date, datetime
+from pathlib import Path
 from typing import Any
 
 from ..types import (
@@ -110,6 +110,61 @@ def _to_status(val: str | None) -> TaskStatus:
         return TaskStatus.TODO
 
 
+# ── Work DB resolution (aos#130 phase 2) ────────────────────────────────
+#
+# The kernel owns work/task state in its own ~/.aos/data/work.db (see
+# core/infra/migrations/050_work_db_ownership.py and
+# core/engine/work/backend.py on the main lineage). Qareen used to read
+# qareen.db directly for work tables; this resolves the same DB the kernel
+# resolves to, so both surfaces agree. Sessions/session_tasks are NOT part
+# of the cutover — they stay Qareen-owned in qareen.db until aos#131 (see
+# WorkAdapter._session_conn).
+
+def _is_seeded_work_db(path: Path) -> bool:
+    """True only if ``path`` is a real work database (has the ``tasks`` table).
+
+    Guards the implicit cutover: a 0-byte or half-initialized work.db must NOT
+    trigger a switch away from qareen.db — the kernel store is only
+    authoritative once migration 050 has seeded it. Any error (missing, locked,
+    not a database) is treated as "not seeded" so resolution falls back safely.
+    """
+    try:
+        if not path.exists() or path.stat().st_size == 0:
+            return False
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        try:
+            return (
+                conn.execute(
+                    "SELECT 1 FROM sqlite_master "
+                    "WHERE type='table' AND name='tasks'"
+                ).fetchone()
+                is not None
+            )
+        finally:
+            conn.close()
+    except Exception:
+        return False
+
+
+def resolve_work_db_path() -> Path:
+    """Locate the work/task database.
+
+    Resolution order (mirrors core/engine/work/backend.py._resolve_db_path):
+      1. AOS_WORK_DB env var — explicit override; also makes tests injectable.
+      2. ~/.aos/data/work.db — the kernel-owned store, once it has been seeded
+         (a bare/empty file does not count — see _is_seeded_work_db).
+      3. ~/.aos/data/qareen.db — fall back so machines that predate the
+         migration keep working unchanged.
+    """
+    env = os.environ.get("AOS_WORK_DB")
+    if env:
+        return Path(env).expanduser()
+    work_db = Path.home() / ".aos" / "data" / "work.db"
+    if _is_seeded_work_db(work_db):
+        return work_db
+    return Path.home() / ".aos" / "data" / "qareen.db"
+
+
 class WorkAdapter(Adapter):
     """Handles Task, Project, Goal, Inbox, Thread objects in qareen.db.
 
@@ -130,15 +185,78 @@ class WorkAdapter(Adapter):
 
     # ── ID Generation (private) ──────────────────────────
 
-    def _project_prefix(self, project_id: str | None) -> str:
-        """Derive short prefix from project ID.
+    def _projects_has_short_id(self) -> bool:
+        """Whether projects.short_id exists (migration 046). Cached per conn.
 
-        aos -> aos, aos-v2 -> aos, None -> t (unaffiliated).
+        Lets the adapter run against a pre-migration DB without crashing.
+        """
+        cached = getattr(self, "_has_short_id_col", None)
+        if cached is None:
+            cols = {
+                r[1] for r in self._conn.execute("PRAGMA table_info(projects)")
+            }
+            cached = "short_id" in cols
+            self._has_short_id_col = cached
+        return cached
+
+    def _resolve_project_id(self, value: str | None) -> str | None:
+        """Resolve a --project argument to the canonical projects.id.
+
+        The argument may be either the canonical id (e.g. "p1", "aos") or a
+        project's short_id (e.g. "dod"). Returns the canonical id so it can be
+        used as the tasks.project_id foreign key. Matching is by id first,
+        then by short_id. If no project matches, the value is returned
+        unchanged (e.g. None stays None; an as-yet-uncreated slug passes
+        through so legacy id==slug flows keep working).
+        """
+        if not value:
+            return value
+        # Canonical id match (the common, fast path).
+        if self._conn.execute(
+            "SELECT 1 FROM projects WHERE id = ?", (value,)
+        ).fetchone():
+            return value
+        # short_id alias match. On a pre-migration DB (no short_id column,
+        # added by migration 046) fall back to id-only resolution.
+        if not self._projects_has_short_id():
+            return value
+        row = self._conn.execute(
+            "SELECT id FROM projects WHERE short_id = ?", (value,)
+        ).fetchone()
+        if row:
+            return row["id"]
+        return value
+
+    def _project_prefix(self, project_id: str | None) -> str:
+        """Derive the scoped task-id prefix for a --project argument.
+
+        Prefers the project's short_id (so a project with short_id "dod" gets
+        dod#1 tasks even though its canonical id is "p1"). Falls back to the
+        canonical id with version suffixes stripped (aos-v2 -> aos). None ->
+        t (unaffiliated). Accepts either a canonical id or a short_id as input.
         """
         if not project_id:
             return "t"
-        clean = re.sub(r'[-_]v\d+$', '', project_id)
-        return clean
+        # Look up by id or short_id; prefer the project's own short_id.
+        # On a pre-migration DB without the short_id column, derive the prefix
+        # from the id alone (legacy behavior).
+        if self._projects_has_short_id():
+            row = self._conn.execute(
+                "SELECT id, short_id FROM projects WHERE id = ? OR short_id = ?",
+                (project_id, project_id),
+            ).fetchone()
+        else:
+            row = self._conn.execute(
+                "SELECT id, NULL AS short_id FROM projects WHERE id = ?",
+                (project_id,),
+            ).fetchone()
+        if row and row["short_id"]:
+            base = row["short_id"]
+        elif row:
+            base = row["id"]
+        else:
+            base = project_id
+        return re.sub(r'[-_]v\d+$', '', base)
 
     def _next_scoped_id(self, prefix: str) -> str:
         """Generate next project-scoped ID: aos#1, aos#2, chief#1, t#1, etc."""
@@ -560,7 +678,6 @@ class WorkAdapter(Adapter):
             return None
         return self._row_to_task(row)
 
-
     def _session_conn(self):
         """Connection containing sessions/session_tasks (Qareen-owned until aos#131).
 
@@ -720,6 +837,10 @@ class WorkAdapter(Adapter):
 
     def _create_task(self, task: Task) -> Task:
         now = datetime.now().isoformat()
+        # Resolve the project handle (id or short_id) to the canonical
+        # projects.id so the project_id foreign key always points at a real
+        # parent row. Without this, --project <short_id> violated the FK.
+        task.project = self._resolve_project_id(task.project)
         self._conn.execute(
             "INSERT OR REPLACE INTO tasks "
             "(id, title, status, priority, project_id, description, "
@@ -848,6 +969,7 @@ class WorkAdapter(Adapter):
             path=row["path"],
             goal=row["goal"],
             done_when=row["done_when"],
+            short_id=(row["short_id"] if "short_id" in row.keys() else None),
             telegram_bot_key=row["telegram_bot_key"],
             telegram_chat_key=row["telegram_chat_key"],
             telegram_forum_topic=row["telegram_forum_topic"],
@@ -875,28 +997,55 @@ class WorkAdapter(Adapter):
 
     def _create_project(self, project: Project) -> Project:
         now = datetime.now().isoformat()
-        self._conn.execute(
-            "INSERT OR REPLACE INTO projects "
-            "(id, title, description, status, path, goal, done_when, "
-            " telegram_bot_key, telegram_chat_key, telegram_forum_topic, "
-            " stages, current_stage, version, modified_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)",
-            (
-                project.id,
-                project.title,
-                project.description,
-                project.status,
-                project.path,
-                project.goal,
-                project.done_when,
-                project.telegram_bot_key,
-                project.telegram_chat_key,
-                project.telegram_forum_topic,
-                _json_dumps(project.stages),
-                project.current_stage,
-                now,
-            ),
-        )
+        if self._projects_has_short_id():
+            self._conn.execute(
+                "INSERT OR REPLACE INTO projects "
+                "(id, title, description, status, path, goal, done_when, short_id, "
+                " telegram_bot_key, telegram_chat_key, telegram_forum_topic, "
+                " stages, current_stage, version, modified_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)",
+                (
+                    project.id,
+                    project.title,
+                    project.description,
+                    project.status,
+                    project.path,
+                    project.goal,
+                    project.done_when,
+                    project.short_id,
+                    project.telegram_bot_key,
+                    project.telegram_chat_key,
+                    project.telegram_forum_topic,
+                    _json_dumps(project.stages),
+                    project.current_stage,
+                    now,
+                ),
+            )
+        else:
+            # Pre-migration DB (no short_id column): omit it so creation still
+            # works. Migration 046 backfills short_id once it runs.
+            self._conn.execute(
+                "INSERT OR REPLACE INTO projects "
+                "(id, title, description, status, path, goal, done_when, "
+                " telegram_bot_key, telegram_chat_key, telegram_forum_topic, "
+                " stages, current_stage, version, modified_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)",
+                (
+                    project.id,
+                    project.title,
+                    project.description,
+                    project.status,
+                    project.path,
+                    project.goal,
+                    project.done_when,
+                    project.telegram_bot_key,
+                    project.telegram_chat_key,
+                    project.telegram_forum_topic,
+                    _json_dumps(project.stages),
+                    project.current_stage,
+                    now,
+                ),
+            )
         self._conn.commit()
         return project
 

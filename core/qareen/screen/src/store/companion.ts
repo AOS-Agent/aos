@@ -95,6 +95,31 @@ export interface ApprovalItem {
 }
 
 // ---------------------------------------------------------------------------
+// Thread types (v2 — thread visualization)
+// ---------------------------------------------------------------------------
+
+export interface ThoughtUnit {
+  id: string
+  threadId: string
+  text: string
+  speaker: string
+  timestamp: string
+  classification: 'idea' | 'task' | 'decision' | 'question' | 'plan' | 'context' | 'emotion'
+  confidence: number
+  entities: string[]
+}
+
+export interface Thread {
+  id: string
+  title: string
+  summary: string
+  units: ThoughtUnit[]
+  isActive: boolean
+  firstSeen: string
+  lastSeen: string
+}
+
+// ---------------------------------------------------------------------------
 // Focus anchor
 // ---------------------------------------------------------------------------
 
@@ -243,6 +268,19 @@ interface CompanionState {
   // Transcript collapse
   transcriptCollapsed: boolean
   setTranscriptCollapsed: (collapsed: boolean) => void
+
+  // Screen mode (v2)
+  screenMode: 'focus' | 'split'
+  setScreenMode: (mode: 'focus' | 'split') => void
+
+  // Thread state (v2)
+  threads: Thread[]
+  activeThreadId: string | null
+  addThread: (thread: Omit<Thread, 'units'> & { units?: ThoughtUnit[] }) => void
+  addUnitToThread: (unit: ThoughtUnit) => void
+  setActiveThread: (threadId: string) => void
+  updateThreadSummary: (threadId: string, summary: string) => void
+  clearThreads: () => void
 
   // Clear all session data (for clean starts)
   clearSessionData: () => void
@@ -457,9 +495,78 @@ export const useCompanionStore = create<CompanionState>()(
       transcriptCollapsed: false,
       setTranscriptCollapsed: (transcriptCollapsed) => set({ transcriptCollapsed }),
 
+      // Screen mode (v2)
+      screenMode: 'focus' as const,
+      setScreenMode: (mode) => set({ screenMode: mode }),
+
+      // Thread state (v2)
+      threads: [],
+      activeThreadId: null,
+      addThread: (thread) =>
+        set((s) => {
+          if (s.threads.some((t) => t.id === thread.id)) return s
+          return {
+            threads: [
+              ...s.threads,
+              { ...thread, units: thread.units ?? [] },
+            ],
+          }
+        }),
+      addUnitToThread: (unit) =>
+        set((s) => {
+          const threadIdx = s.threads.findIndex((t) => t.id === unit.threadId)
+          if (threadIdx >= 0) {
+            // Thread exists — append unit
+            const thread = s.threads[threadIdx]
+            if (thread.units.some((u) => u.id === unit.id)) return s
+            const updated = [...s.threads]
+            updated[threadIdx] = {
+              ...thread,
+              units: [...thread.units, unit],
+              lastSeen: unit.timestamp,
+            }
+            return { threads: updated }
+          }
+          // Thread not found — create a new one with this unit as seed
+          const now = new Date().toISOString()
+          return {
+            threads: [
+              ...s.threads,
+              {
+                id: unit.threadId,
+                title: unit.text.slice(0, 60) + (unit.text.length > 60 ? '...' : ''),
+                summary: '',
+                units: [unit],
+                isActive: true,
+                firstSeen: now,
+                lastSeen: now,
+              },
+            ],
+            activeThreadId: unit.threadId,
+          }
+        }),
+      setActiveThread: (threadId) =>
+        set((s) => ({
+          activeThreadId: threadId,
+          threads: s.threads.map((t) => ({
+            ...t,
+            isActive: t.id === threadId,
+          })),
+        })),
+      updateThreadSummary: (threadId, summary) =>
+        set((s) => ({
+          threads: s.threads.map((t) =>
+            t.id === threadId ? { ...t, summary } : t,
+          ),
+        })),
+      clearThreads: () => set({ threads: [], activeThreadId: null }),
+
       // Clear all session data for a fresh start
       clearSessionData: () =>
         set({
+          session: null,
+          sessionId: null,
+          lastEventSequence: 0,
           segments: [],
           noteGroups: [],
           approvals: [],
@@ -469,6 +576,8 @@ export const useCompanionStore = create<CompanionState>()(
           thinkingText: null,
           focusAnchor: null,
           voiceState: 'idle' as VoiceState,
+          threads: [],
+          activeThreadId: null,
         }),
     }),
     {
@@ -488,6 +597,8 @@ export const useCompanionStore = create<CompanionState>()(
         noteGroups: state.noteGroups,
         approvals: state.approvals,
         transcriptCollapsed: state.transcriptCollapsed,
+        threads: state.threads,
+        activeThreadId: state.activeThreadId,
       }),
     },
   ),

@@ -1,8 +1,10 @@
-import { useState, useCallback, useEffect, useRef } from 'react'
-import { Mic, MicOff } from 'lucide-react'
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { Mic, MicOff, Clock } from 'lucide-react'
 import { Orb } from '@/components/companion/Orb'
 import { OrbitalPills, type PillMode, MODES } from '@/components/companion/OrbitalPills'
 import { useAudioAnalyser } from '@/hooks/useAudioAnalyser'
+import { useOperator } from '@/hooks/useConfig'
 import {
   calcPrayerSchedule,
   currentPrayerPeriod,
@@ -84,8 +86,8 @@ function playGlassChime() {
     const now = ctx.currentTime
     const osc1 = ctx.createOscillator()
     const osc2 = ctx.createOscillator()
-    const gain1 = ctx.createGainNode()
-    const gain2 = ctx.createGainNode()
+    const gain1 = ctx.createGain()
+    const gain2 = ctx.createGain()
     osc1.type = 'sine'; osc1.frequency.value = 1046.5
     osc2.type = 'sine'; osc2.frequency.value = 1568
     gain1.gain.setValueAtTime(0, now)
@@ -122,16 +124,63 @@ interface SessionLauncherProps {
   onStartSession: (type: string, text?: string) => void
 }
 
+function getGreeting(period: PrayerPeriod): string {
+  switch (period) {
+    case 'fajr':
+    case 'last-third':
+      return 'Peace be upon this hour'
+    case 'sunrise':
+    case 'duha':
+      return 'Good morning'
+    case 'dhuhr':
+      return 'Good afternoon'
+    case 'asr':
+      return 'Good afternoon'
+    case 'maghrib':
+      return 'Good evening'
+    case 'isha':
+      return 'Good evening'
+    default:
+      return 'Assalamu alaikum'
+  }
+}
+
+// Work out WHY the mic is unavailable so the UI can say what to do about it,
+// instead of a bare red "Mic unavailable". Avoids a second getUserMedia prompt.
+async function classifyMicFailure(): Promise<string> {
+  if (typeof window === 'undefined') return 'Mic unavailable'
+  if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+    return 'Open the dashboard on localhost or over https:// — browsers block the mic otherwise'
+  }
+  try {
+    const status = await navigator.permissions?.query({ name: 'microphone' as PermissionName })
+    if (status?.state === 'denied') {
+      return 'Microphone blocked — allow it for this site in your browser, then retry'
+    }
+  } catch { /* permissions API unavailable — fall through */ }
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices()
+    if (!devices.some(d => d.kind === 'audioinput')) {
+      return 'No microphone found — connect one and retry'
+    }
+  } catch { /* enumerateDevices unavailable — fall through */ }
+  return 'Microphone unavailable — check that no other app is using it, then retry'
+}
+
 export function SessionLauncher({ onStartSession }: SessionLauncherProps) {
+  const { data: op } = useOperator()
   const [hoveredPill, setHoveredPill] = useState<string | null>(null)
   const [micConnected, setMicConnected] = useState(false)
+  const [micReason, setMicReason] = useState('')
   const [speechAvailable, setSpeechAvailable] = useState(false)
   const [micMuted, setMicMuted] = useState(false)
+  const micMutedRef = useRef(false)
   const [isSpeaking, setIsSpeaking] = useState(false)
   const [liveText, setLiveText] = useState('')
   const [finalText, setFinalText] = useState('')
   const [detectedSkill, setDetectedSkill] = useState<string | null>(null)
   const [prayerColors, setPrayerColors] = useState<[string, string]>(PERIOD_COLORS['duha'])
+  const [prayerPeriod, setPrayerPeriod] = useState<PrayerPeriod>('duha')
 
   const { start: startAnalyser, stop: stopAnalyser, getAmplitude } = useAudioAnalyser()
   const recognitionRef = useRef<any>(null)
@@ -141,12 +190,14 @@ export function SessionLauncher({ onStartSession }: SessionLauncherProps) {
   const voiceDetectRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const speakingHoldTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // Prayer colors
+  // Prayer colors + period
   useEffect(() => {
     function update() {
       try {
         const schedule = calcPrayerSchedule(DEFAULT_COORDS.latitude, DEFAULT_COORDS.longitude, new Date())
-        setPrayerColors(PERIOD_COLORS[currentPrayerPeriod(schedule, new Date())])
+        const period = currentPrayerPeriod(schedule, new Date())
+        setPrayerPeriod(period)
+        setPrayerColors(PERIOD_COLORS[period])
       } catch {}
     }
     update()
@@ -160,19 +211,20 @@ export function SessionLauncher({ onStartSession }: SessionLauncherProps) {
     started.current = true
 
     async function connectMic() {
-      // Try immediately
+      // Try immediately — if no mic, retry once after 2s (USB devices can be slow)
       let ok = await startAnalyser()
-      // If failed, retry after 2s (USB devices can be slow to enumerate)
       if (!ok) {
-        console.log('[Mic] First attempt failed, retrying in 2s...')
         await new Promise(r => setTimeout(r, 2000))
         ok = await startAnalyser()
       }
       setMicConnected(ok)
-      if (ok) {
+      if (!ok) {
+        setMicReason(await classifyMicFailure())
+      } else {
+        setMicReason('')
         const id = setInterval(() => {
           const loud = getAmplitude() > 0.02
-          if (loud) {
+          if (loud && !micMutedRef.current) {
             // Voice detected — set speaking immediately, hold for 1.5s
             setIsSpeaking(true)
             if (speakingHoldTimer.current) clearTimeout(speakingHoldTimer.current)
@@ -193,18 +245,9 @@ export function SessionLauncher({ onStartSession }: SessionLauncherProps) {
     }
   }, [startAnalyser, stopAnalyser, getAmplitude])
 
-  // Retry speech recognition on first user click if it was blocked (once only)
+  // Speech retry removed — user has explicit "Retry" button.
+  // Auto-retrying on any document click consumed pill interactions.
   const clickRetried = useRef(false)
-  useEffect(() => {
-    if (speechAvailable || clickRetried.current) return
-    function onInteraction() {
-      if (clickRetried.current) return
-      clickRetried.current = true
-      if (!speechAvailable && !micMuted) startRecognition()
-    }
-    document.addEventListener('click', onInteraction, { once: true })
-    return () => document.removeEventListener('click', onInteraction)
-  }, [speechAvailable, micMuted])
 
   function startRecognition() {
     stopRecognition()
@@ -212,6 +255,7 @@ export function SessionLauncher({ onStartSession }: SessionLauncherProps) {
     if (!recognition) {
       console.warn('[Speech] SpeechRecognition API not available in this browser')
       setMicConnected(false)
+      setMicReason('Voice input isn’t supported in this browser — try Chrome or Safari')
       return
     }
 
@@ -221,7 +265,7 @@ export function SessionLauncher({ onStartSession }: SessionLauncherProps) {
     recognition.onsoundend = () => setIsSpeaking(false)
 
     recognition.onresult = (event: any) => {
-      if (hasRouted.current) return
+      if (hasRouted.current || micMutedRef.current) return
 
       let allFinal = ''
       let interim = ''
@@ -273,7 +317,7 @@ export function SessionLauncher({ onStartSession }: SessionLauncherProps) {
 
     // Only auto-restart if not blocked by permission/network errors
     recognition.onend = () => {
-      if (blocked || hasRouted.current || micMuted) return
+      if (blocked || hasRouted.current || micMutedRef.current) return
       try { recognition.start() } catch {}
     }
 
@@ -299,16 +343,25 @@ export function SessionLauncher({ onStartSession }: SessionLauncherProps) {
     setMicConnected(ok)
     if (ok) {
       // Also retry speech recognition
+      setMicReason('')
       clickRetried.current = false
       startRecognition()
+    } else {
+      setMicReason(await classifyMicFailure())
     }
   }, [startAnalyser])
 
   const handleToggleMute = useCallback(() => {
     setMicMuted((prev) => {
-      if (!prev) stopRecognition()
-      else startRecognition()
-      return !prev
+      const next = !prev
+      micMutedRef.current = next
+      if (next) {
+        stopRecognition()
+        setIsSpeaking(false)
+      } else {
+        startRecognition()
+      }
+      return next
     })
   }, [])
 
@@ -389,6 +442,19 @@ export function SessionLauncher({ onStartSession }: SessionLauncherProps) {
       {/* Content */}
       <div className="flex-1 flex flex-col items-center justify-center relative z-10">
 
+        {/* Greeting */}
+        {!displayText && (
+          <p
+            className="text-[24px] font-[600] text-white/80 mb-8 text-center animate-[fadeIn_600ms_ease-out]"
+            style={{ lineHeight: 1.3 }}
+          >
+            {getGreeting(prayerPeriod)}
+            {(op?.nickname || op?.name) && (
+              <>, {op.nickname || op.name?.split(' ')[0]}</>
+            )}
+          </p>
+        )}
+
         {/* Pills */}
         <div className={`transition-all duration-400 ease-out ${detectedSkill ? 'opacity-50' : 'opacity-100'}`}>
           <OrbitalPills
@@ -401,7 +467,7 @@ export function SessionLauncher({ onStartSession }: SessionLauncherProps) {
         {/* Live transcription */}
         {displayText && (
           <div className="mt-8 max-w-[500px] text-center animate-[fadeIn_200ms_ease-out]">
-            <p className="text-[15px] leading-relaxed" style={{ fontFamily: 'var(--font-serif)' }}>
+            <p className="text-[15px] leading-relaxed">
               {finalText && <span className="text-white/70">{finalText} </span>}
               {liveText && <span className="text-white/40 italic">{liveText}</span>}
             </p>
@@ -413,9 +479,142 @@ export function SessionLauncher({ onStartSession }: SessionLauncherProps) {
           connected={micConnected}
           muted={micMuted}
           speaking={isSpeaking}
+          reason={micReason}
           onRetry={handleRetryMic}
           onToggleMute={handleToggleMute}
         />
+      </div>
+
+      {/* Recent sessions — pinned to bottom */}
+      <RecentSessions />
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// RecentSessions — subtle list at bottom of launcher
+// ---------------------------------------------------------------------------
+
+interface SessionRecord {
+  id: string
+  title: string
+  date: string
+  duration_seconds: number
+  ended_cleanly?: boolean
+  has_summary: boolean
+  audio_path?: string
+  status?: 'active' | 'paused' | 'ended'
+}
+
+// Honest label for the right-hand meta of a recent session. A session that
+// never closed has no real duration — say so instead of showing a fabricated
+// figure like "2260h 33m".
+function sessionMeta(s: SessionRecord): string {
+  if (s.status === 'active') return 'active'
+  if (s.status === 'paused') return 'paused'
+  if (s.ended_cleanly === false) return "didn't end cleanly"
+  return formatDuration(s.duration_seconds)
+}
+
+function formatDuration(seconds: number): string {
+  if (!seconds || seconds < 0) return ''
+  if (seconds < 60) return `${seconds}s`
+  const m = Math.floor(seconds / 60)
+  if (m < 60) return `${m}m`
+  return `${Math.floor(m / 60)}h ${m % 60}m`
+}
+
+function formatTimeAgo(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime()
+  const mins = Math.floor(diff / 60000)
+  if (mins < 1) return 'just now'
+  if (mins < 60) return `${mins}m ago`
+  const hours = Math.floor(mins / 60)
+  if (hours < 24) return `${hours}h ago`
+  const days = Math.floor(hours / 24)
+  if (days === 1) return 'yesterday'
+  if (days < 7) return `${days}d ago`
+  return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+}
+
+function RecentSessions() {
+  const navigate = useNavigate()
+  const [sessions, setSessions] = useState<SessionRecord[]>([])
+  const [loaded, setLoaded] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    fetch('/companion/sessions?limit=5')
+      .then(r => { if (!r.ok) throw new Error(); return r.json() })
+      .then(data => {
+        if (!cancelled) {
+          const all = Array.isArray(data) ? data : []
+          // Meaningful = has real content. Ended sessions qualify by duration;
+          // never-closed / ongoing ones have no real duration, so keep them by
+          // state instead (they render with an honest label, not a fake time).
+          const hasContent = (s: SessionRecord) =>
+            s.duration_seconds > 10
+            || s.ended_cleanly === false
+            || s.status === 'active'
+            || s.status === 'paused'
+          const meaningful = all.filter((s: SessionRecord) =>
+            s.title && !s.title.startsWith('Untitled') && hasContent(s)
+          )
+          // Fall back to any session with content if no titled ones
+          const candidates = meaningful.length > 0
+            ? meaningful
+            : all.filter(hasContent)
+          setSessions(candidates.slice(0, 5))
+          setLoaded(true)
+        }
+      })
+      .catch(() => { if (!cancelled) setLoaded(true) })
+    return () => { cancelled = true }
+  }, [])
+
+  if (!loaded || sessions.length === 0) return null
+
+  return (
+    <div className="relative z-10 shrink-0 pb-5 px-6 animate-[fadeIn_400ms_ease-out_200ms_both]">
+      <div className="max-w-[420px] mx-auto">
+        <div className="flex items-center gap-2 mb-2 px-1">
+          <Clock className="w-3 h-3 text-white/25" />
+          <span className="text-[10px] font-[510] uppercase tracking-[0.06em] text-white/25">
+            Recent
+          </span>
+          <span className="flex-1" />
+          <button
+            onClick={() => navigate('/sessions')}
+            className="text-[10px] font-[450] text-white/20 hover:text-accent transition-colors cursor-pointer"
+            style={{ transitionDuration: 'var(--duration-instant)' }}
+          >
+            See all
+          </button>
+        </div>
+        <div className="space-y-px">
+          {sessions.map(s => (
+            <button
+              key={s.id}
+              onClick={() => navigate(s.status === 'active' || s.status === 'paused' ? `/companion/session/${s.id}` : `/sessions/${s.id}`)}
+              className="
+                w-full flex items-center gap-3 px-3 py-2
+                rounded-[8px] text-left cursor-pointer
+                hover:bg-white/[0.04] transition-colors group
+              "
+              style={{ transitionDuration: 'var(--duration-instant)' }}
+            >
+              <span className="flex-1 min-w-0 text-[12px] font-[450] text-white/35 truncate group-hover:text-white/55 transition-colors" style={{ transitionDuration: 'var(--duration-instant)' }}>
+                {s.title || 'Untitled'}
+              </span>
+              <span className="text-[10px] text-white/20 shrink-0 tabular-nums group-hover:text-white/35 transition-colors" style={{ transitionDuration: 'var(--duration-instant)' }}>
+                {sessionMeta(s)}
+              </span>
+              <span className="text-[10px] text-white/20 shrink-0 tabular-nums group-hover:text-white/35 transition-colors" style={{ transitionDuration: 'var(--duration-instant)' }}>
+                {formatTimeAgo(s.date)}
+              </span>
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   )
@@ -426,19 +625,26 @@ export function SessionLauncher({ onStartSession }: SessionLauncherProps) {
 // ---------------------------------------------------------------------------
 
 function MicStatus({
-  connected, muted, speaking, onRetry, onToggleMute,
+  connected, muted, speaking, reason, onRetry, onToggleMute,
 }: {
-  connected: boolean; muted: boolean; speaking: boolean
+  connected: boolean; muted: boolean; speaking: boolean; reason?: string
   onRetry: () => void; onToggleMute: () => void
 }) {
   if (!connected) {
     return (
-      <div className="mt-6 flex items-center justify-center gap-2 animate-[fadeIn_300ms_ease-out]">
-        <MicOff className="w-3.5 h-3.5 text-red-400/60" />
-        <span className="text-[11px] text-text-quaternary tracking-wide">Mic unavailable</span>
-        <button onClick={onRetry} className="text-[11px] text-accent/60 hover:text-accent tracking-wide cursor-pointer transition-colors">
-          Retry
-        </button>
+      <div className="mt-6 flex flex-col items-center gap-1.5 animate-[fadeIn_300ms_ease-out]">
+        <div className="flex items-center gap-2">
+          <MicOff className="w-3.5 h-3.5 text-red-400/60" />
+          <span className="text-[11px] text-text-quaternary tracking-wide">Mic unavailable</span>
+          <button onClick={onRetry} className="text-[11px] text-accent/60 hover:text-accent tracking-wide cursor-pointer transition-colors">
+            Retry
+          </button>
+        </div>
+        {reason && (
+          <span className="text-[10px] text-text-quaternary/70 tracking-wide text-center max-w-[280px] leading-snug">
+            {reason}
+          </span>
+        )}
       </div>
     )
   }

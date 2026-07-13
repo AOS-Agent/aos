@@ -17,6 +17,7 @@ export function useOperator() {
       return res.json();
     },
     staleTime: 300_000,
+    refetchOnWindowFocus: true,
   });
 }
 

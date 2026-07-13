@@ -1,72 +1,67 @@
-import { lazy, Suspense } from 'react';
-import { Routes, Route } from 'react-router-dom';
+import { lazy, useEffect } from 'react';
+import { Routes, Route, Navigate } from 'react-router-dom';
 import Layout from '@/components/layout/Layout';
-import { Skeleton } from '@/components/primitives';
+import { migrateLegacyChatIfNeeded } from '@/lib/migrateLegacyChat';
 
-const Companion = lazy(() => import('@/pages/Companion'));
-const Home = lazy(() => import('@/pages/Home'));
-const Tasks = lazy(() => import('@/pages/Tasks'));
-const People = lazy(() => import('@/pages/People'));
-const Vault = lazy(() => import('@/pages/Vault'));
-const Agents = lazy(() => import('@/pages/Agents'));
+// ── Primary surfaces ──
+const Home = lazy(() => import('@/pages/Companion'));
+const CompanionSession = lazy(() => import('@/pages/CompanionSession'));
+const Work = lazy(() => import('@/pages/Work'));
+const Chat = lazy(() => import('@/pages/Chat'));
 const System = lazy(() => import('@/pages/System'));
-const Config = lazy(() => import('@/pages/Config'));
-const Analytics = lazy(() => import('@/pages/Analytics'));
-const Channels = lazy(() => import('@/pages/Channels'));
-const Pipelines = lazy(() => import('@/pages/Pipelines'));
-const Projects = lazy(() => import('@/pages/Projects'));
-const Calendar = lazy(() => import('@/pages/Calendar'));
-const Chief = lazy(() => import('@/pages/Chief'));
-const Meeting = lazy(() => import('@/pages/Meeting'));
-const Approvals = lazy(() => import('@/pages/Approvals'));
-const Memory = lazy(() => import('@/pages/Memory'));
+const Settings = lazy(() => import('@/pages/Settings'));
+const Days = lazy(() => import('@/pages/Days'));
+const Agents = lazy(() => import('@/pages/Agents'));
+const Org = lazy(() => import('@/pages/Org'));
+const Skills = lazy(() => import('@/pages/Skills'));
+
+// ── Sub-views ──
 const Sessions = lazy(() => import('@/pages/Sessions'));
 const SessionDetail = lazy(() => import('@/pages/SessionDetail'));
-const Settings = lazy(() => import('@/pages/Settings'));
+const AgentConfig = lazy(() => import('@/pages/AgentConfig'));
 
-function PageFallback() {
-  return (
-    <div className="space-y-4 py-2">
-      <Skeleton className="h-7 w-48" />
-      <Skeleton className="h-4 w-80" />
-      <div className="mt-8 space-y-3">
-        <Skeleton className="h-16 w-full rounded-[7px]" />
-        <Skeleton className="h-16 w-full rounded-[7px]" />
-        <Skeleton className="h-16 w-full rounded-[7px]" />
-      </div>
-    </div>
-  );
-}
+// ── Review: pages with real UI, kept for evaluation ──
+const Calendar = lazy(() => import('@/pages/Calendar'));
 
 export default function App() {
+  // One-time migration: move legacy chat localStorage → SQLite conversations
+  useEffect(() => { migrateLegacyChatIfNeeded() }, []);
+
   return (
-    <Suspense fallback={<PageFallback />}>
-      <Routes>
-        <Route element={<Layout />}>
-          <Route path="/" element={<Companion />} />
-          <Route path="/home" element={<Home />} />
-          <Route path="/tasks" element={<Tasks />} />
-          <Route path="/people" element={<People />} />
-          <Route path="/docs" element={<Vault />} />
-          <Route path="/vault" element={<Vault />} />
-          <Route path="/agents" element={<Agents />} />
-          <Route path="/system" element={<System />} />
-          <Route path="/config" element={<Config />} />
-          <Route path="/settings" element={<Settings />} />
-          <Route path="/analytics" element={<Analytics />} />
-          <Route path="/channels" element={<Channels />} />
-          <Route path="/pipelines" element={<Pipelines />} />
-          <Route path="/pipeline" element={<Pipelines />} />
-          <Route path="/projects" element={<Projects />} />
-          <Route path="/calendar" element={<Calendar />} />
-          <Route path="/chief" element={<Chief />} />
-          <Route path="/meeting" element={<Meeting />} />
-          <Route path="/approvals" element={<Approvals />} />
-          <Route path="/memory" element={<Memory />} />
-          <Route path="/sessions" element={<Sessions />} />
-          <Route path="/sessions/:id" element={<SessionDetail />} />
-        </Route>
-      </Routes>
-    </Suspense>
+    <Routes>
+      <Route element={<Layout />}>
+        {/* ── Primary surfaces ── */}
+        <Route path="/" element={<Home />} />
+        <Route path="/companion/session/:sessionId" element={<CompanionSession />} />
+        <Route path="/work" element={<Work />} />
+        <Route path="/timeline" element={<Days />} />
+        <Route path="/timeline/*" element={<Days />} />
+        <Route path="/chat" element={<Chat />} />
+        <Route path="/system" element={<System />} />
+        <Route path="/settings" element={<Settings />} />
+        <Route path="/agents" element={<Agents />} />
+        <Route path="/agents/:id" element={<AgentConfig />} />
+        <Route path="/skills" element={<Skills />} />
+        <Route path="/org" element={<Org />} />
+
+        {/* ── Sub-routes ── */}
+        <Route path="/sessions" element={<Sessions />} />
+        <Route path="/sessions/:id" element={<SessionDetail />} />
+
+        {/* ── Review: pages kept for evaluation ── */}
+        {/* meeting route removed — companion sessions handle all session types */}
+        <Route path="/calendar" element={<Calendar />} />
+
+        {/* People, Vault/Knowledge, Intelligence, Integrations, Sentinel,
+            Automations, and Approvals ship in later waves (people-intel,
+            knowledge pipeline, automations, comms/sentinel respectively) —
+            out of scope for the wave-2 Qareen platform + dashboard retirement. */}
+
+        {/* Catch-all: unknown / deep-linked / typo'd URLs redirect home instead of
+            rendering a blank screen (e.g. /today, which has no route). */}
+        <Route path="*" element={<Navigate to="/" replace />} />
+
+      </Route>
+    </Routes>
   );
 }

@@ -78,7 +78,7 @@ function VerdictBanner() {
           <span className={`w-2.5 h-2.5 rounded-full ${dotColor} ${data.verdict !== 'healthy' ? 'animate-pulse' : ''}`} />
         </span>
         <div>
-          <span className="text-[15px] font-[600] text-text tracking-[-0.01em] font-serif">{data.verdict_text}</span>
+          <span className="text-[15px] font-[600] text-text tracking-[-0.01em]">{data.verdict_text}</span>
           <p className="text-[11px] text-text-tertiary mt-0.5">{data.summary}</p>
         </div>
       </div>
@@ -110,7 +110,7 @@ function AttentionPanel() {
         >
           <span className={item.type === 'error' ? 'text-red' : 'text-yellow'}>{iconFor(item)}</span>
           <div className="flex-1 min-w-0">
-            <span className="text-[13px] font-[510] text-text font-serif">{item.text}</span>
+            <span className="text-[13px] font-[510] text-text">{item.text}</span>
             {item.detail && <span className="text-[11px] text-text-quaternary ml-2">{item.detail}</span>}
           </div>
           {item.action_type === 'restart_service' && item.action_target && (
@@ -203,7 +203,7 @@ function ResourcesPanel() {
                   {resources.drives.map(d => (
                     <div key={d.mount} className="bg-bg-tertiary rounded-[7px] p-4">
                       <div className="flex items-center justify-between mb-3">
-                        <span className="text-[13px] font-[510] text-text-secondary font-serif">{d.label}</span>
+                        <span className="text-[13px] font-[510] text-text-secondary">{d.label}</span>
                         <span className={`text-[10px] font-mono ${textColor(d.pct)}`}>{d.pct}%</span>
                       </div>
                       <div className="w-full h-2 bg-bg-quaternary rounded-full overflow-hidden mb-2">
@@ -363,7 +363,7 @@ function ServiceCard({
         <div className="relative">
           <Radio className={`w-4 h-4 ${isOnline ? 'text-green' : isOnDemand ? 'text-text-quaternary' : 'text-red'}`} />
         </div>
-        <h3 className="text-[15px] font-[580] text-text tracking-[-0.01em] capitalize font-serif flex-1">{name}</h3>
+        <h3 className="text-[15px] font-[580] text-text tracking-[-0.01em] capitalize flex-1">{name}</h3>
         <StatusDot
           color={isOnline ? 'green' : isOnDemand ? 'gray' : 'red'}
           size="md"
@@ -516,7 +516,7 @@ function CronTierGroup({ tier, jobs, expanded, onToggle }: { tier: number; jobs:
                 style={{ transitionDuration: 'var(--duration-instant)' }}
               >
                 <StatusDot color={cronStatusColor(job.status)} size="md" />
-                <span className="text-[13px] font-[510] text-text-secondary w-[140px] shrink-0 truncate font-serif">{job.name}</span>
+                <span className="text-[13px] font-[510] text-text-secondary w-[140px] shrink-0 truncate">{job.name}</span>
                 {job.description
                   ? <span className="text-[10px] text-text-quaternary flex-1 truncate hidden md:block">{job.description}</span>
                   : <span className="flex-1" />
@@ -612,7 +612,7 @@ function CronJobsSection() {
   }, []);
 
   if (isLoading) return <SkeletonRows count={6} />;
-  if (crons.length === 0) return <p className="text-[12px] text-text-quaternary font-serif">No cron jobs configured yet.</p>;
+  if (crons.length === 0) return <p className="text-[12px] text-text-quaternary">No cron jobs configured yet.</p>;
 
   return (
     <div>
@@ -636,7 +636,7 @@ function SectionTitle({ icon, label }: { icon: React.ReactNode; label: string })
 /* ---------- Main Page ---------- */
 export default function SystemPage() {
   return (
-    <div className="bg-bg min-h-full">
+    <div className="min-h-full">
       <div className="px-6 md:px-10 py-6 md:py-8 max-w-[1200px] mx-auto overflow-y-auto h-full">
         <VerdictBanner />
         <AttentionPanel />

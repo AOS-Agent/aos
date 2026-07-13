@@ -8,7 +8,7 @@ import { X, Plus, ArrowRight, ArrowLeft } from 'lucide-react'
 // then starts the session. Auto-detects session type from the intent text.
 //
 // Glass card: backdrop-blur, warm translucent bg-panel at 50%.
-// Intent field: Garamond (serif). Chrome (buttons, pills, labels): Inter.
+// All text in Inter (sans).
 // ---------------------------------------------------------------------------
 
 export interface SessionConfig {
@@ -209,7 +209,7 @@ export function SessionSetup({ initialText = '', initialSkill = null, onStart, o
           )}
         </div>
 
-        {/* Intent textarea — Garamond, large */}
+        {/* Intent textarea */}
         <textarea
           ref={textareaRef}
           value={intent}
@@ -224,7 +224,7 @@ export function SessionSetup({ initialText = '', initialSkill = null, onStart, o
             focus:outline-none
             resize-none leading-relaxed
           "
-          style={{ fontFamily: 'var(--font-serif)' }}
+         
         />
 
         {/* Separator */}
