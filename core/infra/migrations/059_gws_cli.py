@@ -1,5 +1,8 @@
 """
-Migration 043: Replace workspace-mcp MCP server with gws CLI.
+Migration 059: Replace workspace-mcp MCP server with gws CLI.
+
+(Renumbered from 043 during release-train wave 3 promotion; see 056's
+docstring for why the renumber is load-bearing, not cosmetic.)
 
 Converts OAuth token files from workspace-mcp format
 (~/.google_workspace_mcp/credentials/) to gws-compatible format

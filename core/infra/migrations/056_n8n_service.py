@@ -1,5 +1,11 @@
 """
-Migration 025: Install n8n automation engine as an AOS service.
+Migration 056: Install n8n automation engine as an AOS service.
+
+(Renumbered from 025 during release-train wave 3 promotion — 025 was the
+council-substrate dev number; 056 is main's next free slot after wave 2's
+053-055. See core/infra/migrations/runner.py: progress is a single integer
+high-watermark, so a lower number here would be silently skipped forever
+on any instance already past 055.)
 
 Sets up n8n to run headlessly on localhost:5678, managed by a LaunchAgent.
 n8n provides the workflow execution engine for Qareen automations —
