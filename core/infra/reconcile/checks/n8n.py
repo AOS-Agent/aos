@@ -2,7 +2,7 @@
 Invariant: The n8n automation service is running and healthy on port 5678.
 
 Full lifecycle:
-- If n8n data dir doesn't exist → skip (migration 025 hasn't run yet)
+- If n8n data dir doesn't exist → skip (migration 056 hasn't run yet)
 - If data dir exists but plist missing → instantiate from template, deploy, start
 - If plist exists but service unhealthy → kickstart
 - If healthy → OK
@@ -98,7 +98,7 @@ class N8nServiceCheck(ReconcileCheck):
         if not self.N8N_DATA_DIR.exists():
             return CheckResult(
                 self.name, Status.SKIP,
-                "n8n data dir not found — run migration 025 first"
+                "n8n data dir not found — run migration 056 first"
             )
 
         # Check n8n binary exists

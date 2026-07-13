@@ -1,5 +1,8 @@
 """
-Migration 027: Deploy crawler service (crawl4ai + MCP) for web research.
+Migration 057: Deploy crawler service (crawl4ai + MCP) for web research.
+
+(Renumbered from 027 during release-train wave 3 promotion; see 056's
+docstring for why the renumber is load-bearing, not cosmetic.)
 
 The crawler service gives all AOS agents the ability to crawl web pages,
 extract structured data, and deep-crawl sites — headlessly, via MCP or CLI.
