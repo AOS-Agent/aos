@@ -16,7 +16,9 @@
 
 set -uo pipefail
 
-DEV="$HOME/project/aos"
+# Repo under check: default to the dev workspace, but allow override so the
+# gate can grade hotfix worktrees/release branches (never hardcode the target).
+DEV="${AOS_SHIP_CHECK_DIR:-$HOME/project/aos}"
 # shellcheck disable=SC2034
 RUNTIME="$HOME/aos"
 
