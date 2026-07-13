@@ -191,6 +191,25 @@ def test_real_looking_phone_still_flagged():
     assert any(h.category == "phone" for h in hits)
 
 
+def test_versioned_identifier_not_flagged_as_phone():
+    # A model ID / package version / container tag glued to a preceding word
+    # via hyphens (e.g. an LLM model string) is a compound identifier, not a
+    # phone number — no real phone is ever written "word-word-555-1234" with
+    # no space before the digits.
+    diff = make_diff("core/foo.py", ['    model="claude-haiku-4-5-20251001",'])
+    hits = ps.scan_diff(diff, [])
+    assert not any(h.category == "phone" for h in hits)
+
+
+def test_versioned_identifier_heuristic_does_not_gut_real_phone():
+    # Guard against over-broadening: a real phone number that merely follows
+    # a word *with a space* (not glued via hyphen) must still be flagged.
+    fake_real_phone = "+1-416-" + "555-0199"
+    diff = make_diff("core/foo.py", [f'support_line = "{fake_real_phone}"'])
+    hits = ps.scan_diff(diff, [])
+    assert any(h.category == "phone" for h in hits)
+
+
 def test_bare_instance_path_is_not_flagged():
     # A path reference is not personal data; framework code uses these roots.
     diff = make_diff("core/foo.py", ['db = open("~/.aos/data/people.db")'])

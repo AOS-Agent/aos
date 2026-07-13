@@ -5,7 +5,7 @@
 # Credential files live at ~/.aos/config/google/credentials/{email}.json
 #
 # Usage:
-#   gws-account --account user@example.com gmail users messages list ...
+#   gws-account --account you@yourdomain gmail users messages list ...
 #   gws-account gmail users messages list ...   # uses GOOGLE_PRIMARY_EMAIL
 #
 # The wrapper sets GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE and passes
