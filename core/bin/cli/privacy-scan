@@ -21,6 +21,18 @@ What it looks for:
                          _looks_like_versioned_identifier().
   (d) api-key strings  — long base64/hex constants that look like secrets
 
+Precedent pass (denylist categories only): the gate exists to catch NEW
+exposure in a diff. If a denylist hit's exact matched line — whitespace-
+normalized — already exists verbatim in some tracked file in the BASE tree the
+diff is measured against (the 'before' side of `git diff`), that line is by
+definition not new, so the hit is downgraded from a failure to a printed INFO
+note ("precedented: identical line ships at <path>"). This cannot false-
+negative a genuine leak: newly-introduced personal data has no identical line
+in the shipped tree, so it has no precedent to hide behind. Deliberately scoped
+to denylist hits ONLY — pattern hits (email/phone/api-key) are never
+precedent-downgraded. There are still NO allowlists and NO path exemptions: the
+downgrade is decided purely by the tree's own prior content, line by line.
+
 Note on instance-data references: matching bare ~/.aos/data or vault/log *paths*
 was deliberately dropped. Framework code references those roots constantly and
 legitimately (they are AOS's data dirs), so a path check produces only false
@@ -92,13 +104,22 @@ HASH_CONTEXT_RE = re.compile(
 
 
 class Hit:
-    __slots__ = ("path", "line", "category", "digest")
+    __slots__ = ("path", "line", "category", "digest", "content",
+                 "precedented", "precedent_path")
 
-    def __init__(self, path: str, line: int, category: str, matched: str):
+    def __init__(self, path: str, line: int, category: str, matched: str,
+                 content: str = ""):
         self.path = path
         self.line = line
         self.category = category
         self.digest = hashlib.sha256(matched.lower().encode()).hexdigest()[:10]
+        # Full added-line text the match came from — needed by the precedent
+        # pass to compare whole lines against the base tree. Never printed.
+        self.content = content
+        # Set by the precedent pass: a denylist hit whose exact (whitespace-
+        # normalized) line already exists in the base tree is not NEW exposure.
+        self.precedented = False
+        self.precedent_path: str | None = None
 
     def key(self):
         return (self.path, self.line, self.category, self.digest)
@@ -235,7 +256,7 @@ def _looks_like_versioned_identifier(content: str, start: int, end: int) -> bool
     return any(c.isalpha() for c in content[s:e])
 
 
-def scan_diff(diff_text: str, denylist):
+def scan_diff(diff_text: str, denylist, precedent_lookup=None):
     hits = []
     for path, lineno, content in iter_added_lines(diff_text):
         spans = []  # (start, end) ranges already claimed by denylist matches
@@ -244,7 +265,7 @@ def scan_diff(diff_text: str, denylist):
         for rx, category, term in denylist:
             for m in rx.finditer(content):
                 spans.append((m.start(), m.end()))
-                hits.append(Hit(path, lineno, category, term))
+                hits.append(Hit(path, lineno, category, term, content=content))
 
         def overlaps(s, e):
             return any(not (e <= a or s >= b) for a, b in spans)
@@ -285,6 +306,21 @@ def scan_diff(diff_text: str, denylist):
         if h.key() not in seen:
             seen.add(h.key())
             unique.append(h)
+
+    # Precedent pass (denylist categories only) — see module docstring.
+    if precedent_lookup is not None:
+        cache: dict[str, str | None] = {}
+        for h in unique:
+            if not h.category.startswith("denylist:"):
+                continue
+            key = _norm_ws(h.content)
+            if not key:
+                continue
+            if key not in cache:
+                cache[key] = precedent_lookup(h.content)
+            if cache[key]:
+                h.precedented = True
+                h.precedent_path = cache[key]
     return unique
 
 
@@ -310,20 +346,111 @@ def get_diff(ref_arg: str | None):
     return out.stdout
 
 
+# ── Precedent pass ──────────────────────────────────────────────────────────
+def _norm_ws(s: str) -> str:
+    """Whitespace-normalize a line: collapse every run of whitespace to a single
+    space and strip the ends. Two lines are 'the same line' iff their normalized
+    forms are equal — so indentation and internal spacing differences don't
+    matter, but a different token or a longer line does."""
+    return " ".join(s.split())
+
+
+def base_ref_of(ref_arg: str | None) -> str:
+    """The base tree the diff is measured against — the same side `git diff`
+    treats as 'before'. This is where the precedent pass looks for an
+    already-shipped identical line.
+
+      None                → staged diff (`--cached`) is index-vs-HEAD → base HEAD
+      'A..B' / 'A' / '<sha>' → base is the left/only ref (`git diff` reads it as
+                               the 'before' tree)
+      'A...B'             → git uses merge-base(A, B) as the base; mirror that
+    """
+    if not ref_arg:
+        return "HEAD"
+    if "..." in ref_arg:
+        left, right = ref_arg.split("...", 1)
+        left = left or "HEAD"
+        right = right or "HEAD"
+        mb = subprocess.run(["git", "merge-base", left, right],
+                            capture_output=True, text=True, check=False)
+        if mb.returncode == 0 and mb.stdout.strip():
+            return mb.stdout.strip()
+        return left
+    if ".." in ref_arg:
+        return ref_arg.split("..", 1)[0] or "HEAD"
+    return ref_arg
+
+
+def _precedent_path(content: str, base_ref: str, cwd: str | None = None):
+    """Return the path of a tracked file in *base_ref* that already contains a
+    line whitespace-identical to *content*, or None. One `git grep -F` per call;
+    callers cache by normalized line so it runs once per unique matched line.
+
+    git grep does a fast fixed-string substring scan for the stripped line; the
+    normalized full-line equality check below rejects substring/near matches
+    (a longer line that merely contains the text is NOT the same line), so this
+    only ever fires on a genuinely identical shipped line.
+    """
+    needle = content.strip()
+    if not needle:
+        return None
+    target = _norm_ws(content)
+    try:
+        out = subprocess.run(
+            ["git", "grep", "-F", "-n", "-e", needle, base_ref, "--"],
+            capture_output=True, text=True, cwd=cwd, check=False,
+        )
+    except FileNotFoundError:
+        return None
+    if out.returncode not in (0, 1):  # 0 = matches, 1 = none, >1 = real error
+        return None
+    for line in out.stdout.splitlines():
+        # `git grep -n <tree>` → "<tree>:<path>:<lineno>:<line>"
+        parts = line.split(":", 3)
+        if len(parts) < 4:
+            continue
+        _tree, path, _lineno, base_content = parts
+        if _norm_ws(base_content) == target:
+            return path
+    return None
+
+
+def make_precedent_lookup(base_ref: str, cwd: str | None = None):
+    """Bind a precedent lookup to a base ref for scan_diff to call per line."""
+    def lookup(content: str):
+        return _precedent_path(content, base_ref, cwd=cwd)
+    return lookup
+
+
 # ── Reporting ───────────────────────────────────────────────────────────────
 def report(hits):
-    if not hits:
-        print("privacy-scan: clean — no personal data in diff")
+    # Precedented denylist hits are not NEW exposure — print them as INFO notes
+    # and exclude them from the pass/fail decision.
+    precedented = [h for h in hits if h.precedented]
+    failures = [h for h in hits if not h.precedented]
+
+    if precedented:
+        precedented.sort(key=lambda h: (h.path, h.line, h.category))
+        print(f"privacy-scan: {len(precedented)} precedented note(s) — "
+              "identical line already ships at base, not new exposure")
+        for h in precedented:
+            print(f"  INFO precedented: identical line ships at "
+                  f"{h.precedent_path}  ({h.path}:{h.line} "
+                  f"[{h.category}] sha256:{h.digest})")
+        print("")
+
+    if not failures:
+        print("privacy-scan: clean — no new personal data in diff")
         return 0
 
-    hits.sort(key=lambda h: (h.path, h.line, h.category))
-    print(f"privacy-scan: {len(hits)} finding(s) — matched strings redacted\n")
-    for h in hits:
+    failures.sort(key=lambda h: (h.path, h.line, h.category))
+    print(f"privacy-scan: {len(failures)} finding(s) — matched strings redacted\n")
+    for h in failures:
         print(f"  {h.path}:{h.line}  [{h.category}]  sha256:{h.digest}")
 
     by_cat: dict[str, int] = {}
     by_file: dict[str, int] = {}
-    for h in hits:
+    for h in failures:
         by_cat[h.category] = by_cat.get(h.category, 0) + 1
         by_file[h.path] = by_file.get(h.path, 0) + 1
     print("\n  By category:")
@@ -357,7 +484,8 @@ def main() -> int:
         print("privacy-scan: clean — empty diff")
         return 0
 
-    hits = scan_diff(diff_text, denylist)
+    precedent_lookup = make_precedent_lookup(base_ref_of(args.ref))
+    hits = scan_diff(diff_text, denylist, precedent_lookup=precedent_lookup)
     return report(hits)
 
 
