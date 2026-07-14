@@ -16,7 +16,7 @@ import { format, isToday, isYesterday, subDays, isAfter } from 'date-fns'
 
 interface SessionRecord {
   id: string
-  title: string
+  title: string | null
   date: string
   duration_seconds: number
   has_transcript: boolean
@@ -31,8 +31,8 @@ interface SessionRecord {
 
 type FilterTab = 'all' | 'has_summary' | 'has_audio'
 
-function getSessionIcon(title: string) {
-  const lower = title.toLowerCase()
+function getSessionIcon(title: string | null | undefined) {
+  const lower = (title ?? '').toLowerCase()
   if (lower.includes('meeting') || lower.includes('call')) return Mic
   if (lower.includes('thinking') || lower.includes('brainstorm')) return Brain
   if (lower.includes('planning') || lower.includes('plan')) return ClipboardList
