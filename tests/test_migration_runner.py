@@ -150,3 +150,51 @@ class TestMigrateContract:
         log = yaml.safe_load(runner.MIGRATION_LOG.read_text())
         assert log[-1]["status"] == "failed"
         assert "no such table" in log[-1]["details"]
+
+
+class TestPendingCount:
+    """cmd_pending_count() — the updater's migration trigger.
+
+    The updater used to gate migrations on VERSION delta alone: if VERSION
+    was unchanged between releases, migrations were skipped even when
+    pending, because a release can ship migrations without bumping VERSION.
+    The fix is for the updater to ask the runner directly, independent of
+    version. These tests pin the runner-side half of that contract: pending
+    count reflects migrations strictly above the watermark, regardless of
+    what VERSION says (the runner has no notion of VERSION at all — it only
+    tracks its own watermark file).
+    """
+
+    def test_zero_pending_when_no_migrations_above_watermark(self, runner, monkeypatch, capsys):
+        monkeypatch.setattr(runner, "find_migrations", lambda: [fake_migration(1, "001_applied", True)])
+        runner.save_version(1)
+        runner.cmd_pending_count()
+        assert capsys.readouterr().out.strip() == "0"
+
+    def test_nonzero_pending_reported_independent_of_version_bump(self, runner, monkeypatch, capsys):
+        """Pins the exact wave-3 scenario: several migrations shipped above
+        the watermark while the release's VERSION string never changed.
+        pending-count must still report them, since the updater has no
+        other way to know they exist."""
+        monkeypatch.setattr(
+            runner, "find_migrations",
+            lambda: [
+                fake_migration(1, "001_applied", True),
+                fake_migration(2, "002_pending", True),
+                fake_migration(3, "003_pending", True),
+                fake_migration(4, "004_pending", True),
+                fake_migration(5, "005_pending", True),
+            ],
+        )
+        runner.save_version(1)
+        runner.cmd_pending_count()
+        assert capsys.readouterr().out.strip() == "4"
+
+    def test_pending_count_does_not_mutate_watermark(self, runner, monkeypatch):
+        """Checking pending count must be side-effect free — it's called
+        every update cycle by the updater purely to decide whether to run
+        migrate, and must not itself advance state."""
+        monkeypatch.setattr(runner, "find_migrations", lambda: [fake_migration(1, "001_pending", True)])
+        runner.save_version(0)
+        runner.cmd_pending_count()
+        assert runner.load_version() == 0

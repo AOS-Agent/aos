@@ -136,6 +136,20 @@ def cmd_migrate():
     return True
 
 
+def cmd_pending_count():
+    """Print the pending migration count as a bare integer.
+
+    Used by the updater to decide whether to run migrations. VERSION is a
+    human-facing release marker, not the source of truth for migration
+    state — a release can ship migrations without bumping VERSION, so the
+    migration trigger must be pending count, not version delta.
+    """
+    current = load_version()
+    migrations = find_migrations()
+    pending = [n for n, name, mod in migrations if n > current]
+    print(len(pending))
+
+
 def cmd_status():
     """Show migration status."""
     current = load_version()
@@ -294,11 +308,13 @@ if __name__ == "__main__":
         sys.exit(0 if success else 1)
     elif cmd == "status":
         cmd_status()
+    elif cmd == "pending-count":
+        cmd_pending_count()
     elif cmd == "discover":
         cmd_discover()
     elif cmd == "import":
         cmd_import_guide()
     else:
         print(f"Unknown command: {cmd}")
-        print("Usage: runner.py [migrate|status|discover|import]")
+        print("Usage: runner.py [migrate|status|pending-count|discover|import]")
         sys.exit(1)
