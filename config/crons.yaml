@@ -188,6 +188,13 @@ jobs:
     tier: 4
     description: Graduates contacts through trust levels
 
+  people-intel-refresh:
+    command: bash ~/aos/core/bin/crons/people-intel-refresh
+    at: "02:00"
+    timeout: 600
+    tier: 4
+    description: Refreshes signal_store, person_classification, and intelligence_queue nudges
+
   # ── Planned (scripts not yet built) ─────────────────────────────────────────
   # These entries are placeholders. Scripts will be created when their
   # integration dependencies are ready.
