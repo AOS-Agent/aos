@@ -33,6 +33,17 @@ to denylist hits ONLY — pattern hits (email/phone/api-key) are never
 precedent-downgraded. There are still NO allowlists and NO path exemptions: the
 downgrade is decided purely by the tree's own prior content, line by line.
 
+Reserved documentation values (email/phone pattern hits only): an address at an
+RFC-reserved domain (example.com/.org/.net and their subdomains per RFC 2606;
+the .example/.invalid/.test TLDs per RFC 6761) or a phone number in the NANP
+fictional 555-01XX block is DEFINITIONALLY an example/documentation value — a
+public standard reserves it as unownable, so it can never belong to a real
+person and flagging it can never catch a real leak. Such a hit is downgraded to
+the same INFO note as a precedented one. Same discipline: ONLY standard-reserved
+domains/ranges qualify — no other domain or number range is ever exempted, and
+denylist hits are never downgraded this way (a reserved-domain address that is
+also on the operator's denylist still fails).
+
 Note on instance-data references: matching bare ~/.aos/data or vault/log *paths*
 was deliberately dropped. Framework code references those roots constantly and
 legitimately (they are AOS's data dirs), so a path check produces only false
@@ -86,6 +97,42 @@ PHONE_RE = re.compile(
 # API-key-ish: a quoted long token from the base64/hex/url-safe alphabet.
 APIKEY_RE = re.compile(r"""['"]([A-Za-z0-9+/=_\-]{40,})['"]""")
 
+# Reserved documentation values — addresses/numbers that a public standard
+# reserves as unownable, so they are DEFINITIONALLY example/documentation
+# values and can never belong to a real person. Flagging them can never catch a
+# real leak, so an email/phone pattern hit landing on one is downgraded to an
+# INFO note (never a ship-blocking failure). This is deliberately narrow: ONLY
+# the domains/ranges a standard reserves qualify — no other domain or number
+# range is ever exempted.
+#   RFC 2606 §3  reserves example.com / example.org / example.net (+ subdomains)
+#   RFC 6761 §6.5 reserves the .example / .invalid / .test TLDs
+RESERVED_EMAIL_SLDS = ("example.com", "example.org", "example.net")
+RESERVED_EMAIL_TLDS = ("example", "invalid", "test")
+
+
+def _is_reserved_email_domain(domain: str) -> bool:
+    d = domain.strip().lower().rstrip(".")
+    if not d:
+        return False
+    if d.rsplit(".", 1)[-1] in RESERVED_EMAIL_TLDS:
+        return True
+    return any(d == s or d.endswith("." + s) for s in RESERVED_EMAIL_SLDS)
+
+
+def _is_reserved_phone(digits: str) -> bool:
+    """True for a North American Numbering Plan fictional number — exchange 555,
+    subscriber 0100-0199 (the 555-01XX block the plan reserves for use in
+    fiction/examples). Such a number is never assignable, so it can't be a real
+    personal phone. Scoped to NANP-shaped input (10 digits, or 11 with the
+    country-code 1); any other length/country is left as-is."""
+    if len(digits) == 11 and digits.startswith("1"):
+        national = digits[1:]
+    elif len(digits) == 10:
+        national = digits
+    else:
+        return False
+    return national[3:6] == "555" and national[6:8] == "01"
+
 # Files/paths where long hashes and personal references are expected & benign.
 DOC_SUFFIXES = {".md", ".markdown", ".rst", ".txt"}
 # Machine-generated dependency manifests: full of hash/base64 blobs whose digit
@@ -105,7 +152,7 @@ HASH_CONTEXT_RE = re.compile(
 
 class Hit:
     __slots__ = ("path", "line", "category", "digest", "content",
-                 "precedented", "precedent_path")
+                 "precedented", "precedent_path", "note")
 
     def __init__(self, path: str, line: int, category: str, matched: str,
                  content: str = ""):
@@ -116,10 +163,15 @@ class Hit:
         # Full added-line text the match came from — needed by the precedent
         # pass to compare whole lines against the base tree. Never printed.
         self.content = content
-        # Set by the precedent pass: a denylist hit whose exact (whitespace-
-        # normalized) line already exists in the base tree is not NEW exposure.
+        # A hit is 'precedented' when it is downgraded from a ship-blocking
+        # failure to an INFO note because it is definitionally not new exposure:
+        # either an identical line already ships at base (precedent pass, sets
+        # precedent_path) or the matched value is a standard-reserved
+        # documentation value (reserved domain / fictional phone range). `note`
+        # holds the human-readable reason printed for the INFO line.
         self.precedented = False
         self.precedent_path: str | None = None
+        self.note: str = ""
 
     def key(self):
         return (self.path, self.line, self.category, self.digest)
@@ -276,7 +328,12 @@ def scan_diff(diff_text: str, denylist, precedent_lookup=None):
         if not lockish:
             for m in EMAIL_RE.finditer(content):
                 if not overlaps(m.start(), m.end()):
-                    hits.append(Hit(path, lineno, "email", m.group(0)))
+                    addr = m.group(0)
+                    h = Hit(path, lineno, "email", addr, content=content)
+                    if _is_reserved_email_domain(addr.rsplit("@", 1)[-1]):
+                        h.precedented = True
+                        h.note = "reserved documentation domain"
+                    hits.append(h)
 
         # (c) phones — require 10-15 digits, skip denylist-covered spans & lockfiles
         if not lockish:
@@ -290,7 +347,11 @@ def scan_diff(diff_text: str, denylist, precedent_lookup=None):
                 if _looks_like_versioned_identifier(content, m.start(1), m.end(1)):
                     continue
                 if not overlaps(m.start(), m.end()):
-                    hits.append(Hit(path, lineno, "phone", digits))
+                    h = Hit(path, lineno, "phone", digits, content=content)
+                    if _is_reserved_phone(digits):
+                        h.precedented = True
+                        h.note = "reserved fictional phone range"
+                    hits.append(h)
 
         # (d) api-key-shaped constants — skip docs, lock files, and hash contexts
         if not is_doc(path) and not lockish and not HASH_CONTEXT_RE.search(content):
@@ -321,6 +382,7 @@ def scan_diff(diff_text: str, denylist, precedent_lookup=None):
             if cache[key]:
                 h.precedented = True
                 h.precedent_path = cache[key]
+                h.note = f"precedented: identical line ships at {cache[key]}"
     return unique
 
 
@@ -424,18 +486,19 @@ def make_precedent_lookup(base_ref: str, cwd: str | None = None):
 
 # ── Reporting ───────────────────────────────────────────────────────────────
 def report(hits):
-    # Precedented denylist hits are not NEW exposure — print them as INFO notes
-    # and exclude them from the pass/fail decision.
+    # Downgraded hits (identical line already ships at base, or a standard-
+    # reserved documentation value) are not NEW exposure — print them as INFO
+    # notes and exclude them from the pass/fail decision.
     precedented = [h for h in hits if h.precedented]
     failures = [h for h in hits if not h.precedented]
 
     if precedented:
         precedented.sort(key=lambda h: (h.path, h.line, h.category))
-        print(f"privacy-scan: {len(precedented)} precedented note(s) — "
-              "identical line already ships at base, not new exposure")
+        print(f"privacy-scan: {len(precedented)} info note(s) — "
+              "precedented or reserved documentation values, not new exposure")
         for h in precedented:
-            print(f"  INFO precedented: identical line ships at "
-                  f"{h.precedent_path}  ({h.path}:{h.line} "
+            reason = h.note or "downgraded"
+            print(f"  INFO {reason}  ({h.path}:{h.line} "
                   f"[{h.category}] sha256:{h.digest})")
         print("")
 
