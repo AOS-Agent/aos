@@ -2,6 +2,18 @@
 
 All notable changes to AOS. Release notes sent via Telegram after each 4am update.
 
+## v0.6.6 — 2026-07-14
+
+Summary: Sentinel — the autonomous commitment agent. When you tell someone "consider it done" or "@aos" in iMessage, Sentinel wakes, researches the favor headlessly, drafts a reply in your voice, gates it through confidence checks, and either surfaces it for approval or (at high confidence) sends it — the backend behind the Sentinel queue UI that already shipped.
+
+- Added the Sentinel backend (`core/engine/comms/sentinel/`): a kqueue watcher on the iMessage chat.db that fires the instant an outbound message contains a trigger phrase, a spawner that runs a headless Sentinel session (`claude --agent Sentinel`), a confidence gate, a voice-matching context builder, and a dispatcher that sends approved drafts via message-person.
+- Added word-boundary trigger detection (`core/engine/comms/triggers/detector.py`) for "consider it done" / "@aos".
+- Added the Sentinel API (`core/qareen/api/sentinel.py`) — SSE stream, queue, and history endpoints behind the Sentinel screen that shipped earlier — and the `sentinel` CLI (status/pause/resume/tail).
+- Added migration 070 (Sentinel infrastructure — agent_triggers table, work/log dirs, sentinel.yaml). Structural fix: an earlier draft dropped an inert `.schema_pending` marker and returned success when comms.db didn't exist yet, permanently stranding agent_triggers once the runner's monotonic watermark advanced; it now creates comms.db and the table directly (the table is self-contained, and comms-bus adds its own tables with IF NOT EXISTS).
+- Added the Sentinel LaunchAgent as a proper framework template (`config/launchagents/com.aos.sentinel.plist.template`, `__HOME__` placeholder + runtime `~/aos` path) and migration 071 to materialize/reload it on machines past migration 012 — replacing the old hand-rolled plist with hardcoded operator paths.
+- Added a reconcile check (`SentinelPlistDriftCheck`) that compares the deployed Sentinel plist against its template every update cycle and re-renders on drift — closing the gap the LaunchAgent Python-path check left (it never compared template vs deployed).
+- Scope note: this wave ships Sentinel and its trigger detection only. Migration slot 069 is intentionally unallocated — council-substrate's `044_style_intelligence` was superseded by the People wave's `schema.sql`, which already ships `style_profiles`/`style_modes` verbatim — and the broader comms-pipeline enrichments (media enrichment, email/slack channel adapters) are deferred and not wired in here.
+
 ## v0.6.5 — 2026-07-14
 
 Summary: People Intelligence engine — nine source adapters, a rule classifier that tiers everyone in your circle (core/active/emerging/fading/dormant), a People CRM UI, and a nightly refresh cron, all self-contained and independent of the comms pipeline that ships in a later wave.
