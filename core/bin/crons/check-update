@@ -516,10 +516,24 @@ deploy() {
     "$AOS_DIR/core/bin/internal/aos-python" "$AOS_DIR/core/infra/reconcile/runner.py" run \
         2>>"$HOME/.aos/logs/reconcile-stderr.log" || true
 
-    # Skip the rest if version didn't change (reconcile-only update)
-    if [[ "$old_version" == "$new_version" ]]; then
-        log "No version change ($old_version) — reconcile only"
+    # Skip the rest only if there's nothing to do: version didn't change AND
+    # no migrations are pending. VERSION is a human-facing release marker,
+    # not the source of truth for migration state — a release can ship
+    # migrations without bumping VERSION (this happened: wave 3 shipped 4
+    # migrations on an unchanged version, and this gate skipped them all
+    # until run manually). The migration trigger must be pending count from
+    # the runner itself, independent of the version delta.
+    local pending_count
+    pending_count=$("$AOS_DIR/core/bin/internal/aos-python" "$AOS_DIR/core/infra/migrations/runner.py" pending-count 2>/dev/null)
+    [[ "$pending_count" =~ ^[0-9]+$ ]] || pending_count=0
+
+    if [[ "$old_version" == "$new_version" && "$pending_count" -eq 0 ]]; then
+        log "No version change ($old_version), no pending migrations — reconcile only"
         return 0
+    fi
+
+    if [[ "$old_version" == "$new_version" ]]; then
+        log "No version change ($old_version) but $pending_count migration(s) pending — running migrations"
     fi
 
     # Run migrations
