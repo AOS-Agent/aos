@@ -39,6 +39,8 @@ def _bootstrap_db() -> sqlite3.Connection:
             first_name TEXT,
             last_name TEXT,
             is_archived INTEGER DEFAULT 0,
+            is_self INTEGER DEFAULT 0,
+            lifecycle_state TEXT DEFAULT 'active',
             created_at INTEGER NOT NULL DEFAULT 0,
             updated_at INTEGER NOT NULL DEFAULT 0
         );

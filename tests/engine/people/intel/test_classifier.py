@@ -89,13 +89,16 @@ def test_rule_dormant_for_minimal_density():
 
 def test_rule_core_requires_all_conditions():
     classifier = RuleClassifier()
-    # All three conditions: multi-channel + high density + recent
+    # multi-channel + high density + recent + reciprocal + recent outbound
+    # activity (CORE also requires the latter two — see classifier.py's
+    # is_reciprocal/has_recent_outbound gate).
     result = classifier.classify(
         _profile(
             channel_count=4,
             density_rank="high",
             days_since_last=15,
             total_messages=800,
+            recent_outbound=5,
         )
     )
     assert result.tier == Tier.CORE
@@ -149,6 +152,7 @@ def test_rule_active_multi_channel_medium_density():
             channel_count=2,
             density_rank="medium",
             days_since_last=40,
+            recent_volume=20,  # ACTIVE requires some recent activity, not just historical density
         )
     )
     assert result.tier == Tier.ACTIVE
@@ -206,6 +210,7 @@ def test_rule_default_to_active_for_moderate_recent():
             density_rank="low",
             days_since_last=60,
             dominant_pattern="episodic",
+            recent_volume=1,  # must be nonzero or rule 8 forces FADING before the default
         )
     )
     # Doesn't hit CORE, EMERGING, FADING, DORMANT, CHANNEL_SPECIFIC
@@ -232,6 +237,7 @@ def test_rule_core_precedes_channel_specific():
             density_rank="high",
             days_since_last=10,
             total_messages=500,
+            recent_outbound=5,
         )
     )
     assert result.tier == Tier.CORE

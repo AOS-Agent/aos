@@ -43,6 +43,29 @@ def seeded_db(tmp_path: Path):
     class_store = ClassificationStore(db)
     class_store.init_schema()
 
+    # Minimal `people` table — normally shipped by the framework's
+    # core/engine/people/schema.sql via db.connect(), but this fixture
+    # only sets up the intel-specific tables above. The runner's
+    # sync_importance() step (added alongside migration 064's
+    # pinned_importance/lifecycle_state columns) joins against `people`,
+    # so it needs to exist here too.
+    import sqlite3
+    conn = sqlite3.connect(str(db))
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS people (
+            id TEXT PRIMARY KEY,
+            importance INTEGER DEFAULT 3,
+            is_self INTEGER DEFAULT 0,
+            pinned_importance INTEGER DEFAULT NULL,
+            lifecycle_state TEXT DEFAULT 'active',
+            updated_at INTEGER DEFAULT 0
+        )
+    """)
+    for pid in ("p_core", "p_active", "p_dormant"):
+        conn.execute("INSERT INTO people (id) VALUES (?)", (pid,))
+    conn.commit()
+    conn.close()
+
     # Seed three persons with different signal shapes.
     for pid, channel, count, days_ago in [
         ("p_core", "imessage", 500, 10),
