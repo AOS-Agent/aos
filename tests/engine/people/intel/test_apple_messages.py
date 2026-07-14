@@ -78,7 +78,7 @@ def build_fixture_db(path: Path) -> None:
         handles = [
             (1, "+14155550123", "iMessage"),   # alice phone
             (2, "alice@example.com", "iMessage"),  # alice email
-            (3, "+14155550999", "SMS"),  # unrelated
+            (3, "+14155550198", "SMS"),  # unrelated
         ]
         cur.executemany(
             "INSERT INTO handle (ROWID, id, service) VALUES (?, ?, ?)", handles
@@ -211,7 +211,7 @@ def person_index() -> dict[str, dict]:
         },
         "p_bob": {
             "name": "Bob",
-            "phones": ["+14155550000"],
+            "phones": ["+14155550199"],
             "emails": [],
             "wa_jids": [],
         },

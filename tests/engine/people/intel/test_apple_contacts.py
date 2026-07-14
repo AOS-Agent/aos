@@ -150,11 +150,11 @@ def _build_db(path: Path, *, include_social: bool = True,
         "INSERT INTO ZABCDPHONENUMBER (ZOWNER, ZFULLNUMBER, ZLABEL) "
         "VALUES (?, ?, ?)",
         [
-            (1, "+1-555-111-2222", "mobile"),
-            (1, "555 111 3333", "home"),
-            (2, "+1 (555) 444-5555", "mobile"),
-            (3, "+1-555-777-8888", "mobile"),
-            (4, "+1-555-999-0000", "mobile"),
+            (1, "+1-415-555-0112", "mobile"),
+            (1, "415 555 0113", "home"),
+            (2, "+1 (415) 555-0144", "mobile"),
+            (3, "+1-415-555-0177", "mobile"),
+            (4, "+1-415-555-0199", "mobile"),
         ],
     )
 
@@ -219,7 +219,7 @@ def person_index_all() -> dict[str, dict]:
     return {
         "p_alice": {
             "name": "Alice Smith",
-            "phones": ["+15551112222"],
+            "phones": ["+14155550112"],
             "emails": ["alice@example.com"],
             "wa_jids": [],
         },
@@ -297,7 +297,7 @@ def test_matches_by_phone_suffix_when_name_differs(fixture_db):
     idx = {
         "p_x": {
             "name": "Totally Different Name",
-            "phones": ["+1-555-111-2222"],
+            "phones": ["+1-415-555-0112"],
             "emails": [],
             "wa_jids": [],
         }
@@ -544,7 +544,7 @@ def test_unmatched_person_absent(fixture_db):
     idx = {
         "p_ghost": {
             "name": "Nobody Here",
-            "phones": ["+10000000000"],
+            "phones": ["+14155550100"],
             "emails": [],
             "wa_jids": [],
         }

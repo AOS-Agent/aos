@@ -110,7 +110,7 @@ def discover_operator_identifiers(default_region: str = "US") -> tuple[set[str],
     """Pull phones + emails the operator has used as iMessage / SMS account.
 
     Reads chat.db.message where is_from_me=1, parses the `account` field
-    (format 'P:+1xxx' or 'E:foo@bar.com') and the `destination_caller_id`.
+    (format 'P:+1xxx' or 'E:foo@example.com') and the `destination_caller_id`.
     Returns (phones_set, emails_set), both normalized.
     """
     phones: set[str] = set()

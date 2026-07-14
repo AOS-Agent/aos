@@ -14,14 +14,14 @@ co-occurrence threshold of 10, Bob does not):
     pk=4  Operator       ZFACECOUNT=99  (dominant — acts as "me")
 
   ZASSET  (6 assets + 2 operator-only assets to anchor home cluster)
-    a1 — 2026-01-15  37.7749,-122.4194  com.apple.camera
-    a2 — 2026-01-20  37.7749,-122.4194  com.apple.camera
-    a3 — 2026-01-25  37.7749,-122.4194  net.whatsapp.WhatsApp
-    a4 — 2026-02-05  40.7128,-74.0060   com.apple.camera
-    a5 — 2026-02-10  40.7128,-74.0060   net.whatsapp.WhatsApp
-    a6 — 2026-02-15  NULL,NULL          NULL
-    a7 — 2026-01-01  37.7749,-122.4194  com.apple.camera  (operator anchor)
-    a8 — 2026-01-02  37.7749,-122.4194  com.apple.camera  (operator anchor)
+    a1 | 2026-01-15 | 37.7749,-122.4194 | com.apple.camera
+    a2 | 2026-01-20 | 37.7749,-122.4194 | com.apple.camera
+    a3 | 2026-01-25 | 37.7749,-122.4194 | net.whatsapp.WhatsApp
+    a4 | 2026-02-05 | 40.7128,-74.0060 | com.apple.camera
+    a5 | 2026-02-10 | 40.7128,-74.0060 | net.whatsapp.WhatsApp
+    a6 | 2026-02-15 | NULL,NULL | NULL
+    a7 | 2026-01-01 | 37.7749,-122.4194 | com.apple.camera  (operator anchor)
+    a8 | 2026-01-02 | 37.7749,-122.4194 | com.apple.camera  (operator anchor)
 
   ZDETECTEDFACE (person_pk, asset_pk)
     Alice: a1, a2, a3, a4, a5, a6              → 6 photos

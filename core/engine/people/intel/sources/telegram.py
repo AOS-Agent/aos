@@ -22,7 +22,7 @@ Line format (example)::
           "username": null
       },
       "text": "hello there",
-      "timestamp": 1774560364.0,
+      "timestamp": 1774560364,
       "from_me": false,
       "thread_id": null
     }
