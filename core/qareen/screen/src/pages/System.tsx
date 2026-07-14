@@ -9,6 +9,7 @@ import { useServices } from '@/hooks/useServices';
 import { useCrons, type CronJob } from '@/hooks/useCrons';
 import { useHealth } from '@/hooks/useHealth';
 import { useAttention, type AttentionItem } from '@/hooks/useAttention';
+import { useLoadingTimeout } from '@/hooks/useLoadingTimeout';
 import { useResources, useRefreshResources } from '@/hooks/useResources';
 import { useRestartService, useRunCron, useToggleCron, fetchCronOutput, fetchServiceLogs } from '@/hooks/useSystemActions';
 import { SkeletonRows, SkeletonCards } from '@/components/primitives/Skeleton';
@@ -58,14 +59,23 @@ function GaugeBar({ pct, className = '' }: { pct: number; className?: string }) 
 
 /* ---------- Verdict Banner ---------- */
 function VerdictBanner() {
-  const { data, isLoading } = useAttention();
-  if (isLoading) return (
+  const { data } = useAttention();
+  // Bound the skeleton with a hard timeout so it can never pulse forever — the
+  // bug this replaces. Gating on "no data" (not react-query's isLoading) is what
+  // makes it robust: on a network-level failure react-query, in its default
+  // 'online' networkMode, PAUSES the query — no data, no error, no loading flag —
+  // which is exactly the state that used to strand this skeleton. The verdict is
+  // optional chrome (the concrete health below is authoritative and unaffected),
+  // so once the window lapses without data it degrades to hidden rather than a
+  // standing error banner.
+  const timedOut = useLoadingTimeout(!data);
+
+  if (!data) return timedOut ? null : (
     <div className="rounded-[7px] p-5 mb-8 animate-pulse bg-bg-secondary">
       <div className="h-5 w-48 bg-bg-tertiary rounded" />
       <div className="h-3 w-64 bg-bg-tertiary rounded mt-2.5" />
     </div>
   );
-  if (!data) return null;
 
   const ringColor = data.verdict === 'healthy' ? 'border-green/40' : data.verdict === 'warning' ? 'border-yellow/40' : 'border-red/40';
   const dotColor = data.verdict === 'healthy' ? 'bg-green' : data.verdict === 'warning' ? 'bg-yellow' : 'bg-red';
