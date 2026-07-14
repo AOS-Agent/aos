@@ -1,0 +1,64 @@
+#!/bin/bash
+# people-intel-refresh — nightly refresh of People Intelligence state.
+# Runs at 02:00 via cron.
+#
+# Pipeline (each step idempotent, safe to re-run):
+#   1. Ingest latest messages from iMessage + email
+#   2. Run identity enrichment (cross-source linking)
+#   3. Re-extract signals from all source adapters → signal_store
+#      (auto-discovers adapters — adding a new source = zero config)
+#   4. Re-classify all persons (rule-based) → person_classification
+#      (syncs tier → importance, respects pins and lifecycle)
+#   5. Generate nudges (drift, reconnect, birthday) → intelligence_queue
+#      (excludes deceased/archived/merged/blocked)
+#   6. Run hygiene scan (dedup + lifecycle candidates)
+#   7. Compile vault profiles for core/active/emerging tiers
+#      (pushname sync runs inside extraction step)
+#
+# Each step's exit code is captured but the script always continues —
+# a single failing step should not block the others. The script exits 0
+# unless every step failed.
+set -u
+
+# Resolve project root from the script's own location so the cron works
+# from runtime (~/aos) and dev (/Volumes/AOS-X/project/aos) without tweaks.
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+AOS_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+PYTHON="${PYTHON:-python3}"
+
+cd "$AOS_ROOT" || { echo "[people-intel-refresh] cannot cd to $AOS_ROOT" >&2; exit 1; }
+
+ts() { date '+%Y-%m-%d %H:%M:%S'; }
+
+failures=0
+successes=0
+
+run_step() {
+    local label="$1"
+    shift
+    echo "[$(ts)] $label starting"
+    if "$@"; then
+        echo "[$(ts)] $label ok"
+        successes=$((successes + 1))
+    else
+        echo "[$(ts)] $label FAILED (exit $?)" >&2
+        failures=$((failures + 1))
+    fi
+}
+
+run_step "imessage-ingest"  "$PYTHON" -m core.qareen.channels.imessage_desktop --days 7
+run_step "email-ingest"     "$PYTHON" -m core.qareen.channels.apple_mail_desktop --days 30
+run_step "id-enrichment"    "$PYTHON" -m core.engine.people.identity_enrichment
+run_step "extract"          "$PYTHON" -m core.engine.people.intel.cli extract
+run_step "classify"         "$PYTHON" -m core.engine.people.intel.cli classify
+run_step "nudges-generate"  "$PYTHON" -m core.engine.people.intel.cli nudges-generate
+run_step "hygiene-scan"     "$PYTHON" -m core.engine.people.intel.cli hygiene-scan
+run_step "compile-profiles" "$PYTHON" -m core.engine.people.intel.cli compile-profiles --tier core,active,emerging
+
+echo "[$(ts)] people-intel-refresh done — $successes ok, $failures failed"
+
+# Only fail if every step failed.
+if [ "$successes" -eq 0 ]; then
+    exit 1
+fi
+exit 0
