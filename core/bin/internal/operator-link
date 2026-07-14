@@ -1,0 +1,461 @@
+#!/usr/bin/env python3
+"""
+operator-link — link the operator's identity to people.db (universal).
+
+This tool answers "which people row is the operator?" by IDENTIFIER —
+never by name. It discovers the operator's phones and emails from
+chat.db (the iMessage account strings on rows where is_from_me=1) and
+finds the existing person row, if any, that already owns one of those
+identifiers. If found, it sets is_self=1 and backfills missing
+identifiers. If not found, it creates a fresh row.
+
+Why identifier-based?
+  Names are unreliable across operators (Western/Eastern order, single
+  names, emoji, transliteration, married/maiden, nicknames). Phones and
+  emails are unique and deterministic. Matching by identifier eliminates
+  the entire class of false-positive name merges.
+
+Configuration:
+  ~/.aos/config/operator.yaml may contain a `name:` field — used only
+  for the *display name* of the row when creating a new one. The match
+  itself never reads it.
+
+  The phone region defaults to whatever phonenumbers infers from the
+  number itself (E.164 prefix). Falls back to 'US' for raw 10-digit
+  inputs.
+
+Usage:
+  operator-link              # Dry run — show what would change
+  operator-link --apply      # Make the changes
+  operator-link --status     # Show current operator state
+"""
+from __future__ import annotations
+
+import argparse
+import re
+import secrets
+import sqlite3
+import string
+import sys
+import time
+from pathlib import Path
+
+PEOPLE_DB = Path.home() / ".aos" / "data" / "people.db"
+CHAT_DB = Path.home() / "Library" / "Messages" / "chat.db"
+OPERATOR_YAML = Path.home() / ".aos" / "config" / "operator.yaml"
+
+
+# ── helpers ─────────────────────────────────────────────────────────────
+
+
+def _connect(path: Path) -> sqlite3.Connection:
+    if not path.exists():
+        sys.exit(f"error: {path} not found")
+    conn = sqlite3.connect(str(path))
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def _read_operator_yaml() -> dict:
+    if not OPERATOR_YAML.exists():
+        return {}
+    data: dict = {}
+    for line in OPERATOR_YAML.read_text().splitlines():
+        if ":" in line and not line.startswith(" "):
+            key, _, val = line.partition(":")
+            data[key.strip()] = val.strip()
+    return data
+
+
+def _normalize_phone(raw: str, default_region: str = "US") -> str | None:
+    """Strict phone normalization. Returns None for non-phones, GUIDs, etc."""
+    if not raw or "@" in raw:
+        return None
+    try:
+        import phonenumbers
+        try:
+            parsed = phonenumbers.parse(raw, default_region)
+            if phonenumbers.is_valid_number(parsed):
+                return phonenumbers.format_number(
+                    parsed, phonenumbers.PhoneNumberFormat.E164
+                )
+        except phonenumbers.NumberParseException:
+            return None
+        return None
+    except ImportError:
+        digits = re.sub(r"[^\d]", "", raw)
+        if not (7 <= len(digits) <= 15):
+            return None
+        return "+" + digits
+
+
+def _normalize_email(raw: str) -> str | None:
+    if not raw or "@" not in raw:
+        return None
+    cleaned = raw.strip().lower()
+    if "@s.whatsapp.net" in cleaned or "@g.us" in cleaned:
+        return None
+    return cleaned
+
+
+def _gen_person_id() -> str:
+    chars = string.ascii_lowercase + string.digits
+    return "p_" + "".join(secrets.choice(chars) for _ in range(8))
+
+
+# ── identifier discovery ────────────────────────────────────────────────
+
+
+def discover_operator_identifiers(default_region: str = "US") -> tuple[set[str], set[str]]:
+    """Pull phones + emails the operator has used as iMessage / SMS account.
+
+    Reads chat.db.message where is_from_me=1, parses the `account` field
+    (format 'P:+1xxx' or 'E:foo@bar.com') and the `destination_caller_id`.
+    Returns (phones_set, emails_set), both normalized.
+    """
+    phones: set[str] = set()
+    emails: set[str] = set()
+    if not CHAT_DB.exists():
+        return phones, emails
+
+    conn = sqlite3.connect(str(CHAT_DB))
+    try:
+        rows = conn.execute(
+            "SELECT DISTINCT account FROM message WHERE is_from_me=1 AND account IS NOT NULL"
+        ).fetchall()
+        for (acct,) in rows:
+            if not acct or len(acct) < 3:
+                continue
+            kind, _, val = acct.partition(":")
+            val = (val or "").strip()
+            if not val:
+                continue
+            if kind == "E":
+                norm = _normalize_email(val)
+                if norm:
+                    emails.add(norm)
+            elif kind == "P":
+                norm = _normalize_phone(val, default_region)
+                if norm:
+                    phones.add(norm)
+
+        rows = conn.execute(
+            "SELECT DISTINCT destination_caller_id FROM message "
+            "WHERE destination_caller_id IS NOT NULL AND is_from_me = 1"
+        ).fetchall()
+        for (val,) in rows:
+            if not val:
+                continue
+            email = _normalize_email(val)
+            if email:
+                emails.add(email)
+                continue
+            phone = _normalize_phone(val, default_region)
+            if phone:
+                phones.add(phone)
+    finally:
+        conn.close()
+    return phones, emails
+
+
+# ── operator row lookup ─────────────────────────────────────────────────
+
+
+def find_operator_by_identifier(
+    conn: sqlite3.Connection,
+    phones: set[str],
+    emails: set[str],
+) -> sqlite3.Row | None:
+    """Return the person row that already owns ANY of these identifiers.
+
+    Resolution order:
+      1. is_self=1 row (already linked, just refresh)
+      2. Any phone match (people may have multiple — pick the one with
+         the most identifier overlaps to handle dup rows)
+      3. Any email match (same tiebreak)
+
+    Returns None if no row owns any of these identifiers.
+    """
+    row = conn.execute("SELECT * FROM people WHERE is_self = 1 LIMIT 1").fetchone()
+    if row:
+        return row
+
+    # Score every candidate by total overlap (phone + email)
+    candidates: dict[str, int] = {}
+
+    if phones:
+        chunk_size = 500
+        phones_list = list(phones)
+        for i in range(0, len(phones_list), chunk_size):
+            chunk = phones_list[i : i + chunk_size]
+            placeholders = ",".join("?" * len(chunk))
+            rows = conn.execute(
+                f"SELECT person_id, COUNT(*) AS n FROM person_identifiers "
+                f"WHERE type='phone' AND normalized IN ({placeholders}) "
+                f"GROUP BY person_id",
+                tuple(chunk),
+            ).fetchall()
+            for r in rows:
+                candidates[r["person_id"]] = candidates.get(r["person_id"], 0) + r["n"]
+
+    if emails:
+        chunk_size = 500
+        emails_list = list(emails)
+        for i in range(0, len(emails_list), chunk_size):
+            chunk = emails_list[i : i + chunk_size]
+            placeholders = ",".join("?" * len(chunk))
+            rows = conn.execute(
+                f"SELECT person_id, COUNT(*) AS n FROM person_identifiers "
+                f"WHERE type='email' AND normalized IN ({placeholders}) "
+                f"GROUP BY person_id",
+                tuple(chunk),
+            ).fetchall()
+            for r in rows:
+                candidates[r["person_id"]] = candidates.get(r["person_id"], 0) + r["n"]
+
+    if not candidates:
+        return None
+
+    best = max(candidates.items(), key=lambda kv: kv[1])
+    return conn.execute("SELECT * FROM people WHERE id = ?", (best[0],)).fetchone()
+
+
+def gather_existing_identifiers(
+    conn: sqlite3.Connection,
+    person_id: str,
+) -> set[tuple[str, str]]:
+    rows = conn.execute(
+        "SELECT type, normalized FROM person_identifiers WHERE person_id = ?",
+        (person_id,),
+    ).fetchall()
+    return {(r["type"], r["normalized"]) for r in rows if r["normalized"]}
+
+
+# ── duplicate detection (identifier-based, not name-based) ──────────────
+
+
+def find_dup_candidates(
+    conn: sqlite3.Connection,
+    phones: set[str],
+    emails: set[str],
+    target_id: str,
+) -> list[sqlite3.Row]:
+    """Find OTHER rows that own any of the operator's identifiers.
+
+    These are merge candidates by data alone — same phone/email means
+    same person. Excludes the target.
+    """
+    ids: set[str] = set()
+    if phones:
+        for chunk_start in range(0, len(phones), 500):
+            chunk = list(phones)[chunk_start : chunk_start + 500]
+            placeholders = ",".join("?" * len(chunk))
+            rows = conn.execute(
+                f"SELECT DISTINCT person_id FROM person_identifiers "
+                f"WHERE type='phone' AND normalized IN ({placeholders})",
+                tuple(chunk),
+            ).fetchall()
+            ids.update(r["person_id"] for r in rows if r["person_id"] != target_id)
+    if emails:
+        for chunk_start in range(0, len(emails), 500):
+            chunk = list(emails)[chunk_start : chunk_start + 500]
+            placeholders = ",".join("?" * len(chunk))
+            rows = conn.execute(
+                f"SELECT DISTINCT person_id FROM person_identifiers "
+                f"WHERE type='email' AND normalized IN ({placeholders})",
+                tuple(chunk),
+            ).fetchall()
+            ids.update(r["person_id"] for r in rows if r["person_id"] != target_id)
+
+    if not ids:
+        return []
+
+    placeholders = ",".join("?" * len(ids))
+    return conn.execute(
+        f"SELECT id, canonical_name, importance, is_archived FROM people "
+        f"WHERE id IN ({placeholders}) AND is_self = 0",
+        tuple(ids),
+    ).fetchall()
+
+
+# ── commands ────────────────────────────────────────────────────────────
+
+
+def cmd_status(conn: sqlite3.Connection) -> int:
+    row = conn.execute(
+        "SELECT id, canonical_name, importance, is_archived FROM people WHERE is_self = 1"
+    ).fetchone()
+    if not row:
+        print("✗ No operator linked. Run with --apply to link.")
+        return 1
+    print(f"✓ Operator linked: {row['canonical_name']} ({row['id']})")
+    print(f"  importance={row['importance']}, archived={row['is_archived']}")
+    idents = conn.execute(
+        "SELECT type, normalized FROM person_identifiers WHERE person_id = ? "
+        "ORDER BY type, normalized",
+        (row["id"],),
+    ).fetchall()
+    print(f"  identifiers: {len(idents)}")
+    for i in idents:
+        print(f"    {i['type']:10}  {i['normalized']}")
+    return 0
+
+
+def cmd_link(conn: sqlite3.Connection, apply: bool, default_region: str) -> int:
+    yaml = _read_operator_yaml()
+    name_for_create = yaml.get("name") or "Operator"
+    print(f"Operator (operator.yaml name → only used if creating new): {name_for_create}")
+    print(f"Phone region default: {default_region}")
+
+    phones, emails = discover_operator_identifiers(default_region)
+    print(f"\nIdentifiers from chat.db is_from_me=1 rows:")
+    print(f"  phones: {len(phones)}")
+    for p in sorted(phones):
+        print(f"    {p}")
+    print(f"  emails: {len(emails)}")
+    for e in sorted(emails):
+        print(f"    {e}")
+
+    if not phones and not emails:
+        print("\n✗ No operator identifiers found in chat.db.")
+        print("  This is normal on a fresh install with no Messages history.")
+        print("  Re-run after iMessage syncs or add identifiers manually.")
+        return 1
+
+    target = find_operator_by_identifier(conn, phones, emails)
+
+    if target is None:
+        print(f"\n→ Will CREATE new operator row '{name_for_create}'")
+        action = "create"
+    elif target["is_self"]:
+        print(f"\n✓ Already linked: {target['canonical_name']} ({target['id']})")
+        action = "update"
+    else:
+        print(f"\n→ Will LINK existing row: {target['canonical_name']} ({target['id']})")
+        print(f"  importance={target['importance']}, archived={target['is_archived']}")
+        action = "link"
+
+    target_id = target["id"] if target else None
+
+    # Identifier diff (only relevant if we have a target)
+    new_idents: list[tuple[str, str]] = []
+    if target_id:
+        existing = gather_existing_identifiers(conn, target_id)
+        for p in sorted(phones):
+            if ("phone", p) not in existing:
+                new_idents.append(("phone", p))
+        for e in sorted(emails):
+            if ("email", e) not in existing:
+                new_idents.append(("email", e))
+    else:
+        new_idents = [("phone", p) for p in sorted(phones)] + \
+                     [("email", e) for e in sorted(emails)]
+
+    if new_idents:
+        print(f"\nIdentifiers to add ({len(new_idents)}):")
+        for t, v in new_idents:
+            print(f"  {t:10}  {v}")
+    else:
+        print("\nAll identifiers already present.")
+
+    # Duplicate detection — purely by identifier overlap
+    dup_candidates: list[sqlite3.Row] = []
+    if target_id:
+        dup_candidates = find_dup_candidates(conn, phones, emails, target_id)
+    if dup_candidates:
+        print(f"\nDuplicate rows (own one of the operator's identifiers):")
+        for c in dup_candidates:
+            n_idents = conn.execute(
+                "SELECT COUNT(*) FROM person_identifiers WHERE person_id = ?",
+                (c["id"],),
+            ).fetchone()[0]
+            print(f"  {c['id']}  {c['canonical_name']:30}  importance={c['importance']} archived={c['is_archived']} idents={n_idents}")
+
+    if not apply:
+        print("\nDry run — re-run with --apply to make changes.")
+        return 0
+
+    # ── Apply ──────────────────────────────────────────────────────────
+    now = int(time.time())
+
+    if action == "create":
+        target_id = _gen_person_id()
+        conn.execute(
+            "INSERT INTO people (id, canonical_name, importance, is_self, "
+            "is_archived, created_at, updated_at) VALUES (?, ?, 1, 1, 0, ?, ?)",
+            (target_id, name_for_create, now, now),
+        )
+        print(f"\n✓ Created operator row: {target_id} '{name_for_create}'")
+    else:
+        conn.execute(
+            "UPDATE people SET is_self = 1, is_archived = 0, updated_at = ? WHERE id = ?",
+            (now, target_id),
+        )
+        print(f"\n✓ Set is_self=1, unarchived: {target_id}")
+
+    # Insert new identifiers (idempotent)
+    for t, v in new_idents:
+        try:
+            conn.execute(
+                "INSERT INTO person_identifiers (person_id, type, value, normalized, source) "
+                "VALUES (?, ?, ?, ?, 'operator-link')",
+                (target_id, t, v, v),
+            )
+        except sqlite3.IntegrityError:
+            pass
+    if new_idents:
+        print(f"✓ Inserted {len(new_idents)} new identifiers")
+
+    # Re-point identifiers from dup rows, then archive them
+    merged = 0
+    for c in dup_candidates:
+        rows = conn.execute(
+            "SELECT type, value FROM person_identifiers WHERE person_id = ?",
+            (c["id"],),
+        ).fetchall()
+        for r in rows:
+            try:
+                conn.execute(
+                    "UPDATE person_identifiers SET person_id = ? "
+                    "WHERE person_id = ? AND type = ? AND value = ?",
+                    (target_id, c["id"], r["type"], r["value"]),
+                )
+            except sqlite3.IntegrityError:
+                conn.execute(
+                    "DELETE FROM person_identifiers "
+                    "WHERE person_id = ? AND type = ? AND value = ?",
+                    (c["id"], r["type"], r["value"]),
+                )
+        conn.execute(
+            "UPDATE people SET is_archived = 1, merge_target_id = ?, updated_at = ? "
+            "WHERE id = ?",
+            (target_id, now, c["id"]),
+        )
+        merged += 1
+    if merged:
+        print(f"✓ Merged + archived {merged} duplicate identifier-overlapping rows")
+
+    conn.commit()
+    return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Link operator identity to people.db (universal)")
+    g = parser.add_mutually_exclusive_group()
+    g.add_argument("--apply", action="store_true", help="Make changes (default: dry run)")
+    g.add_argument("--status", action="store_true", help="Show current state and exit")
+    parser.add_argument("--region", default="US",
+                        help="Default phone region for ambiguous numbers (ISO 3166 alpha-2)")
+    args = parser.parse_args()
+
+    conn = _connect(PEOPLE_DB)
+    try:
+        if args.status:
+            return cmd_status(conn)
+        return cmd_link(conn, apply=args.apply, default_region=args.region)
+    finally:
+        conn.close()
+
+
+if __name__ == "__main__":
+    sys.exit(main())
