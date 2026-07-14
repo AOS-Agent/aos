@@ -1,6 +1,8 @@
 import { Suspense, useEffect } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
+import { Loader2 } from 'lucide-react';
 import Sidebar from './Sidebar';
+import RouteErrorBoundary from './RouteErrorBoundary';
 import CommandPalette from './CommandPalette';
 import FloatingAgent from '../agent/FloatingAgent';
 import { ToastContainer } from './NotificationToast';
@@ -32,6 +34,17 @@ function QareenContextHydrator() {
   return null;
 }
 
+/** Quiet loading state shown while a lazy route chunk downloads. Without a
+ *  fallback, Suspense renders nothing — leaving a blank canvas under the
+ *  floating chrome for several seconds on first visit to a heavy route. */
+function RouteFallback() {
+  return (
+    <div className="h-full flex items-center justify-center">
+      <Loader2 className="w-4 h-4 text-text-quaternary animate-spin" />
+    </div>
+  );
+}
+
 function NotificationLayer() {
   const { toasts, addToast, dismissToast } = useToastQueue();
   useNotificationSSE(addToast);
@@ -52,6 +65,7 @@ function GrainFilter() {
 
 export default function Layout() {
   const { colors } = usePrayerAmbient();
+  const { pathname } = useLocation();
 
   return (
     <SSEProvider>
@@ -79,9 +93,14 @@ export default function Layout() {
           }}
         >
           <main className="h-full overflow-hidden">
-            <Suspense>
-              <Outlet />
-            </Suspense>
+            {/* Keyed by pathname so a caught error clears on navigation and each
+                route re-mounts fresh. Boundary wraps Suspense so a chunk that
+                throws while loading is caught too. */}
+            <RouteErrorBoundary key={pathname} onReset={() => window.location.reload()}>
+              <Suspense fallback={<RouteFallback />}>
+                <Outlet />
+              </Suspense>
+            </RouteErrorBoundary>
           </main>
         </div>
         {/* Floating chrome */}
