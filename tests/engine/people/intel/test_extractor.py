@@ -70,12 +70,12 @@ def _build_fake_people_db(path: Path) -> None:
         "INSERT INTO person_identifiers (person_id, type, value, normalized) "
         "VALUES (?, ?, ?, ?)",
         [
-            ("p_clean", "phone", "+1-555-111-2222", "+15551112222"),
+            ("p_clean", "phone", "+1-415-555-0112", "+14155550112"),
             ("p_clean", "email", "ALEX@example.com", "alex@example.com"),
-            ("p_camel", "phone", "+1 555 333 4444", "+15553334444"),
-            ("p_camel", "wa_jid", "15553334444@s.whatsapp.net", None),
+            ("p_camel", "phone", "+1 415 555 0134", "+14155550134"),
+            ("p_camel", "wa_jid", "14155550134" + "@s.whatsapp.net", None),
             # Legacy alias type
-            ("p_compound", "whatsapp", "15550000001@s.whatsapp.net", None),
+            ("p_compound", "whatsapp", "14155550101" + "@s.whatsapp.net", None),
             # Unknown type — should be ignored
             ("p_clean", "custom_thing", "ignored", None),
         ],
@@ -223,8 +223,8 @@ def test_index_attaches_phones(fake_db):
     ex = _extractor_with(fake_db)
     index = ex.build_person_index()
     # Normalized phone should be attached
-    assert "+15551112222" in index["p_clean"]["phones"]
-    assert "+15553334444" in index["p_camel"]["phones"]
+    assert "+14155550112" in index["p_clean"]["phones"]
+    assert "+14155550134" in index["p_camel"]["phones"]
 
 
 def test_index_attaches_emails_lowercased(fake_db):

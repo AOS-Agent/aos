@@ -92,7 +92,7 @@ def _phone_suffix(phone: str) -> str | None:
 
 
 def _jid_digits(jid: str) -> str:
-    """Extract the digits portion from a WhatsApp JID like '14155550123@s.whatsapp.net'."""
+    """Extract the digits portion from a WhatsApp JID like '<digits>@s.whatsapp.net'."""
     if "@" not in jid:
         return re.sub(r"\D", "", jid or "")
     local = jid.split("@", 1)[0]

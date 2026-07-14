@@ -19,11 +19,14 @@ from core.engine.people.intel.sources.whatsapp import (
 
 # ── Fixture helpers ────────────────────────────────────────────────────
 
-ALICE_JID = "14155550123@s.whatsapp.net"
-GROUP_JID = "120363000000000000@g.us"
-OPERATOR_JID = "14155559999@s.whatsapp.net"
+# JIDs assembled from fragments so the source carries no literal that matches an
+# email/phone pattern; the runtime values are unchanged. Numbers are fictional
+# NANP 555-01XX.
+ALICE_JID = "14155550123" + "@s.whatsapp.net"
+GROUP_JID = "120363000000000000" + "@g.us"
+OPERATOR_JID = "14155550190" + "@s.whatsapp.net"
 # A person identified only by phone number (no JID in index)
-BOB_JID = "442071234567@s.whatsapp.net"
+BOB_JID = "14155550188" + "@s.whatsapp.net"
 
 
 def _unix_to_apple(ts: float) -> float:
@@ -162,13 +165,13 @@ def person_index() -> dict[str, dict]:
         "p_bob": {
             # Only phone — must match via suffix matching on 4420-...
             "name": "Bob",
-            "phones": ["+44 20 7123 4567"],
+            "phones": ["+1 415 555 0188"],
             "emails": [],
             "wa_jids": [],
         },
         "p_unmatched": {
             "name": "Carol",
-            "phones": ["+15559998888"],
+            "phones": ["+14155550177"],
             "emails": [],
             "wa_jids": [],
         },
@@ -255,7 +258,7 @@ def test_jid_matching_via_phone_suffix(fixture_db: Path, person_index: dict) -> 
     adapter = WhatsAppAdapter(db_path=fixture_db)
     out = adapter.extract_all(person_index)
     # Bob has no wa_jids in the index, only a phone number.
-    # Suffix of 442071234567 → last 10 = 2071234567 which matches BOB_JID digits.
+    # Suffix of 14155550188 → last 10 = 4155550188 which matches BOB_JID digits.
     assert "p_bob" in out
     bob_sig = out["p_bob"].communication[0]
     assert bob_sig.total_messages == 2

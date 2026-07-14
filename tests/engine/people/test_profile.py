@@ -161,7 +161,7 @@ def test_compile_full_profile(tmp_path):
     conn.executemany(
         "INSERT INTO person_identifiers (person_id, type, value, normalized) VALUES (?, ?, ?, ?)",
         [
-            ("p_1", "phone", "+15551111111", "+15551111111"),
+            ("p_1", "phone", "+14155550111", "+14155550111"),
             ("p_1", "email", "alice@example.com", "alice@example.com"),
         ],
     )
@@ -218,7 +218,7 @@ def test_compile_full_profile(tmp_path):
     assert profile is not None
     assert profile.basics["display_name"] == "Ali"
     assert {a["alias"] for a in profile.aliases} == {"ali", "alice"}
-    assert profile.identifiers["phone"] == ["+15551111111"]
+    assert profile.identifiers["phone"] == ["+14155550111"]
     assert profile.metadata["birthday"] == "0000-06-15"
     assert profile.metadata["city"] == "Toronto"
     assert profile.classification["tier"] == "core"
@@ -237,7 +237,7 @@ def test_render_markdown_contains_key_sections(tmp_path):
     _seed_person(conn, "p_1", "Alice Kumar", importance=1)
     conn.execute(
         "INSERT INTO person_identifiers (person_id, type, value, normalized) "
-        "VALUES ('p_1', 'phone', '+15551111111', '+15551111111')"
+        "VALUES ('p_1', 'phone', '+14155550111', '+14155550111')"
     )
     conn.commit()
 
@@ -246,7 +246,7 @@ def test_render_markdown_contains_key_sections(tmp_path):
     assert "type: person" in md
     assert "inner-circle" in md
     assert "## Reach" in md
-    assert "+15551111111" in md
+    assert "+14155550111" in md
     assert md.endswith("\n")
 
 

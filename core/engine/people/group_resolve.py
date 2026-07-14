@@ -26,7 +26,7 @@ DB_PATH = Path.home() / ".aos" / "data" / "people.db"
 
 _ID_CHARS = string.ascii_lowercase + string.digits
 
-# Pattern: wa_jid is like "971501234567@s.whatsapp.net" — extract digits
+# Pattern: wa_jid is like "<digits>@s.whatsapp.net" — extract digits
 _WA_JID_DIGITS_RE = re.compile(r"^(\d+)@")
 
 # Heuristic: a "good" pushname has a space and isn't just a phone number
@@ -59,7 +59,7 @@ def _has_table(conn: sqlite3.Connection, name: str) -> bool:
 def _jid_to_phone(wa_jid: str | None) -> str | None:
     """Extract phone number from a WhatsApp JID.
 
-    '971501234567@s.whatsapp.net' -> '+971501234567'
+    '<digits>@s.whatsapp.net' -> '+<digits>'
     LID format ('12345@lid') -> None (no phone in LID)
     """
     if not wa_jid:

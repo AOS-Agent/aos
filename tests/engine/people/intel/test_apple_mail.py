@@ -106,7 +106,7 @@ def _build_envelope_index(
     )
     cur.execute(
         "INSERT INTO senders (ROWID, address, comment) VALUES (?, ?, ?)",
-        (3, "noreply@shop.com", "Shop"),
+        (3, "noreply@example.com", "Shop"),
     )
     # Also create a sender row for "you" so recipients that point to senders
     # can reference you — not strictly needed but realistic.
@@ -245,18 +245,18 @@ def test_bidirectional_ratio(tmp_path: Path) -> None:
 
 
 def test_automated_sender_excluded(tmp_path: Path) -> None:
-    """noreply@shop.com must not show up in any person signal."""
+    """noreply@example.com must not show up in any person signal."""
     db = tmp_path / "Envelope Index"
     _build_envelope_index(db)
     idx = _person_index()
     idx["p_shop"] = {
         "name": "Shop",
         "phones": [],
-        "emails": ["noreply@shop.com"],
+        "emails": ["noreply@example.com"],
         "wa_jids": [],
     }
     result = AppleMailAdapter(db_path=db).extract_all(idx)
-    # The automated-sender regex drops noreply@shop.com entirely.
+    # The automated-sender regex drops noreply@example.com entirely.
     assert "p_shop" not in result
     # And no person's total should include it.
     for ps in result.values():

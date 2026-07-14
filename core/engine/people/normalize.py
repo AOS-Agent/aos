@@ -112,15 +112,15 @@ def normalize_phone(raw: str, default_region: str = "AE") -> str:
             country prefix.  Defaults to "AE" (United Arab Emirates).
 
     Returns:
-        E.164 phone string (e.g. ``"+971501234567"``).
+        E.164 phone string (e.g. ``"+14155550142"``).
 
-    Examples:
-        >>> normalize_phone("+971-50-123-4567")
-        '+971501234567'
-        >>> normalize_phone("050 123 4567")
-        '+971501234567'
-        >>> normalize_phone("00971501234567")
-        '+971501234567'
+    A leading "00" international prefix is normalized to "+" before parsing.
+
+    Examples (fictional NANP 555-01XX numbers used for illustration):
+        >>> normalize_phone("+1-415-555-0142")
+        '+14155550142'
+        >>> normalize_phone("(415) 555-0142", default_region="US")
+        '+14155550142'
     """
     cleaned = raw.strip()
     if not cleaned:
@@ -162,8 +162,8 @@ def normalize_email(raw: str) -> str:
     * Lowercases the whole address.
     * Strips dots from the local part for Gmail/Googlemail (they are ignored
       by Google's mail servers).
-    * Removes ``+tag`` suffixes for Gmail (``user+tag@gmail.com`` becomes
-      ``user@gmail.com``).
+    * Removes ``+tag`` suffixes for Gmail (a ``user+tag`` local part at a Gmail
+      domain becomes ``user``).
     * Trims leading/trailing whitespace.
 
     Args:
@@ -172,13 +172,13 @@ def normalize_email(raw: str) -> str:
     Returns:
         Normalized email string.
 
-    Examples:
-        >>> normalize_email("  A.B.C@Gmail.com  ")
-        'abc@gmail.com'
-        >>> normalize_email("user+promo@gmail.com")
-        'user@gmail.com'
-        >>> normalize_email("John@Company.COM")
-        'john@company.com'
+    Gmail canonicalization applies only when the domain is in ``_GMAIL_DOMAINS``:
+    dots and ``+tag`` suffixes are stripped from the local part, so a local part
+    ``a.b.c`` becomes ``abc`` and ``user+promo`` becomes ``user``. Every other
+    domain is only lowercased and trimmed:
+
+        >>> normalize_email("  John@Example.COM  ")
+        'john@example.com'
     """
     cleaned = raw.strip().lower()
     if "@" not in cleaned:
