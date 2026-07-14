@@ -2,6 +2,20 @@
 
 All notable changes to AOS. Release notes sent via Telegram after each 4am update.
 
+## v0.6.5 — 2026-07-14
+
+Summary: People Intelligence engine — nine source adapters, a rule classifier that tiers everyone in your circle (core/active/emerging/fading/dormant), a People CRM UI, and a nightly refresh cron, all self-contained and independent of the comms pipeline that ships in a later wave.
+
+- Added the People Intelligence signal-extraction layer (`core/engine/people/intel/`): nine source adapters (iMessage, calls, WhatsApp, Apple Photos, Apple Contacts, Apple Mail, Telegram, vault, work) plus Signal Desktop, a universal import path, and LinkedIn/Meta export converters — all read local data directly with stdlib only, no dependency on the comms connector pipeline.
+- Added the rule classifier, profile compiler, and taxonomy that turn extracted signals into a tier per person, plus an operator-feedback loop that retrains future classification runs.
+- Added the ontology layer (`core/engine/people/{graph,group_resolve,hygiene,identity,normalize,org}.py`): relationship-graph inference, WhatsApp group→circle resolution, canonical-name hygiene splitting/dedup, and cross-source identity enrichment.
+- Added operator self-identity linking (`people.is_self`) and a universal profile compiler.
+- Added the People CRM UI and API (`core/qareen/api/people.py`, `core/qareen/screen/src/pages/People.tsx`) — directory, detail panel, messaging, classification correction, circle/graph/org-chart/hygiene views.
+- Added "Today's Relevant People" and daily birthday/drift/reconnect nudges to Chief's session-start context.
+- Added a nightly `people-intel-refresh` cron (02:00) — extract, classify, generate nudges.
+- Added migrations 060-068 for the ontology, signal-store, classification, and nudge-queue schema. Structural fix: these migrations now lazily create `people.db` via the framework's own `db.connect()` instead of skipping when it doesn't exist yet — on a fresh machine, skipping meant the runner's monotonic version watermark advanced past them permanently, stranding their tables forever the first time they ran before any comms activity had created the DB.
+- Scope note: this wave's classifier and profiler are usable standalone via CLI/API but are not yet wired into `core/engine/comms/*`'s extraction pipeline — that integration is comms-pipeline territory and ships in a later wave, consistent with this wave's adapters having no import dependency on `core/engine/comms/connectors/*` in either direction.
+
 ## v0.6.4 — 2026-07-14
 
 Summary: Hotfix for two bugs found during wave 3's live edge deployment that had to land before waves 1-3 promote to friend machines.
