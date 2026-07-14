@@ -97,13 +97,18 @@ def _get_prayer_times() -> dict:
 
 
 def _write_yaml(data: dict, path: Path):
-    """Write dict as YAML using stdlib (no pyyaml required)."""
+    """Write dict as YAML using stdlib (no pyyaml required).
+
+    Supports flat dicts, one level of nested dicts, and top-level lists
+    of dicts (e.g. `people_today`).
+    """
     lines = []
 
     def _val(v):
         if isinstance(v, str):
             if any(c in v for c in ('"', "'", ":", "#", "{", "}", "[", "]", ",")):
-                return f'"{v}"'
+                escaped = v.replace('"', '\\"')
+                return f'"{escaped}"'
             return v
         return str(v)
 
@@ -112,11 +117,56 @@ def _write_yaml(data: dict, path: Path):
             lines.append(f"{key}:")
             for k2, v2 in value.items():
                 lines.append(f"  {k2}: {_val(str(v2))}")
+        elif isinstance(value, list):
+            lines.append(f"{key}:")
+            for item in value:
+                if isinstance(item, dict):
+                    first = True
+                    for k2, v2 in item.items():
+                        prefix = "  - " if first else "    "
+                        lines.append(f"{prefix}{k2}: {_val(str(v2))}")
+                        first = False
+                else:
+                    lines.append(f"  - {_val(str(item))}")
         else:
             lines.append(f"{key}: {_val(str(value))}")
 
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines) + "\n")
+
+
+def _get_people_nudges() -> list:
+    """Refresh and read top live nudges from people.db. Never crashes."""
+    try:
+        import sqlite3
+        # Resolve project root from this script's location so the import
+        # works from both the runtime tree (~/aos) and the dev workspace.
+        project_root = Path(__file__).resolve().parents[3]
+        sys.path.insert(0, str(project_root))
+        from core.engine.people.intel import nudges as nudges_mod  # type: ignore
+
+        db_path = Path.home() / ".aos" / "data" / "people.db"
+        if not db_path.exists():
+            return []
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+        try:
+            nudges_mod.generate_all(conn)
+            live = nudges_mod.list_live_nudges(conn, limit=5)
+        finally:
+            conn.close()
+        return [
+            {
+                "person_id": n["person_id"],
+                "name": n["name"] or "",
+                "type": n["surface_type"],
+                "prompt": n["content"],
+            }
+            for n in live
+        ]
+    except Exception as e:
+        print(f"Warning: people-nudges refresh failed: {e}")
+        return []
 
 
 def main():
@@ -131,11 +181,15 @@ def main():
     print(f"Fetching prayer times ({CITY}, {COUNTRY}, method {PRAYER_METHOD})...")
     prayer_times = _get_prayer_times()
 
+    print("Refreshing people nudges...")
+    people_today = _get_people_nudges()
+
     context = {
         "date": today,
         "generated": now,
         "weather": weather,
         "prayer_times": prayer_times,
+        "people_today": people_today,
     }
 
     _write_yaml(context, OUTPUT_FILE)
@@ -145,6 +199,8 @@ def main():
         print(f"  Weather: {weather['summary']}")
     if prayer_times.get("fajr"):
         print(f"  Fajr: {prayer_times['fajr']}, Maghrib: {prayer_times.get('maghrib', '?')}")
+    if people_today:
+        print(f"  People nudges: {len(people_today)} live")
 
     print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] morning-context done")
 

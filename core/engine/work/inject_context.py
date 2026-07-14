@@ -53,6 +53,332 @@ except Exception:
 
 DASHBOARD_URL = "http://127.0.0.1:4096"
 
+# people.db path — overridable for tests
+PEOPLE_DB_PATH = Path.home() / ".aos" / "data" / "people.db"
+
+
+def _build_people_section(db_path: Path | None = None, limit: int = 20) -> str:
+    """Build the "Today's Relevant People" markdown section.
+
+    Reads people.db directly (sqlite3) and returns up to `limit` currently
+    relevant people ranked by signal density. Graceful fail: any error
+    (missing file, missing tables, bad JSON) returns an empty string. This
+    function is called from a session-start hook — it must NEVER crash.
+
+    Selection:
+      - person_classification.tier IN ('core', 'active', 'emerging')
+      - people.is_archived = 0
+      - Skips persons with no detectable last_interaction_date across signals
+      - Ranked by density score (best-effort from signals_json)
+
+    Format per entry:
+      **Name** — tier[, tag1, tag2], last seen Nd ago, channel1, channel2[, +N more]
+    """
+    import sqlite3
+    from datetime import datetime as _dt
+
+    path = Path(db_path) if db_path else PEOPLE_DB_PATH
+    try:
+        if not path.exists():
+            return ""
+    except Exception:
+        return ""
+
+    try:
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    except Exception:
+        try:
+            conn = sqlite3.connect(str(path))
+        except Exception:
+            return ""
+
+    try:
+        conn.row_factory = sqlite3.Row
+        # Verify required tables exist
+        try:
+            tables = {
+                row[0]
+                for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+            }
+        except Exception:
+            return ""
+        if not {"people", "person_classification"}.issubset(tables):
+            return ""
+        has_signals = "signal_store" in tables
+
+        try:
+            if has_signals:
+                rows = conn.execute(
+                    """
+                    SELECT
+                      p.id AS person_id,
+                      p.display_name AS display_name,
+                      p.canonical_name AS canonical_name,
+                      p.first_name AS first_name,
+                      p.last_name AS last_name,
+                      pc.tier AS tier,
+                      pc.context_tags_json AS context_tags_json,
+                      ss.source_name AS source_name,
+                      ss.signals_json AS signals_json
+                    FROM people p
+                    INNER JOIN person_classification pc ON pc.person_id = p.id
+                    LEFT JOIN signal_store ss ON ss.person_id = p.id
+                    WHERE p.is_archived = 0
+                      AND pc.tier IN ('core', 'active', 'emerging')
+                    ORDER BY
+                      CASE pc.tier
+                        WHEN 'core' THEN 0
+                        WHEN 'active' THEN 1
+                        WHEN 'emerging' THEN 2
+                        ELSE 3
+                      END ASC,
+                      pc.created_at DESC
+                    LIMIT 500
+                    """
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT
+                      p.id AS person_id,
+                      p.display_name AS display_name,
+                      p.canonical_name AS canonical_name,
+                      p.first_name AS first_name,
+                      p.last_name AS last_name,
+                      pc.tier AS tier,
+                      pc.context_tags_json AS context_tags_json,
+                      NULL AS source_name,
+                      NULL AS signals_json
+                    FROM people p
+                    INNER JOIN person_classification pc ON pc.person_id = p.id
+                    WHERE p.is_archived = 0
+                      AND pc.tier IN ('core', 'active', 'emerging')
+                    ORDER BY
+                      CASE pc.tier
+                        WHEN 'core' THEN 0
+                        WHEN 'active' THEN 1
+                        WHEN 'emerging' THEN 2
+                        ELSE 3
+                      END ASC,
+                      pc.created_at DESC
+                    LIMIT 500
+                    """
+                ).fetchall()
+        except Exception:
+            return ""
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+    # Aggregate per person across signal_store source rows
+    people_map: dict = {}
+    for row in rows:
+        pid = row["person_id"]
+        if not pid:
+            continue
+        rec = people_map.get(pid)
+        if rec is None:
+            # Pick best name
+            name = (
+                row["display_name"]
+                or row["canonical_name"]
+                or " ".join(
+                    x for x in (row["first_name"], row["last_name"]) if x
+                ).strip()
+                or "Unknown"
+            )
+            # Parse context tags
+            tags: list = []
+            try:
+                raw_tags = row["context_tags_json"]
+                if raw_tags:
+                    parsed = json.loads(raw_tags)
+                    if isinstance(parsed, list):
+                        tags = [str(t) for t in parsed if t]
+            except Exception:
+                tags = []
+            rec = {
+                "name": name,
+                "tier": row["tier"],
+                "tags": tags,
+                "channels": [],
+                "channel_msg_counts": {},
+                "last_seen": None,  # datetime
+                "density": 0.0,
+                "total_messages": 0,
+                "total_calls": 0,
+                "total_photos": 0,
+            }
+            people_map[pid] = rec
+
+        signals_json = row["signals_json"]
+        if not signals_json:
+            continue
+        try:
+            signals = json.loads(signals_json)
+        except Exception:
+            continue
+        if not isinstance(signals, dict):
+            continue
+
+        # CommunicationSignals: list of {channel, total_messages, last_message_date, ...}
+        comms = signals.get("communication") or []
+        if isinstance(comms, list):
+            for c in comms:
+                if not isinstance(c, dict):
+                    continue
+                ch = c.get("channel")
+                tm = c.get("total_messages") or 0
+                try:
+                    tm = int(tm)
+                except Exception:
+                    tm = 0
+                if ch:
+                    prev = rec["channel_msg_counts"].get(ch, 0)
+                    rec["channel_msg_counts"][ch] = prev + tm
+                rec["total_messages"] += tm
+                lmd = c.get("last_message_date")
+                _update_last_seen(rec, lmd)
+
+        # VoiceSignal
+        voice = signals.get("voice") or []
+        if isinstance(voice, list):
+            for v in voice:
+                if not isinstance(v, dict):
+                    continue
+                try:
+                    rec["total_calls"] += int(v.get("total_calls") or 0)
+                except Exception:
+                    pass
+                if (v.get("total_calls") or 0) and "phone" not in rec["channel_msg_counts"]:
+                    rec["channel_msg_counts"]["phone"] = int(v.get("total_calls") or 0)
+                _update_last_seen(rec, v.get("last_call_date"))
+
+        # PhysicalPresence
+        phys = signals.get("physical_presence") or []
+        if isinstance(phys, list):
+            for p in phys:
+                if not isinstance(p, dict):
+                    continue
+                try:
+                    rec["total_photos"] += int(p.get("total_photos") or 0)
+                except Exception:
+                    pass
+                if (p.get("total_photos") or 0) and "photos" not in rec["channel_msg_counts"]:
+                    rec["channel_msg_counts"]["photos"] = int(p.get("total_photos") or 0)
+                _update_last_seen(rec, p.get("last_photo_date"))
+
+        # Professional (email)
+        prof = signals.get("professional") or []
+        if isinstance(prof, list):
+            for pr in prof:
+                if not isinstance(pr, dict):
+                    continue
+                te = pr.get("total_emails") or 0
+                try:
+                    te = int(te)
+                except Exception:
+                    te = 0
+                if te and "email" not in rec["channel_msg_counts"]:
+                    rec["channel_msg_counts"]["email"] = te
+                _update_last_seen(rec, pr.get("last_date"))
+
+    # Filter: only keep people with a detectable last_seen
+    now = _now_utc_naive()
+    candidates = []
+    for pid, rec in people_map.items():
+        if rec["last_seen"] is None:
+            continue
+        try:
+            days = max(0, int((now - rec["last_seen"]).total_seconds() // 86400))
+        except Exception:
+            continue
+        rec["days_since"] = days
+        # Density: simple composite
+        rec["density"] = (
+            rec["total_messages"]
+            + rec["total_calls"] * 3
+            + rec["total_photos"] * 2
+            + len(rec["channel_msg_counts"]) * 10
+        )
+        # Tier rank for stable sort
+        tier_rank = {"core": 0, "active": 1, "emerging": 2}.get(rec["tier"], 3)
+        rec["sort_key"] = (tier_rank, -rec["density"], days)
+        candidates.append(rec)
+
+    if not candidates:
+        return ""
+
+    candidates.sort(key=lambda r: r["sort_key"])
+    top = candidates[:limit]
+
+    # Format
+    out_lines = ["## Today's Relevant People", ""]
+    out_lines.append(
+        f"Currently in your active circle (top {len(top)} by signal density):"
+    )
+    out_lines.append("")
+    for rec in top:
+        # Sort channels by message count desc
+        sorted_channels = sorted(
+            rec["channel_msg_counts"].items(), key=lambda kv: -kv[1]
+        )
+        channel_names = [c for c, _ in sorted_channels]
+        shown_channels = channel_names[:3]
+        extra_n = len(channel_names) - len(shown_channels)
+        channel_part = ", ".join(shown_channels)
+        if extra_n > 0:
+            channel_part = (
+                channel_part + f", +{extra_n} more" if channel_part else f"+{extra_n} more"
+            )
+
+        top_tags = rec["tags"][:2]
+        tag_part = ", ".join(top_tags)
+
+        segments = [rec["tier"]]
+        if tag_part:
+            segments.append(tag_part)
+        segments.append(f"last seen {rec['days_since']}d ago")
+        if channel_part:
+            segments.append(channel_part)
+
+        out_lines.append(f"- **{rec['name']}** — " + ", ".join(segments))
+
+    return "\n".join(out_lines)
+
+
+def _now_utc_naive():
+    """Return current UTC time as a naive datetime (for subtraction with parsed dates)."""
+    from datetime import datetime as _dt
+    return _dt.utcnow()
+
+
+def _update_last_seen(rec: dict, iso_str) -> None:
+    """Parse an ISO date string and update rec['last_seen'] if newer. Best-effort."""
+    if not iso_str or not isinstance(iso_str, str):
+        return
+    from datetime import datetime as _dt
+    try:
+        # Normalize trailing Z
+        s = iso_str.replace("Z", "+00:00")
+        parsed = _dt.fromisoformat(s)
+        # Strip tz for naive comparison
+        if parsed.tzinfo is not None:
+            parsed = parsed.replace(tzinfo=None)
+    except Exception:
+        # Try date-only
+        try:
+            from datetime import datetime as _dt2
+            parsed = _dt2.strptime(iso_str[:10], "%Y-%m-%d")
+        except Exception:
+            return
+    if rec["last_seen"] is None or parsed > rec["last_seen"]:
+        rec["last_seen"] = parsed
+
 # Add ontology backend to path
 _this_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _this_dir)  # for query.py (still in this dir)
@@ -277,6 +603,38 @@ def main():
                     except Exception:
                         pass
                     lines.append(f"- {name} ({channel}, {ago}): {preview[:60]}")
+    except Exception:
+        pass  # Never crash the hook
+
+    # --- Today's Relevant People ---
+    # Inject a short list of currently-relevant people from people.db so Chief
+    # is aware of who's active in the operator's life without having to ask.
+    # Reads person_classification + signal_store directly. Best-effort: any
+    # failure returns an empty string, never crashes the hook.
+    try:
+        people_section = _build_people_section()
+        if people_section:
+            lines.append("")
+            lines.append(people_section)
+    except Exception:
+        pass  # Never crash the hook
+
+    # --- People nudges ---
+    # Surface live nudges from intelligence_queue (birthday, drift, reconnect).
+    # Reads from morning-context.yaml which is refreshed daily by the cron.
+    try:
+        mc_path = Path.home() / ".aos" / "work" / "morning-context.yaml"
+        if mc_path.exists():
+            mc = yaml.safe_load(mc_path.read_text()) or {}
+            nudges_list = mc.get("people_today") or []
+            if nudges_list:
+                lines.append("")
+                lines.append("**People nudges:**")
+                for nudge in nudges_list[:5]:
+                    if isinstance(nudge, dict):
+                        prompt = nudge.get("prompt", "")
+                        if prompt:
+                            lines.append(f"- {prompt}")
     except Exception:
         pass  # Never crash the hook
 
