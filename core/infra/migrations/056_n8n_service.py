@@ -209,12 +209,21 @@ def up() -> bool:
             return True
 
     if _port_open(5678):
+        # Bound but not answering /healthz yet — legitimately slow cold
+        # start (npm install just ran, first boot compiles internal
+        # state). The reconcile check (core/infra/reconcile/checks/n8n.py)
+        # owns ongoing health monitoring and will keep retrying past this
+        # point, so this is success, not failure.
         print("  WARNING: n8n not healthy after 60s, but port 5678 is bound —")
         print("  likely still starting. Check ~/.aos/logs/n8n.err.log.")
-    else:
-        print("  WARNING: n8n not healthy after 60s and port 5678 is not bound —")
-        print("  the process likely failed to start. Check ~/.aos/logs/n8n.err.log.")
-    # Return True anyway in both cases — the reconcile check
-    # (core/infra/reconcile/checks/n8n.py) owns ongoing health monitoring
-    # and will keep retrying/notifying past this point.
-    return True
+        return True
+
+    # Not bound at all — the process never came up (crash loop, bad
+    # install, missing dep). Reconcile can re-kickstart a healthy install
+    # that drifted, but it can't heal a binary that never started; a
+    # False here is correct even though it stops the migration batch — a
+    # machine where n8n can't start needs a human, not a watermark that
+    # silently advanced past a service that was never actually running.
+    print("  ERROR: n8n not healthy after 60s and port 5678 is not bound —")
+    print("  the process failed to start. Check ~/.aos/logs/n8n.err.log.")
+    return False

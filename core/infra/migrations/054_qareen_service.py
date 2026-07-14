@@ -23,6 +23,7 @@ for the full renumbering rationale). Renumbered to 054 to land after main's
 DESCRIPTION = "Deploy Qareen service (replaces dashboard on port 4096)"
 
 import os
+import socket
 import sqlite3
 import subprocess
 import time
@@ -51,6 +52,13 @@ HEALTH_URL = "http://127.0.0.1:4096/api/health"
 
 def _run(cmd: list[str], timeout: int = 120) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+
+
+def _port_open(port: int, host: str = "127.0.0.1", timeout: float = 1.0) -> bool:
+    """Return True if something is already listening on host:port."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(timeout)
+        return s.connect_ex((host, port)) == 0
 
 
 def _is_healthy() -> bool:
@@ -180,7 +188,21 @@ def up() -> bool:
             print(f"  Qareen healthy after {(i + 1) * 2}s on port 4096")
             return True
 
-    print("  WARNING: Qareen not healthy after 60s — check ~/.aos/logs/qareen.err.log")
-    # Return True — service may still be initializing.
-    # Reconcile check will handle ongoing monitoring.
-    return True
+    if _port_open(4096):
+        # Bound but not answering /api/health yet — legitimately slow cold
+        # start (pip install just ran, first boot initializes state).
+        # Reconcile owns ongoing monitoring past this point, so this is
+        # success, not failure.
+        print("  WARNING: Qareen not healthy after 60s, but port 4096 is bound —")
+        print("  likely still starting. Check ~/.aos/logs/qareen.err.log.")
+        return True
+
+    # Not bound at all — the process never came up (crash loop, bad venv,
+    # missing dep). Reconcile can re-kickstart a healthy install that
+    # drifted, but it can't heal a binary that never started; a False
+    # here is correct even though it stops the migration batch — a
+    # machine where Qareen can't start needs a human, not a watermark
+    # that silently advanced past a service that was never running.
+    print("  ERROR: Qareen not healthy after 60s and port 4096 is not bound —")
+    print("  the process failed to start. Check ~/.aos/logs/qareen.err.log.")
+    return False
