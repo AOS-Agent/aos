@@ -50,12 +50,12 @@ def _make_people_db() -> sqlite3.Connection:
 
 
 def test_normalize_phone_e164(operator_link_module):
-    assert operator_link_module._normalize_phone("+14168453524") == "+14168453524"
+    assert operator_link_module._normalize_phone("+14165551234") == "+14165551234"
 
 
 def test_normalize_phone_us_no_prefix(operator_link_module):
-    # 4168453524 alone won't validate as a US number; +1 prefix should work
-    assert operator_link_module._normalize_phone("+1 (416) 845-3524") == "+14168453524"
+    # 4165551234 alone won't validate as a US number; +1 prefix should work
+    assert operator_link_module._normalize_phone("+1 (416) 555-1234") == "+14165551234"
 
 
 def test_normalize_phone_rejects_garbage(operator_link_module):
