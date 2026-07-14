@@ -2,6 +2,19 @@
 
 All notable changes to AOS. Release notes sent via Telegram after each 4am update.
 
+## v0.6.7 — 2026-07-14
+
+Summary: Qareen UI rehaul Phase A — foundation and honesty. Fixes the crashed Sessions route, wires the People page live into the nav, kills two stuck-loading bugs, fixes the wave-3 UI type errors, and adds a TypeScript gate to ship-check so UI type errors can't ship again.
+
+- Fixed the `/sessions` route crashing to a black screen (`TypeError: null.toLowerCase()` in `getSessionIcon`) — the session icon lookup now tolerates a null title, and `SessionRecord.title` is typed as nullable to match the API.
+- Added a route-level error boundary (`components/layout/RouteErrorBoundary.tsx`) around every route so a single render exception shows a warm retry fallback instead of taking the whole app to black.
+- Wired the People CRM page live: added the `/people` route and a People entry in the Focus nav group (shipped in wave 4 but previously unreachable from the nav).
+- Fixed the System page's top verdict banner pulsing a skeleton forever when its fetch never resolved — a new `hooks/useLoadingTimeout.ts` bounds the skeleton, gating on "no data" rather than the loading flag (which a paused/hung query never clears); the optional banner degrades to hidden after the timeout, and the fetch gets its own `AbortSignal` timeout.
+- Fixed the blank-on-first-load of lazy routes (most visibly Chat): the router's `Suspense` boundary now renders a loading state instead of nothing while a route chunk downloads.
+- Fixed the three `TS2322` `StatusDotColor` type errors in `Automations.tsx` (pre-existing from wave 3, aos#159) with a typed fix — no `as any`.
+- Added a UI type-safety gate to `ship-check`: when the diff touches `core/qareen/screen/`, it runs `tsc -b` and fails on any TypeScript error — the gap that let aos#159 ship.
+- Amended `DESIGN.md` with a Loading & Empty States section codifying the skeleton pattern (hard timeout, gate on "no data", resolve to retry for primary surfaces or hidden for optional chrome) and the empty-state copy pattern.
+
 ## v0.6.6 — 2026-07-14
 
 Summary: Sentinel — the autonomous commitment agent. When you tell someone "consider it done" or "@aos" in iMessage, Sentinel wakes, researches the favor headlessly, drafts a reply in your voice, gates it through confidence checks, and either surfaces it for approval or (at high confidence) sends it — the backend behind the Sentinel queue UI that already shipped.
