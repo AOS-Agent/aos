@@ -199,3 +199,55 @@ class TestQareenKickstartTimeout:
         monkeypatch.setattr(mod, "_is_healthy", lambda: True)
 
         assert mod.up() is True
+
+
+class TestSentinelKickstartTimeout:
+    """071_sentinel_plist.py up() has the same unguarded kickstart -k pattern.
+    Sentinel binds no HTTP port, so its health signal is a live launchctl pid;
+    the post-poll split is pid-present (slow start, True) vs pid-absent (never
+    started, False), mirroring 054/056's port-bound/not-bound tail."""
+
+    @pytest.fixture
+    def mod(self, tmp_path, monkeypatch):
+        m = _load_module("071_sentinel_plist")
+
+        m.TEMPLATE_PATH = tmp_path / "com.aos.sentinel.plist.template"
+        m.TEMPLATE_PATH.write_text("__HOME__")
+        m.PLIST_PATH = tmp_path / "com.aos.sentinel.plist"
+        m.LOG_DIR = tmp_path / "logs" / "sentinel"
+
+        monkeypatch.setattr(m.time, "sleep", lambda s: None)
+
+        yield m
+        sys.modules.pop("071_sentinel_plist", None)
+
+    def test_kickstart_timeout_is_not_fatal_and_health_poll_still_runs(self, mod, monkeypatch):
+        monkeypatch.setattr(mod, "_run", _fake_run(kickstart_raises=True, default_timeout=10))
+        monkeypatch.setattr(mod, "_is_running", lambda: True)
+
+        assert mod.up() is True
+
+    def test_health_never_arrives_but_pid_present_returns_true(self, mod, monkeypatch):
+        """Slow start: no pid during the 60s poll, but a pid is present at the
+        tail check. KeepAlive/reconcile own it from here — success."""
+        monkeypatch.setattr(mod, "_run", _fake_run(kickstart_raises=True, default_timeout=10))
+        monkeypatch.setattr(mod, "_is_running", lambda: False)
+        monkeypatch.setattr(mod, "_service_pid", lambda: 4321)
+
+        assert mod.up() is True
+
+    def test_health_never_arrives_and_pid_absent_returns_false(self, mod, monkeypatch):
+        """Dead process: no pid after 60s and none at the tail — the service
+        never came up. KeepAlive cannot heal a process that never starts; fail."""
+        monkeypatch.setattr(mod, "_run", _fake_run(kickstart_raises=True, default_timeout=10))
+        monkeypatch.setattr(mod, "_is_running", lambda: False)
+        monkeypatch.setattr(mod, "_service_pid", lambda: None)
+
+        assert mod.up() is False
+
+    def test_no_timeout_still_succeeds_normally(self, mod, monkeypatch):
+        """Baseline: behavior is unchanged when kickstart doesn't time out."""
+        monkeypatch.setattr(mod, "_run", _fake_run(kickstart_raises=False, default_timeout=10))
+        monkeypatch.setattr(mod, "_is_running", lambda: True)
+
+        assert mod.up() is True
