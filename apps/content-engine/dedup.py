@@ -1,10 +1,22 @@
-"""URL deduplication — track processed URLs to avoid reprocessing."""
+"""URL deduplication — track processed URLs to avoid reprocessing.
+
+The ledger is INSTANCE state, not framework state. It lives in ~/.aos/data/
+so that the framework directory (~/aos/, read-only at runtime) stays clean.
+
+Historically this wrote to `Path(__file__).parent / "processed_urls.jsonl"`,
+which crashed with PermissionError on any release install and meant dedup
+silently never worked. Migration 051 relocates the old ledger if present.
+"""
 
 import json
+import os
 from datetime import datetime
 from pathlib import Path
 
-DEDUP_FILE = Path(__file__).parent / "processed_urls.jsonl"
+# Instance data dir — overridable for tests.
+_DEFAULT_DIR = Path.home() / ".aos" / "data" / "content-engine"
+DEDUP_DIR = Path(os.environ.get("AOS_CONTENT_ENGINE_DIR", _DEFAULT_DIR))
+DEDUP_FILE = DEDUP_DIR / "processed_urls.jsonl"
 
 
 def is_processed(content_id: str, platform: str) -> bool:
@@ -27,7 +39,11 @@ def is_processed(content_id: str, platform: str) -> bool:
 
 def mark_processed(url: str, content_id: str, platform: str,
                    tier: str = "deep", vault_path: str = "") -> None:
-    """Record a URL as processed."""
+    """Record a URL as processed.
+
+    Never fatal: a dedup-ledger failure must not lose an extraction that has
+    already been written to the vault.
+    """
     entry = {
         "url": url,
         "content_id": content_id,
@@ -37,8 +53,13 @@ def mark_processed(url: str, content_id: str, platform: str,
         "processed_at": datetime.now().isoformat(),
     }
 
-    with open(DEDUP_FILE, "a") as f:
-        f.write(json.dumps(entry) + "\n")
+    try:
+        DEDUP_DIR.mkdir(parents=True, exist_ok=True)
+        with open(DEDUP_FILE, "a") as f:
+            f.write(json.dumps(entry) + "\n")
+    except OSError as e:
+        print(f"  Warning: could not record dedup entry ({e}). "
+              f"Extraction itself succeeded.")
 
 
 def get_processed_count() -> int:
