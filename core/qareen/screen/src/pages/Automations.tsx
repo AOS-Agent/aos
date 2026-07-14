@@ -7,7 +7,7 @@ import {
   MessageCircle, Mail, Sheet, Rss, Webhook,
   Calendar, Globe, Bot,
 } from 'lucide-react';
-import { Tag, StatusDot } from '@/components/primitives';
+import { Tag, StatusDot, type StatusDotColor } from '@/components/primitives';
 import {
   useN8nAutomations, useAutomationsHealth,
   useGenerateAutomation, useDeployAutomation,
@@ -64,7 +64,7 @@ function useAutomations() {
 
 // ── Status helpers ──
 
-function statusColor(status: string | number | undefined): string {
+function statusColor(status: string | number | undefined): StatusDotColor {
   if (status === undefined || status === null) return 'gray';
   if (status === 'success' || status === 0) return 'green';
   if (status === 'running') return 'blue';
@@ -458,7 +458,7 @@ function N8nAutomationCard({
   onActivate: () => void;
   onDeactivate: () => void;
 }) {
-  const statusColors: Record<string, string> = {
+  const statusColors: Record<string, StatusDotColor> = {
     active: 'green', draft: 'gray', paused: 'yellow', error: 'red', archived: 'gray',
   };
   const sc = statusColors[automation.status] || 'gray';
@@ -479,7 +479,7 @@ function N8nAutomationCard({
         <div className="flex items-center gap-2.5">
           <StatusDot color={sc} size="md" pulse={automation.status === 'active'} />
           <span className="text-[14px] font-[560] text-text">{automation.name}</span>
-          <Tag label={automation.status} color={sc as any} size="sm" />
+          <Tag label={automation.status} color={sc} size="sm" />
         </div>
         <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
           {automation.status === 'active' ? (
