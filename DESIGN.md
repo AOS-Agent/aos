@@ -186,6 +186,29 @@ Easing: `cubic-bezier(0.25, 0.46, 0.45, 0.94)` for most transitions.
 
 **Vertical flow.** Greeting → briefing → suggestion chips → recent sessions. Single centered column. No multi-column grids on the main screen.
 
+## Loading & Empty States
+
+Every data fetch has three outcomes — loading, empty, and error. Design all three. An undefined loading or empty state is how you ship a stuck skeleton or a blank screen.
+
+### Skeleton pattern
+
+While content is loading, show a skeleton — not a spinner-only screen, and never nothing.
+
+- **Surface:** `bg-tertiary`, with a subtle opacity pulse (`animate-pulse`).
+- **Shape:** the skeleton block matches the border-radius and rough dimensions of the content it will become. A card skeleton is card-shaped; a row skeleton is row-shaped.
+- **Hard timeout — the load-bearing rule.** A skeleton must never persist indefinitely. If real content hasn't replaced it within ~8s, resolve to something else. Gate the skeleton on a timeout (see `hooks/useLoadingTimeout.ts`), and gate it on "no data yet" rather than the fetch library's loading flag — a paused/hung query keeps that flag from ever flipping, which is how a skeleton hangs forever. Give the underlying fetch its own timeout (`AbortSignal.timeout`) too, so a hung endpoint rejects instead of stalling.
+- **What it resolves to depends on the surface.** A **primary data surface** (the thing the page exists to show) falls back to an explicit error/retry state: a short honest line ("Couldn't load your tasks"), one sentence of why, and a `Retry` button wired to refetch. **Optional chrome** (a secondary banner, a nice-to-have summary) degrades to hidden — never show a standing "failed / Retry" banner for a surface the operator didn't come for, especially one whose endpoint may not be wired yet. Warm palette, sentence case either way.
+
+### Empty-state pattern
+
+When a fetch succeeds but returns nothing, never render "No data available." Follow the Calendar page's canonical pattern:
+
+- A **bold headline** naming the state ("No schedule configured").
+- **One sentence of specific guidance** telling the operator exactly what to do next ("Define your daily rhythm in Settings…") — not a generic apology.
+- An optional action (button/link) to that next step.
+
+The shared `EmptyState` primitive (`components/primitives/EmptyState.tsx`) encodes this: `icon` + `title` + specific `description` + optional `action`. Use it rather than hand-rolling.
+
 ## Rules
 
 1. **Warm over cold.** Every surface, every border, every shadow.
