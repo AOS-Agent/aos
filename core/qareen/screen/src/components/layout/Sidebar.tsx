@@ -4,7 +4,7 @@ import {
   ListTodo, Bot, Bell,
   Activity, Settings, Mic, MessageSquare,
   Menu, Search, Sun, Moon, X,
-  CalendarDays,
+  CalendarDays, Users,
   Network, Sparkles,
   type LucideIcon,
 } from 'lucide-react';
@@ -37,6 +37,7 @@ const NAV_GROUPS: NavGroup[] = [
     label: 'Focus',
     items: [
       { label: 'Work', href: '/work', icon: ListTodo },
+      { label: 'People', href: '/people', icon: Users },
       { label: 'Timeline', href: '/timeline', icon: CalendarDays },
     ],
   },

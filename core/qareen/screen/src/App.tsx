@@ -7,6 +7,7 @@ import { migrateLegacyChatIfNeeded } from '@/lib/migrateLegacyChat';
 const Home = lazy(() => import('@/pages/Companion'));
 const CompanionSession = lazy(() => import('@/pages/CompanionSession'));
 const Work = lazy(() => import('@/pages/Work'));
+const People = lazy(() => import('@/pages/People'));
 const Chat = lazy(() => import('@/pages/Chat'));
 const System = lazy(() => import('@/pages/System'));
 const Settings = lazy(() => import('@/pages/Settings'));
@@ -34,6 +35,7 @@ export default function App() {
         <Route path="/" element={<Home />} />
         <Route path="/companion/session/:sessionId" element={<CompanionSession />} />
         <Route path="/work" element={<Work />} />
+        <Route path="/people" element={<People />} />
         <Route path="/timeline" element={<Days />} />
         <Route path="/timeline/*" element={<Days />} />
         <Route path="/chat" element={<Chat />} />
@@ -52,10 +54,10 @@ export default function App() {
         {/* meeting route removed — companion sessions handle all session types */}
         <Route path="/calendar" element={<Calendar />} />
 
-        {/* People, Vault/Knowledge, Intelligence, Integrations, Sentinel,
-            Automations, and Approvals ship in later waves (people-intel,
-            knowledge pipeline, automations, comms/sentinel respectively) —
-            out of scope for the wave-2 Qareen platform + dashboard retirement. */}
+        {/* Vault/Knowledge, Intelligence, Integrations, Sentinel, Automations,
+            and Approvals ship in later waves (knowledge pipeline, automations,
+            comms/sentinel respectively) — a nav entry lands in the same PR as
+            its route, never before it. */}
 
         {/* Catch-all: unknown / deep-linked / typo'd URLs redirect home instead of
             rendering a blank screen (e.g. /today, which has no route). */}
