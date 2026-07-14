@@ -159,19 +159,28 @@ def up() -> bool:
     if result.returncode != 0:
         print(f"  WARNING: bootstrap returned {result.returncode}: {result.stderr}")
 
-    # Kickstart
-    _run(["launchctl", "kickstart", "-k", service], timeout=10)
-    print("  Qareen LaunchAgent started")
+    # Kickstart. `-k` can block for longer than our timeout while an old
+    # instance drains before the new one binds the port — that's not a
+    # failure, just launchctl taking its time. A TimeoutExpired here must
+    # not fail the migration; the health poll below is the actual success
+    # criterion (same drain-blocking pattern fixed in
+    # 056_n8n_service.py — see that migration's comment for the incident).
+    try:
+        _run(["launchctl", "kickstart", "-k", service], timeout=10)
+        print("  Qareen LaunchAgent started")
+    except subprocess.TimeoutExpired:
+        print("  launchctl kickstart timed out (old instance likely still draining) — continuing to health check")
 
-    # 9. Wait for health
+    # 9. Wait for health (up to 60s — kickstart -k above may still be
+    # draining the old instance)
     print("  Waiting for Qareen to become healthy...")
-    for i in range(20):
+    for i in range(30):
         time.sleep(2)
         if _is_healthy():
             print(f"  Qareen healthy after {(i + 1) * 2}s on port 4096")
             return True
 
-    print("  WARNING: Qareen not healthy after 40s — check ~/.aos/logs/qareen.err.log")
+    print("  WARNING: Qareen not healthy after 60s — check ~/.aos/logs/qareen.err.log")
     # Return True — service may still be initializing.
     # Reconcile check will handle ongoing monitoring.
     return True

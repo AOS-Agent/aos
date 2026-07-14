@@ -186,23 +186,33 @@ def up() -> bool:
     if result.returncode != 0:
         print(f"  WARNING: bootstrap returned {result.returncode}: {result.stderr}")
 
-    # Kickstart
-    _run(["launchctl", "kickstart", "-k", service], timeout=10)
-    print("  LaunchAgent started")
+    # Kickstart. `-k` can block for longer than our timeout while an old
+    # instance drains before the new one binds the port — that's not a
+    # failure, just launchctl taking its time. A TimeoutExpired here must
+    # not fail the migration; the health poll below is the actual success
+    # criterion (see WARNING below and the drain-blocking incident this
+    # guards against: kickstart timed out, service was healthy seconds
+    # later, but the migration reported failure).
+    try:
+        _run(["launchctl", "kickstart", "-k", service], timeout=10)
+        print("  LaunchAgent started")
+    except subprocess.TimeoutExpired:
+        print("  launchctl kickstart timed out (old instance likely still draining) — continuing to health check")
 
-    # 7. Wait for health (up to 30s — n8n takes a moment to start)
+    # 7. Wait for health (up to 60s — n8n takes a moment to start, and
+    # kickstart -k above may still be draining the old instance)
     print("  Waiting for n8n to become healthy...")
-    for i in range(15):
+    for i in range(30):
         time.sleep(2)
         if _is_healthy():
             print(f"  n8n healthy after {(i + 1) * 2}s")
             return True
 
     if _port_open(5678):
-        print("  WARNING: n8n not healthy after 30s, but port 5678 is bound —")
+        print("  WARNING: n8n not healthy after 60s, but port 5678 is bound —")
         print("  likely still starting. Check ~/.aos/logs/n8n.err.log.")
     else:
-        print("  WARNING: n8n not healthy after 30s and port 5678 is not bound —")
+        print("  WARNING: n8n not healthy after 60s and port 5678 is not bound —")
         print("  the process likely failed to start. Check ~/.aos/logs/n8n.err.log.")
     # Return True anyway in both cases — the reconcile check
     # (core/infra/reconcile/checks/n8n.py) owns ongoing health monitoring
