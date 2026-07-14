@@ -13,6 +13,21 @@ healthy seconds after). The fix: catch TimeoutExpired around the
 kickstart call and continue to the health poll, which is the real
 success criterion.
 
+That poll has two distinct failure branches, and they are NOT
+equivalent:
+  - Port bound, health not yet responding after 60s: a legitimately slow
+    cold start. The reconcile check owns ongoing monitoring from here, so
+    this is success (True).
+  - Port not bound at all after 60s: the process never came up — a crash
+    loop, bad install, or missing dependency. Reconcile can re-kickstart
+    a healthy install that drifted, but it cannot heal a binary that
+    never started, so "reconcile owns it" does not hold here. This must
+    be a failure (False), even though returning False stops the
+    migration batch — a machine where the service binary can't start
+    needs a human, not a watermark that silently advanced past a service
+    that was never running (the same silent-success bug class aos#147/#149
+    exist to kill).
+
 Loads each migration module directly (same pattern as
 test_migration_runner.py) with all its I/O-touching module-level state
 redirected to tmp_path and its I/O functions monkeypatched, so nothing
@@ -50,8 +65,25 @@ def _fake_run(kickstart_raises: bool, default_timeout: int):
     return run
 
 
+def _fake_port_open_sequence(*results: bool):
+    """Build a fake `_port_open` that returns each of `results` in order,
+    one per call, and repeats the last value once exhausted. Used where a
+    migration calls _port_open more than once for different purposes
+    (056's pre-kickstart conflict check, then its post-poll tail check) and
+    the two calls need different answers.
+    """
+    remaining = list(results)
+
+    def port_open(*args, **kwargs):
+        if len(remaining) > 1:
+            return remaining.pop(0)
+        return remaining[0]
+    return port_open
+
+
 class TestN8nKickstartTimeout:
-    """056_n8n_service.py up() must not fail when kickstart -k times out."""
+    """056_n8n_service.py up() must not fail when kickstart -k times out,
+    and must correctly split its post-poll outcome on port state."""
 
     @pytest.fixture
     def mod(self, tmp_path, monkeypatch):
@@ -66,7 +98,6 @@ class TestN8nKickstartTimeout:
 
         monkeypatch.setattr(m, "_has_n8n", lambda: True)
         monkeypatch.setattr(m, "_has_api_key", lambda: True)
-        monkeypatch.setattr(m, "_port_open", lambda *a, **k: False)
         monkeypatch.setattr(m.time, "sleep", lambda s: None)
 
         yield m
@@ -74,22 +105,36 @@ class TestN8nKickstartTimeout:
 
     def test_kickstart_timeout_is_not_fatal_and_health_poll_still_runs(self, mod, monkeypatch):
         monkeypatch.setattr(mod, "_run", _fake_run(kickstart_raises=True, default_timeout=10))
+        monkeypatch.setattr(mod, "_port_open", lambda *a, **k: False)  # clear at pre-kickstart conflict check
         monkeypatch.setattr(mod, "_is_healthy", lambda: True)
 
         assert mod.up() is True
 
-    def test_kickstart_timeout_then_health_never_comes_up_still_returns_true(self, mod, monkeypatch):
-        """up() intentionally returns True even if health never arrives —
-        the reconcile check owns ongoing monitoring, not the migration.
-        Pins that the timeout-catch doesn't change that existing contract."""
+    def test_health_never_arrives_but_port_bound_returns_true(self, mod, monkeypatch):
+        """Slow cold start: port bound, /healthz not answering yet after
+        60s. Reconcile owns it from here — success."""
         monkeypatch.setattr(mod, "_run", _fake_run(kickstart_raises=True, default_timeout=10))
+        # First call is the pre-kickstart conflict check (must be False so
+        # up() doesn't bail out early); second call is the post-poll tail
+        # check (True — port is bound by the time we get there).
+        monkeypatch.setattr(mod, "_port_open", _fake_port_open_sequence(False, True))
         monkeypatch.setattr(mod, "_is_healthy", lambda: False)
 
         assert mod.up() is True
 
+    def test_health_never_arrives_and_port_not_bound_returns_false(self, mod, monkeypatch):
+        """Dead process: port never bound after 60s — the service failed
+        to start entirely. Reconcile cannot heal this; must fail."""
+        monkeypatch.setattr(mod, "_run", _fake_run(kickstart_raises=True, default_timeout=10))
+        monkeypatch.setattr(mod, "_port_open", lambda *a, **k: False)
+        monkeypatch.setattr(mod, "_is_healthy", lambda: False)
+
+        assert mod.up() is False
+
     def test_no_timeout_still_succeeds_normally(self, mod, monkeypatch):
         """Baseline: behavior is unchanged when kickstart doesn't time out."""
         monkeypatch.setattr(mod, "_run", _fake_run(kickstart_raises=False, default_timeout=10))
+        monkeypatch.setattr(mod, "_port_open", lambda *a, **k: False)
         monkeypatch.setattr(mod, "_is_healthy", lambda: True)
 
         assert mod.up() is True
@@ -97,8 +142,9 @@ class TestN8nKickstartTimeout:
 
 class TestQareenKickstartTimeout:
     """054_qareen_service.py up() has the identical unguarded kickstart -k
-    pattern (found via the 050-059 sweep) and must not fail when it times
-    out either."""
+    pattern (found via the 050-059 sweep) and the same success/failure
+    split now applies to its post-poll tail (it had no _port_open helper
+    at all before this fix — added to make the split possible)."""
 
     @pytest.fixture
     def mod(self, tmp_path, monkeypatch):
@@ -129,6 +175,24 @@ class TestQareenKickstartTimeout:
         monkeypatch.setattr(mod, "_is_healthy", lambda: True)
 
         assert mod.up() is True
+
+    def test_health_never_arrives_but_port_bound_returns_true(self, mod, monkeypatch):
+        """Slow cold start: port bound, /api/health not answering yet
+        after 60s. Reconcile owns it from here — success."""
+        monkeypatch.setattr(mod, "_run", _fake_run(kickstart_raises=True, default_timeout=120))
+        monkeypatch.setattr(mod, "_is_healthy", lambda: False)
+        monkeypatch.setattr(mod, "_port_open", lambda *a, **k: True)
+
+        assert mod.up() is True
+
+    def test_health_never_arrives_and_port_not_bound_returns_false(self, mod, monkeypatch):
+        """Dead process: port never bound after 60s — the service failed
+        to start entirely. Reconcile cannot heal this; must fail."""
+        monkeypatch.setattr(mod, "_run", _fake_run(kickstart_raises=True, default_timeout=120))
+        monkeypatch.setattr(mod, "_is_healthy", lambda: False)
+        monkeypatch.setattr(mod, "_port_open", lambda *a, **k: False)
+
+        assert mod.up() is False
 
     def test_no_timeout_still_succeeds_normally(self, mod, monkeypatch):
         monkeypatch.setattr(mod, "_run", _fake_run(kickstart_raises=False, default_timeout=120))
