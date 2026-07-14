@@ -1,0 +1,317 @@
+#!/usr/bin/env python3
+"""sentinel — CLI for the Sentinel autonomous commitment agent.
+
+Usage:
+  sentinel status                  # show current state
+  sentinel pause                   # stop processing new triggers
+  sentinel resume                  # re-enable
+  sentinel list [--all|--pending]  # show triggers
+  sentinel show <trigger_id>       # full details + draft
+  sentinel cancel <trigger_id>     # abort an in-flight send during soft window
+  sentinel pending                 # list low-confidence drafts awaiting review
+  sentinel log [--tail N]          # tail sent.jsonl
+  sentinel run-once                # process detected triggers, then exit
+  sentinel test                    # fire a test notification
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sqlite3
+import sys
+import time
+from datetime import datetime
+from pathlib import Path
+
+import yaml
+
+HOME = Path.home()
+COMMS_DB = HOME / ".aos" / "data" / "comms.db"
+CONFIG_PATH = HOME / ".aos" / "config" / "sentinel.yaml"
+DRAFTS_DIR = HOME / ".aos" / "work" / "sentinel" / "drafts"
+PENDING_DIR = HOME / ".aos" / "work" / "sentinel" / "pending"
+SENT_LOG = HOME / ".aos" / "logs" / "sentinel" / "sent.jsonl"
+
+
+def _ensure_path():
+    for p in (HOME / "project" / "aos", HOME / "aos"):
+        if (p / "core").is_dir():
+            sys.path.insert(0, str(p))
+            return
+
+
+def _conn():
+    return sqlite3.connect(str(COMMS_DB))
+
+
+def _load_config() -> dict:
+    if not CONFIG_PATH.exists():
+        return {}
+    return yaml.safe_load(CONFIG_PATH.read_text()) or {}
+
+
+def _save_config(data: dict) -> None:
+    CONFIG_PATH.write_text(yaml.safe_dump(data, sort_keys=False))
+
+
+def cmd_status(_args) -> int:
+    cfg = _load_config()
+    enabled = cfg.get("enabled", True)
+    paused = cfg.get("paused", False)
+    print(f"Sentinel: {'PAUSED' if paused else ('ENABLED' if enabled else 'DISABLED')}")
+    print(f"Config:   {CONFIG_PATH}")
+    print(f"Phrases:  {', '.join(cfg.get('trigger_phrases', []))}")
+    print(f"Channels: {', '.join(cfg.get('channels', []))}")
+    print(f"Soft window: {cfg.get('soft_window_seconds', 30)}s")
+
+    conn = _conn()
+    counts = {}
+    for status in ("detected", "spawning", "researching", "draft_ready",
+                    "sending", "sent", "pending", "blocked", "cancelled", "failed"):
+        c = conn.execute(
+            "SELECT COUNT(*) FROM agent_triggers WHERE status = ?", (status,)
+        ).fetchone()[0]
+        if c:
+            counts[status] = c
+    conn.close()
+    print()
+    print("Counts by status:")
+    for k, v in counts.items():
+        print(f"  {k:14} {v}")
+    return 0
+
+
+def cmd_pause(_args) -> int:
+    cfg = _load_config()
+    cfg["paused"] = True
+    _save_config(cfg)
+    print("Sentinel paused. New triggers will not be processed.")
+    return 0
+
+
+def cmd_resume(_args) -> int:
+    cfg = _load_config()
+    cfg["paused"] = False
+    cfg["enabled"] = True
+    _save_config(cfg)
+    print("Sentinel resumed.")
+    return 0
+
+
+def cmd_list(args) -> int:
+    conn = _conn()
+    conn.row_factory = sqlite3.Row
+    if args.pending:
+        rows = conn.execute("""
+            SELECT * FROM agent_triggers
+            WHERE status IN ('pending','blocked')
+            ORDER BY created_at DESC LIMIT 50
+        """).fetchall()
+    elif args.all:
+        rows = conn.execute("""
+            SELECT * FROM agent_triggers ORDER BY created_at DESC LIMIT 50
+        """).fetchall()
+    else:
+        rows = conn.execute("""
+            SELECT * FROM agent_triggers
+            WHERE status IN ('detected','spawning','researching','draft_ready','sending','pending')
+            ORDER BY created_at DESC LIMIT 50
+        """).fetchall()
+
+    if not rows:
+        print("No triggers.")
+        return 0
+    for r in rows:
+        ts = datetime.fromtimestamp(r["created_at"]).strftime("%m-%d %H:%M")
+        print(f"  {r['id']}  [{ts}]  {r['status']:12} {r['channel']:8} {r['trigger_phrase']:18} "
+              f"{(r['task_inferred'] or '')[:60]}")
+    return 0
+
+
+def cmd_show(args) -> int:
+    conn = _conn()
+    conn.row_factory = sqlite3.Row
+    row = conn.execute("SELECT * FROM agent_triggers WHERE id = ?", (args.trigger_id,)).fetchone()
+    if not row:
+        print(f"No such trigger: {args.trigger_id}", file=sys.stderr)
+        return 1
+    print(f"ID:         {row['id']}")
+    print(f"Message:    {row['message_id']}")
+    print(f"Person:     {row['person_id']}")
+    print(f"Channel:    {row['channel']}")
+    print(f"Phrase:     {row['trigger_phrase']}")
+    print(f"Status:     {row['status']}")
+    print(f"Task:       {row['task_inferred']}")
+    print(f"Confidence: {row['confidence']}")
+    if row['confidence_reasons']:
+        try:
+            for r in json.loads(row['confidence_reasons']):
+                print(f"  - {r}")
+        except Exception:
+            print(f"  {row['confidence_reasons']}")
+    if row['draft_path']:
+        p = Path(row['draft_path'])
+        if p.exists():
+            print()
+            print("=== DRAFT ===")
+            print(p.read_text())
+    return 0
+
+
+def cmd_cancel(args) -> int:
+    conn = _conn()
+    conn.row_factory = sqlite3.Row
+    row = conn.execute("SELECT status FROM agent_triggers WHERE id = ?",
+                        (args.trigger_id,)).fetchone()
+    if not row:
+        print(f"No such trigger: {args.trigger_id}", file=sys.stderr)
+        return 1
+    if row["status"] not in ("detected", "spawning", "researching",
+                              "draft_ready", "sending"):
+        print(f"Cannot cancel — status is {row['status']}", file=sys.stderr)
+        return 1
+    conn.execute("UPDATE agent_triggers SET status='cancelled', decided_at=? WHERE id=?",
+                  (int(time.time()), args.trigger_id))
+    conn.commit()
+    print(f"Cancelled {args.trigger_id}")
+    return 0
+
+
+def cmd_pending(_args) -> int:
+    conn = _conn()
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute("""
+        SELECT * FROM agent_triggers
+        WHERE status IN ('pending','blocked')
+        ORDER BY created_at DESC LIMIT 50
+    """).fetchall()
+    if not rows:
+        print("No pending drafts.")
+        return 0
+    for r in rows:
+        ts = datetime.fromtimestamp(r["created_at"]).strftime("%m-%d %H:%M")
+        reasons = []
+        if r["confidence_reasons"]:
+            try:
+                reasons = json.loads(r["confidence_reasons"])
+            except Exception:
+                pass
+        print()
+        print(f"  {r['id']}  [{ts}]  {r['status']}  confidence={r['confidence']}")
+        print(f"    task: {r['task_inferred']}")
+        if reasons:
+            print(f"    reasons:")
+            for x in reasons[:5]:
+                print(f"      - {x}")
+        if r["draft_path"]:
+            print(f"    draft: {r['draft_path']}")
+        print(f"    actions: sentinel show {r['id']}  |  sentinel send {r['id']}")
+    return 0
+
+
+def cmd_send(args) -> int:
+    """Manually approve a pending draft and send it."""
+    _ensure_path()
+    conn = _conn()
+    conn.row_factory = sqlite3.Row
+    row = conn.execute("SELECT * FROM agent_triggers WHERE id = ?",
+                        (args.trigger_id,)).fetchone()
+    if not row:
+        print(f"No such trigger: {args.trigger_id}", file=sys.stderr)
+        return 1
+    if row["status"] not in ("pending", "blocked", "draft_ready"):
+        print(f"Cannot send from status {row['status']}", file=sys.stderr)
+        return 1
+    if not row["draft_path"] or not Path(row["draft_path"]).exists():
+        print("Draft file missing.", file=sys.stderr)
+        return 1
+
+    from core.engine.comms.sentinel.confidence_gate import parse_draft_file
+    from core.engine.comms.sentinel.context_builder import ContextBuilder
+    from core.engine.comms.sentinel.dispatcher import send_draft
+
+    draft = parse_draft_file(Path(row["draft_path"]))
+    if not draft:
+        print("Could not parse draft.", file=sys.stderr)
+        return 1
+    bundle = ContextBuilder().build(args.trigger_id)
+    ok, info = send_draft(args.trigger_id, bundle.contact.canonical_name,
+                           row["channel"], draft.body)
+    print(("Sent." if ok else f"Failed: {info}"))
+    return 0 if ok else 1
+
+
+def cmd_log(args) -> int:
+    if not SENT_LOG.exists():
+        print("No sends yet.")
+        return 0
+    n = args.tail
+    lines = SENT_LOG.read_text().splitlines()[-n:]
+    for line in lines:
+        try:
+            j = json.loads(line)
+            t = datetime.fromtimestamp(j["ts"]).strftime("%m-%d %H:%M")
+            print(f"[{t}] {j.get('contact')} ← {j.get('task','')[:70]}")
+            print(f"   {j.get('body','')[:200]}")
+        except Exception:
+            print(line)
+    return 0
+
+
+def cmd_run_once(_args) -> int:
+    _ensure_path()
+    from core.engine.comms.sentinel.spawner import SentinelSpawner
+    n = SentinelSpawner().run_once()
+    print(f"Processed {n} trigger(s).")
+    return 0
+
+
+def cmd_test(_args) -> int:
+    _ensure_path()
+    from core.engine.comms.sentinel.notifier import notify_test
+    notify_test("Test notification — wiring OK.")
+    print("Test notification dispatched.")
+    return 0
+
+
+def main():
+    p = argparse.ArgumentParser(prog="sentinel")
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    sub.add_parser("status").set_defaults(func=cmd_status)
+    sub.add_parser("pause").set_defaults(func=cmd_pause)
+    sub.add_parser("resume").set_defaults(func=cmd_resume)
+
+    p_list = sub.add_parser("list")
+    p_list.add_argument("--all", action="store_true")
+    p_list.add_argument("--pending", action="store_true")
+    p_list.set_defaults(func=cmd_list)
+
+    p_show = sub.add_parser("show")
+    p_show.add_argument("trigger_id")
+    p_show.set_defaults(func=cmd_show)
+
+    p_cancel = sub.add_parser("cancel")
+    p_cancel.add_argument("trigger_id")
+    p_cancel.set_defaults(func=cmd_cancel)
+
+    sub.add_parser("pending").set_defaults(func=cmd_pending)
+
+    p_send = sub.add_parser("send")
+    p_send.add_argument("trigger_id")
+    p_send.set_defaults(func=cmd_send)
+
+    p_log = sub.add_parser("log")
+    p_log.add_argument("--tail", type=int, default=20)
+    p_log.set_defaults(func=cmd_log)
+
+    sub.add_parser("run-once").set_defaults(func=cmd_run_once)
+    sub.add_parser("test").set_defaults(func=cmd_test)
+
+    args = p.parse_args()
+    sys.exit(args.func(args))
+
+
+if __name__ == "__main__":
+    main()
