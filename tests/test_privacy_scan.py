@@ -366,3 +366,69 @@ def test_pattern_hit_never_precedent_downgraded(denylist):
     phones = [h for h in hits if h.category == "phone"]
     assert phones and not any(h.precedented for h in phones)
     assert ps.report(hits) == 1
+
+
+# ── Reserved documentation values (RFC 2606 / RFC 6761 / NANP fictional) ─────
+# Assemble reserved literals from fragments so this source carries no verbatim
+# trigger, same as the rest of the file.
+RESERVED_EMAIL = "docs" + _AT + "example.com"
+RESERVED_EMAIL_SUB = "team" + _AT + "mail.example.org"
+RESERVED_EMAIL_TLD = "user" + _AT + "host.invalid"
+REAL_EMAIL = "someone" + _AT + "gmail.com"          # ownable → still a leak
+RESERVED_PHONE = "+1 416 " + "555 " + "0142"        # NANP fictional 555-01XX
+REAL_PHONE = "+1 416 " + "555 " + "1234"            # real-shaped, not fictional
+
+
+def test_reserved_domain_email_downgraded_to_info():
+    for addr in (RESERVED_EMAIL, RESERVED_EMAIL_SUB, RESERVED_EMAIL_TLD):
+        diff = make_diff("core/x.py", [f'contact = "{addr}"'])
+        hits = ps.scan_diff(diff, [])
+        emails = [h for h in hits if h.category == "email"]
+        assert emails and all(h.precedented for h in emails), addr
+        assert all(h.note == "reserved documentation domain" for h in emails)
+        assert ps.report(hits) == 0
+
+
+def test_real_domain_email_still_fails():
+    diff = make_diff("core/x.py", [f'contact = "{REAL_EMAIL}"'])
+    hits = ps.scan_diff(diff, [])
+    emails = [h for h in hits if h.category == "email"]
+    assert emails and not any(h.precedented for h in emails)
+    assert ps.report(hits) == 1
+
+
+def test_nanp_fictional_phone_downgraded_to_info():
+    diff = make_diff("core/x.py", [f'support = "{RESERVED_PHONE}"'])
+    hits = ps.scan_diff(diff, [])
+    phones = [h for h in hits if h.category == "phone"]
+    assert phones and all(h.precedented for h in phones)
+    assert all(h.note == "reserved fictional phone range" for h in phones)
+    assert ps.report(hits) == 0
+
+
+def test_real_shaped_non_reserved_phone_still_fails():
+    diff = make_diff("core/x.py", [f'support = "{REAL_PHONE}"'])
+    hits = ps.scan_diff(diff, [])
+    phones = [h for h in hits if h.category == "phone"]
+    assert phones and not any(h.precedented for h in phones)
+    assert ps.report(hits) == 1
+
+
+def test_non_nanp_number_ending_in_555_01_not_reserved():
+    # The NANP fictional block is North-American-only; a formatted 12-digit
+    # international number that merely ends in ...555 0142 must NOT be treated
+    # as reserved (it isn't NANP-shaped).
+    intl = "+971 50 " + "555 0142"       # 12 digits, separator-grouped, not NANP
+    diff = make_diff("core/x.py", [f'wa = "{intl}"'])
+    hits = ps.scan_diff(diff, [])
+    phones = [h for h in hits if h.category == "phone"]
+    assert phones and not any(h.precedented for h in phones)
+
+
+def test_reserved_downgrade_does_not_apply_to_denylist(denylist):
+    # A reserved-domain address that is ALSO the operator's denylisted email is
+    # still a denylist failure — reserved-value downgrade is pattern-only.
+    diff = make_diff("core/x.py", [f'owner = "{FAKE_EMAIL}"'])  # on denylist
+    hits = ps.scan_diff(diff, denylist)
+    assert any(h.category == "denylist:email" and not h.precedented for h in hits)
+    assert ps.report(hits) == 1
