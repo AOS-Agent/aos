@@ -277,3 +277,92 @@ def test_line_numbers_are_new_file_positions():
 def test_clean_diff_is_clean(denylist):
     diff = make_diff("core/foo.py", ["def add(a, b):", "    return a + b"])
     assert ps.scan_diff(diff, denylist) == []
+
+
+# ── Precedent pass ──────────────────────────────────────────────────────────
+import subprocess as _sp
+
+
+def _git_repo(tmp_path, files):
+    """Init a git repo at tmp_path with {relpath: content}, commit once."""
+    _sp.run(["git", "init", "-q", str(tmp_path)], check=True)
+    _sp.run(["git", "-C", str(tmp_path), "config", "user.email", "t@t.example"],
+            check=True)
+    _sp.run(["git", "-C", str(tmp_path), "config", "user.name", "t"], check=True)
+    for rel, content in files.items():
+        f = tmp_path / rel
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(content)
+    _sp.run(["git", "-C", str(tmp_path), "add", "-A"], check=True)
+    _sp.run(["git", "-C", str(tmp_path), "commit", "-q", "-m", "base"], check=True)
+
+
+def test_precedent_path_finds_identical_line(tmp_path):
+    # A byte-identical line (different indentation) already in the base tree
+    # is found — indentation is normalized away.
+    line = f'greeting = "Hello {FAKE_NAME}"'
+    _git_repo(tmp_path, {"core/engine/comms/resolver.py": f"import x\n    {line}\n"})
+    p = ps._precedent_path(line, "HEAD", cwd=str(tmp_path))
+    assert p == "core/engine/comms/resolver.py"
+
+
+def test_precedent_path_rejects_different_line_context(tmp_path):
+    # The denylist term exists in the base tree, but NOT as this exact line.
+    # Sharing a term is not precedent — the whole line must match.
+    _git_repo(tmp_path, {"core/x.py": f'display = "prefix {FAKE_NAME} suffix"\n'})
+    p = ps._precedent_path(f'name = "{FAKE_NAME}"', "HEAD", cwd=str(tmp_path))
+    assert p is None
+
+
+def test_precedent_path_rejects_substring_of_longer_line(tmp_path):
+    # git grep -F would match the text as a substring of a longer base line;
+    # the full-line normalized-equality guard must still reject it.
+    _git_repo(tmp_path, {"core/x.py": f'xname = "{FAKE_NAME}" + tail\n'})
+    p = ps._precedent_path(f'name = "{FAKE_NAME}"', "HEAD", cwd=str(tmp_path))
+    assert p is None
+
+
+def test_base_ref_of_extracts_before_side():
+    assert ps.base_ref_of("origin/main..HEAD") == "origin/main"
+    assert ps.base_ref_of(None) == "HEAD"
+    assert ps.base_ref_of("origin/main") == "origin/main"
+
+
+def test_precedented_denylist_line_is_not_a_failure(denylist):
+    # (a) A denylist hit whose exact line already ships at base is downgraded
+    # to INFO — present in hits, but report() treats the diff as clean.
+    line = f'greeting = "Hello {FAKE_NAME}"'
+    diff = make_diff("core/engine/people/normalize.py", [line])
+
+    def lookup(content):
+        return ("core/engine/comms/resolver.py"
+                if ps._norm_ws(content) == ps._norm_ws(line) else None)
+
+    hits = ps.scan_diff(diff, denylist, precedent_lookup=lookup)
+    dl = [h for h in hits if h.category.startswith("denylist:")]
+    assert dl and all(h.precedented for h in dl)
+    assert all(h.precedent_path == "core/engine/comms/resolver.py" for h in dl)
+    assert ps.report(hits) == 0
+
+
+def test_denylist_hit_without_precedent_still_fails(denylist):
+    # (b) Same shape, but no identical base line → lookup returns None → the
+    # hit stays a failure.
+    line = f'name = "{FAKE_NAME}"'
+    diff = make_diff("core/engine/people/normalize.py", [line])
+    hits = ps.scan_diff(diff, denylist, precedent_lookup=lambda content: None)
+    dl = [h for h in hits if h.category.startswith("denylist:")]
+    assert dl and not any(h.precedented for h in dl)
+    assert ps.report(hits) == 1
+
+
+def test_pattern_hit_never_precedent_downgraded(denylist):
+    # (c) A phone (pattern category) hit must never be precedent-downgraded,
+    # even if the lookup would precedent literally anything.
+    line = f'phone = "{FAKE_PHONE}"'
+    diff = make_diff("core/x.py", [line])
+    hits = ps.scan_diff(diff, denylist,
+                        precedent_lookup=lambda content: "core/anywhere.py")
+    phones = [h for h in hits if h.category == "phone"]
+    assert phones and not any(h.precedented for h in phones)
+    assert ps.report(hits) == 1
