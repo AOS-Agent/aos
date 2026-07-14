@@ -32,7 +32,7 @@ from .normalize import (
 
 # Allowed characters in a "splittable" Latin name: letters, dot, hyphen, apostrophe.
 _SPLIT_ALLOWED_RE = re.compile(r"^[A-Za-z.\-']+$")
-# Run of 4+ consecutive uppercase letters (e.g. MICHIGAN, BRADFORDUK) — likely a tag, not a name.
+# Run of 4+ consecutive uppercase letters (e.g. TEXAS, NEWYORKCITY) — likely a tag, not a name.
 _ALLCAPS_RUN_RE = re.compile(r"[A-Z]{4,}")
 # Lowercase→Uppercase boundary.
 _LC_UC_BOUNDARY_RE = re.compile(r"(?<=[a-z])(?=[A-Z])")
@@ -61,7 +61,7 @@ def split_concatenated_name(raw: str | None) -> str | None:
       * No ``/`` (compound entries go to the review queue)
       * ASCII-only — letters plus ``.``, ``-``, ``'``
       * No run of 4+ consecutive uppercase letters (location tags like
-        ``MICHIGAN`` are not names)
+        ``TEXAS`` are not names)
       * After splitting: ≥ 2 tokens, every token 2–20 chars, total ≤ 60 chars
       * Result must differ from the input
 
@@ -76,7 +76,7 @@ def split_concatenated_name(raw: str | None) -> str | None:
         True
         >>> split_concatenated_name("Ahmed Ali") is None
         True
-        >>> split_concatenated_name("AyeshaCOUSIN/MICHIGAN") is None
+        >>> split_concatenated_name("SamCOUSIN/TEXAS") is None
         True
     """
     if not raw or not isinstance(raw, str):

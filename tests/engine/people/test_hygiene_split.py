@@ -26,8 +26,8 @@ from core.engine.people.hygiene import (
         ("KhaleeqUrRehman", "Khaleeq Ur Rehman"),
         ("MuhammadFurqanAli", "Muhammad Furqan Ali"),
         (
-            "QariMuhammadYahyaRasoolNagriAlBalochi",
-            "Qari Muhammad Yahya Rasool Nagri Al Balochi",
+            "SheikhAbdurRahmanIbnFaisalAlAskari",
+            "Sheikh Abdur Rahman Ibn Faisal Al Askari",
         ),
         # Dot-joined title
         ("Dr.BadarUlIslam", "Dr. Badar Ul Islam"),
@@ -39,11 +39,11 @@ from core.engine.people.hygiene import (
         ("Ahmed Ali", None),
         ("Abdus Samad Rashid", None),
         # Rejected: slash compound
-        ("AyeshaCOUSIN/MICHIGAN", None),
-        ("Omar/OusamaUmrahTrip2025", None),
+        ("SamCOUSIN/OHIO", None),
+        ("Jordan/RileyRoadTrip2025", None),
         # Rejected: ALLCAPS run
         ("SALTAccountingTeam", None),
-        ("ZainAyub/ABERDEEN", None),
+        ("TaylorReed/DENVER", None),
         # Rejected: non-ASCII (Arabic)
         ("\u0623\u062d\u0645\u062f\u0637\u0644\u0627\u0644\u0627\u0644\u0639\u0631\u0641\u062c", None),
         # Rejected: empty / None / too short
@@ -140,7 +140,7 @@ def test_run_tier1_splits_dirty_names():
     _seed_person(conn, "p_2", "Dr.BadarUlIslam")
     _seed_person(conn, "p_3", "KhaleeqUrRehman")
     _seed_person(conn, "p_4", "Ahmed Ali")  # already clean
-    _seed_person(conn, "p_5", "AyeshaCOUSIN/MICHIGAN")  # rejected
+    _seed_person(conn, "p_5", "SamCOUSIN/OHIO")  # rejected
     conn.commit()
 
     eng = HygieneEngine(conn=conn)
@@ -155,7 +155,7 @@ def test_run_tier1_splits_dirty_names():
     assert rows["p_2"] == "Dr. Badar Ul Islam"
     assert rows["p_3"] == "Khaleeq Ur Rehman"
     assert rows["p_4"] == "Ahmed Ali"  # untouched
-    assert rows["p_5"] == "AyeshaCOUSIN/MICHIGAN"  # untouched
+    assert rows["p_5"] == "SamCOUSIN/OHIO"  # untouched
 
     aliases = {
         r["alias"]: r["type"]
@@ -213,8 +213,8 @@ def test_split_idempotent_across_runs():
 
 def test_scan_dirty_names_classifies():
     conn = _bootstrap_db()
-    _seed_person(conn, "p_slash", "Omar/OusamaUmrahTrip2025")
-    _seed_person(conn, "p_caps", "AyeshaCOUSIN")
+    _seed_person(conn, "p_slash", "Jordan/RileyRoadTrip2025")
+    _seed_person(conn, "p_caps", "SamCOUSIN")
     _seed_person(conn, "p_arabic", "\u0623\u062d\u0645\u062f\u0637\u0644\u0627\u0644\u0639")  # 9 chars
     _seed_person(conn, "p_clean", "Ahmed Ali")
     conn.commit()
