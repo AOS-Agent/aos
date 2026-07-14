@@ -186,7 +186,7 @@ def test_person_signals_channels_active():
         source="wa", channel="whatsapp", total_messages=0,  # zero → not active
     ))
     ps.voice.append(VoiceSignal(source="calls", total_calls=3))
-    ps.physical_presence.append(PhysicalPresenceSignal(source="photos", total_photos=2))
+    ps.physical_presence.append(PhysicalPresenceSignal(source="photos", total_photos=3))
 
     active = ps.channels_active
     assert "imessage" in active

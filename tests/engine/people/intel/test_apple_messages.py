@@ -41,7 +41,8 @@ def build_fixture_db(path: Path) -> None:
                 service TEXT
             );
             CREATE TABLE chat (
-                ROWID INTEGER PRIMARY KEY
+                ROWID INTEGER PRIMARY KEY,
+                style INTEGER DEFAULT 45
             );
             CREATE TABLE chat_handle_join (
                 chat_id INTEGER,
