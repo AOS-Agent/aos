@@ -74,14 +74,23 @@ class SentinelPlistDriftCheck(ReconcileCheck):
         time.sleep(1)
         result = subprocess.run(["launchctl", "bootstrap", domain, str(self.PLIST_PATH)],
                                 capture_output=True, text=True, timeout=10)
-        subprocess.run(["launchctl", "kickstart", "-k", service],
-                       capture_output=True, timeout=10)
 
         detail = None
         if result.returncode != 0:
             # Reload can fail if deps aren't ready — plist is corrected on disk
             # and KeepAlive will retry; report but do not fail the check.
             detail = f"bootstrap returned {result.returncode}: {result.stderr.strip()}"
+
+        # kickstart -k can block past the timeout while the old instance drains
+        # (the 054/056/071 drain-blocking shape). A TimeoutExpired here must not
+        # turn this fix into an ERROR — the plist, which is what this check owns,
+        # is already corrected on disk and KeepAlive will restart the job.
+        try:
+            subprocess.run(["launchctl", "kickstart", "-k", service],
+                           capture_output=True, timeout=10)
+        except subprocess.TimeoutExpired:
+            note = "kickstart timed out (old instance draining) — plist corrected, KeepAlive will restart"
+            detail = f"{detail}; {note}" if detail else note
 
         return CheckResult(
             self.name, Status.FIXED,
