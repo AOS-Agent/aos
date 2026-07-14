@@ -111,6 +111,45 @@ if [[ $import_errors -eq 0 ]]; then
     pass "Key imports OK"
 fi
 
+# UI type safety — the Qareen frontend must compile with zero TypeScript errors
+# whenever the diff touches it. This is the gate that would have caught the
+# TS2322 StatusDotColor errors that shipped in wave 3 (aos#159).
+UI_DIR="$DEV/core/qareen/screen"
+run_ui_check=0
+if [[ "${1:-}" == "--all" ]]; then
+    [[ -d "$UI_DIR" ]] && run_ui_check=1
+else
+    ui_touched=$(git diff origin/main --name-only 2>/dev/null | grep -c '^core/qareen/screen/' || true)
+    ui_touched=${ui_touched:-0}
+    ui_uncommitted=$(git diff --name-only 2>/dev/null | grep -c '^core/qareen/screen/' || true)
+    ui_uncommitted=${ui_uncommitted:-0}
+    if [[ "$ui_touched" -gt 0 || "$ui_uncommitted" -gt 0 ]]; then
+        run_ui_check=1
+    fi
+fi
+
+if [[ "$run_ui_check" -eq 0 ]]; then
+    pass "No UI changes — TypeScript check skipped"
+elif [[ ! -d "$UI_DIR" ]]; then
+    warn "UI dir core/qareen/screen missing — TypeScript check skipped"
+else
+    # Prefer the project's local tsc; install deps if missing and bun is present.
+    if [[ ! -x "$UI_DIR/node_modules/.bin/tsc" ]] && command -v bun >/dev/null 2>&1; then
+        ( cd "$UI_DIR" && bun install ) >/dev/null 2>&1
+    fi
+    if [[ -x "$UI_DIR/node_modules/.bin/tsc" ]]; then
+        ts_out=$( cd "$UI_DIR" && ./node_modules/.bin/tsc -b 2>&1 )
+        if [[ $? -eq 0 ]]; then
+            pass "UI TypeScript compiles clean (tsc -b)"
+        else
+            fail "UI TypeScript errors (tsc -b):"
+            echo "$ts_out" | grep -E 'error TS' | head -10 | sed 's/^/    /'
+        fi
+    else
+        warn "No TypeScript toolchain for UI (bun/node_modules unavailable) — type check skipped"
+    fi
+fi
+
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 2. DOCS SYNC — new components have their documentation
