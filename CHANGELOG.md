@@ -2,6 +2,14 @@
 
 All notable changes to AOS. Release notes sent via Telegram after each 4am update.
 
+## v0.6.4 — 2026-07-14
+
+Summary: Hotfix for two bugs found during wave 3's live edge deployment that had to land before waves 1-3 promote to friend machines.
+
+- Fixed the updater silently skipping pending migrations when VERSION was unchanged between releases (`core/bin/crons/check-update`). Wave 3 shipped 4 migrations without a VERSION bump; the "no version change — reconcile only" fast path skipped them all until run manually. The migration trigger is now `runner.py pending-count` (a new machine-readable subcommand), independent of the version delta — reconcile-only remains the fast path only when both VERSION is unchanged AND pending count is zero.
+- Fixed `056_n8n_service.py`'s `up()` reporting failure when `launchctl kickstart -k` blocked past its 10s subprocess timeout while the previous n8n instance drained — observed live: the timeout fired, but n8n was healthy seconds later. The kickstart call is now non-fatal on timeout, and the health poll (the real success criterion) extends to 60s.
+- Fixed the identical kickstart-timeout pattern in `054_qareen_service.py`, found via a sweep of migrations 050-059 for the same drain-blocking shape.
+
 ## v0.6.3 — 2026-07-13
 
 Summary: Qareen becomes the primary AOS service on port 4096, retiring the old HTML-template dashboard — full task/work platform, companion mode, sessions, agents config, org chart, and system health, backed by a FastAPI + React app instead of static templates.
