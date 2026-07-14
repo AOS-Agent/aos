@@ -14,6 +14,7 @@ from .log_location import LogLocationCheck
 from .mcp_location import McpLocationCheck
 from .n8n import N8nServiceCheck
 from .runtime_protection import RuntimeProtectionCheck
+from .sentinel_plist import SentinelPlistDriftCheck
 from .storage_layout import StorageLayoutCheck
 from .symlinks import AgentSymlinkCheck, RuleSymlinkCheck, SkillSymlinkCheck
 from .transcriber import TranscriberServiceCheck
@@ -40,6 +41,11 @@ ALL_CHECKS = [
 
     # Services — LaunchAgent plists reference existing Python
     LaunchAgentPythonCheck,
+
+    # Services — deployed Sentinel plist matches its framework template
+    # (catches drift back to hardcoded operator paths after a manual edit
+    # or bad merge; complements LaunchAgentPythonCheck's binary-path check)
+    SentinelPlistDriftCheck,
 
     # Integrations — Google Workspace gws CLI
     GoogleWorkspaceCheck,
