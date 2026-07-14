@@ -1,0 +1,147 @@
+#!/usr/bin/env python3
+"""
+People Hygiene Preview — Phase 6.1 canonical name cleanup
+
+Dry-run / apply tool for the canonical_name hygiene pass.
+
+  --dry-run (default)   Show proposed CamelCase splits and Tier-2 review cases
+                        without modifying the database.
+  --apply               Run engine.run_tier1_fixes() (which includes name
+                        splitting) and engine.scan_dirty_names() via scan_all().
+
+Reads ~/.aos/data/people.db. Safe to re-run; idempotent.
+"""
+from __future__ import annotations
+
+import argparse
+import sqlite3
+import sys
+from pathlib import Path
+
+# Make `core.engine.people.hygiene` importable when run from anywhere
+REPO_ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(REPO_ROOT))
+
+from core.engine.people.hygiene import (  # noqa: E402
+    HygieneEngine,
+    _ALLCAPS_RUN_RE,
+    _ARABIC_RE,
+    _LC_UC_BOUNDARY_RE,
+    _SPLIT_ALLOWED_RE,
+    split_concatenated_name,
+)
+
+DB_PATH = Path.home() / ".aos" / "data" / "people.db"
+
+
+def _connect() -> sqlite3.Connection:
+    if not DB_PATH.exists():
+        sys.exit(f"error: {DB_PATH} not found")
+    conn = sqlite3.connect(str(DB_PATH))
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def cmd_dry_run() -> int:
+    conn = _connect()
+    rows = conn.execute(
+        "SELECT id, canonical_name FROM people "
+        "WHERE is_archived = 0 AND canonical_name IS NOT NULL "
+        "ORDER BY canonical_name"
+    ).fetchall()
+
+    splits: list[tuple[str, str, str]] = []
+    rejects: list[tuple[str, str, str]] = []  # (id, name, reason)
+
+    for row in rows:
+        cn = row["canonical_name"]
+        if not cn:
+            continue
+        if " " not in cn:
+            new = split_concatenated_name(cn)
+            if new:
+                splits.append((row["id"], cn, new))
+                continue
+        # Mirror scan_dirty_names() classification (operator-review queue):
+        if "/" in cn:
+            rejects.append((row["id"], cn, "slash_compound"))
+        elif _ALLCAPS_RUN_RE.search(cn):
+            rejects.append((row["id"], cn, "allcaps_tag"))
+        elif _ARABIC_RE.search(cn) and " " not in cn and len(cn) > 8:
+            rejects.append((row["id"], cn, "arabic_concat"))
+        elif (
+            len(cn) >= 4
+            and " " not in cn
+            and _SPLIT_ALLOWED_RE.match(cn)
+            and _LC_UC_BOUNDARY_RE.search(cn)
+        ):
+            rejects.append((row["id"], cn, "split_rejected"))
+
+    print(f"=== People Hygiene Preview ({DB_PATH}) ===\n")
+    print(f"Splittable (Tier 1 auto-fix): {len(splits)}\n")
+    if splits:
+        idw = max(len(s[0]) for s in splits)
+        oldw = max(len(s[1]) for s in splits)
+        for pid, old, new in splits:
+            print(f"  {pid:<{idw}}  {old:<{oldw}}  →  {new}")
+        print()
+
+    print(f"Tier 2 review queue ({len(rejects)} items):\n")
+    by_reason: dict[str, list[tuple[str, str]]] = {}
+    for pid, cn, reason in rejects:
+        by_reason.setdefault(reason, []).append((pid, cn))
+    for reason, items in sorted(by_reason.items()):
+        print(f"  [{reason}] ({len(items)})")
+        for pid, cn in items[:25]:
+            print(f"    {pid}  {cn}")
+        if len(items) > 25:
+            print(f"    ... and {len(items) - 25} more")
+        print()
+
+    print("Run with --apply to write changes.")
+    conn.close()
+    return 0
+
+
+def cmd_apply() -> int:
+    conn = _connect()
+    eng = HygieneEngine(conn=conn)
+
+    print(f"=== People Hygiene Apply ({DB_PATH}) ===\n")
+    print("Running Tier 1 fixes...")
+    fix_counts = eng.run_tier1_fixes()
+    for k, v in fix_counts.items():
+        print(f"  {k}: {v}")
+    print()
+
+    print("Running scanners (Tier 2 → hygiene_queue)...")
+    scan_counts = eng.scan_all()
+    for k, v in scan_counts.items():
+        print(f"  {k}: {v}")
+    print()
+
+    pending = conn.execute(
+        "SELECT action_type, COUNT(*) AS n FROM hygiene_queue "
+        "WHERE status='pending' GROUP BY action_type ORDER BY action_type"
+    ).fetchall()
+    print("Pending hygiene_queue:")
+    for r in pending:
+        print(f"  {r['action_type']}: {r['n']}")
+    conn.close()
+    return 0
+
+
+def main() -> int:
+    p = argparse.ArgumentParser(description="People canonical_name hygiene preview / apply")
+    g = p.add_mutually_exclusive_group()
+    g.add_argument("--dry-run", action="store_true", help="Preview changes (default)")
+    g.add_argument("--apply", action="store_true", help="Apply Tier 1 fixes and scan Tier 2")
+    args = p.parse_args()
+
+    if args.apply:
+        return cmd_apply()
+    return cmd_dry_run()
+
+
+if __name__ == "__main__":
+    sys.exit(main())
