@@ -155,10 +155,16 @@ function OrgDetail({ id, onSelect }: { id: string; onSelect: (personId: string) 
 }
 
 // ---------------------------------------------------------------------------
-// OrgChart — split layout
+// PeopleOrgChart — split layout
+//
+// Named distinctly from pages/Org.tsx (the agent-hierarchy /org page) to
+// avoid confusion — this renders a person/organization membership chart
+// inside the People CRM, not the agent org chart. No route or filename
+// collision, but same conceptual "org chart" territory, so the name says
+// what it's a chart OF.
 // ---------------------------------------------------------------------------
 
-export default function OrgChart({ onSelect }: { onSelect: (personId: string) => void }) {
+export default function PeopleOrgChart({ onSelect }: { onSelect: (personId: string) => void }) {
   const { data, isLoading } = useOrgs();
   const [selectedOrgId, setSelectedOrgId] = useState<string | null>(null);
 

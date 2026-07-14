@@ -17,7 +17,7 @@ import { ErrorBanner } from '@/components/primitives/ErrorBanner';
 import CircleBrowser from '@/components/people/CircleBrowser';
 import GraphExplorer from '@/components/people/GraphExplorer';
 import FamilyTree from '@/components/people/FamilyTree';
-import OrgChart from '@/components/people/OrgChart';
+import PeopleOrgChart from '@/components/people/PeopleOrgChart';
 import HygienePanel, { HygieneBadge } from '@/components/people/HygienePanel';
 // Phase 4 — people intelligence
 import TierStrip from '@/components/people/TierStrip';
@@ -837,7 +837,7 @@ export default function PeoplePage() {
 
         {/* Organizations view */}
         {activeView === 'orgs' && (
-          <OrgChart onSelect={setSelectedId} />
+          <PeopleOrgChart onSelect={setSelectedId} />
         )}
       </div>
 
