@@ -285,7 +285,7 @@ export default function FloatingAgent() {
               background: 'var(--glass-bg)',
               backdropFilter: 'blur(16px)',
               WebkitBackdropFilter: 'blur(16px)',
-              border: '1px solid rgba(217,115,13,0.2)',
+              border: '1px solid rgba(214, 204, 180,0.2)',
             }}
           >
             Listening...
@@ -307,7 +307,7 @@ export default function FloatingAgent() {
           `}
         >
           <AgentOrb
-            colors={["#E8842A", "#D9730D"]}
+            colors={["#E4DCC8", "#D6CCB4"]}
             agentState={agentState}
             seed={42}
             className="absolute inset-0"
@@ -438,7 +438,7 @@ export default function FloatingAgent() {
         {/* ��─ Input bar ── */}
         <div className="shrink-0 px-2.5 pb-2.5 pt-0.5">
           <div
-            className="rounded-[10px] px-2.5 pt-2 pb-1.5 border border-[rgba(255,245,235,0.07)] bg-[rgba(21,18,16,0.45)] focus-within:border-[rgba(217,115,13,0.18)] transition-colors"
+            className="rounded-[10px] px-2.5 pt-2 pb-1.5 border border-[rgba(255,245,235,0.07)] bg-[rgba(21,18,16,0.45)] focus-within:border-[rgba(214, 204, 180,0.18)] transition-colors"
             style={{ transitionDuration: 'var(--duration-fast)' }}
           >
             <textarea
@@ -468,7 +468,7 @@ export default function FloatingAgent() {
                   type="button"
                   onClick={handleSend}
                   disabled={!input.trim() || isPending}
-                  className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 transition-all ${input.trim() && !isPending ? 'bg-accent text-bg cursor-pointer hover:bg-accent-hover' : 'text-text-quaternary cursor-default opacity-20'}`}
+                  className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 transition-all ${input.trim() && !isPending ? 'bg-accent text-on-accent cursor-pointer hover:bg-accent-hover' : 'text-text-quaternary cursor-default opacity-20'}`}
                   style={{ transitionDuration: 'var(--duration-instant)' }}
                 >
                   <Send className="w-3.5 h-3.5" />

@@ -236,7 +236,7 @@ export function RemoteAccessStatusCard() {
           disabled={!url}
           className="
             inline-flex items-center gap-1.5 h-8 px-3.5 rounded-[5px]
-            text-[12px] font-[590] text-white bg-accent
+            text-[12px] font-[590] text-on-accent bg-accent
             transition-colors duration-100 cursor-pointer
             hover:bg-accent-hover
             disabled:opacity-40 disabled:pointer-events-none

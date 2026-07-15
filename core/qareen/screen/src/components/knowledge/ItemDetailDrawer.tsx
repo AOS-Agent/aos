@@ -330,7 +330,7 @@ export default function ItemDetailDrawer({ item, onClose, onItemChange }: Props)
           <button
             onClick={handleSave}
             disabled={saving || current.status === 'saved'}
-            className="h-8 px-4 rounded-full bg-accent text-white text-[12px] font-[510] hover:bg-accent-subtle disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-75 flex items-center gap-1.5"
+            className="h-8 px-4 rounded-full bg-accent text-on-accent text-[12px] font-[510] hover:bg-accent-subtle disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-75 flex items-center gap-1.5"
           >
             {saving && <Loader2 className="w-3 h-3 animate-spin" />}
             {current.status === 'saved' ? 'Saved' : 'Save to vault'}

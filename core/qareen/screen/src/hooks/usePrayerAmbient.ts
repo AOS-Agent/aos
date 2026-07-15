@@ -18,18 +18,20 @@ import {
 
 type ColorPair = [string, string]
 
-// Dark mode — muted tints on near-black
+// Dark mode — barely-there charcoal tints on near-black.
+// A faint cool cast before dawn, warm-neutral charcoal through the
+// day. Deliberately no orange — the ambient stays monochrome charcoal.
 const DARK_COLORS: Record<PrayerPeriod, ColorPair> = {
-  'last-third': ['#1A1535', '#0D0B20'],
-  'fajr':       ['#2A1F3A', '#1A1228'],
-  'sunrise':    ['#2A1A10', '#1A1208'],
-  'duha':       ['#2A1C0A', '#1A1408'],
-  'zawal':      ['#2A1E0A', '#1A1508'],
-  'dhuhr':      ['#2A1E0A', '#1A1508'],
-  'asr':        ['#2A1808', '#1A1206'],
-  'pre-maghrib':['#2A1208', '#1A0E06'],
-  'maghrib':    ['#2A0E0A', '#1A0A08'],
-  'isha':       ['#1A1210', '#0D0B09'],
+  'last-third': ['#1A1826', '#101019'],
+  'fajr':       ['#201C2A', '#14121B'],
+  'sunrise':    ['#201E1A', '#141310'],
+  'duha':       ['#211F1A', '#151410'],
+  'zawal':      ['#221F19', '#161410'],
+  'dhuhr':      ['#221F19', '#161410'],
+  'asr':        ['#201E19', '#14130F'],
+  'pre-maghrib':['#1F1D18', '#14120E'],
+  'maghrib':    ['#1E1B17', '#13110E'],
+  'isha':       ['#181713', '#0D0C0A'],
 }
 
 // Light mode — warm washes on paper

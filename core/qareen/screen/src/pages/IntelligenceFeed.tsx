@@ -199,7 +199,7 @@ export default function IntelligenceFeed() {
                 h-7 px-3 rounded-full text-[11px] font-[510] cursor-pointer
                 transition-all
                 ${activePlatform === platform
-                  ? 'bg-accent text-white'
+                  ? 'bg-accent text-on-accent'
                   : 'text-text-quaternary hover:text-text-tertiary hover:bg-hover border border-transparent'}
               `}
               style={{ transitionDuration: 'var(--duration-instant)' }}

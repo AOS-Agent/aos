@@ -18,7 +18,7 @@ import { TaskStatus, TaskPriority } from '@/lib/types';
 import { format, isPast, isToday, isTomorrow, differenceInDays } from 'date-fns';
 import type { LucideIcon } from 'lucide-react';
 
-const PRI: Record<number, string> = { 1: '#FF453A', 2: '#D9730D', 3: '#6B6560', 4: '#0A84FF', 5: '#4A4540' };
+const PRI: Record<number, string> = { 1: '#FF453A', 2: '#FFD60A', 3: '#6B6560', 4: '#0A84FF', 5: '#4A4540' };
 const STAT_COLOR: Record<string, string> = { todo: '#6B6560', active: '#0A84FF', waiting: '#FFD60A', done: '#30D158', cancelled: '#4A4540' };
 const STAT_LABEL: Record<string, string> = { todo: 'Todo', active: 'Active', waiting: 'Waiting', done: 'Done', cancelled: 'Cancelled' };
 
@@ -252,7 +252,7 @@ export function DatabaseView({ tasks, onSelect, selectedId, projects = [], group
                     <button onClick={() => upd.mutate({ id: task.id, data: { status: done ? TaskStatus.TODO : TaskStatus.DONE } })}
                       className="w-4 h-4 rounded-full border-[1.5px] flex items-center justify-center cursor-pointer group-hover:invisible"
                       style={{ borderColor: done ? '#30D158' : 'rgba(255,245,235,0.15)', backgroundColor: done ? '#30D158' : 'transparent' }}>
-                      {done && <svg width="8" height="6" viewBox="0 0 10 8" fill="none"><path d="M1 4L3.5 6.5L9 1" stroke="#0D0B09" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>}
+                      {done && <svg width="8" height="6" viewBox="0 0 10 8" fill="none"><path d="M1 4L3.5 6.5L9 1" stroke="#14130E" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>}
                     </button>
                     <button onClick={() => onSelect(task)}
                       className="absolute inset-0 flex items-center justify-center invisible group-hover:visible cursor-pointer" title="Open">

@@ -416,7 +416,7 @@ export default function ChatPage() {
               border border-border-tertiary
               rounded-[20px] px-2 py-1.5
               shadow-[0_4px_24px_rgba(0,0,0,0.35)]
-              focus-within:border-accent/30 focus-within:shadow-[0_4px_24px_rgba(0,0,0,0.4),0_0_0_1px_rgba(217,115,13,0.12)]
+              focus-within:border-accent/30 focus-within:shadow-[0_4px_24px_rgba(0,0,0,0.4),0_0_0_1px_rgba(214, 204, 180,0.12)]
               transition-all
             "
             style={{ transitionDuration: 'var(--duration-fast)' }}
@@ -468,7 +468,7 @@ export default function ChatPage() {
                 ${streaming
                   ? 'bg-red/15 text-red hover:bg-red/25 cursor-pointer !opacity-100'
                   : input.trim() || attachments.length > 0
-                    ? 'bg-accent text-bg cursor-pointer hover:bg-accent-hover'
+                    ? 'bg-accent text-on-accent cursor-pointer hover:bg-accent-hover'
                     : 'text-text-quaternary cursor-default opacity-30'
                 }
               `}

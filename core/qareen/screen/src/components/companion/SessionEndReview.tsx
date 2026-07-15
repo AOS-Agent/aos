@@ -225,7 +225,7 @@ export function SessionEndReview({
               inline-flex items-center justify-center
               transition-all duration-[var(--duration-instant)]
               ${saveToVault
-                ? 'bg-accent border-accent text-white'
+                ? 'bg-accent border-accent text-on-accent'
                 : 'border-border-secondary text-transparent hover:border-text-quaternary'}
             `}
           >

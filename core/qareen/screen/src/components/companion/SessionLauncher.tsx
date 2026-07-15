@@ -21,17 +21,19 @@ import {
 // ---------------------------------------------------------------------------
 
 // Prayer period → orb color pairs
+// Restrained charcoal -> bone glow. Keeps a subtle prayer-period shift
+// (cooler before dawn, warmer bone through the day) with no orange.
 const PERIOD_COLORS: Record<PrayerPeriod, [string, string]> = {
-  'last-third': ['#2A1F4E', '#4A3570'],
-  'fajr':       ['#5C3D7A', '#8B5A6B'],
-  'sunrise':    ['#C4692A', '#E8943D'],
-  'duha':       ['#D9730D', '#E8943D'],
-  'zawal':      ['#D4920F', '#E8B84D'],
-  'dhuhr':      ['#D4920F', '#E8B84D'],
-  'asr':        ['#C47020', '#D9883A'],
-  'pre-maghrib':['#B55A18', '#D46830'],
-  'maghrib':    ['#9A3E1A', '#C45530'],
-  'isha':       ['#3D2A1E', '#6B4530'],
+  'last-third': ['#2A2740', '#463F5E'],
+  'fajr':       ['#413A56', '#6E6480'],
+  'sunrise':    ['#4A443A', '#8A7F68'],
+  'duha':       ['#3E3A31', '#9A8E72'],
+  'zawal':      ['#423E34', '#A99A79'],
+  'dhuhr':      ['#423E34', '#A99A79'],
+  'asr':        ['#3E3930', '#948868'],
+  'pre-maghrib':['#3A342C', '#847763'],
+  'maghrib':    ['#332E28', '#6E6252'],
+  'isha':       ['#26241F', '#4A453C'],
 }
 
 // Trigger phrases → 4 modes: Talk, Meet, Plan, Clear
@@ -669,7 +671,7 @@ function MicStatus({
       ) : (
         <span className="relative flex h-2 w-2">
           {speaking && <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent/40" />}
-          <span className={`relative inline-flex rounded-full h-2 w-2 transition-all duration-300 ${speaking ? 'bg-accent shadow-[0_0_6px_rgba(217,115,13,0.5)]' : 'bg-text-quaternary/40'}`} />
+          <span className={`relative inline-flex rounded-full h-2 w-2 transition-all duration-300 ${speaking ? 'bg-accent shadow-[0_0_6px_rgba(214, 204, 180,0.5)]' : 'bg-text-quaternary/40'}`} />
         </span>
       )}
     </div>

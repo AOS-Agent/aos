@@ -11,7 +11,7 @@ interface SiriWaveProps {
 const ATT = 4;
 const globalAtt = (x: number) => Math.pow(ATT / (ATT + x * x), ATT);
 
-export default function SiriWave({ getAmplitude, width = 400, height = 100, color = '#D9730D', className = '' }: SiriWaveProps) {
+export default function SiriWave({ getAmplitude, width = 400, height = 100, color = '#D6CCB4', className = '' }: SiriWaveProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const phaseRef = useRef(0);
   const ampRef = useRef(0.03);

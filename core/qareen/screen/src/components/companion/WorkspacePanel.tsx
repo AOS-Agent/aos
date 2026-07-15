@@ -70,7 +70,7 @@ export function WorkspacePanel({ onApprove, onStartApproval, onUndo, onDismiss, 
               <span className="text-[11px] font-[510] text-text-quaternary tracking-wide">
                 Approvals
               </span>
-              <span className="inline-flex items-center justify-center min-w-[16px] h-[16px] px-1 rounded-full bg-accent text-white text-[9px] font-semibold">
+              <span className="inline-flex items-center justify-center min-w-[16px] h-[16px] px-1 rounded-full bg-accent text-on-accent text-[9px] font-semibold">
                 {pendingApprovals.length}
               </span>
             </div>

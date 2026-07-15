@@ -31,7 +31,7 @@ type OrbProps = {
 }
 
 export function AgentOrb({
-  colors = ["#E8842A", "#D9730D"],
+  colors = ["#E4DCC8", "#D6CCB4"],
   colorsRef,
   resizeDebounce = 100,
   seed,

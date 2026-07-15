@@ -233,7 +233,7 @@ export default function Sidebar() {
         >
           <Bell className="w-3.5 h-3.5" />
           {(unreadCount ?? 0) > 0 && (
-            <span className="absolute -top-1 -right-1 min-w-[16px] h-[16px] flex items-center justify-center rounded-full bg-accent text-[9px] font-[600] text-white px-1">
+            <span className="absolute -top-1 -right-1 min-w-[16px] h-[16px] flex items-center justify-center rounded-full bg-accent text-[9px] font-[600] text-on-accent px-1">
               {unreadCount! > 99 ? '99+' : unreadCount}
             </span>
           )}

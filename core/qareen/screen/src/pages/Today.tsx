@@ -49,7 +49,7 @@ function TaskRow({ task, tone, showProject, onToggle }: { task: Task; tone: Area
         className="w-[16px] h-[16px] rounded-full border-[1.5px] flex items-center justify-center shrink-0 cursor-pointer"
         style={{ borderColor: done ? '#30D158' : 'rgba(255,245,235,0.15)', backgroundColor: done ? '#30D158' : 'transparent' }}
       >
-        {done && <svg width="8" height="6" viewBox="0 0 10 8" fill="none"><path d="M1 4L3.5 6.5L9 1" stroke="#0D0B09" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>}
+        {done && <svg width="8" height="6" viewBox="0 0 10 8" fill="none"><path d="M1 4L3.5 6.5L9 1" stroke="#14130E" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>}
       </button>
       {/* area dot — color = which area this task belongs to */}
       <span className={`w-[6px] h-[6px] rounded-full shrink-0 ${tone.dot}`} />
