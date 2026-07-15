@@ -1774,6 +1774,13 @@ class TelegramChannel:
 
     def start(self):
         """Start the Telegram bot (blocking)."""
+        # Install the poll-liveness heartbeat before the bot is built so every
+        # getUpdates cycle records a timestamp. A wedged poll loop (process
+        # alive, fetching stopped) then shows up as a stale timestamp that the
+        # bridge_poll_liveness reconcile check can catch and restart.
+        from poll_heartbeat import install_poll_heartbeat
+        install_poll_heartbeat()
+
         # Global error handler — registered FIRST so no errors are ever unhandled
         async def _error_handler(update, context):
             logger.error(f"Unhandled error: {context.error}", exc_info=context.error)

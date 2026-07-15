@@ -16,8 +16,11 @@ It is never destructive. Scanner is read-only.
 from __future__ import annotations
 
 import logging
+import sys
+from pathlib import Path
 
-from ..base import CheckResult, ReconcileCheck, Status
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from base import CheckResult, ReconcileCheck, Status
 
 logger = logging.getLogger(__name__)
 
