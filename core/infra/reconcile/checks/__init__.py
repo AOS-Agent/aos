@@ -8,6 +8,7 @@ from .dev_browser import DevBrowserCheck
 from .disk_smart import DiskSmartCheck
 from .google_workspace import GoogleWorkspaceCheck
 from .hooks import HooksPathCheck
+from .bridge_poll_liveness import BridgePollLivenessCheck
 from .initiatives import BridgeTopicsCheck, InitiativeDirectoriesCheck
 from .instance_hygiene import InstanceHygieneCheck
 from .launchagents import LaunchAgentPythonCheck
@@ -55,6 +56,10 @@ ALL_CHECKS = [
     # Content — CLAUDE.md managed sections are current
     RootClaudeMdCheck,
     GlobalClaudeMdCheck,
+
+    # Services — bridge Telegram poll loop is fetching, not silently wedged
+    # (process-liveness watchdogs miss a stalled getUpdates; this restarts it)
+    BridgePollLivenessCheck,
 
     # Services — transcriber running and healthy
     TranscriberServiceCheck,

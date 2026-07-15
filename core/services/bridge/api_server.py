@@ -233,15 +233,28 @@ async def handle_history(request):
 
 
 async def handle_health(request):
-    """GET /health — alive check."""
+    """GET /health — alive check.
+
+    Includes the Telegram poll-liveness heartbeat (last successful getUpdates
+    and its age in seconds) so the poll loop can be monitored independently of
+    process liveness — a wedged loop keeps the process up but stops advancing
+    last_poll_ts.
+    """
     from session_manager import get_persistent_session
     session = get_persistent_session()
+
+    from poll_heartbeat import last_poll_age, last_poll_ts
+    poll_ts = last_poll_ts()
+    poll_age = last_poll_age()
+
     return web.json_response({
         "ok": True,
         "persistent_session": session.alive,
         "session_id": (session.session_id or "")[:16],
         "subscribers": len(_subscribers),
         "history_size": len(_event_history),
+        "last_poll_ts": poll_ts or None,
+        "last_poll_age_s": round(poll_age, 1) if poll_age is not None else None,
     }, headers={"Access-Control-Allow-Origin": "*"})
 
 

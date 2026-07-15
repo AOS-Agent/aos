@@ -10,9 +10,11 @@ Catches the "shipped but never deployed" class of bugs:
 
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
-from ..base import CheckResult, ReconcileCheck, Status
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from base import CheckResult, ReconcileCheck, Status
 
 HOME = Path.home()
 AOS = HOME / "aos"
