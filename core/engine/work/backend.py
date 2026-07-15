@@ -279,6 +279,8 @@ def _project_to_dict(project: Project) -> dict:
         d["goal"] = project.goal
     if project.done_when:
         d["done_when"] = project.done_when
+    if project.short_id:
+        d["short_id"] = project.short_id
     if project.stages:
         d["stages"] = project.stages
     if project.current_stage:
@@ -803,12 +805,12 @@ def add_project(title: str, goal: str = None, done_when: str = None,
                 appetite: str = None, short_id: str = None,
                 initiative: str = None, project_id: str = None) -> dict:
     """Create a new project."""
-    # Build description from extra fields not in schema
+    # Build description from extra fields that have no dedicated column.
+    # short_id is now a first-class column on projects (passed below), so it
+    # is no longer encoded into the description.
     desc_parts = []
     if appetite:
         desc_parts.append(f"appetite:{appetite}")
-    if short_id:
-        desc_parts.append(f"short_id:{short_id}")
     if initiative:
         desc_parts.append(f"initiative:{initiative}")
     description = ", ".join(desc_parts) if desc_parts else None
@@ -819,6 +821,7 @@ def add_project(title: str, goal: str = None, done_when: str = None,
         description=description,
         goal=goal,
         done_when=done_when,
+        short_id=short_id,
     )
     result = _get_adapter().create(project)
     result_dict = _to_dict(result)
@@ -1108,7 +1111,11 @@ def move_tasks_to_project(task_ids: list[str], target_project: str) -> list[dict
     adapter = _get_adapter()
     conn = adapter._conn
 
+    # Derive the scoped-id prefix from the handle (short_id-aware), then
+    # resolve the handle to the canonical projects.id for the FK so a
+    # short_id target (e.g. --to dod) doesn't violate the foreign key.
     prefix = adapter._project_prefix(target_project)
+    target_project = adapter._resolve_project_id(target_project)
     moved = []
 
     # Build full set of IDs to move (including subtasks)
