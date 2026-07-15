@@ -51,6 +51,7 @@ class TaskStatus(str, Enum):
     ACTIVE = "active"
     WAITING = "waiting"
     DONE = "done"
+    CANCELLED = "cancelled"
 
 
 class TaskPriority(int, Enum):
