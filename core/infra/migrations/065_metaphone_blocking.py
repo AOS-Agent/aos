@@ -28,8 +28,12 @@ def _ensure_people_db() -> bool:
     """Ensure people.db exists, creating it via the framework's own
     db.connect() if it doesn't. See 060_people_ontology.py's copy of this
     helper for the full rationale (aos#153)."""
-    if DB_PATH.exists():
-        return True
+    # No file-exists early return: a partial/schema-less people.db (from an
+    # interrupted run or a bare service touch) must still get the schema.
+    # people_db.connect() gates on the 'people' TABLE and schema.sql is
+    # fully idempotent (IF NOT EXISTS), so this is always safe. Clean-box
+    # finding 2026-07-15 — same file-exists-vs-schema-exists class as
+    # 053/058.
     core_dir = next((p for p in Path(__file__).resolve().parents if p.name == "core"), None)
     people_dir = core_dir / "engine" / "people" if core_dir else None
     if not people_dir or not people_dir.exists():
