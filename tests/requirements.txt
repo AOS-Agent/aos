@@ -1,0 +1,8 @@
+# Test-suite third-party deps — CI installs from this file.
+# Verified minimal: clean venv + these six -> 656 passed (2026-07-15).
+pytest
+pyyaml
+rapidfuzz
+networkx
+phonenumbers
+httpx
