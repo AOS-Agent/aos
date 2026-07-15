@@ -44,11 +44,13 @@ class VaultContractCheck(ReconcileCheck):
         the point is to keep the inventory cache fresh.
         """
         try:
-            # Try both import styles — reconcile runs from various cwds
-            try:
-                from engine.intelligence.inventory import scan_vault
-            except ImportError:
-                from core.engine.intelligence.inventory import scan_vault
+            # Reconcile runs from various cwds and the runner only puts
+            # core/infra/reconcile on sys.path (for `base`). Add the AOS
+            # root so `core.*` resolves regardless of where we're invoked.
+            aos_root = str(Path(__file__).resolve().parents[4])
+            if aos_root not in sys.path:
+                sys.path.insert(0, aos_root)
+            from core.engine.intelligence.inventory import scan_vault
             self._stats = scan_vault()
         except Exception as e:
             logger.exception("vault_contract scan failed: %s", e)
