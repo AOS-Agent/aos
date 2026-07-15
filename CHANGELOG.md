@@ -2,6 +2,14 @@
 
 All notable changes to AOS. Release notes sent via Telegram after each 4am update.
 
+## v0.6.9 — 2026-07-14
+
+Summary: Council deliberation substrate, Qareen remote access over Cloudflare Tunnel, and a task-system foreign-key fix. Chief can now convene a multi-persona council in the background on high-stakes decisions; Qareen can be reached from the internet behind Cloudflare Access as an explicit, operator-provisioned opt-in; and `--project <short-id>` no longer crashes on a foreign-key constraint. Migrations 079–080 (069 is an intentional hole).
+
+- Added the council deliberation substrate (`core/engine/council/`): a token-passing chat engine with four builtin personas (architect, builder, skeptic, dreamer), a scheduler, and a synthesis pass that writes a QMD-indexed decision memo per adjourned council. Chief auto-convenes a background council on gate-check CONCERNS and mid-execution architecture changes rather than asking the operator to run anything (`core/agents/chief.md`). CLI at `core/bin/cli/council`; skill at `core/skills/council/`. The Mission Control council route already shipped as a stub — this lands its backend.
+- Added Qareen remote access (`core/qareen/{api/remote_access,integrations/cloudflare,services/tunnel_manager,services/remote_access_state}.py`): reach local Qareen at `aos.<domain>` behind Cloudflare Access (email-OTP + allow-list). Structurally opt-in — nothing is provisioned or exposed until the operator pastes a scoped Cloudflare token into the Settings wizard. Connecting rebinds Qareen from `0.0.0.0` to `127.0.0.1` only after a health poll (so it never locks out the LAN), and disconnect always restores `0.0.0.0`. Both secrets (CF API token, tunnel run-token) live only in the Keychain. Migration 080 adds the `remote_access` state table and the `AOS_QAREEN_HOST` bind env var. UI: a Remote Access section in Settings with a paste-a-token wizard and live status.
+- Fixed `work add "Task" --project <short-id>` raising `sqlite3.IntegrityError: FOREIGN KEY constraint failed` — `add_project` now stores the short-id in its first-class `projects.short_id` column instead of encoding it into the description, and `move_tasks_to_project` resolves a short-id target to the canonical id before setting the FK. Migration 079 adds the column + partial index and backfills any legacy `short_id:` token. 7 regression tests.
+
 ## v0.6.8 — 2026-07-14
 
 Summary: Intelligence → Knowledge pipeline and content engine. The personal intelligence feed monitors internet sources and scores what matters; the knowledge pipeline turns captured items into vault notes with per-platform templates, shadow-mode compilation proposals, a nightly vault lint pass, and a Knowledge UI. Migrations 072–078.
