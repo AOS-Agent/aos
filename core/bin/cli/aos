@@ -105,7 +105,10 @@ case "${1:-help}" in
         # Sync ALL skills from framework to user space via symlinks.
         # Auto-discovers skills — no hardcoded lists to maintain.
         # Deprecated skills are explicitly excluded; everything else is installed.
-        SOURCE="$AOS_DIR/.claude/skills"
+        # Skills live in core/skills (moved there in wave 1 / migration 052);
+        # the old .claude/skills path no longer exists, so pointing at it synced
+        # nothing while still reporting success.
+        SOURCE="$AOS_DIR/core/skills"
         TARGET="$HOME/.claude/skills"
         mkdir -p "$TARGET"
 
@@ -197,19 +200,23 @@ case "${1:-help}" in
         ;;
 
     sync-mcp)
-        # Register AOS MCP servers into ~/.claude/mcp.json (where Claude Code reads them)
-        MCP_FILE="$HOME/.claude/mcp.json"
-        mkdir -p "$HOME/.claude"
+        # Register AOS MCP servers as user-scope servers in ~/.claude.json.
+        # Claude Code reads user-scope MCP servers from ~/.claude.json (the same
+        # file `claude mcp add --scope user` writes, and where 059_gws_cli.py
+        # registers gws). The old target ~/.claude/mcp.json is only read for
+        # sessions whose cwd is ~/.claude/, so AOS sessions never saw memory or
+        # crawler registered there.
+        MCP_FILE="$HOME/.claude.json"
 
         python3 - "$AOS_DIR" "$MCP_FILE" << 'SYNCMCP'
-import json, sys
+import json, os, sys
 from pathlib import Path
 
 aos_dir = Path(sys.argv[1])
 mcp_file = Path(sys.argv[2])
 home = Path.home()
 
-# Load existing config (preserve non-AOS servers)
+# Load existing config (preserve everything else in ~/.claude.json)
 if mcp_file.exists():
     try:
         config = json.loads(mcp_file.read_text())
@@ -252,7 +259,15 @@ for name, spec in aos_servers.items():
 if changed == 0:
     print("  ✓ All MCP servers in sync")
 else:
-    mcp_file.write_text(json.dumps(config, indent=2) + "\n")
+    # Atomic write: ~/.claude.json is actively read and written by any running
+    # Claude Code session (including via /config). Back it up, write a sibling
+    # temp file, then os.replace() it into place so a reader never sees a torn
+    # file (mirrors 059_gws_cli.py's _atomic_write_json).
+    if mcp_file.exists():
+        mcp_file.with_suffix(mcp_file.suffix + ".bak").write_text(mcp_file.read_text())
+    tmp = mcp_file.with_suffix(mcp_file.suffix + ".tmp")
+    tmp.write_text(json.dumps(config, indent=2) + "\n")
+    os.replace(tmp, mcp_file)
     print(f"  ✓ Synced {changed} MCP server(s)")
 SYNCMCP
         ;;
