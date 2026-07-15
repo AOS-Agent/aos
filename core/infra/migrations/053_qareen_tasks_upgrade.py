@@ -59,6 +59,18 @@ def check() -> bool:
         return True
     try:
         conn = sqlite3.connect(str(db_path))
+        # If the tasks table itself is absent, there is nothing to retrofit —
+        # the db file exists but carries no pre-upgrade schema (e.g. an empty
+        # file side-created by a service start or a read-through connect).
+        # 054 seeds the full schema in that case. Found by clean-box VM:
+        # empty qareen.db made up() fail "no such table: tasks" and halt
+        # every upgrade at 53.
+        has_tasks = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='tasks'"
+        ).fetchone()
+        if has_tasks is None:
+            conn.close()
+            return True
         cursor = conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='comments'"
         )
@@ -78,6 +90,17 @@ def up() -> bool:
         return True
 
     conn = sqlite3.connect(str(db_path))
+
+    # Mirror check()'s guard: a db file without the tasks table has no
+    # pre-upgrade schema to retrofit — 054 seeds everything. Never assume
+    # the table exists just because the file does.
+    if conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='tasks'"
+    ).fetchone() is None:
+        conn.close()
+        print("       qareen.db has no tasks table — nothing to retrofit (054 seeds fresh)")
+        return True
+
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
 
