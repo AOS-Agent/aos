@@ -2,6 +2,19 @@
 
 All notable changes to AOS. Release notes sent via Telegram after each 4am update.
 
+## v0.6.8 — 2026-07-14
+
+Summary: Intelligence → Knowledge pipeline and content engine. The personal intelligence feed monitors internet sources and scores what matters; the knowledge pipeline turns captured items into vault notes with per-platform templates, shadow-mode compilation proposals, a nightly vault lint pass, and a Knowledge UI. Migrations 072–078.
+
+- Added the personal intelligence feed (`core/engine/intelligence/ingest/`): RSS/RSSHub fetchers, content extraction, relevance triage, and a store keyed on `qareen.db`; `feed-ingest` (every 30m) and `feed-digest` (07:00) crons; the `/intelligence` UI and API. Migration 072 adds the feed columns to `intelligence_briefs`/`intelligence_sources`.
+- Added the Intelligence → Knowledge pipeline (`core/engine/intelligence/`): a compile engine with per-platform frontmatter templates (tweet, blog, video, github, paper, generic), a content router with crawler/FxTwitter backends, a bootstrap engine, a vault inventory scanner with a doc-type contract, a nightly lint pass (orphans, stale docs, topic refresh, synthesis suggestions), and a topic builder. Migration 073 backfills `content_status`; 074 adds `compilation_proposals` (shadow-mode compilation); 075 `vault_inventory`; 076 `bootstrap_runs`.
+- Added the Knowledge UI (`/knowledge` — Today, Feed, Library, Topics, Pipeline views) and its API, plus the `IntelligenceAdapter` that links captured entities into the ontology as `CAPTURE` objects. Added a Knowledge item to the nav.
+- Enforced the compile-template frontmatter contract: `CaptureTemplate.validate_frontmatter()` checks a built capture against its template's declared mandatory fields, and the save path logs drift instead of letting an unpopulated mandatory field reach the vault silently.
+- Added real cron telemetry: `cron-wrap` records each wrapped cron run into a `cron_runs` table (migration 077), read by the Knowledge Pipeline view. `feed-ingest`, `feed-digest`, and the new nightly `vault-maintenance` (04:30) cron run through it. Telemetry is best-effort — a wrapped cron's own exit code is what's returned, so a telemetry write failure never breaks the underlying job.
+- Added the `vault_contract` and `dev_backend_plist` reconcile checks (both notify-only, never auto-mutate).
+- Fixed the content engine's dedup ledger (migration 078): it now writes to `~/.aos/data/content-engine/` instead of the read-only framework tree, so dedup works on release installs and the CLI stops exiting non-zero.
+- Ships the RSSHub LaunchAgent template un-deployed — feed sources routed through RSSHub need Docker, which is an operator opt-in; nothing auto-installs it.
+
 ## v0.6.7 — 2026-07-14
 
 Summary: Qareen UI rehaul Phase A — foundation and honesty. Fixes the crashed Sessions route, wires the People page live into the nav, kills two stuck-loading bugs, fixes the wave-3 UI type errors, and adds a TypeScript gate to ship-check so UI type errors can't ship again.
