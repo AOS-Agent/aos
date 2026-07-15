@@ -313,7 +313,62 @@ Dispatch Advisor with the transition-specific checklist:
 
 Dispatch: "Read the initiative at {path}. Run the gate check for {transition}. Validate each item in the checklist. Return PASS / CONCERNS / FAIL with specifics."
 
-PASS → advance. CONCERNS → operator decides (suggest `deliberate` skill for high-stakes). FAIL → fix first.
+PASS → advance. CONCERNS → **auto-convene council in background** (see Council Auto-Dispatch below) — don't ask the operator to run anything. FAIL → fix first.
+
+### Council Auto-Dispatch
+
+When you encounter a high-stakes decision, **do not ask the operator to run `council convene`** — you dispatch it yourself, in the background, and the operator reads the synthesis memo when they're ready. They are not the orchestrator of the council; the council is your tool for serving them.
+
+**When you MUST auto-dispatch a council:**
+
+| Trigger | What to do |
+|---------|-----------|
+| Gate check returns CONCERNS | `council background "<gate question>" --personas architect,builder,skeptic,dreamer --seed "<the concerns + context>"` |
+| Initiative shaping for 2-weeks-or-more appetite | Convene a shaping council on the open shaping questions before locking decisions |
+| Complex planning (4+ phases or unclear sequence) | Convene before dispatching Advisor solo — council debates phase structure |
+| Architecture change mid-execution | Auto-convene; don't proceed until verdict |
+| Operator asks "what should I do" / "I'm stuck" on initiative-scale work | Convene to stress-test priorities |
+| Pre-ship review for any user-facing change | Convene; verdict gates the ship decision |
+| Mid-task fork (agent in worktree hits a decision) | The agent calls council via the council CLI; agent waits for verdict file |
+
+**How to dispatch (one command):**
+
+```bash
+~/aos/core/bin/cli/council background "<topic — the question>" \
+  --personas architect,builder,skeptic,dreamer \
+  --seed "<your framing of the question with all context the personas need>" \
+  --rounds 8 \
+  --first architect
+```
+
+Returns immediately. Reply to the operator with: *"Convening council on <topic>. Verdict in ~2 min. I'll surface the memo when it lands."* Then continue with other work — don't block.
+
+**The synthesis is automatic.** Every adjourned council writes:
+- `~/vault/knowledge/decisions/<date>-<slug>-council.md` — full memo with frontmatter (QMD-indexed)
+- Verdict, reasoning, dissent, lock-in items
+
+You read the memo when ready. Surface key points to the operator in plain prose — not the protocol. Lead with the verdict, name the strongest dissent, point to the memo for detail.
+
+**Persistent councils for initiatives.** When working on a specific initiative, tie the council to it:
+```bash
+council background "<topic>" --seed "Initiative: <slug>. Context: <key locked decisions>. Question: <topic>"
+```
+
+The chat.jsonl is persistent. Resume the same council across sessions with `council show <id>` and re-run from where it stopped.
+
+**Operator interjection.** If the operator pushes back on a council verdict:
+- `council say "@architect, the dissent on X is real — re-examine"` — appends to chat, council can resume
+- Reply to a Telegram synthesis with `@council <message>` — bridge appends to the right council
+
+When operator interjects, treat their message as a new seed and re-run. They don't run the protocol; you do.
+
+**When NOT to council:**
+- Simple lookups, single-action requests, quick questions
+- When the decision is already made and you're just executing
+- When the operator explicitly said "just do it"
+- When trust level is high and a catalog agent already has clear scope
+
+If in doubt for a multi-session architectural choice: convene. Cost is ~$0.50 of API and 2 minutes wall-clock; value is multi-lens stress-test on a decision you would otherwise make alone.
 
 ### Session Boundaries
 
@@ -323,7 +378,7 @@ PASS → advance. CONCERNS → operator decides (suggest `deliberate` skill for 
 ### Deviation Rules
 
 - Scope additions → always ask operator
-- Architecture changes → always ask + suggest deliberation
+- Architecture changes → **auto-convene council** (see Council Auto-Dispatch); do not ask the operator to run it
 - Task taking 2x estimate → pause and report
 - 3 failed attempts → stop, document, move on
 
