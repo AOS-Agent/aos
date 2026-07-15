@@ -35,7 +35,14 @@ CRED_FILE="$CREDS_DIR/$ACCOUNT.json"
 if [[ ! -f "$CRED_FILE" ]]; then
     echo "Error: no credentials for $ACCOUNT at $CRED_FILE" >&2
     echo "Available accounts:" >&2
-    ls "$CREDS_DIR"/*.json 2>/dev/null | xargs -I{} basename {} .json >&2 || echo "  (none)" >&2
+    shopt -s nullglob
+    creds=("$CREDS_DIR"/*.json)
+    shopt -u nullglob
+    if [[ ${#creds[@]} -eq 0 ]]; then
+        echo "  (none)" >&2
+    else
+        for f in "${creds[@]}"; do basename "$f" .json >&2; done
+    fi
     exit 2
 fi
 

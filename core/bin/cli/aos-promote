@@ -91,7 +91,7 @@ NOW=$(date +%s)
 
 GUARD_OUT=$(python3 "$CHANNELS_LIB" guard "${DEPLOYED_AT:--}" "$NOW" "$MIN_DAYS" "$FORCE")
 GUARD_RC=$?
-IFS=$'\t' read -r ALLOWED SOAK REASON <<< "$GUARD_OUT"
+IFS=$'\t' read -r ALLOWED _ REASON <<< "$GUARD_OUT"
 log "Soak:                      ${REASON}"
 if [[ "$GUARD_RC" -ne 0 || "$ALLOWED" != "1" ]]; then
     die "Soak guard failed. Wait longer, pass --days, or --force."
