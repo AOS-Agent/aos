@@ -28,6 +28,7 @@ class ValidationResult:
 # Keys we expect in operator.yaml. Unknown keys produce a warning.
 _OPERATOR_REQUIRED = {"name", "timezone", "schedule"}
 _OPERATOR_KNOWN = _OPERATOR_REQUIRED | {
+    "role",  # developer | operator — stamped by migration 081 (role-aware AOS)
     "communication", "daily_loop", "trust", "agent_name",
     "initiatives", "projects",
 }
