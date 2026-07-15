@@ -2,6 +2,15 @@
 
 All notable changes to AOS. Release notes sent via Telegram after each 4am update.
 
+## v0.6.12 — 2026-07-15
+
+Summary: Repainted the Qareen UI from warm brown + orange to a charcoal-and-bone system. The operator vetoed the orange accent; the whole surface now reads as neutral-warm charcoal (never blue-black) with a single restrained warm-bone accent, pure-white headings, and semantic status colors kept legible. No behavior change — palette only.
+
+- Rewrote the design tokens in `core/qareen/screen/src/globals.css` (the Tailwind v4 `@theme` source) and its TS mirror `core/qareen/screen/src/lib/design.ts`: the background ladder is now neutral-warm charcoal (`#0B0B0A` → `#302E2A`, `R ≥ G ≥ B` by a hair so it never reads blue-black), borders are warm-neutral white alpha, and the brand orange accent (`#D9730D`) is replaced by a warm-bone accent (`#D6CCB4`). Because the accent is now light, a new `--color-on-accent` token (charcoal) carries text on solid accent fills; the ~34 `text-white`/`text-bg`-on-`bg-accent` call sites were migrated to `text-on-accent`.
+- Chose bone over the two other candidates on purpose: muted gold was rejected as too close to the vetoed orange (and the operator explicitly warned against orange-adjacent ambers), and desaturated green was rejected because it collides with the semantic status-green (`connected`/`success`). Bone is the only option that is categorically not-orange, stays warm, and pairs with pure-white headings. Rationale recorded in `DESIGN.md`.
+- Hunted and migrated every hardcoded orange/amber/brown stray outside the token file: the companion orb and its prayer-period glow (`Orb.tsx`, `SessionLauncher.tsx`), the app-wide prayer ambient (`usePrayerAmbient.ts`, neutralized to charcoal), the code-syntax theme (`Markdown.tsx`), agent identity colors (`Agents.tsx`), the org human-node gradient and opus model color (`Org.tsx`), task priority-2 (orange → yellow), notification/relationship/waveform accents, and the old brown surface/checkmark hexes — all repointed to the new charcoal/bone values. No orange remains anywhere in the source.
+- Rewrote the `DESIGN.md` color system, philosophy, aurora, and rules sections to describe the charcoal-and-bone language, keeping the type scale, spacing, and Loading/Empty-state sections intact.
+
 ## v0.6.11 — 2026-07-15
 
 Summary: The last batch before v0.6.10+ promotes to friends. Role-aware session rules so an operator's machine stops being lectured to use a developer's dev workspace, a guarded service restart that can no longer leave a LaunchAgent silently unloaded (the bridge-vanish incident), the last reconcile check that still crashed every cycle, and a pass over the Telegram messages so a briefing reads like plain English on a phone. Migration 081.
