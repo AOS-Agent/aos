@@ -7,7 +7,6 @@ schema-guess territory, so tests are the source of truth for field names.
 """
 from __future__ import annotations
 
-import os
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -18,7 +17,6 @@ from core.engine.people.intel.sources.apple_contacts import (
     APPLE_EPOCH_OFFSET,
     AppleContactsAdapter,
 )
-
 
 # ── Fixture builder ──────────────────────────────────────────────────
 

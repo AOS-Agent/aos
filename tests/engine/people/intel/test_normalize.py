@@ -4,11 +4,9 @@ All test inputs are FABRICATED. Do not put any real operator canonical_name
 values into this file — those live only in the operator's own people.db.
 """
 from core.engine.people.intel.normalize import (
-    NormalizedName,
     component_variants,
     normalize_canonical_name,
 )
-
 
 # ── component_variants ───────────────────────────────────────────────
 

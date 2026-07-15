@@ -16,10 +16,11 @@ Why `claude -p` over the Anthropic API:
     no completion-verb regex, no idle-state detection)
 """
 from __future__ import annotations
-import subprocess
-import re
-import sys
+
 import datetime
+import re
+import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -156,7 +157,7 @@ class Council:
                     out = proc.stdout.strip()
                     if out:
                         return out
-                    last_err = f"empty stdout (rc=0)"
+                    last_err = "empty stdout (rc=0)"
                 else:
                     last_err = f"rc={proc.returncode}: {proc.stderr[:300]}"
             except subprocess.TimeoutExpired:

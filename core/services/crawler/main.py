@@ -2,7 +2,6 @@
 
 import setproctitle; setproctitle.setproctitle("aos-crawler")
 
-import asyncio
 import json
 from typing import Optional
 

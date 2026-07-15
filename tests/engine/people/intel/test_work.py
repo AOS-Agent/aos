@@ -10,10 +10,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-import pytest
-
 from core.engine.people.intel.sources.work import WorkAdapter
-
 
 # ── fixture builders ─────────────────────────────────────────────────
 

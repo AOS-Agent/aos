@@ -1080,9 +1080,12 @@ async def knowledge_maintenance(limit: int = Query(30, ge=1, le=100)) -> dict[st
     trend + link to the latest report's body.
     """
     try:
-        from engine.intelligence.lint.report import list_reports, find_latest_report
+        from engine.intelligence.lint.report import find_latest_report, list_reports
     except ImportError:
-        from core.engine.intelligence.lint.report import list_reports, find_latest_report
+        from core.engine.intelligence.lint.report import (
+            find_latest_report,
+            list_reports,
+        )
 
     reports = list_reports(limit=limit)
     latest_path = find_latest_report()

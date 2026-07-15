@@ -19,7 +19,6 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -224,8 +223,9 @@ async def _create_credential_internal(
         logger.error("n8n admin credentials not found in Keychain")
         return None
 
-    import httpx
     import uuid
+
+    import httpx
 
     browser_id = str(uuid.uuid4())
 

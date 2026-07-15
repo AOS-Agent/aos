@@ -460,7 +460,6 @@ class ProfileBuilder:
         total_sent = 0
         total_received = 0
         total_evening_late = 0.0
-        total_weekend_est = 0.0
         total_media = 0
         total_msgs_for_ratios = 0
 

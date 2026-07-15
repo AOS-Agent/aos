@@ -54,7 +54,6 @@ from core.engine.people.intel.sources.apple_photos import (
 )
 from core.engine.people.intel.types import PersonSignals, SignalType
 
-
 # ── fixture helpers ───────────────────────────────────────────────────
 
 

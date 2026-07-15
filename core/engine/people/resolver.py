@@ -28,8 +28,6 @@ import argparse
 import json
 import sqlite3
 import time
-from pathlib import Path
-from typing import Optional
 
 from db import connect, now_ts
 

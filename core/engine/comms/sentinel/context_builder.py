@@ -9,10 +9,9 @@ A bundle contains everything she needs to make a confident draft:
 
 from __future__ import annotations
 
-import json
 import logging
 import sqlite3
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Optional
 
@@ -97,13 +96,13 @@ class ContextBundle:
                 lines.append(f"• {v}")
             lines.append("")
         lines.append("=== INSTRUCTIONS ===")
-        lines.append(f"1. Infer the task from the TRIGGER MESSAGE above (NOT from older conversation history).")
-        lines.append(f"2. Decide if it's in scope (research only — no bookings/payments/scheduling).")
-        lines.append(f"3. If in scope, research it. Cite sources. Be specific.")
-        lines.append(f"4. Draft the reply message in the operator's voice with this contact.")
-        lines.append(f"5. Self-check before writing: does my draft directly respond to the operator's TRIGGER MESSAGE? If I'm answering a question they didn't ask, mark confidence low.")
+        lines.append("1. Infer the task from the TRIGGER MESSAGE above (NOT from older conversation history).")
+        lines.append("2. Decide if it's in scope (research only — no bookings/payments/scheduling).")
+        lines.append("3. If in scope, research it. Cite sources. Be specific.")
+        lines.append("4. Draft the reply message in the operator's voice with this contact.")
+        lines.append("5. Self-check before writing: does my draft directly respond to the operator's TRIGGER MESSAGE? If I'm answering a question they didn't ask, mark confidence low.")
         lines.append(f"6. Write the draft file to: {self.draft_path}")
-        lines.append(f"   (Frontmatter exactly as defined in your system prompt.)")
+        lines.append("   (Frontmatter exactly as defined in your system prompt.)")
         lines.append(f"7. Output ONE line on stdout: SENTINEL_DRAFT_READY: {self.draft_path}")
         lines.append("")
         lines.append(f"trigger_id: {self.trigger_id}")
@@ -156,7 +155,6 @@ class ContextBuilder:
         # If comms.db hasn't caught up yet, the trigger may be missing.
         trigger_text = (trg_msg.get("content") or "").strip()
         trigger_ts = trg_msg.get("timestamp") or ""
-        trigger_id_str = trg_msg.get("id") or trg["message_id"]
         if not any(
             (m.text or "").strip() == trigger_text
             and m.timestamp == trigger_ts
@@ -424,8 +422,9 @@ class ContextBuilder:
             log.warning("chat.db conv fallback failed for %s: %s", conv_id, e)
             return []
 
-        from .attributedbody import extract_text
         from datetime import datetime
+
+        from .attributedbody import extract_text
         APPLE_EPOCH = 978307200
 
         out: list[ConversationMessage] = []

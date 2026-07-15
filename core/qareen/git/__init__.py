@@ -17,15 +17,15 @@ from .runner import (
     GitError,
     GitTimeout,
     RepoResolution,
-    resolve_repo,
-    git_status,
-    git_commits,
-    git_below_base,
-    git_worktrees,
     commit_subjects,
+    git_below_base,
+    git_commits,
+    git_status,
+    git_worktrees,
     head_sha,
     ordered_unmerged_shas,
     resolve_base,
+    resolve_repo,
 )
 
 __all__ = [

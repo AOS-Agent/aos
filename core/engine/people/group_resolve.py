@@ -12,7 +12,6 @@ import string
 import time
 from pathlib import Path
 from random import choices
-from typing import Any
 
 from rapidfuzz import fuzz
 
@@ -312,7 +311,6 @@ class GroupResolver:
 
         now = _now()
         for group in groups:
-            group_jid = group.get("jid", "")
             participants = group.get("participants", [])
             stats["groups_queried"] += 1
 

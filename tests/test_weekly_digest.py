@@ -13,8 +13,6 @@ import importlib.util
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
-import pytest
-
 REPO_ROOT = Path(__file__).parent.parent
 DIGEST = REPO_ROOT / "core" / "bin" / "crons" / "weekly-digest"
 

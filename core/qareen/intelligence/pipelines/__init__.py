@@ -1,5 +1,5 @@
-from .entity_resolver import EntityResolverPipeline
 from .action_detector import ActionDetectorPipeline
+from .entity_resolver import EntityResolverPipeline
 from .research_trigger import ResearchTriggerPipeline
 from .voice_responder import VoiceResponderPipeline
 

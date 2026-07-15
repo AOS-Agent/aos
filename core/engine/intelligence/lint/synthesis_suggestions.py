@@ -85,8 +85,8 @@ async def draft_synthesis_suggestions(
     }
 
     try:
+        from ..compile.llm import LLMError, complete
         from ..topics import load_index
-        from ..compile.llm import complete, LLMError
     except Exception as e:
         stats["errors"].append(f"setup: {e}")
         return stats
@@ -168,7 +168,7 @@ def _build_synthesis_prompt(idx: Any) -> str:
         f"# Topic: {idx.title}",
         f"slug: {idx.slug}",
         "",
-        f"## Orientation",
+        "## Orientation",
         (idx.orientation or "(none)").strip(),
         "",
         f"## Captures ({len(idx.captures)})",

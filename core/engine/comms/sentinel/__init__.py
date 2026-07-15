@@ -20,7 +20,7 @@ Spawner pipeline:
         └─ low/med → move to pending/, macOS notification
 """
 
-from .context_builder import ContextBuilder, ContextBundle
 from .confidence_gate import ConfidenceGate, GateResult
+from .context_builder import ContextBuilder, ContextBundle
 
 __all__ = ["ContextBuilder", "ContextBundle", "ConfidenceGate", "GateResult"]

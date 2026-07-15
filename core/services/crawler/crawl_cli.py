@@ -11,7 +11,6 @@ Usage:
 import argparse
 import asyncio
 import contextlib
-import io
 import json
 import os
 import re
@@ -74,7 +73,7 @@ async def _fetch_tweet_cli(url: str, output_format: str) -> bool:
         print(f"# {author.get('name', '')} (@{author.get('screen_name', '')})")
         print(f"\n*{tweet.get('created_at', '')}*\n")
         print(tweet.get("text", ""))
-        print(f"\n---")
+        print("\n---")
         print(f"Likes: {tweet.get('likes', 0):,} | Retweets: {tweet.get('retweets', 0):,} | Views: {tweet.get('views', 0):,}")
     return True
 
@@ -86,8 +85,8 @@ async def crawl_single(url: str, output_format: str = "markdown", schema_name: s
     config_kwargs = {"word_count_threshold": 10}
 
     if schema_name:
-        from schemas import SchemaStore
         from crawl4ai.extraction_strategy import JsonCssExtractionStrategy
+        from schemas import SchemaStore
 
         store = SchemaStore()
         schema_def = store.get(schema_name)

@@ -31,7 +31,6 @@ import re
 import shutil
 import sqlite3
 import tempfile
-import time
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -273,7 +272,6 @@ def enrich_identifiers(
             "skipped_no_match": 0,
         }
 
-        now = int(time.time())
         for contact in contacts:
             pid = _match_contact(contact, idx)
             if pid is None:
@@ -366,14 +364,12 @@ def bulk_resolve_comms(dry_run: bool = False) -> dict[str, int]:
         "FROM messages WHERE person_id IS NULL"
     ).fetchall()
 
-    resolved = 0
     batch: list[tuple[str, str]] = []  # (person_id, msg_id)
     for msg in unresolved:
         msg_id = msg[0]
         direction = msg[1]
         sender_id = (msg[2] or "").strip()
         recipient_id = (msg[3] or "").strip()
-        channel = msg[4]
         meta_raw = msg[5]
 
         # Determine the "other party" handle
@@ -424,7 +420,7 @@ def bulk_resolve_comms(dry_run: bool = False) -> dict[str, int]:
 
 
 def main() -> int:
-    import argparse, sys
+    import argparse
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 
     parser = argparse.ArgumentParser(

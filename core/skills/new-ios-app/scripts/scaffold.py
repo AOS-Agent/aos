@@ -18,7 +18,14 @@ Usage:
 
 Prints the absolute project directory on the last line (PROJECT_DIR=...).
 """
-import argparse, os, re, sys, subprocess, zlib, struct, json
+import argparse
+import json
+import os
+import re
+import struct
+import subprocess
+import sys
+import zlib
 
 # ---------- helpers ----------
 

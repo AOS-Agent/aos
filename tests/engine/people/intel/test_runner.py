@@ -4,18 +4,15 @@ Uses a tmp_path people.db seeded via SignalStore + direct SQL. Mocks the
 LLM classifier via constructor injection — never hits a real model.
 """
 import asyncio
-from dataclasses import dataclass
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.engine.people.intel.classifier import LLMClassifier, RuleClassifier
+from core.engine.people.intel.classifier import LLMClassifier
 from core.engine.people.intel.feedback import ClassificationStore
-from core.engine.people.intel.profiler import ProfileBuilder
 from core.engine.people.intel.runner import (
     ClassifierRunner,
-    ClassifyRunReport,
     _estimate_cost_per_call,
 )
 from core.engine.people.intel.store import SignalStore
@@ -27,7 +24,6 @@ from core.engine.people.intel.types import (
     CommunicationSignal,
     PersonSignals,
 )
-
 
 # ── Fixtures ──────────────────────────────────────────────────────────
 

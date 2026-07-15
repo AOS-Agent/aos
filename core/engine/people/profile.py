@@ -639,7 +639,8 @@ def persist(
         vault_path = vault_dir / f"{slug}.md"
         vault_path.write_text(render_markdown(profile))
 
-    import secrets, string
+    import secrets
+    import string
     chars = string.ascii_lowercase + string.digits
     profile_id = "pv_" + "".join(secrets.choice(chars) for _ in range(8))
 

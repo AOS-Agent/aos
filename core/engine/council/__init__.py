@@ -15,8 +15,8 @@ Public API:
 CLI: core/bin/cli/council
 """
 from .chat import Chat
-from .persona import Persona, load_persona, BUILTIN_PERSONAS
-from .scheduler import Scheduler
 from .engine import Council
+from .persona import BUILTIN_PERSONAS, Persona, load_persona
+from .scheduler import Scheduler
 
 __all__ = ["Council", "Chat", "Persona", "Scheduler", "load_persona", "BUILTIN_PERSONAS"]

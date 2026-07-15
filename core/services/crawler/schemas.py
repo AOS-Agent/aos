@@ -1,6 +1,5 @@
 """Schema store for reusable extraction patterns."""
 
-import json
 from pathlib import Path
 from typing import Optional
 

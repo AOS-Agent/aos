@@ -36,7 +36,6 @@ sys.path.insert(0, str(WORK_DIR))
 
 import backend  # noqa: E402
 
-
 # ── Scratch DB ───────────────────────────────────────────────────────
 
 # The subset of qareen.sql the work backend touches. Mirrors the canonical

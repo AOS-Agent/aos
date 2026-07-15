@@ -134,7 +134,6 @@ class SignalDesktopAdapter(SignalAdapter):
 
         # Get messages per conversation
         results: dict[str, PersonSignals] = {}
-        our_number = None  # Will detect from outbound messages
 
         for conv_id, pid in conv_to_pid.items():
             try:

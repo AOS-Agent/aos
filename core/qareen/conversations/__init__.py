@@ -15,11 +15,11 @@ This package owns:
 """
 
 from qareen.conversations.store import (
+    ALL_CAPABILITIES,
+    DEFAULT_CAPABILITIES,
     Conversation,
     ConversationMessage,
     ConversationStore,
-    DEFAULT_CAPABILITIES,
-    ALL_CAPABILITIES,
 )
 
 __all__ = [

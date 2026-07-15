@@ -22,8 +22,8 @@ Cost budget: ~$0.15-$0.25/night at nominal scale (25 topic refreshes +
 5 synthesis drafts via Sonnet).
 """
 
-from .runner import MaintenanceReport, run_maintenance_pass
 from .orphans import find_orphans
+from .runner import MaintenanceReport, run_maintenance_pass
 from .stale import find_stale
 
 __all__ = [

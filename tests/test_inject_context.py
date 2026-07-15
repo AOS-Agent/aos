@@ -19,8 +19,8 @@ operator's real ~/.aos/data database.
 """
 
 import json
-import subprocess
 import sqlite3
+import subprocess
 import sys
 from pathlib import Path
 

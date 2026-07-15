@@ -19,7 +19,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "core" / "lib"))
 
 import channels  # noqa: E402
 
-
 # ── normalize_channel ────────────────────────────────────────────────────────
 
 class TestNormalizeChannel:

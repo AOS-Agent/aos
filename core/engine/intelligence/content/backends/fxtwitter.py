@@ -13,7 +13,6 @@ import httpx
 
 from ..result import ExtractionError, ExtractionResult
 
-
 _TWITTER_RE = re.compile(
     r"^https?://(?:www\.)?(?:x|twitter)\.com/([^/]+)/status/(\d+)",
     re.IGNORECASE,

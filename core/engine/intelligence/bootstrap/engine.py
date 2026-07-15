@@ -454,8 +454,7 @@ async def _worker_run(
             rows = rows[run.processed_docs:]
 
     # Lazy imports — avoid dragging compile stack into callers that don't use it
-    from ..compile import compile_capture, CompilationError
-    from ..content.result import ExtractionResult
+    from ..compile import CompilationError
 
     errors: list[dict[str, Any]] = []
     auto_accepted = 0
@@ -737,8 +736,9 @@ def _merge_frontmatter_into_file(
     # Also update the topic index
     if compilation.topic:
         try:
-            from ..topics import TopicEntry, update_index, slugify
             from datetime import date
+
+            from ..topics import TopicEntry, slugify, update_index
             entry = TopicEntry(
                 path=path,
                 title=str(merged.get("title", full.stem)),

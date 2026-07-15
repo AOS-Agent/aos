@@ -37,9 +37,9 @@ from __future__ import annotations
 
 import json
 import logging
+import random
 import sqlite3
 import string
-import random
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -221,7 +221,7 @@ class IdentityResolver:
             match_type = "exact_phone" if norm_phones else (
                 "exact_email" if norm_emails else "exact_jid"
             )
-            sr_id = self._insert_claim_data(person_id, claim)
+            self._insert_claim_data(person_id, claim)
             self.build_golden_record(person_id)
             return MatchResult(
                 person_id=person_id,
@@ -245,7 +245,7 @@ class IdentityResolver:
                 ),
             )
             # Attach data to the first match for now
-            sr_id = self._insert_claim_data(pids[0], claim)
+            self._insert_claim_data(pids[0], claim)
             return MatchResult(
                 person_id=pids[0],
                 confidence=0.70,
@@ -269,7 +269,7 @@ class IdentityResolver:
 
         # ── Step 3: No match — create new person ────────────────────
         person_id = self._create_person(claim)
-        sr_id = self._insert_claim_data(person_id, claim)
+        self._insert_claim_data(person_id, claim)
         self.build_golden_record(person_id)
         return MatchResult(
             person_id=person_id,
@@ -424,7 +424,7 @@ class IdentityResolver:
 
         if best_score >= _FUZZY_AUTO_MATCH:
             # Auto-match
-            sr_id = self._insert_claim_data(best_pid, claim)
+            self._insert_claim_data(best_pid, claim)
             self.build_golden_record(best_pid)
             return MatchResult(
                 person_id=best_pid,
@@ -707,7 +707,6 @@ class IdentityResolver:
         best: dict[str, tuple[Any, int]] = {}  # field -> (value, priority)
 
         for row in rows:
-            src_type = row[0] if isinstance(row, tuple) else row["source_type"]
             raw_str = row[1] if isinstance(row, tuple) else row["raw_data"]
             prio = row[2] if isinstance(row, tuple) else row["priority"]
 

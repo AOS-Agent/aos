@@ -29,8 +29,6 @@ structural gate, not a code review — it catches the copy-paste before it ships
 import ast
 from pathlib import Path
 
-import pytest
-
 REPO_ROOT = Path(__file__).parent.parent
 SCAN_DIRS = [
     REPO_ROOT / "core" / "infra" / "migrations",

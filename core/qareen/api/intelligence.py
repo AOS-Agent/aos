@@ -6,7 +6,6 @@ Reads from intelligence_sources and intelligence_briefs tables in qareen.db.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import re
@@ -30,6 +29,7 @@ VAULT_DIR = Path.home() / "vault"
 # auto-accept straight through to the vault. Lower-confidence proposals
 # wait for operator approval. Configurable via environment variable.
 import os as _os
+
 SHADOW_ACCEPT_THRESHOLD = float(_os.environ.get("AOS_SHADOW_THRESHOLD", "0.85"))
 
 
@@ -499,9 +499,15 @@ async def save_item(item_id: str) -> JSONResponse:
         # Fire automation hooks — best effort, never blocks
         try:
             try:
-                from engine.intelligence.hooks import emit_brief_compiled, emit_brief_created
+                from engine.intelligence.hooks import (
+                    emit_brief_compiled,
+                    emit_brief_created,
+                )
             except ImportError:
-                from core.engine.intelligence.hooks import emit_brief_compiled, emit_brief_created
+                from core.engine.intelligence.hooks import (
+                    emit_brief_compiled,
+                    emit_brief_created,
+                )
             await emit_brief_created(brief)
             await emit_brief_compiled(brief, compilation.to_dict())
         except Exception:
@@ -675,9 +681,10 @@ def _apply_compilation_to_vault(
     approve endpoint. Returns {vault_path, filename, topic_index_path,
     links_created}.
     """
-    from engine.intelligence.compile.templates import get_template
-    from engine.intelligence.topics import TopicEntry, update_index, slugify as topic_slugify
     import yaml as _yaml
+    from engine.intelligence.compile.templates import get_template
+    from engine.intelligence.topics import TopicEntry, update_index
+    from engine.intelligence.topics import slugify as topic_slugify
 
     template = get_template(extraction.platform)
     frontmatter = template.build_frontmatter(
@@ -790,9 +797,9 @@ def _create_entity_links(*, capture_id: str, entities: list[dict]) -> int:
         return 0
     count = 0
     try:
-        from core.qareen.ontology.types import LinkType, ObjectType
         from core.qareen.ontology.adapters.intelligence import IntelligenceAdapter
         from core.qareen.ontology.adapters.people import PeopleAdapter
+        from core.qareen.ontology.types import LinkType, ObjectType
 
         intel_adapter = IntelligenceAdapter(
             vault_dir=str(VAULT_DIR),
@@ -945,8 +952,8 @@ async def approve_proposal(proposal_id: str) -> JSONResponse:
         )
 
     # Rehydrate the extraction and compilation results
-    from engine.intelligence.content.result import ExtractionResult
     from engine.intelligence.compile.engine import CompilationResult
+    from engine.intelligence.content.result import ExtractionResult
 
     extraction_data = prop.get("extraction") or {}
     compilation_data = prop.get("compilation") or {}

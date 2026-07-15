@@ -17,11 +17,12 @@ Operator can reply with `@council <anything>` to interject into the council.
 The bridge listens for that pattern and routes via `council say`.
 """
 from __future__ import annotations
-import subprocess
-import re
-import urllib.request
-import urllib.parse
+
 import json
+import re
+import subprocess
+import urllib.parse
+import urllib.request
 from pathlib import Path
 
 

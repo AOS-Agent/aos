@@ -1,6 +1,6 @@
 """triage — Score feed items by relevance to the operator's interests."""
 
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 
 
 def score_item(item: dict, source: dict) -> tuple[float, list[str]]:

@@ -6,8 +6,8 @@ Marks the trigger row as sent on success, failed on error.
 from __future__ import annotations
 
 import logging
-import subprocess
 import sqlite3
+import subprocess
 import time
 from pathlib import Path
 from typing import Optional

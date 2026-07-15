@@ -30,7 +30,6 @@ import re
 import sys
 from pathlib import Path
 
-
 _SKIP_DIRS = {
     ".git", "node_modules", ".venv", "venv", "__pycache__",
     "dist", "build", ".next", "site-packages", ".pytest_cache",

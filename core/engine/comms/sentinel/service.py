@@ -43,8 +43,8 @@ def main():
     log = logging.getLogger("sentinel.service")
     log.info("Sentinel service starting (watcher + fallback)")
 
-    from core.engine.comms.sentinel.watcher import SentinelWatcher
     from core.engine.comms.sentinel.spawner import SentinelSpawner
+    from core.engine.comms.sentinel.watcher import SentinelWatcher
 
     watcher = SentinelWatcher()
     spawner = SentinelSpawner()

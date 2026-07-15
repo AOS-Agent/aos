@@ -18,7 +18,7 @@ Design notes:
       landscape at write-time — Karpathy's trick.
 """
 
-from .llm import complete, LLMResponse, LLMError
+from .llm import LLMError, LLMResponse, complete
 
 __all__ = [
     "complete",

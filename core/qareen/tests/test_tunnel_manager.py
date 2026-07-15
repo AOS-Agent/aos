@@ -27,9 +27,9 @@ from unittest import mock
 # Make the `qareen` package importable (package root is core/)
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from qareen.events.types import RemoteAccessProgress  # noqa: E402
 from qareen.services import tunnel_manager as tm_mod  # noqa: E402
 from qareen.services.tunnel_manager import TunnelManager  # noqa: E402
-from qareen.events.types import RemoteAccessProgress  # noqa: E402
 
 
 def _run(coro):
