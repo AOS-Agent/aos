@@ -4,6 +4,9 @@ Bridge v2 format: celebratory first (done today), then open items,
 then an invitation to reflect. Not a form. Not a rating scale.
 
 Sends to the `daily` forum topic if available.
+
+Message style: plain human English, no internal codes — see
+MESSAGE_STYLE.md in this directory.
 """
 
 import datetime

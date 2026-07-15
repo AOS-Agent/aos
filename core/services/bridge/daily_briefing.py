@@ -5,6 +5,9 @@ No system metrics, no trust scores, no session counts. Delta only.
 
 Runs once per day at a configured hour. Scans tasks, initiatives,
 schedule, and overnight work, then sends a classified briefing.
+
+Message style: plain human English, no internal codes (priority "P1",
+status "[executing]", "3d") — see MESSAGE_STYLE.md in this directory.
 """
 
 import json
@@ -26,6 +29,23 @@ OPERATOR_CONFIG = Path.home() / ".aos" / "config" / "operator.yaml"
 
 # Max items per BLUF section (Cowan 2001 cognitive load)
 MAX_ITEMS = 4
+
+# Internal initiative statuses → plain words for the reader. The briefing goes
+# to a phone, not a dashboard — no one should have to decode "[executing]".
+_STATUS_WORDS = {
+    "executing": "in progress",
+    "planning": "being planned",
+    "research": "in research",
+    "shaping": "taking shape",
+}
+
+
+def _status_words(status: str) -> str:
+    return _STATUS_WORDS.get(status, status)
+
+
+def _days_ago(n: int) -> str:
+    return "1 day" if n == 1 else f"{n} days"
 
 
 # ── Config helpers ─────────────────────────────────────────────────────
@@ -221,7 +241,7 @@ def _build_briefing() -> str:
                 due_str = str(due).split("T")[0]
                 if due_str < today_str:
                     days_late = (now.date() - datetime.strptime(due_str, "%Y-%m-%d").date()).days
-                    urgent.append(f"<b>{t['title']}</b> — overdue by {days_late}d")
+                    urgent.append(f"<b>{t['title']}</b> — overdue by {_days_ago(days_late)}")
             except (ValueError, TypeError):
                 pass
 
@@ -233,16 +253,16 @@ def _build_briefing() -> str:
         if init["stale"]:
             phase_info = ""
             if init.get("phase") and init.get("total_phases"):
-                phase_info = f" (phase {init['phase']}/{init['total_phases']})"
-            urgent.append(f"<b>{init['title']}</b> — stale, last updated {init['updated']}{phase_info}")
+                phase_info = f" (phase {init['phase']} of {init['total_phases']})"
+            urgent.append(f"<b>{init['title']}</b> — stalled, last touched {init['updated']}{phase_info}")
 
-    # P1 active tasks
+    # Top-priority active tasks
     for t in work_tasks:
         if t.get("priority") == 1 and t.get("status") in ("active", "todo", "in-progress", "focus"):
             if not t.get("parent"):  # Skip subtasks
                 title = t.get("title", "Untitled")
                 if not any(title in u for u in urgent):
-                    urgent.append(f"<b>{title}</b> — P1 active")
+                    urgent.append(f"<b>{title}</b> — top priority")
 
     # ── IMPORTANT: active initiatives, high-pri tasks, due this week ─
     # Active initiatives with phase info
@@ -250,14 +270,14 @@ def _build_briefing() -> str:
         if not init["stale"] and init["status"] in ("executing", "planning"):
             phase_info = ""
             if init.get("phase") and init.get("total_phases"):
-                phase_info = f" — phase {init['phase']}/{init['total_phases']}"
-            important.append(f"<b>{init['title']}</b> [{init['status']}]{phase_info}")
+                phase_info = f", phase {init['phase']} of {init['total_phases']}"
+            important.append(f"<b>{init['title']}</b> — {_status_words(init['status'])}{phase_info}")
 
-    # High priority todo tasks (P2)
+    # High-priority to-do tasks
     for t in work_tasks:
         if t.get("status") in ("active", "todo", "focus", "in-progress") and not t.get("parent"):
             if t.get("priority") == 2:
-                important.append(f"{t['title']} — P2")
+                important.append(f"{t['title']} — worth doing this week")
 
     # Tasks due this week
     week_end = now + timedelta(days=(6 - now.weekday()))  # End of this week (Sunday)
@@ -280,7 +300,7 @@ def _build_briefing() -> str:
     # Initiatives in research/shaping
     for init in initiatives:
         if not init["stale"] and init["status"] in ("research", "shaping"):
-            think.append(f"<b>{init['title']}</b> [{init['status']}] — needs input")
+            think.append(f"<b>{init['title']}</b> — {_status_words(init['status'])}, needs your input")
 
     # Inbox items awaiting triage
     try:
