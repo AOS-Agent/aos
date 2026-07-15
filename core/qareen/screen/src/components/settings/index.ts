@@ -9,10 +9,12 @@ export { SectionNav } from './SectionNav';
 
 import { generalSection } from './GeneralSection';
 import { notificationsSection } from './NotificationsSection';
+import { remoteAccessSection } from './RemoteAccessSection';
 
 import type { SettingsSection } from './types';
 
 export const SETTINGS_SECTIONS: SettingsSection[] = [
   generalSection,
   notificationsSection,
+  remoteAccessSection,
 ];
