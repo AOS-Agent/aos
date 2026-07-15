@@ -123,7 +123,18 @@ def up() -> bool:
             print("  (e.g. `brew install node`) — install that first, then retry.")
             return False
         print("  Installing n8n via npm (this may take a minute)...")
-        result = _run(["npm", "install", "-g", "n8n"], timeout=300)
+        # Preflight: the npm global prefix must be writable, or npm hangs/
+        # fails deep in the install (clean-box finding: root-owned prefix).
+        prefix_probe = _run(["npm", "config", "get", "prefix"], timeout=30)
+        prefix = (prefix_probe.stdout or "").strip()
+        if prefix and not os.access(prefix, os.W_OK):
+            print(f"  ERROR: npm global prefix {prefix} is not writable.")
+            print("  Fix: `npm config set prefix ~/.npm-global` (and add its bin to PATH), then retry.")
+            return False
+        # 300s was too tight for n8n's dependency tree on slow machines/
+        # networks (clean-box finding — same tight-timeout family as the
+        # kickstart bug). 20 min is generous; a genuine hang still fails.
+        result = _run(["npm", "install", "-g", "n8n"], timeout=1200)
         if result.returncode != 0:
             print(f"  ERROR: npm install failed: {result.stderr}")
             return False
