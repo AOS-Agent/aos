@@ -1,34 +1,35 @@
 // ---------------------------------------------------------------------------
-// AOS Design System — TypeScript token constants (warm dark browns)
+// AOS Design System — TypeScript token constants (neutral-warm charcoal)
 // Mirrors globals.css @theme block. Use these when programmatic access to
 // tokens is needed (e.g. charts, canvas, conditional styling). For CSS/Tailwind
 // use the custom properties defined in globals.css.
 // ---------------------------------------------------------------------------
 
 export const colors = {
-  bg: "#0D0B09",
-  bgPanel: "#151210",
-  bgSecondary: "#1E1A16",
-  bgTertiary: "#2A2520",
-  bgQuaternary: "#3A3530",
+  bg: "#0B0B0A",
+  bgPanel: "#121210",
+  bgSecondary: "#1A1917",
+  bgTertiary: "#24221F",
+  bgQuaternary: "#302E2A",
 
   text: "#FFFFFF",
-  textSecondary: "#E8E4DF",
-  textTertiary: "#9A9490",
-  textQuaternary: "#6B6560",
+  textSecondary: "#E7E4DE",
+  textTertiary: "#97938C",
+  textQuaternary: "#66625B",
 
-  border: "rgba(255, 245, 235, 0.06)",
-  borderSecondary: "rgba(255, 245, 235, 0.10)",
-  borderTertiary: "rgba(255, 245, 235, 0.15)",
+  border: "rgba(245, 242, 236, 0.07)",
+  borderSecondary: "rgba(245, 242, 236, 0.11)",
+  borderTertiary: "rgba(245, 242, 236, 0.16)",
 
-  accent: "#D9730D",
-  accentHover: "#E8842A",
-  accentMuted: "#1F1510",
-  accentSubtle: "rgba(217, 115, 13, 0.15)",
+  accent: "#D6CCB4",
+  accentHover: "#E4DCC8",
+  accentMuted: "#1B1915",
+  accentSubtle: "rgba(214, 204, 180, 0.14)",
+  onAccent: "#14130E",
 
-  hover: "rgba(255, 245, 235, 0.05)",
-  active: "rgba(255, 245, 235, 0.08)",
-  selected: "rgba(255, 245, 235, 0.12)",
+  hover: "rgba(245, 242, 236, 0.05)",
+  active: "rgba(245, 242, 236, 0.08)",
+  selected: "rgba(245, 242, 236, 0.12)",
 
   green: "#30D158",
   greenMuted: "#0D1F12",

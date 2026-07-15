@@ -92,7 +92,7 @@ function StepHeader({ current }: { current: number }) {
                 className={`
                   flex items-center justify-center w-[18px] h-[18px] rounded-full text-[10px] font-[590]
                   transition-colors duration-150
-                  ${active ? 'bg-accent text-white'
+                  ${active ? 'bg-accent text-on-accent'
                     : done ? 'bg-accent-subtle text-accent'
                     : 'bg-bg-tertiary text-text-quaternary'}
                 `}
@@ -154,7 +154,7 @@ function WizardFooter({
         disabled={!canNext}
         className="
           inline-flex items-center gap-1.5 h-8 px-3.5 rounded-[5px]
-          text-[12px] font-[590] text-white bg-accent
+          text-[12px] font-[590] text-on-accent bg-accent
           transition-colors duration-100 cursor-pointer
           hover:bg-accent-hover
           disabled:opacity-40 disabled:pointer-events-none
@@ -214,7 +214,7 @@ function StepConnect({
         }
         className="
           inline-flex items-center gap-1.5 h-8 px-3.5 rounded-[5px]
-          text-[12px] font-[590] text-white bg-accent
+          text-[12px] font-[590] text-on-accent bg-accent
           transition-colors duration-100 cursor-pointer
           hover:bg-accent-hover
         "

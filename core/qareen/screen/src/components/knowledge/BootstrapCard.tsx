@@ -355,7 +355,7 @@ export function BootstrapCard() {
           <button
             onClick={startBootstrap}
             disabled={starting}
-            className="h-8 px-3 rounded-full bg-accent text-white text-[11px] font-[520] hover:bg-accent-hover disabled:opacity-50"
+            className="h-8 px-3 rounded-full bg-accent text-on-accent text-[11px] font-[520] hover:bg-accent-hover disabled:opacity-50"
           >
             {starting ? 'Starting…' : 'Start bootstrap'}
           </button>

@@ -89,7 +89,7 @@ export function QueueColumn() {
         <div className="flex items-center gap-2">
           <span className="type-overline text-text-quaternary">Queue</span>
           {cards.length > 0 && (
-            <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-accent text-white text-[10px] font-semibold">
+            <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-accent text-on-accent text-[10px] font-semibold">
               {cards.length}
             </span>
           )}

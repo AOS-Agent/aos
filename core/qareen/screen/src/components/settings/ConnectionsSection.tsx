@@ -58,7 +58,7 @@ const PROVIDERS: Record<string, { icon: LucideIcon; color: string }> = {
   apple_dev: { icon: Apple,         color: '#A2AAAD' },
   paypal:    { icon: CreditCard,    color: '#00457C' },
   wave:      { icon: Landmark,      color: '#1C6BFF' },
-  chitchats: { icon: Ship,          color: '#FF6B35' },
+  chitchats: { icon: Ship,          color: '#C9BEA0' },
   clickup:   { icon: BarChart3,     color: '#7B68EE' },
   plane:     { icon: BarChart3,     color: '#3F76FF' },
   openrouter:{ icon: Bot,           color: '#BF5AF2' },
@@ -143,7 +143,7 @@ function DetailMenu({ account }: { account: AccountEntry }) {
 /* ── Account row — icon + name + identifier | status + menu ── */
 
 function AccountRow({ account }: { account: AccountEntry }) {
-  const provider = PROVIDERS[account.provider] ?? { icon: Globe, color: '#9A9490' };
+  const provider = PROVIDERS[account.provider] ?? { icon: Globe, color: '#97938C' };
   const Icon = provider.icon;
   const trust = TRUST_LABELS[account.trust] ?? TRUST_LABELS.open;
 
@@ -182,7 +182,7 @@ function AccountRow({ account }: { account: AccountEntry }) {
 
 function ProviderGroup({ provider: providerKey, accounts }: { provider: string; accounts: AccountEntry[] }) {
   const [expanded, setExpanded] = useState(false);
-  const prov = PROVIDERS[providerKey] ?? { icon: Globe, color: '#9A9490' };
+  const prov = PROVIDERS[providerKey] ?? { icon: Globe, color: '#97938C' };
   const Icon = prov.icon;
 
   // Single account — render flat

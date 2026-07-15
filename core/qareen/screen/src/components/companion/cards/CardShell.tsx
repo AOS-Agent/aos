@@ -141,7 +141,7 @@ export function CardShell({
           className="
             flex-1 inline-flex items-center justify-center gap-1.5
             h-8 rounded-xs text-[12px] font-medium
-            bg-accent text-white
+            bg-accent text-on-accent
             hover:bg-accent-hover active:opacity-90
             transition-colors duration-[var(--duration-instant)]
           "

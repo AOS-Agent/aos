@@ -66,8 +66,8 @@ export function OrbitalPills({
                 cursor-pointer
                 transition-all ease-[cubic-bezier(0.34,1.56,0.64,1)]
                 ${isHovered
-                  ? `duration-200 bg-[rgba(217,115,13,0.18)] border-[rgba(217,115,13,0.4)] text-white
-                     shadow-[0_0_24px_rgba(217,115,13,0.3),0_0_8px_rgba(217,115,13,0.15)]
+                  ? `duration-200 bg-[rgba(214, 204, 180,0.18)] border-[rgba(214, 204, 180,0.4)] text-white
+                     shadow-[0_0_24px_rgba(214, 204, 180,0.3),0_0_8px_rgba(214, 204, 180,0.15)]
                      scale-110`
                   : otherHovered
                     ? 'duration-300 bg-[rgba(21,18,16,0.4)] border-[rgba(255,245,235,0.04)] text-text-quaternary opacity-40 scale-95'

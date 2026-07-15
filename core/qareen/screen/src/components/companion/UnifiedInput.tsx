@@ -321,7 +321,7 @@ export function UnifiedInput({ onSendText, onSendFile, autoActivateMic }: Unifie
             className="
               h-8 w-8 rounded-full
               inline-flex items-center justify-center
-              bg-accent text-white
+              bg-accent text-on-accent
               disabled:opacity-20
               hover:bg-accent-hover
               transition-all duration-[80ms]

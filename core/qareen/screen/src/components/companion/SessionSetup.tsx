@@ -370,7 +370,7 @@ export function SessionSetup({ initialText = '', initialSkill = null, onStart, o
             className="
               inline-flex items-center gap-2
               h-10 px-6 rounded-full
-              bg-accent text-white text-[13px] font-[510]
+              bg-accent text-on-accent text-[13px] font-[510]
               hover:bg-accent-hover
               disabled:opacity-30
               transition-all duration-[150ms]

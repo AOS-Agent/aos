@@ -169,7 +169,7 @@ export function ClassificationCorrector({
         <button
           onClick={handleSave}
           disabled={!changed || correct.isPending}
-          className="flex items-center gap-1.5 h-8 px-3.5 rounded-full bg-accent text-bg text-[11px] font-[510] hover:bg-accent-hover transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+          className="flex items-center gap-1.5 h-8 px-3.5 rounded-full bg-accent text-on-accent text-[11px] font-[510] hover:bg-accent-hover transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
           style={{ transitionDuration: 'var(--duration-instant)' }}
         >
           {correct.isPending ? (

@@ -26,7 +26,7 @@ import { format, isPast, isToday, isTomorrow, differenceInDays } from 'date-fns'
 // Helpers
 // ═══════════════════════════════════════════════════════════════════════════
 
-const PRI: Record<number, string> = { 1: '#FF453A', 2: '#D9730D', 3: '#6B6560', 4: '#0A84FF', 5: '#4A4540' };
+const PRI: Record<number, string> = { 1: '#FF453A', 2: '#FFD60A', 3: '#6B6560', 4: '#0A84FF', 5: '#4A4540' };
 const STAT_COLOR: Record<string, string> = { todo: '#6B6560', active: '#0A84FF', waiting: '#FFD60A', done: '#30D158', cancelled: '#4A4540' };
 const STAT_LABEL: Record<string, string> = { todo: 'Todo', active: 'Active', waiting: 'Waiting', done: 'Done', cancelled: 'Cancelled' };
 
@@ -61,7 +61,7 @@ function TaskRow({ task, onSelect, isSelected, isFocused }: { task: Task; onSele
         className="w-[18px] h-[18px] rounded-full border-[1.5px] flex items-center justify-center shrink-0 cursor-pointer transition-all duration-75"
         style={{ borderColor: done ? '#30D158' : 'rgba(255,245,235,0.15)', backgroundColor: done ? '#30D158' : 'transparent' }}
       >
-        {done && <svg width="10" height="8" viewBox="0 0 10 8" fill="none"><path d="M1 4L3.5 6.5L9 1" stroke="#0D0B09" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>}
+        {done && <svg width="10" height="8" viewBox="0 0 10 8" fill="none"><path d="M1 4L3.5 6.5L9 1" stroke="#14130E" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>}
       </button>
 
       {/* Priority */}
@@ -248,7 +248,7 @@ function TodayView({ tasks, onSelect }: { tasks: Task[]; onSelect: (t: Task) => 
         <button onClick={e => { e.stopPropagation(); update.mutate({ id: task.id, data: { status: done ? TaskStatus.TODO : TaskStatus.DONE } }); }}
           className="w-[18px] h-[18px] rounded-full border-[1.5px] flex items-center justify-center shrink-0 cursor-pointer transition-all duration-75"
           style={{ borderColor: done ? '#30D158' : 'rgba(255,245,235,0.15)', backgroundColor: done ? '#30D158' : 'transparent' }}>
-          {done && <svg width="10" height="8" viewBox="0 0 10 8" fill="none"><path d="M1 4L3.5 6.5L9 1" stroke="#0D0B09" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>}
+          {done && <svg width="10" height="8" viewBox="0 0 10 8" fill="none"><path d="M1 4L3.5 6.5L9 1" stroke="#14130E" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>}
         </button>
         {/* Priority */}
         <div className="w-[6px] h-[6px] rounded-full shrink-0" style={{ backgroundColor: PRI[task.priority] }} />
@@ -499,7 +499,7 @@ function SubtaskSection({ task }: { task: Task }) {
             <button onClick={() => update.mutate({ id: sub.id, data: { status: sub.status === 'done' ? TaskStatus.TODO : TaskStatus.DONE } })}
               className="w-[14px] h-[14px] rounded-full border-[1.5px] flex items-center justify-center shrink-0 cursor-pointer"
               style={{ borderColor: sub.status === 'done' ? '#30D158' : 'rgba(255,245,235,0.15)', backgroundColor: sub.status === 'done' ? '#30D158' : 'transparent' }}>
-              {sub.status === 'done' && <svg width="7" height="5" viewBox="0 0 10 8" fill="none"><path d="M1 4L3.5 6.5L9 1" stroke="#0D0B09" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>}
+              {sub.status === 'done' && <svg width="7" height="5" viewBox="0 0 10 8" fill="none"><path d="M1 4L3.5 6.5L9 1" stroke="#14130E" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>}
             </button>
             <span className={`text-[14px] flex-1 ${sub.status === 'done' ? 'text-text-quaternary line-through' : 'text-text-secondary'}`}>{sub.title}</span>
           </div>
@@ -642,7 +642,7 @@ function _OldDatabaseViewRemoved({ tasks, onSelect, selectedId }: { tasks: Task[
                     <button onClick={e => { e.stopPropagation(); update.mutate({ id: task.id, data: { status: done ? TaskStatus.TODO : TaskStatus.DONE } }); }}
                       className="w-4 h-4 rounded-full border-[1.5px] flex items-center justify-center cursor-pointer"
                       style={{ borderColor: done ? '#30D158' : 'rgba(255,245,235,0.15)', backgroundColor: done ? '#30D158' : 'transparent' }}>
-                      {done && <svg width="8" height="6" viewBox="0 0 10 8" fill="none"><path d="M1 4L3.5 6.5L9 1" stroke="#0D0B09" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>}
+                      {done && <svg width="8" height="6" viewBox="0 0 10 8" fill="none"><path d="M1 4L3.5 6.5L9 1" stroke="#14130E" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>}
                     </button>
                   </div>
                   {/* Title */}
@@ -853,7 +853,7 @@ export default function TasksPage({ initialProjectFilter }: { initialProjectFilt
                   activePopover === 'filter' ? 'bg-bg-tertiary text-text-secondary' : hasActiveFilters ? 'text-accent' : 'text-text-quaternary hover:text-text-tertiary'
                 }`} title="Filter">
                 <SlidersHorizontal className="w-3.5 h-3.5" />
-                {filterCount > 0 && <span className="text-[11px] bg-accent text-bg w-4 h-4 rounded-full flex items-center justify-center font-[590]">{filterCount}</span>}
+                {filterCount > 0 && <span className="text-[11px] bg-accent text-on-accent w-4 h-4 rounded-full flex items-center justify-center font-[590]">{filterCount}</span>}
               </button>
               {activePopover === 'filter' && (
                 <div data-popover className="absolute right-0 top-full mt-1 w-[240px] bg-bg-panel border border-border-secondary rounded-lg shadow-[0_4px_20px_rgba(0,0,0,0.4)] z-50 py-1 max-h-[400px] overflow-y-auto">
@@ -973,7 +973,7 @@ export default function TasksPage({ initialProjectFilter }: { initialProjectFilt
 
             {/* ── New ── */}
             <button onClick={() => setCreating(true)}
-              className="h-7 px-3 ml-1 flex items-center gap-1.5 rounded-lg bg-accent hover:bg-accent-hover text-[13px] font-[510] text-bg cursor-pointer transition-colors duration-75">
+              className="h-7 px-3 ml-1 flex items-center gap-1.5 rounded-lg bg-accent hover:bg-accent-hover text-[13px] font-[510] text-on-accent cursor-pointer transition-colors duration-75">
               <Plus className="w-3.5 h-3.5" />New
             </button>
           </div>

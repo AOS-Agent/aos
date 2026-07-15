@@ -158,14 +158,14 @@ const WORKERS: OrgNode[] = [
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const MODEL_COLORS: Record<string, string> = {
-  opus: '#D9730D',
+  opus: '#D6CCB4',
   sonnet: '#0A84FF',
   haiku: '#64D2FF',
   'gpt-4o': '#10A37F',
 };
 
 const MODEL_BG: Record<string, string> = {
-  opus: 'rgba(217, 115, 13, 0.12)',
+  opus: 'rgba(214, 204, 180, 0.12)',
   sonnet: 'rgba(10, 132, 255, 0.12)',
   haiku: 'rgba(100, 210, 255, 0.12)',
   'gpt-4o': 'rgba(16, 163, 127, 0.12)',
@@ -206,9 +206,9 @@ function Avatar({ node, size = 40 }: { node: OrgNode; size?: number }) {
         className="relative shrink-0 flex items-center justify-center rounded-full font-[600]"
         style={{
           width: size, height: size, fontSize: size * 0.36,
-          background: 'linear-gradient(135deg, #8B6914 0%, #D4A843 50%, #8B6914 100%)',
-          color: '#FFF',
-          boxShadow: '0 0 0 2px rgba(212, 168, 67, 0.2)',
+          background: 'linear-gradient(135deg, #B7AE97 0%, #E4DCC8 50%, #B7AE97 100%)',
+          color: '#14130E',
+          boxShadow: '0 0 0 2px rgba(214, 204, 180, 0.22)',
         }}
       >
         {getInitials(node.name)}
@@ -249,7 +249,7 @@ function Avatar({ node, size = 40 }: { node: OrgNode; size?: number }) {
 
   // Agent
   const color = MODEL_COLORS[node.model ?? ''] ?? 'var(--color-accent)';
-  const bg = MODEL_BG[node.model ?? ''] ?? 'rgba(217, 115, 13, 0.12)';
+  const bg = MODEL_BG[node.model ?? ''] ?? 'rgba(214, 204, 180, 0.12)';
   return (
     <div
       className="relative shrink-0 flex items-center justify-center rounded-full font-[700] uppercase"
@@ -764,15 +764,15 @@ export default function Org() {
           background: var(--glass-bg);
           border: 1px solid var(--color-accent);
           box-shadow:
-            0 0 0 1px rgba(217, 115, 13, 0.1),
-            0 0 20px rgba(217, 115, 13, 0.06),
+            0 0 0 1px rgba(214, 204, 180, 0.1),
+            0 0 20px rgba(214, 204, 180, 0.06),
             var(--glass-shadow);
           animation: org-heartbeat 3s ease-in-out infinite;
         }
 
         @keyframes org-heartbeat {
-          0%, 100% { box-shadow: 0 0 0 1px rgba(217, 115, 13, 0.1), 0 0 20px rgba(217, 115, 13, 0.06), var(--glass-shadow); }
-          50% { box-shadow: 0 0 0 2px rgba(217, 115, 13, 0.15), 0 0 30px rgba(217, 115, 13, 0.1), var(--glass-shadow); }
+          0%, 100% { box-shadow: 0 0 0 1px rgba(214, 204, 180, 0.1), 0 0 20px rgba(214, 204, 180, 0.06), var(--glass-shadow); }
+          50% { box-shadow: 0 0 0 2px rgba(214, 204, 180, 0.15), 0 0 30px rgba(214, 204, 180, 0.1), var(--glass-shadow); }
         }
 
         .org-council-panel {

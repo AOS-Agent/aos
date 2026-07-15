@@ -122,7 +122,7 @@ export function AudioPlayer({ src, className = '' }: AudioPlayerProps) {
         className="
           h-8 w-8 rounded-full shrink-0
           inline-flex items-center justify-center
-          bg-accent text-white
+          bg-accent text-on-accent
           disabled:opacity-30
           hover:bg-accent-hover
           transition-all duration-[var(--duration-instant)]

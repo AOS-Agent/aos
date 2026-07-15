@@ -351,7 +351,7 @@ function SubtaskSection({ task }: { task: Task }) {
             <button onClick={() => update.mutate({ id: sub.id, data: { status: sub.status === 'done' ? TaskStatus.TODO : TaskStatus.DONE } })}
               className="w-[14px] h-[14px] rounded-full border-[1.5px] flex items-center justify-center shrink-0 cursor-pointer"
               style={{ borderColor: sub.status === 'done' ? '#30D158' : 'rgba(255,245,235,0.15)', backgroundColor: sub.status === 'done' ? '#30D158' : 'transparent' }}>
-              {sub.status === 'done' && <svg width="7" height="5" viewBox="0 0 10 8" fill="none"><path d="M1 4L3.5 6.5L9 1" stroke="#0D0B09" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>}
+              {sub.status === 'done' && <svg width="7" height="5" viewBox="0 0 10 8" fill="none"><path d="M1 4L3.5 6.5L9 1" stroke="#14130E" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>}
             </button>
             <span className={`text-[14px] flex-1 ${sub.status === 'done' ? 'text-text-quaternary line-through' : 'text-text-secondary'}`}>{sub.title}</span>
           </div>

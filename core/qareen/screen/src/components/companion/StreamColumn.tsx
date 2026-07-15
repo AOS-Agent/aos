@@ -182,7 +182,7 @@ export function StreamColumn() {
           <button
             type="submit"
             disabled={!inputText.trim() || isSubmitting}
-            className="h-9 px-4 bg-accent text-white rounded-[5px] text-[13px] font-[510] disabled:opacity-40 hover:bg-accent-hover transition-colors duration-[80ms] inline-flex items-center gap-1.5"
+            className="h-9 px-4 bg-accent text-on-accent rounded-[5px] text-[13px] font-[510] disabled:opacity-40 hover:bg-accent-hover transition-colors duration-[80ms] inline-flex items-center gap-1.5"
           >
             <Send className="w-3.5 h-3.5" />
             Send

@@ -19,7 +19,7 @@ import { Skeleton } from '@/components/primitives/Skeleton';
 // ---------------------------------------------------------------------------
 
 const CATEGORY_NODE_COLORS: Record<string, string> = {
-  family: '#D9730D',
+  family: '#D6CCB4',
   work: '#0A84FF',
   community: '#BF5AF2',
   friends: '#30D158',
@@ -176,7 +176,7 @@ export default function GraphExplorer({ onSelect }: { onSelect: (personId: strin
         <Controls
           showInteractive={false}
           style={{
-            background: '#151210',
+            background: '#121210',
             border: '1px solid rgba(255,245,235,0.06)',
             borderRadius: '7px',
           }}

@@ -44,11 +44,11 @@ export function Orb({
   const agentState = useMemo(() => mapState(state), [state])
 
   const defaultColors: [string, string] = micConnected
-    ? ['#D9730D', '#E8943D']
-    : ['#8B5A2B', '#A0744B']
+    ? ['#D6CCB4', '#E4DCC8']
+    : ['#6B6659', '#8A8478']
 
   const activeColors = hovered
-    ? (['#E8943D', '#F5C27A'] as [string, string])
+    ? (['#E4DCC8', '#F2ECDD'] as [string, string])
     : (colors ?? defaultColors)
 
   return (

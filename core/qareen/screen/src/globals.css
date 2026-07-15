@@ -3,46 +3,53 @@
 @import "@fontsource-variable/eb-garamond";
 
 /* ============================================================
-   AOS Design System — Warm Dark Design System
+   AOS Design System — Charcoal Design System
 
-   Philosophy: Warm dark browns — intentionally warm, not cold
-   or clinical. Brown-tinted near-blacks, amber accents. Pure
-   white headings for readability.
+   Philosophy: Neutral-warm charcoal and black — deep, quiet,
+   restrained. Charcoal near-blacks (never blue-tinted), a warm
+   bone accent instead of a loud brand hue. Pure white headings
+   for readability. Content and status colors carry the only
+   real color; the chrome stays monochrome.
    ============================================================ */
 
 @theme {
-  /* === Backgrounds — warm dark browns, NOT blue-black ===
-     Brown-tinted near-black to warm gray elevation steps. */
-  --color-bg:            #0D0B09;
-  --color-bg-panel:      #151210;
-  --color-bg-secondary:  #1E1A16;
-  --color-bg-tertiary:   #2A2520;
-  --color-bg-quaternary: #3A3530;
+  /* === Backgrounds — neutral-warm charcoal, NOT blue-black ===
+     True near-black to warm graphite elevation steps. R >= G >= B
+     by a hair so the charcoal reads warm-neutral, never cold. */
+  --color-bg:            #0B0B0A;
+  --color-bg-panel:      #121210;
+  --color-bg-secondary:  #1A1917;
+  --color-bg-tertiary:   #24221F;
+  --color-bg-quaternary: #302E2A;
 
   /* === Text — pure white headings, warm gray body === */
   --color-text:           #FFFFFF;
-  --color-text-secondary: #E8E4DF;
-  --color-text-tertiary:  #9A9490;
-  --color-text-quaternary:#6B6560;
+  --color-text-secondary: #E7E4DE;
+  --color-text-tertiary:  #97938C;
+  --color-text-quaternary:#66625B;
 
-  /* === Borders — warm tinted === */
-  --color-border:           rgba(255, 245, 235, 0.06);
-  --color-border-secondary: rgba(255, 245, 235, 0.10);
-  --color-border-tertiary:  rgba(255, 245, 235, 0.15);
+  /* === Borders — warm-neutral white alpha === */
+  --color-border:           rgba(245, 242, 236, 0.07);
+  --color-border-secondary: rgba(245, 242, 236, 0.11);
+  --color-border-tertiary:  rgba(245, 242, 236, 0.16);
 
-  /* === AOS Accent (orange) === */
-  --color-accent:       #D9730D;
-  --color-accent-hover: #E8842A;
-  --color-accent-muted: #1F1510;
-  --color-accent-subtle: rgba(217, 115, 13, 0.15);
+  /* === AOS Accent (warm bone) ===
+     Desaturated warm bone/greige — restrained, unmistakably not
+     orange. Accent fills are light, so text on them uses
+     --color-on-accent (charcoal), not white. */
+  --color-accent:        #D6CCB4;
+  --color-accent-hover:  #E4DCC8;
+  --color-accent-muted:  #1B1915;
+  --color-accent-subtle: rgba(214, 204, 180, 0.14);
+  --color-on-accent:     #14130E;
 
   /* === Status Colors === */
   --color-green:        #30D158;
   --color-green-muted:  #0D1F12;
   --color-yellow:       #FFD60A;
   --color-yellow-muted: #1C1A08;
-  --color-orange:       #FF9F0A;
-  --color-orange-muted: #1C1508;
+  --color-orange:       #A99E88;
+  --color-orange-muted: #201F1B;
   --color-red:          #FF453A;
   --color-red-muted:    #1F0F0E;
   --color-blue:         #0A84FF;
@@ -65,22 +72,22 @@
   --color-tag-red-bg:    #2E1210;
   --color-tag-yellow:    #FFD60A;
   --color-tag-yellow-bg: #262010;
-  --color-tag-orange:    #FF9F0A;
-  --color-tag-orange-bg: #261A0A;
+  --color-tag-orange:    #A99E88;
+  --color-tag-orange-bg: #201F1B;
   --color-tag-teal:      #64D2FF;
   --color-tag-teal-bg:   #102228;
   --color-tag-pink:      #FF375F;
   --color-tag-pink-bg:   #28101A;
 
-  /* === Interaction — warm white alpha === */
-  --color-hover:    rgba(255, 245, 235, 0.05);
-  --color-active:   rgba(255, 245, 235, 0.08);
-  --color-selected: rgba(255, 245, 235, 0.12);
+  /* === Interaction — warm-neutral white alpha === */
+  --color-hover:    rgba(245, 242, 236, 0.05);
+  --color-active:   rgba(245, 242, 236, 0.08);
+  --color-selected: rgba(245, 242, 236, 0.12);
 
-  /* === Glass — translucent surfaces === */
-  --glass-bg:     rgba(30, 26, 22, 0.60);
-  --glass-border: rgba(255, 245, 235, 0.06);
-  --glass-shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
+  /* === Glass — translucent charcoal surfaces === */
+  --glass-bg:     rgba(26, 25, 23, 0.62);
+  --glass-border: rgba(245, 242, 236, 0.07);
+  --glass-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
 
   /* === Border Radius === */
   --radius-xs:   3px;
@@ -197,10 +204,11 @@ a, button, [role="button"], input, select, textarea, label {
   --color-border-secondary: rgba(56, 50, 43, 0.12);
   --color-border-tertiary:  rgba(56, 50, 43, 0.18);
 
-  --color-accent:       #C4660A;
-  --color-accent-hover: #D9770E;
-  --color-accent-muted: #FAF0E5;
-  --color-accent-subtle: rgba(196, 102, 10, 0.10);
+  --color-accent:       #5C554A;
+  --color-accent-hover: #6E6659;
+  --color-accent-muted: #ECE7DF;
+  --color-accent-subtle: rgba(92, 85, 74, 0.10);
+  --color-on-accent:    #F7F4F0;
 
   --color-hover:    rgba(56, 50, 43, 0.04);
   --color-active:   rgba(56, 50, 43, 0.08);
@@ -210,8 +218,8 @@ a, button, [role="button"], input, select, textarea, label {
   --color-green-muted:  #E8F5EE;
   --color-yellow:       #B8860E;
   --color-yellow-muted: #FBF5E0;
-  --color-orange:       #D9730D;
-  --color-orange-muted: #FAE8D5;
+  --color-orange:       #8A8073;
+  --color-orange-muted: #ECE8E1;
   --color-red:          #B84840;
   --color-red-muted:    #FCE8E7;
   --color-blue:         #2968A8;
@@ -225,8 +233,8 @@ a, button, [role="button"], input, select, textarea, label {
   --color-tag-gray-bg:   #EDEAE5;
   --color-tag-green:     #3D7A54;
   --color-tag-green-bg:  #E5F0E9;
-  --color-tag-orange:    #D9730D;
-  --color-tag-orange-bg: #FAE8D8;
+  --color-tag-orange:    #8A8073;
+  --color-tag-orange-bg: #E9E5DE;
   --color-tag-red:       #C44040;
   --color-tag-red-bg:    #FAE5E5;
   --color-tag-yellow:    #B8860E;

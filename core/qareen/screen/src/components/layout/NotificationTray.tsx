@@ -12,7 +12,7 @@ import { useNotificationList, type Notification } from '@/hooks/useNotificationS
 
 const PRIORITY_COLORS: Record<string, string> = {
   low: '#6B6560',
-  normal: '#D9730D',
+  normal: '#D6CCB4',
   high: '#FFD60A',
   urgent: '#FF453A',
 };

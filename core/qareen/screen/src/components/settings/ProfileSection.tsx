@@ -110,7 +110,7 @@ function ProfileContent() {
               disabled={updateOp.isPending}
               className="
                 px-3 py-1.5 rounded-[5px] text-[12px] font-[510]
-                bg-accent text-white hover:bg-accent-hover
+                bg-accent text-on-accent hover:bg-accent-hover
                 transition-colors duration-150 cursor-pointer
                 disabled:opacity-40
               "

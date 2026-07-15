@@ -25,7 +25,7 @@ import type { FamilyEdge } from '@/lib/types';
 // ---------------------------------------------------------------------------
 
 const REL_COLORS: Record<string, string> = {
-  spouse: '#D9730D',
+  spouse: '#D6CCB4',
   parent: '#BF5AF2',
   child: '#BF5AF2',
   sibling: '#30D158',
@@ -163,7 +163,7 @@ function buildLayout(familyEdges: FamilyEdge[]): { nodes: Node[]; edges: Edge[] 
         style: {
           width: nodeWidth,
           height: nodeHeight,
-          background: '#1E1A16',
+          background: '#1A1917',
           border: '1px solid rgba(255,245,235,0.1)',
           borderRadius: '7px',
           padding: '8px 16px',
@@ -173,7 +173,7 @@ function buildLayout(familyEdges: FamilyEdge[]): { nodes: Node[]; edges: Edge[] 
           cursor: 'pointer',
           fontSize: '13px',
           fontWeight: 510,
-          color: '#E8E4DF',
+          color: '#E7E4DE',
         },
       });
     });
@@ -248,7 +248,7 @@ export default function FamilyTree({ onSelect }: { onSelect: (personId: string) 
         <Controls
           showInteractive={false}
           style={{
-            background: '#151210',
+            background: '#121210',
             border: '1px solid rgba(255,245,235,0.06)',
             borderRadius: '7px',
           }}

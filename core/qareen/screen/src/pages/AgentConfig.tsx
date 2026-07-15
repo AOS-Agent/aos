@@ -473,7 +473,7 @@ export default function AgentConfigPage() {
               Cancel
             </button>
             <button type="button" onClick={handleSave} disabled={saveMutation.isPending}
-              className="h-7 px-4 rounded-md bg-accent hover:bg-accent-hover text-[12px] font-[510] text-white cursor-pointer transition-colors disabled:opacity-60 disabled:cursor-not-allowed" style={{ transitionDuration: '80ms' }}>
+              className="h-7 px-4 rounded-md bg-accent hover:bg-accent-hover text-[12px] font-[510] text-on-accent cursor-pointer transition-colors disabled:opacity-60 disabled:cursor-not-allowed" style={{ transitionDuration: '80ms' }}>
               {saveMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Save'}
             </button>
           </div>

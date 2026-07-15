@@ -9,7 +9,7 @@ import type { Notification } from '@/hooks/useNotificationStream';
 
 const PRIORITY_ACCENT: Record<string, string> = {
   low: '#6B6560',
-  normal: '#D9730D',
+  normal: '#D6CCB4',
   high: '#FFD60A',
   urgent: '#FF453A',
 };

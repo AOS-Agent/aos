@@ -78,7 +78,7 @@ function buildComponents(compact: boolean): Components {
           language={match[1]}
           PreTag="div"
           customStyle={{
-            background: 'var(--color-bg-tertiary, #2A2520)',
+            background: 'var(--color-bg-tertiary, #24221F)',
             padding: '16px',
             borderRadius: '7px',
             fontSize: '13px',

@@ -353,7 +353,7 @@ function CreateModal({ onClose }: { onClose: () => void }) {
           <button
             onClick={() => create.mutate()}
             disabled={!name.trim() || create.isPending}
-            className="px-3 py-1.5 rounded-[5px] text-[12px] font-[510] bg-accent text-white hover:bg-accent-hover transition-colors cursor-pointer disabled:opacity-40"
+            className="px-3 py-1.5 rounded-[5px] text-[12px] font-[510] bg-accent text-on-accent hover:bg-accent-hover transition-colors cursor-pointer disabled:opacity-40"
           >
             {create.isPending ? 'Creating...' : 'Create'}
           </button>
@@ -616,7 +616,7 @@ function GenerateFlow({ onClose }: { onClose: () => void }) {
           <button
             onClick={handleGenerate}
             disabled={!input.trim() || generate.isPending}
-            className="absolute right-2 bottom-2 w-8 h-8 flex items-center justify-center rounded-[5px] bg-accent text-white hover:bg-accent-hover disabled:opacity-30 transition-colors cursor-pointer"
+            className="absolute right-2 bottom-2 w-8 h-8 flex items-center justify-center rounded-[5px] bg-accent text-on-accent hover:bg-accent-hover disabled:opacity-30 transition-colors cursor-pointer"
           >
             {generate.isPending
               ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -653,7 +653,7 @@ function GenerateFlow({ onClose }: { onClose: () => void }) {
                   <button
                     onClick={handleDeploy}
                     disabled={deploy.isPending}
-                    className="px-4 py-1.5 rounded-[5px] text-[12px] font-[510] bg-accent text-white hover:bg-accent-hover transition-colors cursor-pointer disabled:opacity-40"
+                    className="px-4 py-1.5 rounded-[5px] text-[12px] font-[510] bg-accent text-on-accent hover:bg-accent-hover transition-colors cursor-pointer disabled:opacity-40"
                   >
                     {deploy.isPending ? 'Deploying...' : 'Activate'}
                   </button>
@@ -813,7 +813,7 @@ export default function AutomationsPage() {
             </p>
             <button
               onClick={() => setShowCreate(true)}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-[7px] text-[12px] font-[510] bg-accent text-white hover:bg-accent-hover transition-colors cursor-pointer"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-[7px] text-[12px] font-[510] bg-accent text-on-accent hover:bg-accent-hover transition-colors cursor-pointer"
             >
               <Sparkles className="w-3.5 h-3.5" /> Create your first automation
             </button>
