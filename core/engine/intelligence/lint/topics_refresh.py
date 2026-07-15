@@ -94,8 +94,8 @@ async def refresh_topic_orientations(
 
     # Lazy imports — avoid dragging the compile stack unless we're actually linting
     try:
+        from ..compile.llm import LLMError, complete
         from ..topics import load_index, update_index
-        from ..compile.llm import complete, LLMError
     except Exception as e:
         stats["errors"].append(f"lint setup failed: {e}")
         return stats

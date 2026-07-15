@@ -314,7 +314,6 @@ def cmd_classify(args: argparse.Namespace) -> int:
     """Run the classification pipeline."""
     runner = _get_runner(args.db)
 
-    adapter_names = None  # classify uses all adapters via the extractor upstream
 
     person_ids = None
     if args.person:
@@ -697,7 +696,7 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
     print("=" * 60)
     print(f"\n  People: {total} active | {with_signals} with signals | {pinned} pinned")
 
-    print(f"\n  Tier Distribution:")
+    print("\n  Tier Distribution:")
     for row in tiers:
         bar = "#" * min(row["count"] // 5, 40)
         print(f"    {row['tier']:15s} {row['count']:4d}  {bar}")
@@ -707,12 +706,12 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
         pin = f" [{row['pin']}]" if row["pin"] else ""
         print(f"    {row['canonical_name']}{pin}")
 
-    print(f"\n  Signal Coverage:")
+    print("\n  Signal Coverage:")
     for row in coverage:
         print(f"    {row['source_name']:20s} {row['people']:4d} people")
 
     if hygiene:
-        print(f"\n  Hygiene Queue (pending):")
+        print("\n  Hygiene Queue (pending):")
         for row in hygiene:
             print(f"    {row['action_type']:15s} {row['count']:4d}")
 

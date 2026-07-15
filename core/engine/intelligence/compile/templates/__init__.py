@@ -24,7 +24,6 @@ from .paper import PaperTemplate
 from .tweet import TweetTemplate
 from .video import VideoTemplate
 
-
 # Registry: platform tag → template class
 # (platform comes from ExtractionResult.platform, which came from detect.py)
 _REGISTRY: dict[str, type[CaptureTemplate]] = {

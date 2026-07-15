@@ -9,10 +9,11 @@ Reads the last message's `addressed_to` field:
 Also parses agent replies to extract the addressing tag from the body.
 """
 from __future__ import annotations
+
 import re
 from collections import defaultdict
-from .chat import Chat, Message
 
+from .chat import Chat
 
 ADDRESS_RE = re.compile(r"@(\w+)", re.IGNORECASE)
 

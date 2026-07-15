@@ -120,8 +120,9 @@ class TriggerDetector:
     @classmethod
     def from_config(cls, config_path) -> "TriggerDetector":
         """Build from a sentinel.yaml-style config dict or path."""
-        import yaml
         from pathlib import Path
+
+        import yaml
         data = yaml.safe_load(Path(config_path).read_text())
         phrases = data.get("trigger_phrases", [])
         return cls(phrases)

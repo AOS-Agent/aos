@@ -16,25 +16,29 @@ Can also be run as a module:
     python -m core.engine.intelligence.ingest.runner
 """
 
-import asyncio
 import argparse
+import asyncio
 from datetime import datetime, timezone
 from pathlib import Path
 
 # Prefer relative imports when run as a module; fall back to bare imports
 # when the script is executed directly (directory on sys.path).
 try:
-    from .watchlist import load_sources
-    from .fetcher import fetch_feed
-    from .triage import score_item
     from .enricher import summarize
-    from .store import store_item, mark_source_checked, url_exists
+    from .fetcher import fetch_feed
+    from .store import mark_source_checked, store_item, url_exists
+    from .triage import score_item
+    from .watchlist import load_sources
 except ImportError:
-    from watchlist import load_sources  # type: ignore[no-redef]
-    from fetcher import fetch_feed  # type: ignore[no-redef]
-    from triage import score_item  # type: ignore[no-redef]
     from enricher import summarize  # type: ignore[no-redef]
-    from store import store_item, mark_source_checked, url_exists  # type: ignore[no-redef]
+    from fetcher import fetch_feed  # type: ignore[no-redef]
+    from store import (  # type: ignore[no-redef]
+        mark_source_checked,
+        store_item,
+        url_exists,
+    )
+    from triage import score_item  # type: ignore[no-redef]
+    from watchlist import load_sources  # type: ignore[no-redef]
 
 DEFAULT_DB = Path.home() / ".aos" / "data" / "qareen.db"
 DEFAULT_RSSHUB = "http://localhost:1200"

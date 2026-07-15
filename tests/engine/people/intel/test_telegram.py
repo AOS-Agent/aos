@@ -10,7 +10,6 @@ import pytest
 from core.engine.people.intel.sources.telegram import TelegramAdapter
 from core.engine.people.intel.types import PersonSignals
 
-
 # ── Timestamps used by fixtures ───────────────────────────────────────
 # All UTC to keep assertions deterministic regardless of host timezone.
 

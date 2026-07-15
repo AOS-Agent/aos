@@ -10,9 +10,7 @@ from pathlib import Path
 import pytest
 
 from core.engine.people.intel.profiler import (
-    DENSITY_RANK_HIGH,
     DENSITY_RANK_MEDIUM,
-    PersonProfile,
     ProfileBuilder,
 )
 from core.engine.people.intel.store import SignalStore
@@ -26,7 +24,6 @@ from core.engine.people.intel.types import (
     ProfessionalSignal,
     VoiceSignal,
 )
-
 
 # ── Fixtures ──────────────────────────────────────────────────────────
 

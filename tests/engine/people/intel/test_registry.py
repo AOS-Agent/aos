@@ -1,10 +1,8 @@
 """Tests for the signal adapter base class and registry."""
-import pytest
 
 from core.engine.people.intel.registry import AdapterRegistry
 from core.engine.people.intel.sources.base import SignalAdapter
-from core.engine.people.intel.types import PersonSignals, SignalType
-
+from core.engine.people.intel.types import SignalType
 
 # ── Test adapters ──────────────────────────────────────────────────────
 

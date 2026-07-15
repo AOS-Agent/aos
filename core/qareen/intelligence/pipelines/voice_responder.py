@@ -46,8 +46,7 @@ class VoiceResponderPipeline(Pipeline):
             classification = payload.get("classification", "")
 
             if classification == "question":
-                text = payload.get("text", "")
-                brief = self._truncate(f"Looking into that for you.")
+                brief = self._truncate("Looking into that for you.")
                 self._enqueue(brief)
         except Exception:
             logger.exception("VoiceResponder: failed on stream.unit")

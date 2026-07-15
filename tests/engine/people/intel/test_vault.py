@@ -18,7 +18,6 @@ from core.engine.people.intel.sources.vault import (
 )
 from core.engine.people.intel.types import SignalType
 
-
 # ── Fixture helpers ─────────────────────────────────────────────────────
 
 def _write(path: Path, body: str, title: str = "note") -> None:

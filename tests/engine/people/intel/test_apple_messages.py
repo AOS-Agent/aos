@@ -17,7 +17,6 @@ from core.engine.people.intel.sources.apple_messages import (
 )
 from core.engine.people.intel.types import PersonSignals
 
-
 # ── helpers ───────────────────────────────────────────────────────────
 
 def iso_to_apple_ns(year: int, month: int, day: int, hour: int = 12, minute: int = 0) -> int:

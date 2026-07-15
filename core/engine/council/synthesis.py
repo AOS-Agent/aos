@@ -7,8 +7,10 @@ With frontmatter so QMD indexes it as a decision-stage knowledge artifact.
 Also extracts a one-paragraph summary for Telegram delivery.
 """
 from __future__ import annotations
+
 import datetime
 from pathlib import Path
+
 from .chat import Chat
 
 VAULT_DECISIONS = Path.home() / "vault" / "knowledge" / "decisions"

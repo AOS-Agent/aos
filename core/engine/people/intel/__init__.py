@@ -5,16 +5,16 @@ Subsystem B: Profile Compiler + Classifier (planned)
 Subsystem C: Living Intelligence Loop (planned)
 """
 from .types import (
-    SignalType,
-    SourceCapability,
-    PersonSignals,
     CommunicationSignal,
-    VoiceSignal,
-    PhysicalPresenceSignal,
-    ProfessionalSignal,
     GroupSignal,
     MentionSignal,
     MetadataSignal,
+    PersonSignals,
+    PhysicalPresenceSignal,
+    ProfessionalSignal,
+    SignalType,
+    SourceCapability,
+    VoiceSignal,
 )
 
 __all__ = [

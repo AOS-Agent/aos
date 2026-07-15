@@ -9,17 +9,13 @@ import sqlite3
 import time
 from pathlib import Path
 
-import pytest
-
 from core.engine.people.profile import (
-    Profile,
     compile_all,
     compile_profile,
     persist,
     render_markdown,
     slug_for,
 )
-
 
 # ── Fixture: minimal in-memory schema covering both DBs via ATTACH ──
 

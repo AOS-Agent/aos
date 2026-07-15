@@ -5,7 +5,6 @@ Focused on command dispatch, argparse wiring, and exit codes — not the
 exact text format of the output.
 """
 import json
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -17,7 +16,6 @@ from core.engine.people.intel.types import (
     PersonSignals,
     VoiceSignal,
 )
-
 
 # ── Parser tests ──────────────────────────────────────────────────────
 

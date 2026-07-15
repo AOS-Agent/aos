@@ -75,7 +75,6 @@ def _build_people_section(db_path: Path | None = None, limit: int = 20) -> str:
       **Name** — tier[, tag1, tag2], last seen Nd ago, channel1, channel2[, +N more]
     """
     import sqlite3
-    from datetime import datetime as _dt
 
     path = Path(db_path) if db_path else PEOPLE_DB_PATH
     try:

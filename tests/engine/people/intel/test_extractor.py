@@ -15,9 +15,7 @@ from core.engine.people.intel.types import (
     MentionSignal,
     PersonSignals,
     SignalType,
-    VoiceSignal,
 )
-
 
 # ── Fixtures ──────────────────────────────────────────────────────────
 

@@ -4,15 +4,12 @@ The LLM classifier is tested with a mock router — never touches a real
 model. All test profiles are fabricated.
 """
 import asyncio
-import json
-from dataclasses import dataclass
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from core.engine.people.intel.classifier import (
     LLMClassifier,
-    LLMClassifierConfig,
     RuleClassifier,
 )
 from core.engine.people.intel.profiler import PersonProfile
@@ -20,7 +17,6 @@ from core.engine.people.intel.taxonomy import (
     ClassificationResult,
     Tier,
 )
-
 
 # ── Helpers ──────────────────────────────────────────────────────────
 

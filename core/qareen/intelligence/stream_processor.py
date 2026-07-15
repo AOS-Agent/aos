@@ -25,12 +25,12 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from uuid import uuid4
 
-from ..events.types import Event
 from ..events.bus import EventBus
+from ..events.types import Event
 
 logger = logging.getLogger(__name__)
 

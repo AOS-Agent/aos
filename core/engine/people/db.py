@@ -5,10 +5,9 @@ and common operations. The DB lives at ~/.aos/data/people.db.
 """
 
 import json
-import os
+import random
 import sqlite3
 import string
-import random
 import time
 from pathlib import Path
 

@@ -485,7 +485,6 @@ class GraphPipeline:
         "uncle": ("family", "uncle"),
         "phuppo": ("family", "aunt"),
         "chachi": ("family", "aunt"),
-        "chachi": ("family", "aunt"),
         "taya": ("family", "uncle"),
         "nana": ("family", "grandparent"),
         "nani": ("family", "grandparent"),

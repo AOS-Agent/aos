@@ -1,3 +1,4 @@
+from .bridge_poll_liveness import BridgePollLivenessCheck
 from .claude_defaults import ClaudeDefaultsCheck
 from .claude_md import GlobalClaudeMdCheck, RootClaudeMdCheck
 from .context_freshness import ContextFreshnessCheck
@@ -8,7 +9,6 @@ from .dev_browser import DevBrowserCheck
 from .disk_smart import DiskSmartCheck
 from .google_workspace import GoogleWorkspaceCheck
 from .hooks import HooksPathCheck
-from .bridge_poll_liveness import BridgePollLivenessCheck
 from .initiatives import BridgeTopicsCheck, InitiativeDirectoriesCheck
 from .instance_hygiene import InstanceHygieneCheck
 from .launchagents import LaunchAgentPythonCheck

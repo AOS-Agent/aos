@@ -8,7 +8,6 @@ Full lifecycle:
 - If healthy → OK
 """
 
-import json
 import os
 import subprocess
 import sys

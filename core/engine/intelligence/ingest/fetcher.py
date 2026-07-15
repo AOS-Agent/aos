@@ -1,6 +1,5 @@
 """fetcher — Fetch RSS feeds from RSSHub or native RSS URLs."""
 
-import asyncio
 from datetime import datetime, timezone
 
 import feedparser

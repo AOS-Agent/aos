@@ -16,7 +16,6 @@ from core.engine.people.intel.sources.whatsapp import (
     WhatsAppAdapter,
 )
 
-
 # ── Fixture helpers ────────────────────────────────────────────────────
 
 # JIDs assembled from fragments so the source carries no literal that matches an

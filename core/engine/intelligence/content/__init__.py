@@ -18,7 +18,7 @@ Usage:
     result = await router.extract("https://simonwillison.net/2024/Dec/31/")
 """
 
-from .result import ExtractionResult, ExtractionError
 from . import router
+from .result import ExtractionError, ExtractionResult
 
 __all__ = ["ExtractionResult", "ExtractionError", "router"]

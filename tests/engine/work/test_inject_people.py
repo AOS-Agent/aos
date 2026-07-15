@@ -21,15 +21,12 @@ import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
-import pytest
-
 REPO_ROOT = Path(__file__).resolve().parents[3]
 WORK_DIR = REPO_ROOT / "core" / "engine" / "work"
 sys.path.insert(0, str(WORK_DIR))
 sys.path.insert(0, str(REPO_ROOT / "core" / "engine"))
 
 import inject_context  # noqa: E402
-
 
 # ── Helpers ──────────────────────────────────────────────────────────
 

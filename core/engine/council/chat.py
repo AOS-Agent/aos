@@ -5,10 +5,11 @@ Locking uses fcntl so multiple processes can safely append (operator CLI +
 engine running concurrently).
 """
 from __future__ import annotations
-import json
-import fcntl
+
 import datetime
-from dataclasses import dataclass, asdict
+import fcntl
+import json
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Iterator
 

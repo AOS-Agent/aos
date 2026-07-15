@@ -586,7 +586,8 @@ def _build_knowledge_briefing_section() -> dict[str, Any]:
     briefing card.
     """
     import sqlite3
-    from datetime import timedelta, timezone as _tz
+    from datetime import timedelta
+    from datetime import timezone as _tz
 
     out: dict[str, Any] = {
         "top_captures": [],

@@ -14,8 +14,8 @@ bubble up to the caller.
 
 from .actions import (
     ActionRule,
-    emit_brief_created,
     emit_brief_compiled,
+    emit_brief_created,
     emit_proposal_pending,
     load_action_rules,
 )

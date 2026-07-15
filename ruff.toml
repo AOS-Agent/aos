@@ -1,5 +1,8 @@
 # Ruff linter config — keep it lightweight, tighten over time
-target-version = "py39"
+# py312: the codebase uses PEP 701 f-strings (nested quotes + backslashes,
+# e.g. core/engine/comms/sentinel/notifier.py) which only parse on 3.12+.
+# CI's test job runs Python 3.12, so this is the real floor.
+target-version = "py312"
 
 # Don't lint vendored or generated code
 exclude = [
@@ -28,8 +31,10 @@ ignore = [
 # setproctitle must run before other imports (import; call on same line)
 "core/services/bridge/main.py" = ["I001"]
 "core/services/companion/main.py" = ["I001"]
+"core/services/crawler/main.py" = ["I001"]
 "core/services/dashboard/main.py" = ["I001"]
 "core/services/listen/main.py" = ["I001"]
 "core/services/memory/main.py" = ["I001"]
+"core/qareen/main.py" = ["I001"]
 # Standalone test script that imports to verify they exist
 "tests/test_initiative_bridge.py" = ["F401"]

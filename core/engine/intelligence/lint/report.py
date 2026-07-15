@@ -149,7 +149,7 @@ def write_report(report: dict[str, Any]) -> Path | None:
                     lines.append(f"- {c}")
                 lines.append("")
             if s.get("proposal"):
-                lines.append(f"**Proposal:**")
+                lines.append("**Proposal:**")
                 lines.append(s["proposal"])
                 lines.append("")
 

@@ -17,7 +17,6 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .recipes.library import RecipeLibrary
-from .recipes.types import Recipe
 from .recipes.validate import validate_workflow
 
 logger = logging.getLogger(__name__)

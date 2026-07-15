@@ -469,8 +469,8 @@ async def generate_automation(request: Request) -> JSONResponse:
     try:
         import sys
         sys.path.insert(0, str(AOS_HOME / "core"))
-        from automations.recipes import RecipeLibrary
         from automations.generator import WorkflowGenerator
+        from automations.recipes import RecipeLibrary
 
         lib = RecipeLibrary()
         gen = WorkflowGenerator(lib)

@@ -31,7 +31,6 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-
 # ── Lexicons ─────────────────────────────────────────────────────────
 
 # Leading honorifics / titles — stripped if they appear as the first word.

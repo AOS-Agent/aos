@@ -20,7 +20,6 @@ Steps:
 
 DESCRIPTION = "Deploy crawler service (crawl4ai + MCP) for web research"
 
-import os
 import shutil
 import socket
 import subprocess

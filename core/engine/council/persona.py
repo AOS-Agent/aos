@@ -9,6 +9,7 @@ Built-in personas live in personas/<id>.md. Operators can override or add new
 ones by dropping markdown files in the same directory or in ~/.aos/personas/.
 """
 from __future__ import annotations
+
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable

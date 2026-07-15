@@ -10,7 +10,6 @@ from core.engine.people.intel.taxonomy import (
     Tier,
 )
 
-
 # ── Fixtures ──────────────────────────────────────────────────────────
 
 

@@ -63,8 +63,6 @@ async def get_operator(request: Request) -> OperatorResponse:
     comms = data.get("communication", {})
     daily = data.get("daily_loop", {})
     loc_data = data.get("location", {})
-    trust_data = data.get("trust", {})
-    prayer_data = data.get("prayer", {})
 
     # Build location if present
     location = None

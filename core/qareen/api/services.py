@@ -12,7 +12,7 @@ import subprocess
 import urllib.request
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from fastapi import APIRouter, Query, Request
 from fastapi import Path as PathParam

@@ -11,7 +11,7 @@ import json
 import logging
 import re
 import sqlite3
-from datetime import date, datetime
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -919,7 +919,7 @@ async def get_calendar_context(
     # Extract year-month
     ym = target_date[:7]  # "2026-04"
     try:
-        year, month = int(ym[:4]), int(ym[5:7])
+        int(ym[:4]), int(ym[5:7])  # validate the YYYY-MM prefix parses
     except (ValueError, IndexError):
         return JSONResponse({"error": "Invalid date format"}, status_code=400)
 

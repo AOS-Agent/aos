@@ -8,11 +8,14 @@ from __future__ import annotations
 import logging
 import re
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter
 
 from .schemas import SkillListResponse, SkillResponse
+
+if TYPE_CHECKING:
+    from fastapi.responses import JSONResponse
 
 logger = logging.getLogger(__name__)
 

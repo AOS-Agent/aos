@@ -1,15 +1,15 @@
 """Tests for signal type definitions."""
 from core.engine.people.intel.types import (
-    SignalType,
-    SourceCapability,
-    PersonSignals,
     CommunicationSignal,
-    VoiceSignal,
-    PhysicalPresenceSignal,
-    ProfessionalSignal,
     GroupSignal,
     MentionSignal,
     MetadataSignal,
+    PersonSignals,
+    PhysicalPresenceSignal,
+    ProfessionalSignal,
+    SignalType,
+    SourceCapability,
+    VoiceSignal,
 )
 
 

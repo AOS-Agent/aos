@@ -8,7 +8,6 @@ from core.engine.people.intel.taxonomy import (
     validate_tags,
 )
 
-
 # ── Vocabulary ────────────────────────────────────────────────────────
 
 

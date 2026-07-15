@@ -14,7 +14,6 @@ import pytest
 
 from core.engine.people.intel.sources.apple_mail import AppleMailAdapter
 
-
 # ── fixture builder ──────────────────────────────────────────────────
 
 

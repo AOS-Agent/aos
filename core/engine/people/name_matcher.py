@@ -21,10 +21,8 @@ The adapter should skip rather than guess.
 from __future__ import annotations
 
 import sqlite3
-from typing import Any
 
 from .normalize import PHONETIC_GROUPS
-
 
 # Reverse lookup: variant → canonical phonetic form
 _PHONETIC_REVERSE: dict[str, str] = {}

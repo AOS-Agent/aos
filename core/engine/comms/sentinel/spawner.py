@@ -16,11 +16,11 @@ import os
 import shutil
 import sqlite3
 import subprocess
-import threading
 import time
-import yaml
 from pathlib import Path
 from typing import Optional
+
+import yaml
 
 log = logging.getLogger(__name__)
 
@@ -204,8 +204,11 @@ class SentinelSpawner:
             return
 
         # 4. Parse + evaluate confidence
-        from .confidence_gate import (ConfidenceGate, parse_draft_file,
-                                      last_sentinel_send_for_person)
+        from .confidence_gate import (
+            ConfidenceGate,
+            last_sentinel_send_for_person,
+            parse_draft_file,
+        )
         draft = parse_draft_file(draft_path)
         if not draft:
             _update_trigger(trigger_id, status="failed",
@@ -292,8 +295,8 @@ class SentinelSpawner:
         The reply itself is the signal that AOS got the trigger. If Sentinel
         hallucinates, iMessage's built-in 2-minute unsend is the safety net.
         """
-        from .notifier import notify_sent, notify_failed
         from .dispatcher import send_draft
+        from .notifier import notify_failed, notify_sent
 
         _update_trigger(trigger_id, status="sending")
 

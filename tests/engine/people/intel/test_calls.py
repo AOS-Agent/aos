@@ -21,7 +21,6 @@ from core.engine.people.intel.sources.calls import (
 )
 from core.engine.people.intel.types import PersonSignals, SignalType
 
-
 # ── fixture helpers ───────────────────────────────────────────────────
 
 

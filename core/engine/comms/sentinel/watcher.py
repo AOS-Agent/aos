@@ -32,9 +32,8 @@ import select
 import sqlite3
 import threading
 import time
-from datetime import datetime
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Optional
 
 import yaml
 
@@ -358,7 +357,6 @@ class SentinelWatcher:
 
         # Hand off to spawner in a thread so the watcher loop keeps watching
         try:
-            from .spawner import SentinelSpawner
             t = threading.Thread(
                 target=_run_handler, args=(trigger_id,),
                 daemon=True, name=f"hay-{trigger_id[:8]}",

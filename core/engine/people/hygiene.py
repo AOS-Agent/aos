@@ -7,6 +7,7 @@ Tier 2 issues go to the hygiene_queue for operator review (merges, archives).
 
 from __future__ import annotations
 
+import logging
 import re
 import sqlite3
 import string
@@ -18,10 +19,10 @@ from typing import Any
 
 from rapidfuzz import fuzz
 
+logger = logging.getLogger(__name__)
+
 from .normalize import (
     double_metaphone_key,
-    normalize_email,
-    normalize_name,
     normalize_phone,
     phonetic_key,
 )

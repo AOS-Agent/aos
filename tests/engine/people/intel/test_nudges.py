@@ -8,14 +8,10 @@ import sqlite3
 import time
 from datetime import date, timedelta
 
-import pytest
-
-from core.engine.people.intel import nudges
 from core.engine.people.intel.nudges import (
     SURFACE_BIRTHDAY,
     SURFACE_DRIFT,
     SURFACE_RECONNECT,
-    Nudge,
     gen_birthdays,
     gen_drift,
     gen_reconnect,
@@ -23,7 +19,6 @@ from core.engine.people.intel.nudges import (
     list_live_nudges,
     mark_actioned,
 )
-
 
 # ── Fixtures ─────────────────────────────────────────────────────────
 

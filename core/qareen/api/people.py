@@ -264,6 +264,7 @@ def _check_telegram() -> ContactSourceInfo:
 def _check_google() -> ContactSourceInfo:
     """Check Google Contacts availability via workspace MCP."""
     from pathlib import Path
+
     import yaml
 
     source = ContactSourceInfo(
@@ -421,7 +422,6 @@ async def run_pipeline(body: PipelineRunRequest) -> PipelineRunResponse | JSONRe
     Runs as a subprocess with a timeout. Returns output.
     """
     import subprocess
-    import sys
     from pathlib import Path
 
     pipeline_id = body.pipeline.lower()
@@ -2044,7 +2044,7 @@ def _fetch_messages_from_adapters(
 
     Returns (messages, presence) tuple.
     """
-    import sys, os
+    import sys
     # Add the AOS root (parent of core/) so "from core.engine..." imports work
     # Works regardless of whether cwd is ~/aos/core or ~/project/aos/core
     _this_dir = FilePath(__file__).resolve().parent  # qareen/api/
