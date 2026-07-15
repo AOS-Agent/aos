@@ -551,28 +551,54 @@ class WorkAdapter(Adapter):
         return None
 
     def delete(self, object_id: str) -> bool:
-        """Delete an object. Returns True if deleted."""
-        # Try each table
-        for table in ("tasks", "projects", "goals", "inbox", "threads"):
+        """Delete an object. Returns True if deleted.
+
+        Tasks own dependents — subtasks, a handoff row, and an FTS entry — that
+        must be removed *before* the task row, or foreign-key enforcement
+        rejects the delete (task_handoffs.task_id and tasks.parent_id both
+        reference tasks.id). Deleting a parent cascades to its subtasks.
+        """
+        if self._conn.execute(
+            "SELECT 1 FROM tasks WHERE id = ?", (object_id,)
+        ).fetchone():
+            self._delete_task_tree(object_id)
+            self._conn.commit()
+            return True
+
+        for table in ("projects", "goals", "inbox", "threads"):
             cur = self._conn.execute(
                 f"DELETE FROM {table} WHERE id = ?", (object_id,)
             )
             if cur.rowcount > 0:
-                # Clean up related data
-                if table == "tasks":
-                    self._conn.execute(
-                        "DELETE FROM task_handoffs WHERE task_id = ?",
-                        (object_id,),
-                    )
-                    # Remove from FTS
-                    self._conn.execute(
-                        "DELETE FROM tasks_fts WHERE rowid IN "
-                        "(SELECT rowid FROM tasks WHERE id = ?)",
-                        (object_id,),
-                    )
                 self._conn.commit()
                 return True
         return False
+
+    def _delete_task_tree(self, task_id: str) -> None:
+        """Remove a task and everything that depends on it, children first."""
+        children = [
+            r[0]
+            for r in self._conn.execute(
+                "SELECT id FROM tasks WHERE parent_id = ?", (task_id,)
+            ).fetchall()
+        ]
+        for child in children:
+            self._delete_task_tree(child)
+        # FTS entry must go while the row (and its rowid) still exists.
+        # Best-effort: a corrupt/empty external-content index must not block
+        # the delete (see _sync_fts).
+        try:
+            self._conn.execute(
+                "DELETE FROM tasks_fts WHERE rowid IN "
+                "(SELECT rowid FROM tasks WHERE id = ?)",
+                (task_id,),
+            )
+        except sqlite3.Error:
+            pass
+        self._conn.execute(
+            "DELETE FROM task_handoffs WHERE task_id = ?", (task_id,)
+        )
+        self._conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
 
     # ── Relationship methods ────────────────────────────
 
@@ -1804,14 +1830,18 @@ class WorkAdapter(Adapter):
         ).fetchone()
         if row:
             rowid = row[0]
-            # Delete old entry if it exists
+            # Delete old entry if it exists. Best-effort: the FTS5 'delete'
+            # command against an *empty* external-content index (fresh work.db
+            # with no tasks yet) raises DatabaseError "malformed", not just
+            # OperationalError — swallow both so the first task-add never
+            # crashes. The index self-heals on the next 'rebuild'.
             try:
                 self._conn.execute(
                     "INSERT INTO tasks_fts(tasks_fts, rowid, title, description) "
                     "VALUES('delete', ?, ?, ?)",
                     (rowid, title, description or ""),
                 )
-            except sqlite3.OperationalError:
+            except sqlite3.Error:
                 pass
             # Insert new
             try:
@@ -1820,7 +1850,7 @@ class WorkAdapter(Adapter):
                     "VALUES(?, ?, ?)",
                     (rowid, title, description or ""),
                 )
-            except sqlite3.OperationalError:
+            except sqlite3.Error:
                 pass
 
     def _detect_type(self, object_id: str) -> ObjectType:
