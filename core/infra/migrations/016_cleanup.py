@@ -42,9 +42,16 @@ def _find_issues() -> list[str]:
         if (LA_DIR / name).exists():
             issues.append(f"Stale plist: {name}")
 
-    # Dead core/lib/ directory
+    # Dead core/lib/ directory.
+    # NOTE: in the post-infra-reorg tree (migration-era >= wave 1, 2026-07),
+    # core/lib is a live SYMLINK -> core/infra/lib. That is the CURRENT
+    # structure, not the v1-era dead directory this migration targets —
+    # a symlink here means there is nothing to clean up. Only a real,
+    # non-symlink directory is the v1 artifact. (Found by clean-box VM:
+    # shutil.rmtree refuses symlinks, so the old check bricked every
+    # fresh install at migration 16.)
     lib_dir = AOS_DIR / "core" / "lib"
-    if lib_dir.exists():
+    if lib_dir.is_dir() and not lib_dir.is_symlink():
         issues.append("Dead directory: core/lib/")
 
     # CLAUDE.md references config/defaults/
@@ -77,11 +84,16 @@ def up() -> bool:
             plist.unlink()
             print(f"       Removed {name}")
 
-    # 2. Remove dead core/lib/ directory
+    # 2. Remove dead core/lib/ directory — but NEVER through a symlink:
+    #    post-reorg core/lib is a live symlink to core/infra/lib (current
+    #    structure, must be left alone). Only a real directory is the
+    #    v1-era artifact this step exists to remove.
     lib_dir = AOS_DIR / "core" / "lib"
-    if lib_dir.exists():
+    if lib_dir.is_dir() and not lib_dir.is_symlink():
         shutil.rmtree(str(lib_dir))
         print("       Removed core/lib/ (unused config.py + events.py)")
+    elif lib_dir.is_symlink():
+        print("       core/lib is a live symlink (current structure) — left alone")
 
     # 3. Fix ~/CLAUDE.md — replace config/defaults/ reference
     root_claude = HOME / "CLAUDE.md"
