@@ -41,4 +41,8 @@ jobs:
       - name: Install dependencies
         run: pip install pytest pyyaml
       - name: Run tests
-        run: pytest tests/ -v --ignore=tests/test_initiative_bridge.py
+        # Full suite. tests/test_initiative_bridge.py is a standalone dev-machine
+        # verification script — it skips itself under pytest (no ~/project/aos on
+        # the runner), so no --ignore is needed. All tests are DB/stdlib-based and
+        # platform-agnostic, so ubuntu is sufficient (no macOS runner required).
+        run: pytest tests/ -v

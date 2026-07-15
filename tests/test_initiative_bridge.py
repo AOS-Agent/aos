@@ -14,6 +14,24 @@ import sys
 import tempfile
 from pathlib import Path
 
+# This is a standalone dev-machine verification / release-readiness script, not
+# a unit test. Its checks run at module scope, it shells out to live services
+# (bridge process, reconcile runner, work CLI) and reads ~/.aos and ~/vault,
+# and it calls sys.exit() at the end — which would abort pytest collection.
+# When imported by pytest, skip the whole module cleanly. Run it directly on a
+# dev box instead:  python3 tests/test_initiative_bridge.py
+if __name__ != "__main__":
+    import pytest
+
+    _dev_workspace = Path.home() / "project" / "aos"
+    _reason = (
+        "dev-machine verification script — run it directly "
+        "(python3 tests/test_initiative_bridge.py), not under pytest"
+    )
+    if not _dev_workspace.is_dir():
+        _reason = "not a dev machine (no ~/project/aos); " + _reason
+    pytest.skip(_reason, allow_module_level=True)
+
 # Setup paths
 AOS_DEV = Path.home() / "project" / "aos"
 AOS_RUNTIME = Path.home() / "aos"

@@ -1,34 +1,38 @@
 """
-Test suite for AOS Work Engine (core/work/engine.py).
+Test suite for the AOS Work Engine (core/engine/work/backend.py).
 
-Covers: task CRUD, project-scoped IDs, fuzzy resolution, subtask cascade,
-project detection, edge cases, and handoff context.
+backend.py is the live engine the CLI uses (`import backend as engine` in
+cli.py); the older core/engine/work/engine.py is superseded. These tests
+exercise the real backend contract against an isolated SQLite work DB (see
+conftest.work_env) — task CRUD, project-scoped IDs, fuzzy resolution, subtask
+cascade, project detection, edge cases, and handoff context.
 
-All tests are isolated — each uses its own tmp_path via work_env fixture.
-No test ever touches ~/.aos/.
+All tests are isolated — each uses its own tmp_path DB via the work_env
+fixture. No test ever touches ~/.aos/.
 """
 
 import os
 import sys
 from pathlib import Path
 
-import pytest
-import yaml
-
 # conftest.py already adds the work package to sys.path, but be explicit here
 # so the module can be imported standalone too.
 sys.path.insert(0, str(Path(__file__).parent.parent / "core" / "engine" / "work"))
 
 
+def _ids(eng):
+    """Current task IDs straight from the store (no reliance on file layout)."""
+    return [t["id"] for t in eng.get_all_tasks()]
+
 
 # ===========================================================================
-# Task CRUD — 5 tests
+# Task CRUD
 # ===========================================================================
 
 class TestTaskCrud:
 
     def test_add_task_appears_in_data(self, work_env):
-        """Adding a task persists it to work.yaml and returns the task dict."""
+        """Adding a task persists it and returns the task dict."""
         eng = work_env["engine"]
 
         task = eng.add_task("Deploy the bridge service", priority=2)
@@ -39,10 +43,8 @@ class TestTaskCrud:
         assert task["status"] == "todo", "Default status should be 'todo'"
         assert "id" in task, "Task must receive an ID"
 
-        # Verify persistence: reload from disk
-        data = yaml.safe_load(work_env["work_file"].read_text())
-        ids = [t["id"] for t in data["tasks"]]
-        assert task["id"] in ids, "Task ID must survive a round-trip to disk"
+        # Verify persistence: reload from the store.
+        assert task["id"] in _ids(eng), "Task ID must survive a round-trip to disk"
 
     def test_add_task_with_project_gets_scoped_id(self, work_env):
         """A task added with project='aos' receives a project-scoped ID like aos#1."""
@@ -81,7 +83,7 @@ class TestTaskCrud:
         assert result["status"] == "done", "Task should be completed"
 
     def test_cancel_task_sets_cancelled_status(self, work_env):
-        """cancel_task() marks a task cancelled without deleting it from data."""
+        """cancel_task() marks a task cancelled without deleting it from the store."""
         eng = work_env["engine"]
         task = eng.add_task("Spike: evaluate vector DBs")
 
@@ -91,9 +93,7 @@ class TestTaskCrud:
         assert result["status"] == "cancelled", "Status must be 'cancelled'"
 
         # Task still exists in storage
-        data = yaml.safe_load(work_env["work_file"].read_text())
-        ids = [t["id"] for t in data["tasks"]]
-        assert task["id"] in ids, "Cancelled task should remain in storage"
+        assert task["id"] in _ids(eng), "Cancelled task should remain in storage"
 
     def test_delete_task_removes_it_permanently(self, work_env):
         """delete_task() removes the task and all its subtasks from storage."""
@@ -105,14 +105,13 @@ class TestTaskCrud:
         success = eng.delete_task(parent["id"])
 
         assert success is True, "delete_task should return True on success"
-        data = yaml.safe_load(work_env["work_file"].read_text())
-        ids = [t["id"] for t in data["tasks"]]
-        assert parent["id"] not in ids, "Parent task must be deleted"
-        assert sub["id"] not in ids, "Subtask must also be deleted with parent"
+        remaining = _ids(eng)
+        assert parent["id"] not in remaining, "Parent task must be deleted"
+        assert sub["id"] not in remaining, "Subtask must also be deleted with parent"
 
 
 # ===========================================================================
-# Fuzzy Resolution — 4 tests
+# Fuzzy Resolution
 # ===========================================================================
 
 class TestFuzzyResolution:
@@ -183,7 +182,7 @@ class TestFuzzyResolution:
 
 
 # ===========================================================================
-# Subtask Cascade — 3 tests
+# Subtask Cascade
 # ===========================================================================
 
 class TestSubtaskCascade:
@@ -198,15 +197,17 @@ class TestSubtaskCascade:
         s2 = eng.add_subtask(parent["id"], "Part two")
 
         eng.complete_task(s1["id"])
-        eng.complete_task(s2["id"])  # this should trigger cascade
+        last = eng.complete_task(s2["id"])  # this should trigger cascade
 
-        # Reload the parent from storage
+        # complete_task signals the cascade on its return value.
+        assert last.get("auto_completed") is True, \
+            "Completing the final subtask must flag the parent cascade"
+
+        # And the parent is 'done' when reloaded from the store.
         parent_reloaded = eng.get_task(parent["id"])
         assert parent_reloaded is not None, "Parent task must still exist"
         assert parent_reloaded["status"] == "done", \
             "Parent must auto-complete when all subtasks are done"
-        assert parent_reloaded.get("auto_completed") is True, \
-            "auto_completed flag must be set on cascade"
 
     def test_partial_subtask_completion_leaves_parent_active(self, work_env):
         """Completing some (not all) subtasks must NOT auto-complete the parent."""
@@ -246,20 +247,20 @@ class TestSubtaskCascade:
 
 
 # ===========================================================================
-# Project Detection — 2 tests
+# Project Detection
 # ===========================================================================
 
 class TestProjectDetection:
 
     def test_task_in_project_dir_gets_auto_assigned(self, work_env, monkeypatch, tmp_path):
-        """detect_project_from_cwd returns the correct project for a known directory name."""
+        """detect_project_from_cwd returns a project whose ID matches the directory name."""
         eng = work_env["engine"]
+        # Detection is DB-driven: it needs the project to exist. A directory
+        # whose name equals a project ID resolves to that project.
+        eng.add_project("AOS Framework", short_id="aos", project_id="aos")
 
-        # The engine has a built-in mapping: directory 'aos' -> project 'aos'
         fake_cwd = tmp_path / "aos"
         fake_cwd.mkdir()
-
-        # Patch os.getcwd so detect_project_from_cwd() sees our fake dir
         monkeypatch.setattr(os, "getcwd", lambda: str(fake_cwd))
 
         project_id = eng.detect_project_from_cwd(str(fake_cwd))
@@ -279,46 +280,30 @@ class TestProjectDetection:
 
 
 # ===========================================================================
-# Edge Cases — 4 tests
+# Edge Cases
 # ===========================================================================
 
 class TestEdgeCases:
 
-    def test_empty_work_yaml_loads_without_error(self, work_env):
-        """_load() on an empty / non-existent work.yaml returns a valid empty structure."""
+    def test_empty_db_loads_without_error(self, work_env):
+        """load_all() on a fresh DB returns a valid empty structure."""
         eng = work_env["engine"]
-        # work_file does not exist yet — _load() must not raise
-        data = eng._load()
+        data = eng.load_all()
 
-        assert isinstance(data, dict), "load must return a dict"
+        assert isinstance(data, dict), "load_all must return a dict"
         for key in ("tasks", "projects", "goals", "threads", "inbox"):
             assert key in data, f"Empty load must still have '{key}' key"
             assert isinstance(data[key], list), f"'{key}' must be a list"
-
-    def test_corrupted_work_yaml_handled_gracefully(self, work_env):
-        """_load() on a file with invalid YAML content returns an empty structure."""
-        eng = work_env["engine"]
-        work_env["work_file"].write_text(":: this is not valid: yaml: [[[")
-
-        # Should not raise — bad YAML -> yaml.safe_load returns None -> _empty_work
-        try:
-            eng._load()
-        except Exception as exc:
-            # If it raises, that's fine as long as we document the behavior.
-            # Some YAML parsers may raise on truly corrupt input.
-            # The engine silently falls back only when the file is absent or None.
-            pytest.skip(f"Engine raises on corrupt YAML (expected on some inputs): {exc}")
+            assert data[key] == [], f"'{key}' must be empty on a fresh DB"
 
     def test_two_rapid_adds_dont_lose_data(self, work_env):
-        """Sequential add_task calls both persist — write + read + write is safe."""
+        """Sequential add_task calls both persist."""
         eng = work_env["engine"]
 
         t1 = eng.add_task("First task")
         t2 = eng.add_task("Second task")
 
-        # Both tasks must appear in storage
-        data = yaml.safe_load(work_env["work_file"].read_text())
-        ids = [t["id"] for t in data["tasks"]]
+        ids = _ids(eng)
         assert t1["id"] in ids, "First task must be persisted after second write"
         assert t2["id"] in ids, "Second task must be persisted"
         assert len(ids) == 2, f"Exactly 2 tasks should exist, got {len(ids)}"
@@ -344,7 +329,7 @@ class TestEdgeCases:
 
 
 # ===========================================================================
-# Handoff Context — 3 tests
+# Handoff Context
 # ===========================================================================
 
 class TestHandoffContext:
@@ -377,7 +362,8 @@ class TestHandoffContext:
         """write_handoff() with a bad task ID returns None — no crash."""
         eng = work_env["engine"]
 
-        result = eng.write_handoff("aos#9999", state="Doesn't matter")
+        result = eng.write_handoff("aos#9999", state="Doesn't matter",
+                                   next_step="nothing")
         assert result is None, "write_handoff on missing task must return None"
 
     def test_build_handoff_prompt_contains_key_sections(self, work_env):
@@ -402,32 +388,35 @@ class TestHandoffContext:
 
 
 # ===========================================================================
-# ID Generation Internals — 2 tests
+# ID Generation — observable behavior
 # ===========================================================================
 
 class TestIdGeneration:
 
     def test_next_scoped_id_respects_existing_tasks(self, work_env):
-        """_next_scoped_id returns the correct next number when tasks already exist."""
+        """The next scoped ID continues past existing tasks (subtasks don't count)."""
         eng = work_env["engine"]
+        eng.add_project("AOS Framework", short_id="aos", project_id="aos")
 
-        existing = [
-            {"id": "aos#1"},
-            {"id": "aos#2"},
-            {"id": "aos#3"},
-        ]
-        next_id = eng._next_scoped_id(existing, "aos")
-        assert next_id == "aos#4", f"Expected 'aos#4', got '{next_id}'"
+        p1 = eng.add_task("Parent one", project="aos")   # aos#1
+        eng.add_task("Parent two", project="aos")        # aos#2
+        eng.add_subtask(p1["id"], "sub")                 # aos#1.1 — must not bump top-level
+
+        nxt = eng.add_task("Third top-level", project="aos")
+        assert nxt["id"] == "aos#3", f"Expected 'aos#3', got '{nxt['id']}'"
 
     def test_next_subtask_id_ignores_sibling_parents(self, work_env):
-        """_next_subtask_id only counts subtasks of the specified parent."""
+        """Subtask numbering only counts subtasks of the specified parent."""
         eng = work_env["engine"]
+        eng.add_project("AOS Framework", short_id="aos", project_id="aos")
 
-        tasks = [
-            {"id": "aos#1.1"},
-            {"id": "aos#1.2"},
-            {"id": "aos#2.1"},  # different parent — must not affect count
-        ]
-        next_id = eng._next_subtask_id(tasks, "aos#1")
-        assert next_id == "aos#1.3", \
-            f"Expected 'aos#1.3' (only counting aos#1.* tasks), got '{next_id}'"
+        p1 = eng.add_task("Parent one", project="aos")   # aos#1
+        p2 = eng.add_task("Parent two", project="aos")   # aos#2
+
+        eng.add_subtask(p1["id"], "a")                   # aos#1.1
+        eng.add_subtask(p1["id"], "b")                   # aos#1.2
+        eng.add_subtask(p2["id"], "c")                   # aos#2.1 — different parent
+
+        nxt = eng.add_subtask(p1["id"], "d")
+        assert nxt["id"] == "aos#1.3", \
+            f"Expected 'aos#1.3' (only counting aos#1.* subtasks), got '{nxt['id']}'"
