@@ -39,7 +39,9 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install dependencies
-        run: pip install pytest pyyaml
+        # pytest+pyyaml for the harness; rapidfuzz/networkx/phonenumbers are
+        # people-intel engine deps (wave 4) imported at test-collection time.
+        run: pip install pytest pyyaml rapidfuzz networkx phonenumbers
       - name: Run tests
         # Full suite. tests/test_initiative_bridge.py is a standalone dev-machine
         # verification script — it skips itself under pytest (no ~/project/aos on
