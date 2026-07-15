@@ -1,4 +1,4 @@
-CREATE TABLE aliases (
+CREATE TABLE IF NOT EXISTS aliases (
     alias       TEXT NOT NULL,              -- "mom", "ballan", "debo"
     person_id   TEXT REFERENCES people(id),
     group_id    TEXT REFERENCES groups(id), -- for group aliases like "family group"
@@ -8,7 +8,7 @@ CREATE TABLE aliases (
     PRIMARY KEY (alias)
 );
 
-CREATE TABLE communication_patterns (
+CREATE TABLE IF NOT EXISTS communication_patterns (
     person_id               TEXT PRIMARY KEY REFERENCES people(id),
     avg_response_time_mins  REAL,
     p50_response_mins       REAL,
@@ -22,7 +22,7 @@ CREATE TABLE communication_patterns (
     computed_at             INTEGER
 );
 
-CREATE TABLE contact_metadata (
+CREATE TABLE IF NOT EXISTS contact_metadata (
     person_id           TEXT PRIMARY KEY REFERENCES people(id),
     -- Personal
     birthday            TEXT,               -- YYYY-MM-DD
@@ -52,7 +52,7 @@ CREATE TABLE contact_metadata (
     last_manual_update  INTEGER
 );
 
-CREATE TABLE dedup_log (
+CREATE TABLE IF NOT EXISTS dedup_log (
     id              TEXT PRIMARY KEY,
     action          TEXT NOT NULL,          -- merge, skip, flag
     primary_id      TEXT,                   -- person kept
@@ -63,7 +63,7 @@ CREATE TABLE dedup_log (
     decided_by      TEXT                    -- operator, auto
 );
 
-CREATE TABLE enrichment_cache (
+CREATE TABLE IF NOT EXISTS enrichment_cache (
     person_id   TEXT NOT NULL REFERENCES people(id),
     source      TEXT NOT NULL,             -- linkedin, google, github, website
     fetched_at  INTEGER NOT NULL,
@@ -74,7 +74,7 @@ CREATE TABLE enrichment_cache (
     PRIMARY KEY (person_id, source)
 );
 
-CREATE TABLE group_members (
+CREATE TABLE IF NOT EXISTS group_members (
     group_id    TEXT NOT NULL REFERENCES groups(id),
     person_id   TEXT REFERENCES people(id), -- NULL if unresolved member
     wa_jid      TEXT,                       -- WhatsApp JID for unresolved members
@@ -85,7 +85,7 @@ CREATE TABLE group_members (
     UNIQUE (group_id, person_id, wa_jid)
 );
 
-CREATE TABLE groups (
+CREATE TABLE IF NOT EXISTS groups (
     id          TEXT PRIMARY KEY,
     name        TEXT NOT NULL,
     type        TEXT,                       -- family, community, business, social, project
@@ -96,7 +96,7 @@ CREATE TABLE groups (
     updated_at  INTEGER
 );
 
-CREATE TABLE intelligence_queue (
+CREATE TABLE IF NOT EXISTS intelligence_queue (
     id              TEXT PRIMARY KEY,
     person_id       TEXT REFERENCES people(id),
     surface_type    TEXT NOT NULL,          -- birthday, drift_nudge, life_event_followup, meeting_brief, opportunity, reconnect, care_prompt
@@ -110,7 +110,7 @@ CREATE TABLE intelligence_queue (
     expires_at      INTEGER
 );
 
-CREATE TABLE interactions (
+CREATE TABLE IF NOT EXISTS interactions (
     id          TEXT PRIMARY KEY,
     person_id   TEXT NOT NULL REFERENCES people(id),
     occurred_at INTEGER NOT NULL,
@@ -125,7 +125,7 @@ CREATE TABLE interactions (
     indexed_at  INTEGER
 );
 
-CREATE TABLE life_events (
+CREATE TABLE IF NOT EXISTS life_events (
     id              TEXT PRIMARY KEY,
     person_id       TEXT NOT NULL REFERENCES people(id),
     event_type      TEXT NOT NULL,          -- job_change, marriage, baby, move, graduation, illness, achievement, death_in_family
@@ -137,7 +137,7 @@ CREATE TABLE life_events (
     notes           TEXT
 );
 
-CREATE TABLE people (
+CREATE TABLE IF NOT EXISTS people (
     id              TEXT PRIMARY KEY,        -- nanoid: "p_a7f3k2"
     canonical_name  TEXT NOT NULL,           -- "Ahmad Ballan"
     display_name    TEXT,                    -- preferred short name: "Ballan"
@@ -152,7 +152,7 @@ CREATE TABLE people (
     updated_at      INTEGER NOT NULL
 );
 
-CREATE TABLE person_identifiers (
+CREATE TABLE IF NOT EXISTS person_identifiers (
     person_id   TEXT NOT NULL REFERENCES people(id),
     type        TEXT NOT NULL,              -- phone, email, wa_jid, twitter, linkedin, github
     value       TEXT NOT NULL,
@@ -164,7 +164,7 @@ CREATE TABLE person_identifiers (
     PRIMARY KEY (person_id, type, value)
 );
 
-CREATE TABLE profile_versions (
+CREATE TABLE IF NOT EXISTS profile_versions (
     id              TEXT PRIMARY KEY,
     person_id       TEXT NOT NULL REFERENCES people(id),
     version         INTEGER NOT NULL,
@@ -175,7 +175,7 @@ CREATE TABLE profile_versions (
     vault_path      TEXT
 );
 
-CREATE TABLE relationship_state (
+CREATE TABLE IF NOT EXISTS relationship_state (
     person_id               TEXT PRIMARY KEY REFERENCES people(id),
     last_interaction_at     INTEGER,
     last_interaction_channel TEXT,
@@ -196,7 +196,7 @@ CREATE TABLE relationship_state (
     computed_at             INTEGER
 );
 
-CREATE TABLE relationships (
+CREATE TABLE IF NOT EXISTS relationships (
     person_a_id     TEXT NOT NULL REFERENCES people(id),
     person_b_id     TEXT NOT NULL REFERENCES people(id),
     type            TEXT NOT NULL,          -- family, friend, colleague, community, business, acquaintance
@@ -211,7 +211,7 @@ CREATE TABLE relationships (
     PRIMARY KEY (person_a_id, person_b_id, type)
 );
 
-CREATE TABLE surface_feedback (
+CREATE TABLE IF NOT EXISTS surface_feedback (
     id TEXT PRIMARY KEY,
     person_id TEXT REFERENCES people(id),
     surface_type TEXT NOT NULL,
@@ -223,33 +223,33 @@ CREATE TABLE surface_feedback (
     session_id TEXT
 );
 
-CREATE INDEX idx_aliases_person ON aliases(person_id);
+CREATE INDEX IF NOT EXISTS idx_aliases_person ON aliases(person_id);
 
-CREATE INDEX idx_feedback_person ON surface_feedback(person_id, surface_type, surface_at DESC);
+CREATE INDEX IF NOT EXISTS idx_feedback_person ON surface_feedback(person_id, surface_type, surface_at DESC);
 
-CREATE INDEX idx_groups_name ON groups(name);
+CREATE INDEX IF NOT EXISTS idx_groups_name ON groups(name);
 
-CREATE INDEX idx_identifiers_normalized ON person_identifiers(normalized);
+CREATE INDEX IF NOT EXISTS idx_identifiers_normalized ON person_identifiers(normalized);
 
-CREATE INDEX idx_identifiers_value ON person_identifiers(value);
+CREATE INDEX IF NOT EXISTS idx_identifiers_value ON person_identifiers(value);
 
-CREATE INDEX idx_interactions_channel ON interactions(channel, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_interactions_channel ON interactions(channel, occurred_at DESC);
 
-CREATE INDEX idx_interactions_person ON interactions(person_id, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_interactions_person ON interactions(person_id, occurred_at DESC);
 
-CREATE INDEX idx_life_events_person ON life_events(person_id, event_date DESC);
+CREATE INDEX IF NOT EXISTS idx_life_events_person ON life_events(person_id, event_date DESC);
 
-CREATE INDEX idx_people_importance ON people(importance);
+CREATE INDEX IF NOT EXISTS idx_people_importance ON people(importance);
 
-CREATE INDEX idx_people_name ON people(canonical_name);
+CREATE INDEX IF NOT EXISTS idx_people_name ON people(canonical_name);
 
-CREATE INDEX idx_profile_versions ON profile_versions(person_id, version DESC);
+CREATE INDEX IF NOT EXISTS idx_profile_versions ON profile_versions(person_id, version DESC);
 
-CREATE INDEX idx_queue_pending ON intelligence_queue(status, surface_after, priority);
+CREATE INDEX IF NOT EXISTS idx_queue_pending ON intelligence_queue(status, surface_after, priority);
 
-CREATE INDEX idx_rel_a ON relationships(person_a_id);
+CREATE INDEX IF NOT EXISTS idx_rel_a ON relationships(person_a_id);
 
-CREATE INDEX idx_rel_b ON relationships(person_b_id);
+CREATE INDEX IF NOT EXISTS idx_rel_b ON relationships(person_b_id);
 
 CREATE TABLE IF NOT EXISTS style_profiles (
     person_id         TEXT PRIMARY KEY REFERENCES people(id),
