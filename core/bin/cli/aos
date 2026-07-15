@@ -378,9 +378,8 @@ SYNCMCP
 
         # Check work engine
         if python3 -c "
-import sys; sys.path.insert(0, '$AOS_DIR/core/work')
-from engine import _load
-_load()
+import sys; sys.path.insert(0, '$AOS_DIR/core/engine/work')
+import backend  # live engine (cli.py does 'import backend as engine')
 " 2>/dev/null; then
             echo "  ✓ Work engine loads"
         else
@@ -399,10 +398,13 @@ _load()
             # Check if Python script
             if head -1 "$script" | grep -q python; then
                 if python3 -c "
-import py_compile, sys
+import ast, sys
+# ast.parse: pure syntax check, no .pyc write — the runtime tree is
+# read-only, so py_compile's cache write failed and 26 healthy scripts
+# were misreported as parse failures.
 try:
-    py_compile.compile('$script', doraise=True)
-except py_compile.PyCompileError as e:
+    ast.parse(open('$script').read(), filename='$script')
+except SyntaxError as e:
     print(f'  ✗ Script $basename: {e}')
     sys.exit(1)
 " 2>/dev/null; then
