@@ -93,6 +93,61 @@ else
     pass "No shell files changed"
 fi
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 1b. LINT — the same ruff + shellcheck gates CI runs, over the whole
+#     tree, so local-green always implies CI-green (ends notification spam).
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+echo ""
+echo "Lint (CI parity)"
+echo "────────────────"
+
+# Ruff — mirrors .github/workflows/ci.yaml lint-python: `ruff check .` at the
+# repo root (reads $DEV/ruff.toml). Prefer an installed ruff, fall back to uvx.
+RUFF=()
+if command -v ruff >/dev/null 2>&1; then
+    RUFF=(ruff)
+elif command -v uvx >/dev/null 2>&1; then
+    RUFF=(uvx ruff)
+fi
+if [[ ${#RUFF[@]} -gt 0 ]]; then
+    ruff_out=$(mktemp)
+    if ( cd "$DEV" && "${RUFF[@]}" check . ) >"$ruff_out" 2>&1; then
+        pass "ruff check clean"
+    else
+        fail "ruff check found issues (fix: ruff check --fix .)"
+        sed 's/^/      /' "$ruff_out" | tail -20
+    fi
+    rm -f "$ruff_out"
+else
+    warn "ruff not installed — CI lint-python not verified locally (brew install ruff)"
+fi
+
+# ShellCheck — mirrors ci.yaml lint-shell exactly (find | shellcheck
+# --severity=warning over *.sh and shebang'd bin/ scripts).
+if command -v shellcheck >/dev/null 2>&1; then
+    sc_targets=$(cd "$DEV" && find . -type f \( -name "*.sh" -o -path "*/bin/*" \) \
+        -not -path "*/node_modules/*" \
+        -not -path "*/.venv/*" \
+        -not -path "*/target/*" \
+        -not -path "*/vendor/*" \
+        -not -path "*/.git/*" \
+        -exec sh -c 'head -1 "$1" | grep -q "#!/.*\(bash\|sh\)" && echo "$1"' _ {} \;)
+    if [[ -z "$sc_targets" ]]; then
+        pass "shellcheck: no shell scripts to check"
+    else
+        sc_out=$(mktemp)
+        if ( cd "$DEV" && echo "$sc_targets" | xargs shellcheck --severity=warning ) >"$sc_out" 2>&1; then
+            pass "shellcheck clean (--severity=warning)"
+        else
+            fail "shellcheck found warnings (mirror ci.yaml lint-shell to reproduce)"
+            sed 's/^/      /' "$sc_out" | tail -20
+        fi
+        rm -f "$sc_out"
+    fi
+else
+    warn "shellcheck not installed — CI lint-shell not verified locally (brew install shellcheck)"
+fi
+
 # Key entry points still import
 import_errors=0
 for module in \
