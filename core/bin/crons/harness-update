@@ -1,0 +1,148 @@
+#!/usr/bin/env bash
+# harness-update — keeps the Claude Code harness current
+#
+# AOS's existing auto-update cron only updates the AOS framework itself.
+# But AOS runs *inside* Claude Code — and the harness gates which models,
+# features, and APIs are available. If Claude Code falls behind, you can't
+# even select newer models from /model. This cron closes that gap.
+#
+# Runs daily at 04:15 (right after the AOS framework auto-update at 04:00),
+# so framework + harness stay roughly in lockstep.
+#
+# What it does:
+#   1. Capture current @anthropic-ai/claude-code version (npm global)
+#   2. Run `npm update -g @anthropic-ai/claude-code`
+#   3. If version changed → Telegram-notify with old → new
+#   4. Log everything to ~/.aos/logs/harness-update.log
+#
+# Safety:
+#   - Idempotent. Safe to run manually anytime.
+#   - Never crashes on network failure or missing npm.
+#   - Does not touch ~/.claude.json, settings.json, or any user state.
+#   - Only updates packages we explicitly manage (currently: claude-code).
+#
+# Why npm (not cmux-bundled or native installer):
+#   - The native installer's auto-update is blocked when a bundled copy
+#     (e.g. cmux.app) is detected (autoUpdatesProtectedForNative).
+#   - The npm-installed copy at /opt/homebrew/bin/claude is the one most
+#     PATH lookups resolve to, and is the most reliably updateable.
+#
+# Called by:
+#   - Scheduler (crons.yaml) daily at 04:15
+#   - User manually: `bash ~/aos/core/bin/crons/harness-update`
+
+set +e
+
+LOG_DIR="$HOME/.aos/logs"
+LOG_FILE="$LOG_DIR/harness-update.log"
+LOG_PREFIX="[$(date '+%Y-%m-%d %H:%M:%S')]"
+AOS_DIR="$HOME/aos"
+
+mkdir -p "$LOG_DIR"
+
+log() {
+    echo "$LOG_PREFIX $*" | tee -a "$LOG_FILE"
+}
+
+# ── Telegram notification (best-effort) ──────────────────────────────────────
+
+notify() {
+    local msg="$1"
+    local bot_token chat_id
+    bot_token=$("$AOS_DIR/core/bin/cli/agent-secret" get TELEGRAM_BOT_TOKEN 2>/dev/null) || return 0
+    chat_id=$("$AOS_DIR/core/bin/cli/agent-secret" get TELEGRAM_CHAT_ID 2>/dev/null) || return 0
+    [[ -z "$bot_token" || -z "$chat_id" ]] && return 0
+
+    curl -s --max-time 10 -X POST "https://api.telegram.org/bot${bot_token}/sendMessage" \
+        -H "Content-Type: application/json" \
+        -d "{\"chat_id\": ${chat_id}, \"text\": \"${msg}\", \"parse_mode\": \"HTML\"}" \
+        > /dev/null 2>&1 || true
+}
+
+# ── Get currently installed claude-code version ──────────────────────────────
+
+get_installed_version() {
+    if ! command -v npm > /dev/null 2>&1; then
+        echo ""
+        return 1
+    fi
+    # `npm ls -g --depth=0 --json` is more reliable than parsing `claude --version`
+    npm ls -g @anthropic-ai/claude-code --depth=0 --json 2>/dev/null \
+        | python3 -c "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    print(d.get('dependencies', {}).get('@anthropic-ai/claude-code', {}).get('version', ''))
+except Exception:
+    print('')
+"
+}
+
+# ── Get latest claude-code version on npm ────────────────────────────────────
+
+get_latest_version() {
+    npm view @anthropic-ai/claude-code version 2>/dev/null | tr -d '[:space:]'
+}
+
+# ── Main ─────────────────────────────────────────────────────────────────────
+
+main() {
+    log "Starting harness update check"
+
+    if ! command -v npm > /dev/null 2>&1; then
+        log "WARN: npm not found — skipping (claude-code not managed via npm here)"
+        return 0
+    fi
+
+    local before
+    before=$(get_installed_version)
+    if [[ -z "$before" ]]; then
+        log "WARN: @anthropic-ai/claude-code not installed via npm — skipping"
+        log "  (it may be installed via cmux bundle or native installer)"
+        return 0
+    fi
+
+    local latest
+    latest=$(get_latest_version)
+    if [[ -z "$latest" ]]; then
+        log "WARN: could not reach npm registry — skipping"
+        return 0
+    fi
+
+    log "Current: $before, Latest: $latest"
+
+    if [[ "$before" == "$latest" ]]; then
+        log "Already up to date"
+        return 0
+    fi
+
+    log "Update available: $before → $latest"
+    log "Running: npm update -g @anthropic-ai/claude-code"
+
+    local update_output update_status
+    update_output=$(npm update -g @anthropic-ai/claude-code 2>&1)
+    update_status=$?
+
+    if [[ $update_status -ne 0 ]]; then
+        log "ERROR: npm update failed (exit $update_status)"
+        echo "$update_output" >> "$LOG_FILE"
+        notify "⚠️ Claude Code update failed ($before → $latest). Check ~/.aos/logs/harness-update.log"
+        return 1
+    fi
+
+    local after
+    after=$(get_installed_version)
+
+    if [[ "$before" == "$after" ]]; then
+        log "WARN: npm update ran but version unchanged ($after)"
+        return 0
+    fi
+
+    log "Updated successfully: $before → $after"
+    notify "✨ Claude Code updated: <b>$before</b> → <b>$after</b>
+New models and features should now be available. Restart your terminal to pick them up."
+
+    return 0
+}
+
+main "$@"
