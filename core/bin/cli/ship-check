@@ -505,42 +505,25 @@ if [[ "${1:-}" != "--all" ]]; then
             svc_name=$(basename "$svc_rel")
             [[ -f "$svc_dir/pyproject.toml" ]] || continue
 
-            # Extract top-level imports from Python files
-            used_imports=$(grep -rhE '^(import|from) ([a-z][a-z0-9_]*)' "$svc_dir"/*.py 2>/dev/null \
-                | awk '{print $2}' | cut -d. -f1 | sort -u || true)
+            # Delegate to the AST-based checker, which filters stdlib, the
+            # service's own local modules, all AOS-internal modules, and
+            # relative imports — so only genuine third-party gaps remain. Run it
+            # with the service's own venv interpreter when present, so declared
+            # distributions (python-telegram-bot, pyyaml) map back to their
+            # import names (telegram, yaml) and aren't false-flagged.
+            svc_venv_py="$HOME/.aos/services/$svc_name/.venv/bin/python"
+            if [[ -x "$svc_venv_py" ]]; then
+                import_check_py="$svc_venv_py"
+            else
+                import_check_py="python3"
+            fi
 
-            # Extract declared deps from pyproject.toml (normalized: hyphens → underscores)
-            declared_deps=$(python3 -c "
-import re
-txt = open('$svc_dir/pyproject.toml').read()
-m = re.search(r'dependencies\s*=\s*\[(.*?)\]', txt, re.DOTALL)
-if m:
-    deps = re.findall(r'\"([a-z][a-z0-9_-]*)', m.group(1))
-    for d in deps:
-        print(d.replace('-','_'))
-" 2>/dev/null)
-
+            gaps=$("$import_check_py" "$DEV/core/infra/service_import_check.py" "$svc_dir" 2>/dev/null || true)
             while IFS= read -r mod; do
                 [[ -z "$mod" ]] && continue
-                # Skip if it's stdlib (importable without install)
-                if python3 -c "
-import importlib, sys
-spec = importlib.util.find_spec('$mod')
-if spec is None:
-    sys.exit(1)
-loc = getattr(spec, 'origin', '') or ''
-if 'site-packages' in loc or 'dist-packages' in loc:
-    sys.exit(1)
-sys.exit(0)
-" 2>/dev/null; then
-                    continue  # stdlib or builtin
-                fi
-                # Check if declared
-                if ! echo "$declared_deps" | grep -qxF "$mod"; then
-                    warn "Service '$svc_name' imports '$mod' but it's not in pyproject.toml"
-                    import_gaps=$((import_gaps + 1))
-                fi
-            done <<< "$used_imports"
+                warn "Service '$svc_name' imports '$mod' but it's not in pyproject.toml"
+                import_gaps=$((import_gaps + 1))
+            done <<< "$gaps"
         done <<< "$changed_svc_dirs"
     fi
     if [[ $import_gaps -eq 0 ]]; then
