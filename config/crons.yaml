@@ -39,6 +39,13 @@ jobs:
     tier: 1
     description: Pulls and applies AOS updates automatically
 
+  harness-update:
+    command: bash ~/aos/core/bin/crons/harness-update
+    at: "04:15"
+    timeout: 300
+    tier: 1
+    description: Keeps the Claude Code harness current (npm) so new models stay reachable
+
   sync-sessions:
     command: python3 ~/aos/core/bin/crons/sync-sessions
     every: 30m
