@@ -131,7 +131,8 @@ def _parse_date(val):
 
 def scan_sessions(start, end):
     if not SESSIONS_DIR.exists():
-        return {"count": 0, "topics": [], "projects": Counter(), "tools": Counter(), "total_messages": 0}
+        return {"count": 0, "topics": [], "projects": Counter(), "tools": Counter(),
+                "total_messages": 0, "total_duration_min": 0, "avg_duration_min": 0}
 
     count = 0
     topics = []
