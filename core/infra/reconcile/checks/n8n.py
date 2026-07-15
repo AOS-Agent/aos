@@ -71,11 +71,17 @@ class N8nServiceCheck(ReconcileCheck):
             capture_output=True, text=True, timeout=10,
         )
 
-        # Kickstart to ensure it's actually running
-        subprocess.run(
-            ["launchctl", "kickstart", "-k", service_target],
-            capture_output=True, timeout=10,
-        )
+        # Kickstart to ensure it's actually running. kickstart -k can block past
+        # the timeout while the old instance drains; a TimeoutExpired here must
+        # not propagate out of fix() (the runner would log it as ERROR). The
+        # restart was already issued — the next cycle owns it from here.
+        try:
+            subprocess.run(
+                ["launchctl", "kickstart", "-k", service_target],
+                capture_output=True, timeout=10,
+            )
+        except subprocess.TimeoutExpired:
+            pass
 
         return result.returncode == 0
 
