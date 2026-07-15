@@ -1,0 +1,212 @@
+#!/usr/bin/env python3
+"""Council CLI — convene, say, tail, show, ls, close.
+
+Usage:
+    council convene "Topic" [--personas architect,builder,skeptic,dreamer] [--seed "..."] [--rounds 8] [--first architect]
+    council list                                      # list past councils
+    council say "@architect, your turn"               # append operator message to current council
+    council tail [<id>]                               # follow chat in real-time
+    council show [<id>]                               # render full transcript
+    council close [<id>]                              # append @close to end the council
+
+If no <id> is given, uses the most recently active council.
+"""
+from __future__ import annotations
+import argparse
+import sys
+import time
+from pathlib import Path
+
+# Make engine package importable
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from engine.council import Council, Chat
+from engine.council.chat import Message
+from engine.council.engine import COUNCIL_ROOT
+
+
+def _resolve_id(maybe_id: str | None) -> str:
+    if maybe_id:
+        return maybe_id
+    # Pick the most recently modified council
+    if not COUNCIL_ROOT.exists():
+        sys.exit("No councils yet. Use `council convene` to start one.")
+    candidates = [p for p in COUNCIL_ROOT.iterdir() if p.is_dir() and (p / "chat.jsonl").exists()]
+    if not candidates:
+        sys.exit("No councils yet.")
+    most_recent = max(candidates, key=lambda p: (p / "chat.jsonl").stat().st_mtime)
+    return most_recent.name
+
+
+def _render_msg(m: Message, width: int = 78) -> str:
+    addr = f" → @{m.addressed_to}" if m.addressed_to and m.addressed_to != "none" else ""
+    head = f"[{m.ts}] {m.speaker}{addr}"
+    body = m.body
+    return f"\n{head}\n{'-' * len(head)}\n{body}"
+
+
+def cmd_convene(args):
+    personas = [p.strip().lower() for p in args.personas.split(",")]
+
+    def on_turn(m: Message):
+        print(_render_msg(m), flush=True)
+
+    council = Council.convene(
+        topic=args.topic,
+        personas=personas,
+        seed=args.seed,
+        first_speaker=args.first,
+        max_turns=args.rounds,
+        on_turn=on_turn,
+    )
+    print(f"# Council convened: {council.id}", file=sys.stderr)
+    print(f"# Personas: {', '.join(personas)}", file=sys.stderr)
+    print(f"# Topic: {council.topic}", file=sys.stderr)
+    print(f"# Data: {council.root}", file=sys.stderr)
+    print(f"# Running up to {args.rounds} turns...", file=sys.stderr)
+    council.run()
+    print(f"\n# Adjourned. Transcript: {council.root}/chat.jsonl", file=sys.stderr)
+
+
+def cmd_list(args):
+    if not COUNCIL_ROOT.exists():
+        return
+    for p in sorted(COUNCIL_ROOT.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True):
+        if not p.is_dir():
+            continue
+        chat_path = p / "chat.jsonl"
+        if not chat_path.exists():
+            continue
+        topic_path = p / "topic.txt"
+        topic = topic_path.read_text().strip() if topic_path.exists() else "(no topic)"
+        n = sum(1 for _ in open(chat_path)) if chat_path.exists() else 0
+        print(f"{p.name}\t{n} turns\t{topic}")
+
+
+def cmd_say(args):
+    id_ = _resolve_id(args.id)
+    chat = Chat(COUNCIL_ROOT / id_ / "chat.jsonl")
+    # Default addressee: the persona last addressed by anyone
+    last = chat.last()
+    default_addr = last.speaker if last and last.speaker != "operator" else "all"
+    # Parse @name from the operator message if present
+    import re
+    m = re.search(r"@(\w+)", args.message)
+    addr = m.group(1).lower() if m else default_addr
+    chat.append(Message.now(speaker="operator", addressed_to=addr, body=args.message))
+    print(f"# Appended to {id_}. Addressed @{addr}.")
+
+
+def cmd_tail(args):
+    id_ = _resolve_id(args.id)
+    chat = Chat(COUNCIL_ROOT / id_ / "chat.jsonl")
+    # Print existing
+    for m in chat.read():
+        print(_render_msg(m), flush=True)
+    if args.follow:
+        print(f"\n# Following {id_}... Ctrl-C to stop.\n", file=sys.stderr)
+        # Manual tail loop
+        seen = len(chat)
+        try:
+            while True:
+                msgs = chat.read()
+                while seen < len(msgs):
+                    print(_render_msg(msgs[seen]), flush=True)
+                    seen += 1
+                time.sleep(0.5)
+        except KeyboardInterrupt:
+            print("\n# Stopped.", file=sys.stderr)
+
+
+def cmd_show(args):
+    id_ = _resolve_id(args.id)
+    chat = Chat(COUNCIL_ROOT / id_ / "chat.jsonl")
+    for m in chat.read():
+        print(_render_msg(m))
+
+
+def cmd_close(args):
+    id_ = _resolve_id(args.id)
+    chat = Chat(COUNCIL_ROOT / id_ / "chat.jsonl")
+    chat.append(Message.now(speaker="operator", addressed_to="close", body="Adjourned by operator."))
+    print(f"# Council {id_} adjourned.")
+
+
+def cmd_synthesize(args):
+    """Re-run synthesis on an existing council. Writes vault memo."""
+    id_ = _resolve_id(args.id)
+    council = Council.resume(id_)
+    result = council.synthesize()
+    if result.get("memo_path"):
+        print(f"# Memo written: {result['memo_path']}")
+        print("")
+        print(result.get("summary", ""))
+
+
+def cmd_background(args):
+    """Convene a council and immediately return — runs in the background."""
+    personas = [p.strip().lower() for p in args.personas.split(",")]
+    council = Council.convene(
+        topic=args.topic,
+        personas=personas,
+        seed=args.seed,
+        first_speaker=args.first,
+        max_turns=args.rounds,
+    )
+    pid = council.convene_background()
+    print(f"# Council convened in background: {council.id}")
+    print(f"# PID: {pid}")
+    print(f"# Watch: council tail {council.id} -f")
+    print(f"# Memo will appear at: ~/vault/knowledge/decisions/$(date +%Y-%m-%d)-{council.id}-council.md")
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="council")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    c = sub.add_parser("convene", help="Start a new council")
+    c.add_argument("topic")
+    c.add_argument("--personas", default="architect,builder,skeptic,dreamer")
+    c.add_argument("--seed", default=None, help="Operator's opening message")
+    c.add_argument("--first", default=None, help="First persona to address (default: first in list)")
+    c.add_argument("--rounds", type=int, default=8)
+    c.set_defaults(func=cmd_convene)
+
+    sub.add_parser("list", help="List past councils").set_defaults(func=cmd_list)
+
+    s = sub.add_parser("say", help="Operator appends a message to the current council")
+    s.add_argument("message")
+    s.add_argument("--id", default=None)
+    s.set_defaults(func=cmd_say)
+
+    t = sub.add_parser("tail", help="Show or follow a council transcript")
+    t.add_argument("id", nargs="?", default=None)
+    t.add_argument("-f", "--follow", action="store_true")
+    t.set_defaults(func=cmd_tail)
+
+    sh = sub.add_parser("show", help="Print full council transcript")
+    sh.add_argument("id", nargs="?", default=None)
+    sh.set_defaults(func=cmd_show)
+
+    cl = sub.add_parser("close", help="Adjourn the council")
+    cl.add_argument("id", nargs="?", default=None)
+    cl.set_defaults(func=cmd_close)
+
+    sy = sub.add_parser("synthesize", help="Re-synthesize an existing council into a vault memo")
+    sy.add_argument("id", nargs="?", default=None)
+    sy.set_defaults(func=cmd_synthesize)
+
+    bg = sub.add_parser("background", help="Convene a council in the background — returns immediately")
+    bg.add_argument("topic")
+    bg.add_argument("--personas", default="architect,builder,skeptic,dreamer")
+    bg.add_argument("--seed", default=None)
+    bg.add_argument("--first", default=None)
+    bg.add_argument("--rounds", type=int, default=8)
+    bg.set_defaults(func=cmd_background)
+
+    args = ap.parse_args()
+    args.func(args)
+
+
+if __name__ == "__main__":
+    main()
