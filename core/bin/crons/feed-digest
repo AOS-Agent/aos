@@ -63,7 +63,7 @@ MSG="$MSG"$'\n'"${TOTAL_UNREAD} unread briefs"
 MSG="$MSG"$'\n'
 
 # Parse each brief (pipe-separated from sqlite3 default)
-while IFS='|' read -r title platform score url source_name; do
+while IFS='|' read -r title _ score _ source_name; do
     [ -z "$title" ] && continue
     # Truncate title to 80 chars
     short_title="${title:0:80}"

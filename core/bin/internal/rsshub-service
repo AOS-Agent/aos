@@ -66,7 +66,7 @@ else
 fi
 
 # Health check
-for i in $(seq 1 15); do
+for _ in $(seq 1 15); do
     if curl -sf "http://localhost:${PORT}/healthz" &>/dev/null; then
         log "Healthy on port $PORT"
         exit 0

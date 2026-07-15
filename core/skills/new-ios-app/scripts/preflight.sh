@@ -12,7 +12,6 @@ set -uo pipefail
 INSTALL=0
 [ "${1:-}" = "--install" ] && INSTALL=1
 
-HERE="$(cd "$(dirname "$0")" && pwd)"
 SECRET="$HOME/aos/core/bin/cli/agent-secret"
 
 HARD_FAILS=0
