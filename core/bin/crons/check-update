@@ -467,6 +467,235 @@ apply_git() {
     exec "$AOS_DIR/core/bin/crons/check-update" --continue
 }
 
+# ── Service venv rebuild (safe: stage → verify → atomic swap) ────────────────
+#
+# A service's venv must never be torn down before a working replacement
+# exists. The previous implementation `rm -rf`'d the live venv and then called
+# `aos deploy`, which (a) only understands pyproject.toml, so the crawler
+# (requirements.txt) could never rebuild, and (b) left the service with NO venv
+# whenever the rebuild failed — exactly what broke the live crawler on the
+# v0.6.8 update. These helpers build the new venv at a staging path, verify the
+# service's primary dependency imports, then atomically swap it in — restoring
+# the old venv on any failure.
+
+# Pick the newest available Python (3.11+) for venv creation — mirrors the
+# `aos deploy` _find_python logic so rebuilds match a fresh deploy.
+_find_venv_python() {
+    local p minor
+    for p in /opt/homebrew/bin/python3.13 /opt/homebrew/bin/python3 "$HOME/.local/bin/python3"; do
+        if [[ -f "$p" ]]; then
+            minor=$("$p" --version 2>&1 | awk '{print $2}' | cut -d. -f2)
+            if [[ "$minor" =~ ^[0-9]+$ && "$minor" -ge 11 ]]; then
+                echo "$p"
+                return
+            fi
+        fi
+    done
+    echo "python3"
+}
+
+# Extract the newline-separated dependency list from a pyproject.toml.
+_pyproject_deps() {
+    PYPROJECT="$1" python3 - <<'PY'
+import os, re
+p = os.environ["PYPROJECT"]
+try:
+    import tomllib
+    with open(p, "rb") as f:
+        deps = tomllib.load(f).get("project", {}).get("dependencies", [])
+except Exception:
+    deps = []
+    in_deps = False
+    for line in open(p):
+        s = line.strip()
+        if s == "dependencies = [":
+            in_deps = True
+            continue
+        if in_deps and s == "]":
+            break
+        if in_deps:
+            m = re.search(r'"(.+?)"', line)
+            if m:
+                deps.append(m.group(1))
+print("\n".join(deps))
+PY
+}
+
+# Verify the service's primary dependency imports inside the freshly built
+# venv. Runs the check with the NEW venv's own interpreter so it exercises the
+# real install. Resolves the correct import name from the distribution's
+# top_level.txt (package name != import name for e.g. python-telegram-bot →
+# telegram); falls back to a normalized name, then to "distribution present".
+# Exit 0 = good venv, 1 = do not swap it in.
+_verify_primary_import() {
+    local venv_py="$1" depfile="$2" depmode="$3"
+    DEPFILE="$depfile" DEPMODE="$depmode" "$venv_py" - <<'PY'
+import os, re, sys, importlib
+from importlib import metadata
+
+depfile = os.environ["DEPFILE"]
+depmode = os.environ["DEPMODE"]
+
+deps = []
+if depmode == "pyproject":
+    try:
+        import tomllib
+        with open(depfile, "rb") as f:
+            deps = tomllib.load(f).get("project", {}).get("dependencies", [])
+    except Exception:
+        in_deps = False
+        for line in open(depfile):
+            s = line.strip()
+            if s == "dependencies = [":
+                in_deps = True
+                continue
+            if in_deps and s == "]":
+                break
+            if in_deps:
+                m = re.search(r'"(.+?)"', line)
+                if m:
+                    deps.append(m.group(1))
+else:
+    for line in open(depfile):
+        s = line.strip()
+        if not s or s.startswith("#") or s.startswith("-"):
+            continue
+        deps.append(s)
+
+if not deps:
+    print("no-deps")
+    sys.exit(0)
+
+name = re.split(r"[<>=!~;\[ ]", deps[0], maxsplit=1)[0].strip()
+if not name:
+    print("no-name")
+    sys.exit(0)
+
+cands = []
+# Preferred: reverse the top-level-module → distribution map (handles the
+# package-name != import-name case, e.g. python-telegram-bot → telegram, even
+# for modern wheels that ship no top_level.txt).
+try:
+    pd = metadata.packages_distributions()
+    cands = [mod for mod, dists in pd.items() if name in dists]
+except Exception:
+    pass
+if not cands:
+    try:
+        tl = metadata.distribution(name).read_text("top_level.txt")
+        if tl:
+            cands = [m.strip() for m in tl.splitlines() if m.strip() and not m.startswith("_")]
+    except Exception:
+        pass
+if not cands:
+    cands = [name.replace("-", "_").lower(), name.replace("-", "").lower()]
+
+for m in cands:
+    try:
+        importlib.import_module(m)
+        print("import-ok:" + m)
+        sys.exit(0)
+    except Exception:
+        continue
+
+# Import may fail for reasons unrelated to a broken install (heavy optional
+# side-effect imports). A resolvable distribution still proves the install
+# landed — accept it rather than reject a good venv.
+try:
+    metadata.distribution(name)
+    print("dist-ok:" + name)
+    sys.exit(0)
+except Exception:
+    pass
+
+print("FAIL:" + name)
+sys.exit(1)
+PY
+}
+
+# Rebuild one service's venv safely. Returns 0 on success (or nothing to do),
+# 1 on failure — the live venv is always left in a working state.
+_rebuild_service_venv() {
+    local svc="$1"
+    local src="$AOS_DIR/core/services/$svc"
+    local dst="$HOME/.aos/services/$svc"
+    local venv="$dst/.venv"
+    local staging="$dst/.venv.new"
+    local backup="$dst/.venv.old"
+
+    # Choose the dependency source: pinned lock first, then requirements.txt,
+    # then pyproject.toml. Services without any of these (Go services, or
+    # stdlib-only Python) have no venv to rebuild.
+    local depfile="" depmode=""
+    if [[ -f "$src/requirements.lock" ]]; then
+        depfile="$src/requirements.lock"; depmode="req"
+    elif [[ -f "$src/requirements.txt" ]]; then
+        depfile="$src/requirements.txt"; depmode="req"
+    elif [[ -f "$src/pyproject.toml" ]]; then
+        depfile="$src/pyproject.toml"; depmode="pyproject"
+    else
+        log "  $svc has no requirements/pyproject — no venv to rebuild, skipping"
+        return 0
+    fi
+
+    local py_bin
+    py_bin=$(_find_venv_python)
+
+    # Clear any leftover staging/backup from a previously interrupted rebuild.
+    rm -rf "$staging" "$backup"
+
+    log "  Staging new $svc venv ($depmode: $(basename "$depfile"))..."
+    if ! uv venv "$staging" --python "$py_bin" >/dev/null 2>&1 || [[ ! -x "$staging/bin/python" ]]; then
+        log "  ERROR: $svc venv creation failed — keeping existing venv"
+        rm -rf "$staging"
+        return 1
+    fi
+
+    local install_ok=false
+    if [[ "$depmode" == "req" ]]; then
+        if uv pip install -p "$staging/bin/python" -r "$depfile" >/dev/null 2>&1; then
+            install_ok=true
+        fi
+    else
+        local deps
+        deps=$(_pyproject_deps "$depfile")
+        if [[ -n "$deps" ]] && echo "$deps" | uv pip install -p "$staging/bin/python" -r - >/dev/null 2>&1; then
+            install_ok=true
+        fi
+    fi
+    if [[ "$install_ok" != true ]]; then
+        log "  ERROR: $svc dependency install failed — keeping existing venv"
+        rm -rf "$staging"
+        return 1
+    fi
+
+    if ! _verify_primary_import "$staging/bin/python" "$depfile" "$depmode"; then
+        log "  ERROR: $svc primary-dependency import check failed — keeping existing venv"
+        rm -rf "$staging"
+        return 1
+    fi
+
+    # Atomic swap: move the live venv aside, promote staging, delete the old
+    # copy. On any failure mid-swap, restore the backup so the service keeps a
+    # working venv.
+    if [[ -d "$venv" ]]; then
+        if ! mv "$venv" "$backup"; then
+            log "  ERROR: $svc could not move old venv aside — keeping existing venv"
+            rm -rf "$staging"
+            return 1
+        fi
+    fi
+    if ! mv "$staging" "$venv"; then
+        log "  ERROR: $svc swap failed — restoring previous venv"
+        [[ -d "$backup" ]] && mv "$backup" "$venv"
+        rm -rf "$staging"
+        return 1
+    fi
+    rm -rf "$backup"
+    log "  ✓ $svc venv rebuilt"
+    return 0
+}
+
 # ── Phase 2: Deploy (runs from NEW code on disk) ────────────────────────────
 #
 # This function is always executed from the freshly pulled script.
@@ -553,6 +782,9 @@ deploy() {
     # Auto-discover which services changed and rebuild their venvs.
     # Release installs have no .git in ~/aos, so diff in the source repo using
     # the old/new hashes from the handoff. Git installs diff in ~/aos directly.
+    # Match every dependency-carrying file style, not just pyproject.toml — the
+    # crawler service pins its deps in requirements.txt, so a pyproject-only
+    # filter never noticed its changes.
     local changed_services=""
     if [[ -n "$old_hash" && -n "$new_hash" ]]; then
         local diff_cmd
@@ -562,7 +794,7 @@ deploy() {
             diff_cmd=(git diff --name-only "$old_hash..HEAD")
         fi
         changed_services=$("${diff_cmd[@]}" 2>/dev/null \
-            | grep -E "core/services/[^/]+/(pyproject\.toml|[^/]+\.py)" \
+            | grep -E "core/services/[^/]+/(pyproject\.toml|requirements\.(txt|lock)|[^/]+\.py)" \
             | sed 's|core/services/\([^/]*\)/.*|\1|' \
             | sort -u || true)
     fi
@@ -570,11 +802,14 @@ deploy() {
     if [[ -n "$changed_services" ]]; then
         log "Code/deps changed in: $changed_services"
         for svc in $changed_services; do
-            if [[ -d "$HOME/.aos/services/$svc" ]]; then
-                log "Rebuilding $svc venv..."
-                rm -rf "$HOME/.aos/services/$svc/.venv"
-                bash "$AOS_DIR/core/bin/cli/aos" deploy "$svc" 2>/dev/null || true
-            fi
+            # Only touch services that are actually deployed on this machine.
+            [[ -d "$HOME/.aos/services/$svc" ]] || continue
+            log "Rebuilding $svc venv..."
+            # _rebuild_service_venv builds the replacement at a staging path and
+            # only swaps it in once the primary dependency imports — the live
+            # venv is never deleted before a good replacement exists (the
+            # destructive rm -rf that broke the crawler on the v0.6.8 update).
+            _rebuild_service_venv "$svc" || log "  WARN: $svc venv rebuild failed — previous venv left intact"
         done
     fi
 
