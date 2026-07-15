@@ -1,90 +1,78 @@
 """
 Shared fixtures for AOS work engine tests.
 
-Every test that needs file I/O gets its own isolated tmp_path directory.
-NEVER touches ~/.aos/ — all paths are redirected to pytest's tmp_path.
+Every test gets its own isolated SQLite work DB under pytest's tmp_path — the
+same store the live CLI uses (core/engine/work/backend.py → WorkAdapter),
+pointed away from ~/.aos/ via the AOS_WORK_DB override. No test ever touches
+real operator data.
 """
 
+import sqlite3
 import sys
 from pathlib import Path
 
 import pytest
-import yaml
 
-# Make the work package importable without installing it
+# Make the work package importable without installing it. `backend` handles its
+# own `core.qareen.*` path setup at import time.
 WORK_DIR_SRC = Path(__file__).parent.parent / "core" / "engine" / "work"
 if str(WORK_DIR_SRC) not in sys.path:
     sys.path.insert(0, str(WORK_DIR_SRC))
 
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def make_empty_work_yaml(path: Path) -> Path:
-    """Write a minimal empty work.yaml to *path* and return it."""
-    data = {
-        "version": "2.0",
-        "tasks": [],
-        "projects": [],
-        "goals": [],
-        "threads": [],
-        "inbox": [],
-    }
-    path.write_text(yaml.dump(data, default_flow_style=False, sort_keys=False))
-    return path
+# The live migration-patched work-table schema, captured as a fixture. See
+# tests/fixtures/work_schema.sql for how to regenerate it.
+_WORK_SCHEMA = (Path(__file__).parent / "fixtures" / "work_schema.sql").read_text()
 
 
-def make_work_yaml(path: Path, tasks=None, projects=None, goals=None,
-                   threads=None, inbox=None) -> Path:
-    """Write a work.yaml with the given lists to *path* and return it."""
-    data = {
-        "version": "2.0",
-        "tasks": tasks or [],
-        "projects": projects or [],
-        "goals": goals or [],
-        "threads": threads or [],
-        "inbox": inbox or [],
-    }
-    path.write_text(yaml.dump(data, default_flow_style=False, sort_keys=False,
-                               allow_unicode=True))
+def _make_work_db(path: Path) -> Path:
+    """Create an isolated work DB with the live schema at *path*."""
+    conn = sqlite3.connect(str(path))
+    conn.executescript(_WORK_SCHEMA)
+    conn.commit()
+    conn.close()
     return path
 
 
 # ---------------------------------------------------------------------------
-# Core fixture: isolated work directory wired into engine module-level vars
+# Core fixture: an isolated work engine bound to a throwaway SQLite DB
 # ---------------------------------------------------------------------------
 
 @pytest.fixture()
 def work_env(tmp_path, monkeypatch):
-    """Return a dict with work_dir / work_file pointing at tmp_path.
+    """Return a dict wired to an isolated backend instance.
 
-    Also patches engine.WORK_DIR, engine.WORK_FILE, engine.ACTIVITY_FILE,
-    engine.LIVE_CONTEXT_FILE, and engine.LOCK_FILE so that all engine
-    operations go to the temp directory rather than ~/.aos/work/.
+    Keys:
+        engine    the backend module (the live CLI's work engine)
+        db_path   the throwaway SQLite DB backing it
+        work_dir  a scratch dir for the activity log
 
     Usage:
         def test_something(work_env):
-            import engine
-            task = engine.add_task("Hello")
+            eng = work_env["engine"]
+            task = eng.add_task("Hello")
             assert task["title"] == "Hello"
     """
-    # Re-import fresh each time so module-level state is clean
-    import engine as eng
+    import backend as eng
 
     work_dir = tmp_path / "work"
     work_dir.mkdir()
-    work_file = work_dir / "work.yaml"
+    db_path = _make_work_db(tmp_path / "work.db")
 
+    # Point the engine at the isolated DB. AOS_WORK_DB is what the resolution
+    # logic reads; DB_PATH is the already-resolved module global.
+    monkeypatch.setenv("AOS_WORK_DB", str(db_path))
+    monkeypatch.setattr(eng, "DB_PATH", db_path)
     monkeypatch.setattr(eng, "WORK_DIR", work_dir)
-    monkeypatch.setattr(eng, "WORK_FILE", work_file)
     monkeypatch.setattr(eng, "ACTIVITY_FILE", work_dir / "activity.yaml")
-    monkeypatch.setattr(eng, "LIVE_CONTEXT_FILE", work_dir / ".live-context.json")
-    monkeypatch.setattr(eng, "LOCK_FILE", work_dir / ".work.lock")
+
+    # Rebind the cached singletons so they open the isolated DB, not a real one.
+    monkeypatch.setattr(eng, "_adapter", None)
+    monkeypatch.setattr(eng, "_resolver", None)
+    monkeypatch.setattr(eng, "_project_ctx", None)
 
     return {
         "work_dir": work_dir,
-        "work_file": work_file,
+        "db_path": db_path,
         "engine": eng,
     }
 
@@ -94,15 +82,9 @@ def populated_work_env(work_env):
     """work_env pre-seeded with a project and a few tasks."""
     eng = work_env["engine"]
 
-    # Create the 'aos' project with short_id 'aos'
     eng.add_project("AOS Framework", short_id="aos", project_id="aos")
 
-    # Add tasks under the project
-    t1 = eng.add_task("Build session linking", project="aos", priority=2)
-    t2 = eng.add_task("Write onboarding docs", project="aos", priority=3)
-    t3 = eng.add_task("Unscoped task")  # no project
-
-    work_env["t1"] = t1
-    work_env["t2"] = t2
-    work_env["t3"] = t3
+    work_env["t1"] = eng.add_task("Build session linking", project="aos", priority=2)
+    work_env["t2"] = eng.add_task("Write onboarding docs", project="aos", priority=3)
+    work_env["t3"] = eng.add_task("Unscoped task")  # no project
     return work_env
