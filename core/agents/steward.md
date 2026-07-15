@@ -59,7 +59,7 @@ Monitor -> Detect -> Correct -> Report
 
 | Service | Port | Health check |
 |---------|------|-------------|
-| Dashboard | 4096 | `curl -s http://127.0.0.1:4096/health` |
+| Dashboard | 4096 | `curl -s http://127.0.0.1:4096/api/health` |
 | Listen | 7600 | `curl -s http://127.0.0.1:7600/health` |
 | Bridge | daemon | `launchctl list \| grep com.aos.bridge` |
 | Memory | stdio | MCP server, check process |

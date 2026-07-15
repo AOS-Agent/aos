@@ -157,7 +157,7 @@ These markers match the initiative pipeline: `✅` complete, `🔶` in progress,
 **Done when**: Concrete, verifiable acceptance criteria. Not vibes, not "it works." Specific conditions that can be checked.
 
 Examples of good criteria:
-- `curl http://127.0.0.1:4096/health` returns 200
+- `curl http://127.0.0.1:4096/api/health` returns 200
 - `~/.aos/logs/bridge.jsonl` contains entries with `"level"` and `"ts"` fields
 - `launchctl list | grep com.agent.logwatch` shows running
 
@@ -179,7 +179,7 @@ After approval, do the work. Key rules:
 2. **Verify against acceptance criteria.** Show evidence with blockquotes:
 
    ```
-   > ✅ `curl :4096/health` → 200
+   > ✅ `curl :4096/api/health` → 200
    > ✅ `logs/bridge.jsonl` has valid JSON with "level" and "ts"
    > ❌ `launchctl list | grep logwatch` → not found
    ```
