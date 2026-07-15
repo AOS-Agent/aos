@@ -696,6 +696,61 @@ _rebuild_service_venv() {
     return 0
 }
 
+# ── Service restart ─────────────────────────────────────────────────────────
+#
+# Restart a LaunchAgent so it picks up new code/venv WITHOUT ever leaving the
+# job unloaded.
+#
+# `launchctl bootout` is asynchronous — it returns before launchd has finished
+# tearing the job down. Bootstrapping immediately after (the old inline
+# bootout → bootstrap → kickstart sequence did, with every error swallowed by
+# 2>/dev/null) races the teardown; when bootstrap loses that race it fails
+# silently and the job is left booted-out. That is exactly how com.aos.bridge
+# vanished during the v0.6.10 update cycle: plist intact, venv intact, job gone.
+#
+# This helper is the single guarded path for restarting a service. It settles
+# after bootout, verifies the bootstrap actually registered the job, retries
+# the bootstrap if it didn't, and only then kickstarts. It never returns having
+# left the service unloaded silently — either the job is loaded, or it returns
+# non-zero so the caller escalates. This mirrors the settle-then-verify pattern
+# migrations 054/056/071 use (see those for the drain-blocking incident).
+_restart_launchagent() {
+    local uid="$1" la_name="$2" la_plist="$3"
+    local domain="gui/$uid"
+    local service="gui/$uid/$la_name"
+    local i
+
+    # Bootout the old instance, then wait for launchd to actually release it
+    # before bootstrapping (bootout is async — up to ~5s to settle).
+    launchctl bootout "$service" 2>/dev/null || true
+    for i in 1 2 3 4 5; do
+        launchctl print "$service" >/dev/null 2>&1 || break
+        sleep 1
+    done
+
+    # Bootstrap, then VERIFY the job actually registered. Retry on failure —
+    # a lost bootout race must never be left as a silently-unloaded service.
+    local loaded=false
+    for i in 1 2 3; do
+        launchctl bootstrap "$domain" "$la_plist" 2>/dev/null || true
+        if launchctl print "$service" >/dev/null 2>&1; then
+            loaded=true
+            break
+        fi
+        sleep 1
+    done
+
+    if [[ "$loaded" != true ]]; then
+        log "  ERROR: $la_name failed to bootstrap after 3 attempts — service left DOWN"
+        return 1
+    fi
+
+    # In-place restart to pick up new code/venv. `-k` can block while the old
+    # instance drains before the new one binds its port — not a failure.
+    launchctl kickstart -k "$service" 2>/dev/null || true
+    return 0
+}
+
 # ── Phase 2: Deploy (runs from NEW code on disk) ────────────────────────────
 #
 # This function is always executed from the freshly pulled script.
@@ -826,9 +881,8 @@ deploy() {
 
         if echo "$changed_services" | grep -qx "$svc_name"; then
             log "Restarting $svc_name..."
-            launchctl bootout "gui/$uid/$la_name" 2>/dev/null
-            launchctl bootstrap "gui/$uid" "$la_plist" 2>/dev/null
-            launchctl kickstart -k "gui/$uid/$la_name" 2>/dev/null
+            _restart_launchagent "$uid" "$la_name" "$la_plist" \
+                || log "  WARN: $svc_name restart incomplete — health check will retry"
             restarted_services+=("$la_name")
         fi
     done
@@ -899,9 +953,8 @@ _health_check() {
             if ! launchctl list 2>/dev/null | grep -q "$la"; then
                 local svc_name="${la#com.aos.}"
                 log "WARN: $svc_name not running — attempting restart"
-                launchctl bootout "gui/$uid/$la" 2>/dev/null
-                launchctl bootstrap "gui/$uid" "$HOME/Library/LaunchAgents/${la}.plist" 2>/dev/null
-                launchctl kickstart -k "gui/$uid/$la" 2>/dev/null
+                _restart_launchagent "$uid" "$la" "$HOME/Library/LaunchAgents/${la}.plist" \
+                    || log "  ERROR: $svc_name still down after guarded restart"
             fi
         done
         notify "⚠️ Update to $new_version applied but some services needed extra restart. Check 'aos status'."
