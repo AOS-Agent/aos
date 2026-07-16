@@ -91,6 +91,19 @@ def _check_health() -> dict:
     except Exception:
         ram_pct = -1
 
+    # Memory pressure (the actionable signal; see alert note below)
+    mem_free_pct = -1
+    try:
+        mp = subprocess.run(
+            ["memory_pressure"], capture_output=True, text=True, timeout=5
+        )
+        for line in mp.stdout.splitlines():
+            if "free percentage" in line:
+                mem_free_pct = int(float(line.split(":")[-1].strip().rstrip("%")))
+                break
+    except Exception:
+        pass
+
     # Listen server
     listen_ok = False
     listen_detail = "DOWN"
@@ -132,6 +145,7 @@ def _check_health() -> dict:
     return {
         "disk_pct": disk_pct,
         "ram_pct": ram_pct,
+        "mem_free_pct": mem_free_pct,
         "listen_ok": listen_ok,
         "listen_detail": listen_detail,
         "dashboard_ok": dashboard_ok,
@@ -145,8 +159,16 @@ def _find_problems(health: dict) -> list[str]:
     problems = []
     if health["disk_pct"] > 85:
         problems.append(f"Disk at {health['disk_pct']}% — consider cleanup")
-    if health["ram_pct"] > 85:
-        problems.append(f"RAM at {health['ram_pct']}% — check for runaway processes")
+    # Raw used-% is the wrong alarm on macOS — the OS keeps RAM ~85% full by
+    # design (caching/compression), so a >85% check cries wolf on any healthy
+    # busy machine (operator got recurring false alerts, 2026-07-15). Alert on
+    # memory PRESSURE instead: free-page percentage under 10% means the
+    # compressor/swap are genuinely struggling.
+    if 0 <= health.get("mem_free_pct", -1) < 10:
+        problems.append(
+            f"Memory pressure critical — {health['mem_free_pct']}% free pages "
+            f"(ram used {health['ram_pct']}%) — check for runaway processes"
+        )
     if not health["listen_ok"]:
         problems.append("Listen server is DOWN")
     if not health["dashboard_ok"]:
