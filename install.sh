@@ -241,7 +241,7 @@ _banner() {
       ╚═╝  ╚═╝ ╚═════╝ ╚══════╝
 BANNER
     echo "${RESET}"
-    echo "  ${MUTED}Agentic Operating System  v${AOS_VERSION}${RESET}"
+    echo "  ${MUTED}Agentic Operating System  ${AOS_VERSION}${RESET}"
     echo "  ${MUTED}$(uname -m) · macOS $(sw_vers -productVersion 2>/dev/null || echo '?') · $(date +%H:%M)${RESET}"
     echo ""
     echo "  ${MUTED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
