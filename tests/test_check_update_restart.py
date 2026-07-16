@@ -1,24 +1,24 @@
 """
-Pattern gate: every LaunchAgent restart in check-update must go through the
-guarded `_restart_launchagent` helper — never an inline
-bootout → bootstrap → kickstart sequence.
+Routing gate: every LaunchAgent restart in AOS must go through the shared
+guarded choke-point (core/infra/lib/service_ctl.py) — never a raw
+bootout / bootstrap / kickstart / unload / load.
 
-Why this gate exists: during the v0.6.10 update cycle com.aos.bridge was
-silently unloaded. The phase-2 restart loop ran
+Why this gate exists: during the v0.6.10/0.6.11 update cycles com.aos.bridge and
+com.aos.transcriber were silently unloaded. Several restart paths ran an inline
 
-    launchctl bootout  gui/$uid/$la 2>/dev/null
-    launchctl bootstrap gui/$uid $plist 2>/dev/null
-    launchctl kickstart -k gui/$uid/$la 2>/dev/null
+    launchctl bootout  gui/$uid/$svc
+    launchctl bootstrap gui/$uid $plist
+    launchctl kickstart -k gui/$uid/$svc
 
-with no settle after bootout and every error swallowed. `launchctl bootout`
-is asynchronous, so `bootstrap` raced the teardown; when it lost, the job was
-left booted-out — plist intact, venv intact, job gone — and nothing re-loaded
-it until a human bootstrapped it back hours later.
+with no settle after bootout and errors swallowed. `launchctl bootout` is
+asynchronous, so `bootstrap` raced the teardown; when it lost, the job was left
+booted-out — plist intact, venv intact, job gone (aos#180).
 
-The fix centralizes all launchctl bootout/bootstrap/kickstart into one helper
-that settles after bootout, verifies the bootstrap registered the job, retries,
-and never returns having left the service silently unloaded. This test locks
-that invariant in place so the racy copy-paste cannot reappear.
+The fix promotes check-update's guarded `_restart_launchagent` into ONE shared
+helper (settle → verify → retry → kickstart, with lifecycle audit logging) and
+routes all six restart paths through it. This test proves no raw launchctl
+lifecycle call survives in the live restart surface, so the racy copy-paste
+cannot reappear. The settle/verify logic itself is tested in test_service_ctl.py.
 """
 
 import re
@@ -28,86 +28,74 @@ import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
 CHECK_UPDATE = REPO_ROOT / "core" / "bin" / "crons" / "check-update"
-
+SERVICE_CTL = REPO_ROOT / "core" / "infra" / "lib" / "service_ctl.py"
 HELPER_NAME = "_restart_launchagent"
 
+# The live restart surface: every file that used to (or could) restart a
+# LaunchAgent. service_ctl.py is the ONLY file allowed to issue raw launchctl
+# lifecycle verbs; everything else must delegate to it. Migrations are excluded
+# — they are one-time, already-applied, frozen historical artifacts with their
+# own guarded (settle + kickstart-timeout + health-poll) pattern.
+LIVE_RESTART_SURFACE = [
+    "core/bin/crons/check-update",
+    "core/bin/crons/watchdog",
+    "core/bin/cli/aos",
+    "core/infra/reconcile/checks/transcriber.py",
+    "core/infra/reconcile/checks/bridge_poll_liveness.py",
+    "core/infra/reconcile/checks/launchagents.py",
+    "core/infra/reconcile/checks/sentinel_plist.py",
+    "core/infra/reconcile/checks/n8n.py",
+]
 
-def _lines():
-    return CHECK_UPDATE.read_text().splitlines()
-
-
-def _helper_range(lines):
-    """Return (start, end) line indices (inclusive) of the helper's body.
-
-    The helper opens with `_restart_launchagent() {` and closes with a `}` at
-    column 0 — the shell function style used throughout check-update.
-    """
-    start = None
-    for i, line in enumerate(lines):
-        if line.startswith(f"{HELPER_NAME}()"):
-            start = i
-            break
-    assert start is not None, f"{HELPER_NAME} is not defined in check-update"
-    for j in range(start + 1, len(lines)):
-        if lines[j] == "}":
-            return start, j
-    pytest.fail(f"{HELPER_NAME} has no closing brace at column 0")
-
-
-def test_helper_is_defined():
-    assert HELPER_NAME in CHECK_UPDATE.read_text()
+# Raw launchd lifecycle verbs that must not appear outside the choke-point.
+# `launchctl list` / `launchctl print` are read-only probes and are allowed.
+RAW_LIFECYCLE = re.compile(
+    r"launchctl\s+(bootout|bootstrap|kickstart)\b"
+    r"|launchctl\s+(unload|load)\b"
+)
 
 
-def test_all_launchctl_lifecycle_calls_live_in_the_helper():
-    """bootout / bootstrap / kickstart may only appear inside the guarded helper.
+def _is_comment(line: str) -> bool:
+    # Both Python and shell use '#'; every file in the surface is one or the other.
+    return line.lstrip().startswith("#")
 
-    Comment lines are ignored; only executable `launchctl ...` calls count.
-    """
-    lines = _lines()
-    start, end = _helper_range(lines)
-    call = re.compile(r"^\s*launchctl\s+(bootout|bootstrap|kickstart)\b")
-    for i, line in enumerate(lines):
-        if line.lstrip().startswith("#"):
+
+def test_choke_point_exists():
+    assert SERVICE_CTL.exists(), "service_ctl.py choke-point is missing"
+    text = SERVICE_CTL.read_text()
+    assert "def restart_launchagent" in text
+    # The guarded sequence lives here.
+    assert "bootout" in text and "bootstrap" in text and "kickstart" in text
+
+
+def test_check_update_helper_delegates_to_choke_point():
+    """check-update's _restart_launchagent must now delegate to service_ctl.py,
+    not run launchctl inline."""
+    text = CHECK_UPDATE.read_text()
+    assert HELPER_NAME in text
+    assert "service_ctl.py" in text and "restart" in text
+
+
+@pytest.mark.parametrize("rel", LIVE_RESTART_SURFACE)
+def test_no_raw_launchctl_lifecycle_in_restart_surface(rel):
+    """No file in the live restart surface may issue a raw launchctl
+    bootout/bootstrap/kickstart/unload/load — all must route through the
+    shared choke-point (grep-proof, encoded as a test)."""
+    path = REPO_ROOT / rel
+    assert path.exists(), f"{rel} not found"
+    offenders = []
+    for i, line in enumerate(path.read_text().splitlines(), start=1):
+        if _is_comment(line):
             continue
-        if call.search(line):
-            assert start <= i <= end, (
-                f"check-update line {i + 1} runs an inline launchctl "
-                f"lifecycle call outside {HELPER_NAME}: {line.strip()!r}. "
-                f"Route it through {HELPER_NAME} — a bare bootout→bootstrap "
-                f"races launchd's async teardown and can leave the job "
-                f"unloaded (the v0.6.10 bridge-vanish incident)."
-            )
-
-
-def test_helper_settles_after_bootout_and_verifies_bootstrap():
-    """The helper must wait after bootout and verify the job actually loaded."""
-    lines = _lines()
-    start, end = _helper_range(lines)
-    body = "\n".join(lines[start : end + 1])
-
-    bootout_idx = next(i for i in range(start, end + 1) if "launchctl bootout" in lines[i])
-    bootstrap_idx = next(i for i in range(start, end + 1) if "launchctl bootstrap" in lines[i])
-    assert bootout_idx < bootstrap_idx, "bootout must precede bootstrap in the helper"
-
-    # A settle probe (launchctl print) must sit between bootout and bootstrap.
-    settle = any(
-        "launchctl print" in lines[i] for i in range(bootout_idx + 1, bootstrap_idx)
-    )
-    assert settle, (
-        "The helper must wait for launchd to release the job (a `launchctl "
-        "print` settle probe) between bootout and bootstrap."
+        if RAW_LIFECYCLE.search(line):
+            offenders.append(f"{rel}:{i}: {line.strip()}")
+    assert not offenders, (
+        "Raw launchctl lifecycle call outside the choke-point — route it "
+        "through core/infra/lib/service_ctl.py restart_launchagent():\n  "
+        + "\n  ".join(offenders)
     )
 
-    # A verify probe must sit after bootstrap so a lost race is detected.
-    verify = any(
-        "launchctl print" in lines[i] for i in range(bootstrap_idx + 1, end + 1)
-    )
-    assert verify, (
-        "The helper must verify the job registered (a `launchctl print` check) "
-        "after bootstrap, and retry — never leave the service silently unloaded."
-    )
 
-    # A retry loop must guard the bootstrap so a single lost race isn't fatal.
-    assert "loaded=true" in body or "for i in" in body, (
-        "The helper must retry bootstrap until the job is loaded."
-    )
+def test_service_ctl_is_the_only_place_with_raw_lifecycle():
+    """Sanity: the choke-point itself DOES own the raw verbs."""
+    assert RAW_LIFECYCLE.search(SERVICE_CTL.read_text())

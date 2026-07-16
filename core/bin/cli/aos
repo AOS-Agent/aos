@@ -862,11 +862,19 @@ p.write_text(json.dumps(s, indent=2) + '\n')
         bash "$0" sync-rules 2>/dev/null
         bash "$0" sync-mcp 2>/dev/null
 
-        # Reload all LaunchAgents
+        # Reload all LaunchAgents. Discover the deployed plists rather than
+        # carrying a hardcoded list (which drifts and omitted transcriber, n8n,
+        # sentinel, qareen-tunnel, …), and route each through the shared guarded
+        # choke-point so a bare unload/load can't race launchd and leave a job
+        # unloaded (aos#180).
         echo "  Reloading services..."
-        for la in com.aos.scheduler com.aos.bridge com.aos.qareen com.aos.listen; do
-            launchctl unload "$HOME/Library/LaunchAgents/${la}.plist" 2>/dev/null
-            launchctl load "$HOME/Library/LaunchAgents/${la}.plist" 2>/dev/null
+        for la_plist in "$HOME/Library/LaunchAgents/com.aos."*.plist; do
+            [[ -f "$la_plist" ]] || continue
+            la=$(basename "$la_plist" .plist)
+            "$AOS_DIR/core/bin/internal/aos-python" \
+                "$AOS_DIR/core/infra/lib/service_ctl.py" restart "$la" \
+                --plist "$la_plist" --actor "aos-repair" \
+                || echo "    ⚠ $la restart incomplete — check 'aos status'"
         done
 
         echo ""
