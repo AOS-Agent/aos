@@ -26,12 +26,21 @@ if [[ $EUID -eq 0 ]]; then
     exit 1
 fi
 
+# Dry-run walks the ceremony without changing anything, so it needs no admin
+# access — detect it early (before the sudo prompt) so demos and CI stay
+# password-free. The authoritative parse happens below in the modes block.
+_EARLY_DRY_RUN=false
+[[ "${INSTALL_DRY_RUN:-0}" == "1" ]] && _EARLY_DRY_RUN=true
+for _arg in "$@"; do [[ "$_arg" == "--dry-run" ]] && _EARLY_DRY_RUN=true; done
+
 # Cache sudo upfront — one password prompt, then it's good for the whole install
-echo "AOS needs admin access for Homebrew, SSH, and system config."
-echo ""
-if ! sudo true; then
-    echo "  Failed to get admin access. Some steps may fail."
+if [[ "$_EARLY_DRY_RUN" != true ]]; then
+    echo "AOS needs admin access for Homebrew, SSH, and system config."
     echo ""
+    if ! sudo true; then
+        echo "  Failed to get admin access. Some steps may fail."
+        echo ""
+    fi
 fi
 
 # ── Version ──────────────────────────────────────────
@@ -57,7 +66,10 @@ export BUN_INSTALL="$HOME/.bun"
 export PATH="$HOME/.local/bin:$BUN_INSTALL/bin:$PATH"
 
 # ── Modes ──────────────────────────────────────────
+# Dry-run walks the stage ceremony without touching the machine. Enable it with
+# --dry-run or INSTALL_DRY_RUN=1 (the env form is handy for demos and CI).
 DRY_RUN=false
+[[ "${INSTALL_DRY_RUN:-0}" == "1" ]] && DRY_RUN=true
 CHECKPOINT_FILE="$HOME/.aos/.install-checkpoint"
 
 for arg in "$@"; do
@@ -117,11 +129,24 @@ else
     BRAND="" GREEN="" YELLOW="" RED="" CYAN="" MUTED="" ACCENT="" DIM="" BOLD="" RESET=""
 fi
 
+# ── Calm-UI channel ──────────────────────────────────
+# fd 3 is a private copy of the terminal reserved for the install ceremony
+# (banner, spinner, stage lines, failure panel). During a stage, the phase's
+# own stdout/stderr is redirected to $INSTALL_LOG so the screen stays quiet —
+# but the spinner and any failure panel must still reach the operator. They
+# write to fd 3, which is never redirected.
+exec 3>&1
+
 # ── Timing ──────────────────────────────────────────
 INSTALL_START=$(date +%s)
 STEP_START=$INSTALL_START
 _STEP_NUM=0
-_TOTAL_STEPS=7
+_TOTAL_STEPS=6
+_CURRENT_STAGE=""
+# Role is detected at install time (mirrors migration 081): a machine with the
+# ~/project/aos dev workspace is a developer, everything else is an operator.
+# Stamped early by _detect_role so later stages (notably the handoff) can fork.
+ROLE=""
 
 _timer_start() { STEP_START=$(date +%s); }
 _timer_elapsed() {
@@ -145,12 +170,14 @@ _total_elapsed() {
 _SPINNER_PID=""
 _spinner_start() {
     local msg="${1:-Working}"
-    [[ -t 1 ]] || return
+    # Spinner draws on the calm-UI channel (fd 3) so it survives a stage's
+    # stdout→log redirect and keeps animating while the work stays quiet.
+    [[ -t 3 ]] || return
     (
         local frames=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
         local i=0
         while true; do
-            printf "\r  ${CYAN}%s${RESET} ${MUTED}%s${RESET}" "${frames[$((i % 10))]}" "$msg"
+            printf "\r  ${CYAN}%s${RESET} ${MUTED}%s${RESET}" "${frames[$((i % 10))]}" "$msg" >&3
             ((i++))
             sleep 0.08
         done
@@ -163,12 +190,13 @@ _spinner_stop() {
         kill "$_SPINNER_PID" 2>/dev/null
         wait "$_SPINNER_PID" 2>/dev/null || true
         _SPINNER_PID=""
-        printf "\r\033[K"
+        printf "\r\033[K" >&3
     fi
 }
 
-# Restore cursor on exit
-trap 'tput cnorm 2>/dev/null' EXIT INT TERM
+# Restore cursor and clear any live spinner on exit — a stack trace or an
+# interrupt must never leave the terminal with a spinning artifact.
+trap '_spinner_stop; tput cnorm 2>/dev/null >&3' EXIT INT TERM
 
 # ── Logging ──────────────────────────────────────────
 _log_init() {
@@ -189,18 +217,6 @@ _ok()   { echo "  ${GREEN}✓${RESET} $*"; _log "OK: $*"; }
 _skip() { echo "  ${MUTED}✓ $*${RESET}"; _log "SKIP: $*"; }
 _warn() { echo "  ${YELLOW}!${RESET} $*"; _log "WARN: $*"; }
 _fail() { echo "  ${RED}✗${RESET} $*"; _log "FAIL: $*"; }
-_phase() {
-    if [[ -n "${_PHASE_ACTIVE:-}" ]]; then
-        echo "  ${MUTED}$(_timer_elapsed)${RESET}"
-    fi
-    _PHASE_ACTIVE=1
-    ((_STEP_NUM++)) || true
-    _timer_start
-    echo ""
-    echo "  ${BRAND}[${_STEP_NUM}/${_TOTAL_STEPS}]${RESET} ${BOLD}$*${RESET}"
-    echo ""
-    _log "PHASE: $*"
-}
 _step() {
     echo ""
     echo "  ${BOLD}$*${RESET}"
@@ -231,13 +247,160 @@ BANNER
     echo "  ${MUTED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
 }
 
+# ── Stage presenter ──────────────────────────────────
+# Each install phase is shown as a single calm line: a spinner with a
+# human-named stage while the work runs, resolving to a checkmark. The phase's
+# own output (tool spew, per-item _ok/_skip/_warn lines, migration logs) is
+# redirected to $INSTALL_LOG — the screen never sees raw tool output.
+#
+#   _stage "Human stage name" phase_function [checkpoint_key]
+#
+# A checkpoint key makes the stage resumable: on a re-run it's shown as already
+# done and skipped. If the phase calls _die (fatal) it routes straight to the
+# failure panel; a non-zero return does the same. Success stamps the checkpoint.
+_stage() {
+    local name="$1" fn="$2" ckpt="${3:-}"
+    ((_STEP_NUM++)) || true
+
+    # Dry-run: walk the ceremony without touching the machine.
+    if [[ "$DRY_RUN" == true ]]; then
+        printf "  ${MUTED}[%d/%d]${RESET} ${GREEN}✓${RESET} %s ${MUTED}(dry run)${RESET}\n" \
+            "$_STEP_NUM" "$_TOTAL_STEPS" "$name" >&3
+        _log "DRYRUN STAGE: $name"
+        return 0
+    fi
+
+    # Resume: a completed checkpoint means this stage is already done.
+    if [[ -n "$ckpt" ]] && _checkpoint_skip "$ckpt"; then
+        printf "  ${MUTED}[%d/%d]${RESET} ${GREEN}✓${RESET} %s ${MUTED}(already done)${RESET}\n" \
+            "$_STEP_NUM" "$_TOTAL_STEPS" "$name" >&3
+        _log "SKIP STAGE (resumed): $name"
+        return 0
+    fi
+
+    _CURRENT_STAGE="$name"
+    _timer_start
+    _log "STAGE START: $name"
+    _spinner_start "${name}…"
+
+    # Run the phase with all of its output captured to the log. fd 3 (the
+    # spinner, and the failure panel if _die fires) still reaches the screen.
+    local rc=0
+    { "$fn"; } >>"$INSTALL_LOG" 2>&1 || rc=$?
+
+    _spinner_stop
+    if [[ "$rc" -ne 0 ]]; then
+        _fail_panel "The ${name} step didn't finish cleanly."
+        exit 1
+    fi
+
+    printf "  ${MUTED}[%d/%d]${RESET} ${GREEN}✓${RESET} %s ${MUTED}%s${RESET}\n" \
+        "$_STEP_NUM" "$_TOTAL_STEPS" "$name" "$(_timer_elapsed)" >&3
+    _log "STAGE DONE: $name ($(_timer_elapsed))"
+    [[ -n "$ckpt" ]] && _checkpoint_done "$ckpt"
+    return 0
+}
+
+# ── Graceful failure panel ───────────────────────────
+# A stack trace is never the last thing on screen. When a stage fails we print a
+# calm, bordered, plain-English panel: what happened, what it means, the ONE
+# command to recover, and where the full log lives. Always drawn on fd 3 so it
+# reaches the operator even mid-stage. Preserves a non-zero exit for scripting.
+_fail_panel() {
+    local what="$1"
+    local recover="${2:-bash ~/aos/install.sh}"
+    tput cnorm 2>/dev/null >&3   # bring the cursor back
+    {
+        echo ""
+        echo "  ${RED}────────────────────────────────────────────────────${RESET}"
+        echo "  ${RED}${BOLD}The install paused — one thing needs another try${RESET}"
+        echo ""
+        echo "  ${BOLD}What happened${RESET}"
+        echo "  ${MUTED}${what}${RESET}"
+        echo ""
+        echo "  ${BOLD}What it means${RESET}"
+        echo "  ${MUTED}Your Mac is fine and nothing is half-broken. The installer"
+        echo "  stops cleanly here and picks up exactly where it left off.${RESET}"
+        echo ""
+        echo "  ${BOLD}What to do${RESET}"
+        echo "  Run this again:"
+        echo "    ${BRAND}${BOLD}${recover}${RESET}"
+        echo ""
+        echo "  ${MUTED}Full details are in the log:${RESET}"
+        echo "  ${MUTED}${INSTALL_LOG}${RESET}"
+        echo "  ${RED}────────────────────────────────────────────────────${RESET}"
+        echo ""
+    } >&3
+    _log "PANEL: stage=${_CURRENT_STAGE:-?} what=$what recover=$recover"
+}
+
 # ── Error handling ───────────────────────────────────
+# Fatal errors inside a stage route through the failure panel. Because a stage
+# redirects stdout to the log, _die must draw on fd 3 (via _fail_panel) so the
+# operator actually sees it. The message is used verbatim as "what happened".
 _die() {
-    _fail "$*"
-    echo ""
-    echo "  Install log: $INSTALL_LOG"
-    echo "  Fix the issue above and re-run: bash ~/aos/install.sh"
+    _spinner_stop
+    _fail_panel "$*"
     exit 1
+}
+
+# ── Role detection (mirrors migration 081) ───────────
+# developer = has the ~/project/aos dev workspace; operator = everything else.
+_detect_role() {
+    if [[ -d "$HOME/project/aos" ]]; then
+        ROLE="developer"
+    else
+        ROLE="operator"
+    fi
+    _log "ROLE: $ROLE"
+}
+
+# ── Identity preflight ───────────────────────────────
+# The only questions the installer asks come here, BEFORE the calm ceremony —
+# so a prompt never appears under a spinner (whose stage has redirected stdout
+# to the log). Once git identity is set, the git and bootstrap stages resolve
+# the operator's name without prompting. Non-interactive when nothing's missing
+# (re-runs, developer machines) and skipped entirely in dry-run.
+_collect_identity() {
+    tput cnorm 2>/dev/null >&3   # cursor visible while typing
+
+    local name email
+    name=$(git config --global user.name 2>/dev/null || echo "")
+    email=$(git config --global user.email 2>/dev/null || echo "")
+
+    if [[ -z "$name" || -z "$email" ]]; then
+        echo "" >&3
+        echo "  ${BOLD}First, two quick things${RESET}" >&3
+        echo "  ${MUTED}so your work is signed with your name.${RESET}" >&3
+        echo "" >&3
+    fi
+
+    if [[ -z "$name" ]]; then
+        printf "  ${BOLD}Your name${RESET} (for git commits): " >&3
+        read -r name
+        if [[ -n "$name" ]]; then
+            git config --global user.name "$name"
+        fi
+    fi
+    if [[ -z "$email" ]]; then
+        printf "  ${BOLD}Your email${RESET} (for git commits): " >&3
+        read -r email
+        if [[ -n "$email" ]]; then
+            git config --global user.email "$email"
+        fi
+    fi
+
+    # Resolve the operator's display name once, here, so run_bootstrap never
+    # has to prompt. Prefer the macOS full name, then git, then what we asked.
+    local op_name
+    op_name=$(id -F 2>/dev/null || echo "")
+    if [[ -z "$op_name" || "$op_name" == "$(whoami)" ]]; then
+        op_name="${name:-$(git config --global user.name 2>/dev/null || echo "")}"
+    fi
+    export AOS_OPERATOR_NAME="${op_name:-Operator}"
+    _log "IDENTITY: operator=$AOS_OPERATOR_NAME role=$ROLE"
+
+    tput civis 2>/dev/null >&3   # re-hide for the ceremony
 }
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -936,6 +1099,17 @@ run_prereqs() {
     prereq_ssh
     prereq_tailscale
     prereq_claude_remote
+    return 0
+}
+
+# Repository, PATH, and git config — presented as one "Installing the system"
+# stage. Git identity was already resolved in the preflight, so setup_git_config
+# runs non-interactively here.
+run_repo() {
+    setup_repo
+    setup_path
+    setup_git_config
+    return 0
 }
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1119,19 +1293,14 @@ run_bootstrap() {
     if [[ -f "$operator_yaml" ]]; then
         _skip "Operator profile"
     else
-        # Get the operator's real name — try multiple sources
-        local op_name=""
-        # 1. macOS contact card (most reliable for real name)
-        op_name=$(id -F 2>/dev/null || echo "")
-        # 2. Fall back to git config
+        # The operator's name was already resolved in the identity preflight
+        # (macOS contact card → git → asked once), so this stage never prompts.
+        local op_name="${AOS_OPERATOR_NAME:-}"
+        if [[ -z "$op_name" ]]; then
+            op_name=$(id -F 2>/dev/null || echo "")
+        fi
         if [[ -z "$op_name" ]] || [[ "$op_name" == "$(whoami)" ]]; then
             op_name=$(git config --global user.name 2>/dev/null || echo "")
-        fi
-        # 3. Ask if we still don't have it
-        if [[ -z "$op_name" ]]; then
-            echo ""
-            printf "  ${BOLD}What's your name?${RESET} "
-            read -r op_name
         fi
         local op_tz
         op_tz=$(readlink /etc/localtime 2>/dev/null | sed 's|.*/zoneinfo/||' || echo "UTC")
@@ -1395,26 +1564,21 @@ TRUST
         _skip "Release channel ($(cat "$USER_DIR/config/channel" 2>/dev/null | tr -d '[:space:]'))"
     fi
 
-    # Sync skills — prompt for developer mode
+    # Sync skills — the developer-vs-operator split is derived from role, not
+    # asked. A developer machine (has ~/project/aos) gets the full set including
+    # the developer skills; an operator machine gets the default set. This keeps
+    # the ceremony prompt-free while preserving the old behavior's outcomes.
     _step "Installing skills..."
     echo ""
-    _info "14 default skills will be installed (work, recall, review, etc.)"
-    echo ""
-    echo "  ${BOLD}Also install developer skills?${RESET}"
-    echo "  (debugging, code review, execution plans — 9 extra skills)"
-    echo ""
-    printf "  Install developer skills? [y/N]: "
-    read -r dev_choice
-
-    case "${dev_choice:-n}" in
-        [Yy])
-            touch "$USER_DIR/config/developer-mode"
-            bash "$AOS_DIR/core/bin/cli/aos" sync-skills --all 2>&1 | sed 's/^/  /'
-            ;;
-        *)
-            bash "$AOS_DIR/core/bin/cli/aos" sync-skills 2>&1 | sed 's/^/  /'
-            ;;
-    esac
+    if [[ "$ROLE" == "developer" ]]; then
+        _info "Installing all skills (developer machine)"
+        touch "$USER_DIR/config/developer-mode"
+        bash "$AOS_DIR/core/bin/cli/aos" sync-skills --all 2>&1 | sed 's/^/  /'
+    else
+        _info "Installing default skills"
+        bash "$AOS_DIR/core/bin/cli/aos" sync-skills 2>&1 | sed 's/^/  /'
+    fi
+    return 0
 }
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1522,6 +1686,7 @@ print('\n'.join(deps))
 
     # Install LaunchAgents from templates
     install_launchagents
+    return 0
 }
 
 install_launchagents() {
@@ -2060,6 +2225,15 @@ run_provisioning() {
     configure_terminal
     configure_macos
     setup_statusline
+    return 0
+}
+
+# Discovery + health scorecard, presented as one "Final checks" stage. Returns
+# non-zero when the health gate finds critical failures so the stage presenter
+# shows the failure panel instead of handing off a half-built system.
+run_final_checks() {
+    run_discovery
+    run_health_gate
 }
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -2355,8 +2529,12 @@ for name, job in (data.get('jobs') or {}).items():
     } > "$report_file"
 
     if [[ "$fail" -gt 0 ]]; then
-        _fail "$fail critical failure(s) — fix with: bash ~/aos/install.sh"
+        _fail "$fail critical failure(s) — see $INSTALL_LOG"
         echo ""
+        # Non-zero return → the "Final checks" stage renders the failure panel
+        # rather than proceeding to the handoff. The scorecard above and
+        # install-report.yaml capture exactly what failed.
+        return 1
     elif [[ "$warn" -gt 0 ]]; then
         _ok "System operational ($warn non-critical warning(s))"
         echo ""
@@ -2366,6 +2544,39 @@ for name, job in (data.get('jobs') or {}).items():
         echo ""
         return 0
     fi
+}
+
+QAREEN_URL="http://localhost:4096"
+
+# Wait briefly for the Qareen service to answer, then open it in the operator's
+# browser. Headless / SSH sessions (no GUI) just get the URL printed instead.
+# Never fatal — a browser that won't open is a printed link, not a failed install.
+_open_qareen() {
+    # Headless / SSH sessions have no browser to open — print the link and
+    # return immediately (no point waiting on the service we won't open).
+    if [[ -n "${SSH_CONNECTION:-}${SSH_TTY:-}" ]] || ! command -v open >/dev/null 2>&1; then
+        echo "  ${BOLD}Open AOS in your browser:${RESET}"
+        echo "    ${BRAND}${BOLD}${QAREEN_URL}${RESET}"
+        echo ""
+        return 0
+    fi
+
+    # GUI session: give the Qareen service a moment to answer, then open it so
+    # the operator lands on a live page rather than a connection error.
+    local i=0
+    while [[ $i -lt 15 ]]; do
+        curl -sfm 2 "$QAREEN_URL/api/health" >/dev/null 2>&1 && break
+        sleep 1
+        ((i++)) || true
+    done
+
+    if open "$QAREEN_URL" >/dev/null 2>&1; then
+        echo "  ${MUTED}Opening AOS in your browser…${RESET}"
+    else
+        echo "  ${BOLD}Open AOS in your browser:${RESET}"
+        echo "    ${BRAND}${BOLD}${QAREEN_URL}${RESET}"
+    fi
+    echo ""
 }
 
 print_handoff() {
@@ -2384,12 +2595,12 @@ try:
 except: print('Operator')
 " 2>/dev/null || echo "Operator")
 
-    tput cnorm 2>/dev/null  # restore cursor
+    tput cnorm 2>/dev/null >&3  # restore cursor
 
     echo ""
     echo "  ${MUTED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
     echo ""
-    echo "  ${GREEN}${BOLD}AOS v${AOS_VERSION} installed successfully.${RESET}"
+    echo "  ${GREEN}${BOLD}Your system is alive.${RESET}"
     echo ""
     printf "  ${MUTED}%-12s${RESET}%s\n" "Machine" "$hostname"
     printf "  ${MUTED}%-12s${RESET}%s\n" "ID" "$machine_id"
@@ -2399,28 +2610,32 @@ except: print('Operator')
     echo "  ${MUTED}────────────────────────────────────────────────────${RESET}"
     echo ""
 
-    if command -v cld &>/dev/null || command -v claude &>/dev/null; then
-        echo "  ${BOLD}Get started:${RESET}"
+    if [[ "$ROLE" == "developer" ]]; then
+        # Developer machine: the terminal is the surface. Point at Qareen and
+        # the dev handoff, but don't auto-open a browser.
+        echo "  ${BOLD}AOS is running at${RESET} ${BRAND}${QAREEN_URL}${RESET}"
         echo ""
-        echo "    ${BRAND}${BOLD}\$ aos start${RESET}"
+        if command -v cld &>/dev/null || command -v claude &>/dev/null; then
+            echo "  ${BOLD}Start a session:${RESET}  ${BRAND}${BOLD}aos start${RESET}  ${MUTED}(or ${BOLD}cld${RESET}${MUTED})${RESET}"
+        else
+            echo "  ${BOLD}Next:${RESET} install Claude Code, then run ${BRAND}aos start${RESET}"
+            echo "  ${MUTED}https://docs.anthropic.com/en/docs/claude-code${RESET}"
+        fi
+        echo "  ${MUTED}Dev workspace: ~/project/aos — framework changes go there, never ~/aos.${RESET}"
         echo ""
-        echo "  ${MUTED}Opens your editor with Claude Code ready.${RESET}"
-        echo "  ${MUTED}Sahib will walk you through the rest.${RESET}"
     else
-        echo "  ${BOLD}Next:${RESET} Install Claude Code, then run ${BRAND}aos start${RESET}"
-        echo "  ${MUTED}https://docs.anthropic.com/en/docs/claude-code${RESET}"
+        # Operator machine: Qareen is the whole takeover. Sahib greets them
+        # inside the UI; the terminal is never surfaced again.
+        echo "  ${MUTED}Claude is waiting for you inside — Sahib will take it from here.${RESET}"
+        echo ""
+        _open_qareen
     fi
 
-    echo ""
     echo "  ${MUTED}────────────────────────────────────────────────────${RESET}"
     echo ""
     echo "  ${MUTED}aos status        check migration status${RESET}"
     echo "  ${MUTED}aos self-test     verify system health${RESET}"
     echo "  ${MUTED}aos update        pull latest + migrate${RESET}"
-    echo ""
-    echo "  ${MUTED}Installer options:${RESET}"
-    echo "  ${MUTED}  --dry-run       preview what would be installed${RESET}"
-    echo "  ${MUTED}  --clean         ignore checkpoints, full re-install${RESET}"
     echo ""
     echo "  ${MUTED}Log: $INSTALL_LOG${RESET}"
     echo ""
@@ -2442,26 +2657,24 @@ main() {
     # Show banner
     _banner
 
-    # Dry-run mode — show what would happen
+    # Role decides how the install ends (developer terminal vs operator browser)
+    # and the developer-skills split. Detected the same way migration 081 does.
+    _detect_role
+
+    # Dry-run / walk mode — walk the stage ceremony without touching the machine.
+    # Same code path as a real install so the transcript matches what ships.
     if [[ "$DRY_RUN" == true ]]; then
-        echo "  ${YELLOW}DRY RUN${RESET} — showing what would be installed"
+        echo "  ${YELLOW}DRY RUN${RESET} — walking the install stages (nothing is changed)"
+        echo "  ${MUTED}Role: ${ROLE}${RESET}"
         echo ""
-        echo "  ${BOLD}Phase 1:${RESET} Prerequisites (Homebrew, Python, uv, bun, jq, ffmpeg, gh, Claude Code)"
-        echo "  ${BOLD}Phase 2:${RESET} Repository clone/update, PATH setup, git config"
-        echo "  ${BOLD}Phase 3:${RESET} User data bootstrap, migrations, agents, skills"
-        echo "  ${BOLD}Phase 4:${RESET} Service venvs (bridge, dashboard, listen, memory)"
-        echo "  ${BOLD}Phase 5:${RESET} macOS provisioning (dock, desktop, terminal, preferences)"
-        echo "  ${BOLD}Phase 6:${RESET} Apps (Chrome, SuperWhisper, Obsidian, Claude Code)"
-        echo "  ${BOLD}Phase 7:${RESET} Health scorecard — verify everything works"
+        _stage "Checking your Mac"                          run_prereqs      prereqs
+        _stage "Installing the system"                      run_repo         repo
+        _stage "Setting up your knowledge vault and memory" run_bootstrap    bootstrap
+        _stage "Waking the agents"                          deploy_services  services
+        _stage "Making it yours"                            run_provisioning provisioning
+        _stage "Final checks"                               run_final_checks
         echo ""
-        if [[ -f "$CHECKPOINT_FILE" ]]; then
-            local completed
-            completed=$(wc -l < "$CHECKPOINT_FILE" | tr -d ' ')
-            echo "  ${MUTED}Resume point: $completed phase(s) already completed${RESET}"
-            echo "  ${MUTED}Completed: $(tr '\n' ', ' < "$CHECKPOINT_FILE" | sed 's/,$//')${RESET}"
-        fi
-        echo ""
-        echo "  ${MUTED}Run without --dry-run to install.${RESET}"
+        echo "  ${MUTED}Run without --dry-run (or INSTALL_DRY_RUN unset) to install for real.${RESET}"
         echo ""
         exit 0
     fi
@@ -2469,78 +2682,36 @@ main() {
     # Network check — fail fast
     _check_network
 
+    # The only questions we ask, asked once, before the calm ceremony begins.
+    _collect_identity
+
     # Keep sudo alive — install can take 20+ minutes, ticket expires in 5
     ( while true; do sudo -n true 2>/dev/null; sleep 50; done ) &
     SUDO_KEEPALIVE_PID=$!
-    trap 'kill $SUDO_KEEPALIVE_PID 2>/dev/null' EXIT
+    trap '_spinner_stop; tput cnorm 2>/dev/null >&3; kill $SUDO_KEEPALIVE_PID 2>/dev/null' EXIT
 
-    # Part 1: Prerequisites
-    if _checkpoint_skip "prereqs"; then
-        _phase "Prerequisites"
-        _skip "Already completed (resuming)"
-    else
-        _phase "Prerequisites"
-        run_prereqs
-        _checkpoint_done "prereqs"
-    fi
+    echo "" >&3
 
-    # Part 2: Repo & PATH
-    if _checkpoint_skip "repo"; then
-        _phase "Repository & PATH"
-        _skip "Already completed (resuming)"
-    else
-        _phase "Repository & PATH"
-        setup_repo
-        setup_path
-        setup_git_config
-        _checkpoint_done "repo"
-    fi
+    # The install as a calm progress ceremony: one human-named line per stage,
+    # spinner → checkmark, all tool output tucked into $INSTALL_LOG. A stage that
+    # fails routes through the failure panel (see _stage) and exits non-zero.
+    _stage "Checking your Mac"                          run_prereqs      prereqs
+    _stage "Installing the system"                      run_repo         repo
+    _stage "Setting up your knowledge vault and memory" run_bootstrap    bootstrap
+    _stage "Waking the agents"                          deploy_services  services
+    _stage "Making it yours"                            run_provisioning provisioning
+    _stage "Final checks"                               run_final_checks
 
-    # Part 3: Bootstrap (migrations)
-    if _checkpoint_skip "bootstrap"; then
-        _phase "Bootstrap"
-        _skip "Already completed (resuming)"
-    else
-        _phase "Bootstrap"
-        run_bootstrap
-        _checkpoint_done "bootstrap"
-    fi
-
-    # Part 4: Services
-    if _checkpoint_skip "services"; then
-        _phase "Services"
-        _skip "Already completed (resuming)"
-    else
-        _phase "Services"
-        deploy_services
-        _checkpoint_done "services"
-    fi
-
-    # Part 5: macOS provisioning
-    if _checkpoint_skip "provisioning"; then
-        _phase "System configuration"
-        _skip "Already completed (resuming)"
-    else
-        _phase "System configuration"
-        run_provisioning
-        _checkpoint_done "provisioning"
-    fi
-
-    # Part 6: Discovery
-    _phase "Discovery"
-    run_discovery
-
-    # Part 7: Health scorecard + Handoff
-    _phase "Health scorecard"
-    run_health_gate
     print_handoff
 
     # Clean checkpoint on success — next run starts fresh
     rm -f "$CHECKPOINT_FILE" 2>/dev/null
     _log "Install complete"
 
-    # Launch aos start — drops the operator into onboarding with Chief
-    if command -v claude &>/dev/null; then
+    # Handoff launch. Operators land in Qareen (opened in print_handoff); the
+    # terminal is never surfaced for them. Developers keep the terminal handoff —
+    # aos start drops them into a Claude Code session with onboarding.
+    if [[ "$ROLE" == "developer" ]] && command -v claude &>/dev/null; then
         echo ""
         echo "  ${BOLD}Launching AOS...${RESET}"
         echo ""
