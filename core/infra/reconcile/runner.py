@@ -96,11 +96,18 @@ def _write_state(results: list[CheckResult]):
     STATE_FILE.write_text(json.dumps(state, indent=2) + "\n")
 
 
-def run_all(dry_run: bool = False) -> list[CheckResult]:
+def run_all(dry_run: bool = False, periodic: bool = False) -> list[CheckResult]:
     """Run all reconcile checks.
 
     Args:
-        dry_run: If True, only check — don't fix.
+        dry_run:  If True, only check — don't fix, don't notify.
+        periodic: Lightweight between-deploy run (the 30-min cron). Every check
+            reports check-only EXCEPT those that opt in with periodic_fix=True
+            (ServiceLoadedCheck), which may repair — a dead service shouldn't
+            wait for the next release. Only those periodic-fix results and
+            genuine check crashes notify; the standing conditions the deploy-time
+            reconcile owns (dead code, storage drift, vault debt) are logged but
+            not re-pinged every 30 minutes.
     """
     check_classes = _load_checks()
     results = []
@@ -111,7 +118,17 @@ def run_all(dry_run: bool = False) -> list[CheckResult]:
         try:
             if c.check():
                 results.append(CheckResult(c.name, Status.OK, "ok"))
-            elif dry_run:
+            elif periodic and getattr(c, "periodic_fix", False):
+                # Opt-in: allowed to actually repair on the periodic run.
+                result = c.fix()
+                results.append(result)
+                # Surface what it did (a dead service restarted is worth a ping)
+                # and anything it couldn't. Dedup below stops repeats.
+                if result.status != Status.OK or result.notify:
+                    needs_notify.append(result)
+            elif dry_run or periodic:
+                # Report-only. On the periodic run these are NOT added to
+                # needs_notify — they don't nag about deploy-owned conditions.
                 results.append(CheckResult(
                     c.name, Status.NOTIFY,
                     f"Would fix: {c.description}"
@@ -144,7 +161,12 @@ def run_all(dry_run: bool = False) -> list[CheckResult]:
     # Cleared findings are announced too — closure matters.
     if not dry_run:
         import hashlib
-        seen_path = Path.home() / ".aos" / "state" / "reconcile-notified.json"
+        # Periodic and deploy runs keep SEPARATE dedup sets. They notify on
+        # different subsets (periodic: only periodic-fix results + crashes), so
+        # sharing one set would make a condition present in one but absent in the
+        # other look spuriously "cleared" on every cross-run.
+        seen_name = "reconcile-notified-periodic.json" if periodic else "reconcile-notified.json"
+        seen_path = Path.home() / ".aos" / "state" / seen_name
         seen_path.parent.mkdir(parents=True, exist_ok=True)
         try:
             prev = json.loads(seen_path.read_text())
@@ -239,6 +261,23 @@ def cmd_check():
         print(f"  {icon} {r.name}: {r.message}")
 
 
+def cmd_periodic():
+    """Lightweight between-deploy run: check-only for everything except
+    periodic_fix checks (ServiceLoadedCheck), which may repair. Invoked by the
+    30-min reconcile-periodic cron so dead services don't wait for a deploy."""
+    print("=== AOS Reconcile (periodic) ===\n")
+    results = run_all(periodic=True)
+    for r in results:
+        icon = {
+            Status.OK: "✓", Status.FIXED: "⚡", Status.SKIP: "~",
+            Status.NOTIFY: "⚠", Status.ERROR: "✗",
+        }.get(r.status, "?")
+        print(f"  {icon} {r.name}: {r.message}")
+    fixed = [r for r in results if r.status == Status.FIXED]
+    if fixed:
+        print(f"\n  ⚡ Repaired {len(fixed)} service issue(s)")
+
+
 if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else "run"
     if cmd == "run":
@@ -247,7 +286,9 @@ if __name__ == "__main__":
         cmd_status()
     elif cmd == "check":
         cmd_check()
+    elif cmd == "periodic":
+        cmd_periodic()
     else:
         print(f"Unknown command: {cmd}")
-        print("Usage: runner.py [run|status|check]")
+        print("Usage: runner.py [run|status|check|periodic]")
         sys.exit(1)

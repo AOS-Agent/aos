@@ -32,6 +32,14 @@ jobs:
     tier: 1
     description: Checks for AOS framework updates
 
+  reconcile-periodic:
+    command: bash ~/aos/core/bin/internal/aos-python ~/aos/core/infra/reconcile/runner.py periodic
+    every: 30m
+    active_hours: "07:00-23:00"
+    timeout: 120
+    tier: 1
+    description: Between-deploy service-health reconcile (ServiceLoadedCheck may repair; rest report-only)
+
   auto-update:
     command: bash ~/aos/core/bin/crons/check-update --apply
     at: "04:00"
