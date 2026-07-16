@@ -1,5 +1,5 @@
 """
-Invariant: The transcriber service is running and healthy on port 7601.
+Invariant: The transcriber service is running and healthy on port 7602.
 
 Full lifecycle:
 - If venv doesn't exist → skip (migration 019 hasn't run yet)
@@ -23,12 +23,15 @@ from base import CheckResult, ReconcileCheck, Status
 
 class TranscriberServiceCheck(ReconcileCheck):
     name = "transcriber_service"
-    description = "Transcriber service is running and healthy on port 7601"
+    description = "Transcriber service is running and healthy on port 7602"
 
     HOME = Path.home()
     VENV_PYTHON = HOME / ".aos" / "services" / "transcriber" / ".venv" / "bin" / "python"
     SERVICE_MAIN = HOME / "aos" / "core" / "services" / "transcriber" / "main.py"
-    HEALTH_URL = "http://127.0.0.1:7601/health"
+    # Port 7602. :7601 is whatsmeow — probing it returned whatsmeow's JSON
+    # (no "status" key), so this check read the transcriber as unhealthy on
+    # EVERY reconcile and bounced a healthy service each deploy (aos#180).
+    HEALTH_URL = "http://127.0.0.1:7602/health"
     PLIST_NAME = "com.aos.transcriber"
     PLIST_PATH = HOME / "Library" / "LaunchAgents" / "com.aos.transcriber.plist"
     TEMPLATE_PATH = HOME / "aos" / "config" / "launchagents" / "com.aos.transcriber.plist.template"

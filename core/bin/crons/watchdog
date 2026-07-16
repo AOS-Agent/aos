@@ -160,8 +160,16 @@ check_health() {
 }
 
 # ── Parse services from state.yaml using Python (bash 3.2 safe) ───────────
+#
+# The service map lives in the INSTANCE layer (~/.aos/config/state.yaml),
+# rebuilt from the deployed plists by migration 082. The old code read
+# "$AOS_DIR/config/state.yaml" (~/aos/config/state.yaml) — a path that does
+# not exist — so the Python parse threw FileNotFoundError, 2>/dev/null
+# swallowed it, and the watchdog SILENTLY shrank to a hardcoded 4-service list
+# that omitted the transcriber and gave the bridge no health URL. That silent
+# shrink is why a wedged-but-loaded bridge went unseen for ~4h (aos#180).
 
-STATE_YAML="$AOS_DIR/config/state.yaml"
+STATE_YAML="$HOME/.aos/config/state.yaml"
 
 # Parse YAML into "name|label|health_url" lines — one per service
 SERVICES_LIST=""
@@ -180,11 +188,24 @@ for name, cfg in (data.get('services') or {}).items():
 fi
 
 if [[ -z "$SERVICES_LIST" ]]; then
-    log "WARNING: Could not parse $STATE_YAML — using hardcoded fallback"
-    SERVICES_LIST="bridge|com.aos.bridge|
+    # FAIL LOUD — do NOT silently shrink to a hardcoded list. The instance
+    # service map is missing or unparseable; monitoring is degraded until
+    # `aos reconcile` (migration 082) rebuilds it. Alarm once (state-change
+    # dedup) so this doesn't re-ping every 5 minutes, then fall back to a
+    # minimal core set with the CORRECT ports (bridge :4098, transcriber :7602)
+    # so at least the critical services stay watched.
+    log "CRITICAL: $STATE_YAML missing or unparseable — service monitoring DEGRADED"
+    if check_state_change "state_yaml" "missing"; then
+        notify "<b>AOS watchdog:</b> service map <code>${STATE_YAML}</code> is missing/unparseable. Service monitoring is <b>DEGRADED</b> — run <code>aos reconcile</code> (migration 082 rebuilds it). Falling back to a minimal core list."
+    fi
+    SERVICES_LIST="bridge|com.aos.bridge|http://127.0.0.1:4098/health
 qareen|com.aos.qareen|http://127.0.0.1:4096/api/health
+transcriber|com.aos.transcriber|http://127.0.0.1:7602/health
 listen|com.aos.listen|http://127.0.0.1:7600/health
 whatsapp|com.agent.whatsmeow|http://127.0.0.1:7601/health"
+else
+    # Map present and parseable — clear any prior degraded-state alarm.
+    check_state_change "state_yaml" "present" > /dev/null || true
 fi
 
 # ── Flapping threshold ─────────────────────────────────────────────────────
