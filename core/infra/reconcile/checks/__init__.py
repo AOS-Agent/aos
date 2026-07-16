@@ -17,6 +17,7 @@ from .mcp_location import McpLocationCheck
 from .n8n import N8nServiceCheck
 from .runtime_protection import RuntimeProtectionCheck
 from .sentinel_plist import SentinelPlistDriftCheck
+from .service_loaded import ServiceLoadedCheck
 from .storage_layout import StorageLayoutCheck
 from .symlinks import AgentSymlinkCheck, RuleSymlinkCheck, SkillSymlinkCheck
 from .transcriber import TranscriberServiceCheck
@@ -101,6 +102,14 @@ ALL_CHECKS = [
     # so the dev uvicorn on 4097 auto-restarts on crash. Notify-only; never
     # auto-installs (modifies ~/Library/LaunchAgents/).
     DevBackendPlistCheck,
+
+    # Services — every deployed com.aos.*.plist has a loaded (and healthy)
+    # launchd job. The generic net for the exact silent state that ate the
+    # bridge and transcriber (plist intact, job unloaded). Runs AFTER the
+    # per-service checks so they repair health first; this then catches any
+    # still-unloaded/health-less service. periodic_fix=True — the one service
+    # check allowed to repair between deploys.
+    ServiceLoadedCheck,
 
     # Instance hygiene — diff framework declarations against instance state,
     # clean orphaned service venvs, stale LaunchAgents, broken symlinks,

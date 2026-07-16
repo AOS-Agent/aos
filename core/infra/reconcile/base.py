@@ -36,9 +36,15 @@ class ReconcileCheck:
       description: str   — human-readable purpose
       check() -> bool    — True if invariant holds
       fix() -> CheckResult — attempt repair (only called if check() is False)
+
+    periodic_fix: opt-in flag. Full fix-mode runs only on update deploys. A
+    check that sets periodic_fix = True is ALSO allowed to fix() on the
+    lightweight periodic reconcile (every ~30 min), so a failure it owns doesn't
+    have to wait for the next release. Everything else stays report-only there.
     """
     name: str = "unnamed"
     description: str = ""
+    periodic_fix: bool = False
 
     def check(self) -> bool:
         raise NotImplementedError
