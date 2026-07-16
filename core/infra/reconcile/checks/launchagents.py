@@ -7,12 +7,14 @@ no longer exists. Services silently fail to start.
 """
 
 import re
-import subprocess
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from base import CheckResult, ReconcileCheck, Status
+
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+from lib.service_ctl import restart_launchagent
 
 
 class LaunchAgentPythonCheck(ReconcileCheck):
@@ -65,17 +67,14 @@ class LaunchAgentPythonCheck(ReconcileCheck):
                 new_text = new_text.replace(stale, str(current_python))
 
             if new_text != text:
-                # Unload, fix, reload
-                subprocess.run(
-                    ["launchctl", "unload", str(plist)],
-                    capture_output=True, timeout=10,
-                )
+                # Correct the plist on disk, then reload through the shared
+                # guarded choke-point. The old bare `launchctl unload`/`load`
+                # had no verify — a lost race could leave the job unloaded
+                # (aos#180). restart_launchagent settles, verifies, and retries.
                 plist.write_text(new_text)
-                subprocess.run(
-                    ["launchctl", "load", str(plist)],
-                    capture_output=True, timeout=10,
-                )
-                fixed.append(plist.name)
+                if restart_launchagent(plist.stem, plist,
+                                       actor="reconcile:launchagent_python"):
+                    fixed.append(plist.name)
 
         if fixed:
             return CheckResult(

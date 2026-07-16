@@ -33,6 +33,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from base import CheckResult, ReconcileCheck, Status
 
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+from lib.service_ctl import restart_launchagent
+
 
 class BridgePollLivenessCheck(ReconcileCheck):
     name = "bridge_poll_liveness"
@@ -113,29 +116,6 @@ class BridgePollLivenessCheck(ReconcileCheck):
             return True
         return age <= self.STALE_AFTER_S
 
-    def _guarded_kickstart(self) -> str | None:
-        """bootout → bootstrap → kickstart. Returns a detail note or None.
-
-        kickstart -k can block past the timeout while the old instance drains;
-        a TimeoutExpired here must not turn the fix into an ERROR — the restart
-        was issued and KeepAlive will bring the job back.
-        """
-        uid = os.getuid()
-        domain = f"gui/{uid}"
-        service = f"gui/{uid}/{self.PLIST_NAME}"
-
-        subprocess.run(["launchctl", "bootout", service],
-                       capture_output=True, timeout=10)
-        time.sleep(1)
-        subprocess.run(["launchctl", "bootstrap", domain, str(self.PLIST_PATH)],
-                       capture_output=True, timeout=10)
-        try:
-            subprocess.run(["launchctl", "kickstart", "-k", service],
-                           capture_output=True, timeout=10)
-        except subprocess.TimeoutExpired:
-            return "kickstart timed out (old instance draining) — KeepAlive will restart"
-        return None
-
     def fix(self) -> CheckResult:
         age = self._last_poll_age()
         age_str = f"{int(age)}s" if age is not None else "unknown"
@@ -148,10 +128,19 @@ class BridgePollLivenessCheck(ReconcileCheck):
                 notify=True,
             )
 
-        note = self._guarded_kickstart()
+        # Restart through the shared guarded choke-point (settle → verify →
+        # retry → kickstart, with lifecycle audit logging).
+        ok = restart_launchagent(
+            self.PLIST_NAME, self.PLIST_PATH, actor="reconcile:bridge_poll"
+        )
         detail = f"last poll {age_str} ago (threshold {self.STALE_AFTER_S}s)"
-        if note:
-            detail = f"{detail}; {note}"
+        if not ok:
+            return CheckResult(
+                self.name, Status.NOTIFY,
+                "Bridge poll loop wedged — guarded restart failed to reload the bridge",
+                detail=detail,
+                notify=True,
+            )
         return CheckResult(
             self.name, Status.FIXED,
             "Bridge poll loop wedged — restarted the bridge",

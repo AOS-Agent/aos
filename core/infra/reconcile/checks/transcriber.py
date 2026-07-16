@@ -11,14 +11,15 @@ See GitHub issue #8: plist template existed but was never instantiated.
 """
 
 import json
-import os
-import subprocess
 import sys
 from pathlib import Path
 from urllib.request import Request, urlopen
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from base import CheckResult, ReconcileCheck, Status
+
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+from lib.service_ctl import restart_launchagent
 
 
 class TranscriberServiceCheck(ReconcileCheck):
@@ -63,38 +64,13 @@ class TranscriberServiceCheck(ReconcileCheck):
         return None
 
     def _kickstart(self) -> bool:
-        """Start or restart the service using bootout/bootstrap/kickstart.
-        This avoids launchd throttling issues that unload/load can't handle.
+        """Start or restart the service through the shared guarded choke-point
+        (settle → verify → retry → kickstart, with lifecycle audit logging).
+        Returns True iff the job is verified loaded afterwards.
         """
-        uid = os.getuid()
-        domain_target = f"gui/{uid}"
-        service_target = f"gui/{uid}/{self.PLIST_NAME}"
-
-        # Bootout first (ignore failure — may not be registered)
-        subprocess.run(
-            ["launchctl", "bootout", service_target],
-            capture_output=True, timeout=10,
+        return restart_launchagent(
+            self.PLIST_NAME, self.PLIST_PATH, actor="reconcile:transcriber"
         )
-
-        # Bootstrap the plist
-        result = subprocess.run(
-            ["launchctl", "bootstrap", domain_target, str(self.PLIST_PATH)],
-            capture_output=True, text=True, timeout=10,
-        )
-
-        # Kickstart to ensure it's actually running. kickstart -k can block past
-        # the timeout while the old instance drains; a TimeoutExpired here must
-        # not propagate out of fix() (the runner would log it as ERROR). The
-        # restart was already issued — the next cycle owns it from here.
-        try:
-            subprocess.run(
-                ["launchctl", "kickstart", "-k", service_target],
-                capture_output=True, timeout=10,
-            )
-        except subprocess.TimeoutExpired:
-            pass
-
-        return result.returncode == 0
 
     def check(self) -> bool:
         # No venv = migration hasn't run yet, skip

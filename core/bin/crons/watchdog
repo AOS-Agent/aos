@@ -147,11 +147,14 @@ check_launchagent() {
 restart_service() {
     local label="$1"
     log "Restarting $label..."
-    launchctl kickstart -k "gui/$(id -u)/$label" 2>/dev/null || {
-        launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
-        sleep 2
-        launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/${label}.plist" 2>/dev/null || true
-    }
+    # Route through the shared guarded choke-point so the watchdog's restarts
+    # get the same settle → verify → retry guarantee and land in the lifecycle
+    # audit log. The old inline kickstart-then-bare-bootout/bootstrap could race
+    # launchd's async teardown and leave the job unloaded (aos#180).
+    "$AOS_DIR/core/bin/internal/aos-python" \
+        "$AOS_DIR/core/infra/lib/service_ctl.py" restart "$label" \
+        --plist "$HOME/Library/LaunchAgents/${label}.plist" --actor "watchdog" \
+        || log "  WARN: $label guarded restart failed — still down"
 }
 
 check_health() {
