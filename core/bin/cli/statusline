@@ -1,0 +1,97 @@
+#!/bin/bash
+# AOS statusline for Claude Code
+# Receives session JSON via stdin, prints a single formatted line.
+input=$(cat)
+
+# ── Colors ──────────────────────────────────────────────
+DIM="\033[2m"
+R="\033[0m"
+B="\033[1m"
+RED="\033[31m"
+GRN="\033[32m"
+YEL="\033[33m"
+MAG="\033[35m"
+CYN="\033[36m"
+WHT="\033[37m"
+
+rc() { local p=${1%.*}; [ "$p" -ge 80 ] && echo "\033[1;31m" && return; [ "$p" -ge 50 ] && echo "\033[1;33m" && return; echo "\033[32m"; }
+
+# ── Data ────────────────────────────────────────────────
+CWD=$(echo "$input" | jq -r '.cwd // empty')
+DIR=$(basename "${CWD:-$PWD}")
+BRANCH=""
+[ -n "$CWD" ] && [ -d "$CWD/.git" ] && BRANCH=$(git -C "$CWD" branch --show-current 2>/dev/null)
+[ -z "$BRANCH" ] && [ -d ".git" ] && BRANCH=$(git branch --show-current 2>/dev/null)
+
+# Model shorthand: Opus 4.6 (1M) → O1M, Sonnet 4.6 → S, Haiku 4.5 → H
+MODEL_RAW=$(echo "$input" | jq -r '.model.id // "?"')
+case "$MODEL_RAW" in
+  *opus*1m*)   M="O1M" ;;
+  *opus*)      M="O" ;;
+  *sonnet*)    M="S" ;;
+  *haiku*)     M="H" ;;
+  *)           M=$(echo "$input" | jq -r '.model.display_name // "?"' | sed 's/Claude //') ;;
+esac
+PCT=$(echo "$input" | jq -r '.context_window.used_percentage // 0' | cut -d. -f1)
+COST=$(printf "%.2f" "$(echo "$input" | jq -r '.cost.total_cost_usd // 0')")
+DUR_MS=$(echo "$input" | jq -r '.cost.total_duration_ms // 0')
+LA=$(echo "$input" | jq -r '.cost.total_lines_added // 0')
+LD=$(echo "$input" | jq -r '.cost.total_lines_removed // 0')
+VER=$(cat ~/aos/VERSION 2>/dev/null || echo "?")
+HP=$(echo "$input" | jq -r '.rate_limits.five_hour.used_percentage // empty' | cut -d. -f1)
+WP=$(echo "$input" | jq -r '.rate_limits.seven_day.used_percentage // empty' | cut -d. -f1)
+HR=$(echo "$input" | jq -r '.rate_limits.five_hour.resets_at // empty')
+WR=$(echo "$input" | jq -r '.rate_limits.seven_day.resets_at // empty')
+
+# ── Helpers ─────────────────────────────────────────────
+fmt_dur() {
+  local s=$(($1/1000))
+  [ "$s" -ge 3600 ] && printf "%dh%02dm" $((s/3600)) $(((s%3600)/60)) && return
+  [ "$s" -ge 60 ] && printf "%dm%02ds" $((s/60)) $((s%60)) && return
+  printf "%ds" "$s"
+}
+
+fmt_reset() {
+  [ -z "$1" ] || [ "$1" = "null" ] && return
+  local d=$(($1 - $(date +%s)))
+  [ "$d" -le 0 ] && printf "now" && return
+  local h=$((d/3600)) m=$(((d%3600)/60))
+  [ "$h" -gt 0 ] && printf "%dh%02dm" "$h" "$m" && return
+  printf "%dm" "$m"
+}
+
+# ── Assemble ────────────────────────────────────────────
+CC=$(rc "$PCT")
+
+# Model + context %
+O="${CYN}${B}${M}${R} ${CC}${PCT}%%${R}"
+
+# Rate limits
+if [ -n "$HP" ]; then
+  HC=$(rc "$HP")
+  O+=" ${HC}${HP}%%${R}"
+  HRT=$(fmt_reset "$HR")
+  [ -n "$HRT" ] && O+="${DIM}(${HRT})${R}"
+fi
+if [ -n "$WP" ]; then
+  WC=$(rc "$WP")
+  O+=" ${WC}${WP}%%${R}"
+  WRT=$(fmt_reset "$WR")
+  [ -n "$WRT" ] && O+="${DIM}(${WRT})${R}"
+fi
+
+# Cost + duration
+O+=" ${DIM}\$${R}${COST} $(fmt_dur $DUR_MS)"
+
+# Version (VER already contains the number, no extra v)
+O+=" ${DIM}${YEL}${VER}${R}"
+
+# Dir + branch
+O+=" ${B}${DIR}${R}"
+[ -n "$BRANCH" ] && [ "$BRANCH" != "main" ] && O+=" ${MAG}${BRANCH}${R}"
+
+# Lines
+[ "$LA" -gt 0 ] || [ "$LD" -gt 0 ] && O+=" ${GRN}+${LA}${R}${RED}-${LD}${R}"
+
+printf "$O"
+exit 0
