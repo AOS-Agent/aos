@@ -2,6 +2,16 @@
 
 All notable changes to AOS. Release notes sent via Telegram after each 4am update.
 
+## v0.6.13 — 2026-07-16
+
+Summary: Turned the terminal installer into a calm progress ceremony — the first phase of the Onboarding 10x initiative. Same bootstrap engine and migrations; only the presentation and handoff changed. A fresh install now reads as a beautiful machine waking up rather than a wall of tool output, and it ends by handing the operator to Qareen instead of a terminal. No Qareen code is touched in this phase.
+
+- Wrapped `install.sh`'s phases in a stage presenter (`_stage`): each phase is one calm line — a spinner with a human-named stage ("Checking your Mac", "Installing the system", "Setting up your knowledge vault and memory", "Waking the agents", "Making it yours", "Final checks") that resolves to a checkmark. The phase's own stdout/stderr (brew/pip/git spew, per-item lines, migration logs) is redirected to `~/.aos/logs/install.log`; the screen never shows raw tool output. A private terminal file descriptor (`exec 3>&1`) carries the spinner and any failure panel so they survive the per-stage log redirect. Checkpoint resume is preserved — a completed stage shows "(already done)".
+- Added a graceful failure panel: on any stage failure a bordered, plain-English block says what happened (human words), what it means (nothing is half-broken), the one command to recover (`bash ~/aos/install.sh`, which resumes from the last good stage), and where the full log lives. A stack trace is never the last thing on screen. `_die` now routes through this panel (drawing on fd 3 so it's visible mid-stage), and the health scorecard now returns non-zero on critical failures so a half-built system triggers the panel instead of a silent handoff. Non-zero exit is preserved for scripting.
+- Hoisted the installer's only questions (git name/email, operator name) into an identity preflight that runs before the ceremony, so a prompt never appears under a spinner. The developer-vs-operator skill split is now derived from role instead of asked. Role is detected at install time the same way migration 081 does it (`~/project/aos` present → developer, else operator).
+- Reworked the handoff by role: both roles get "Your system is alive." Operators auto-open `http://localhost:4096` in the default browser (graceful on headless/SSH — the URL is printed instead) and never see the terminal again; developers get the URL plus dev notes and keep the terminal handoff (`aos start` / `cld`), with no browser auto-open. (Lands on the Qareen home for now; the `/welcome` route arrives in Phase 1.)
+- Added a dry-run walk mode (`--dry-run` or `INSTALL_DRY_RUN=1`) that walks the real stage ceremony without touching the machine and needs no admin access — useful for demos and CI. Shellcheck-clean at `--severity=warning`; no Python changed.
+
 ## v0.6.12 — 2026-07-15
 
 Summary: Repainted the Qareen UI from warm brown + orange to a charcoal-and-bone system. The operator vetoed the orange accent; the whole surface now reads as neutral-warm charcoal (never blue-black) with a single restrained warm-bone accent, pure-white headings, and semantic status colors kept legible. No behavior change — palette only.
