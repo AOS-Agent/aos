@@ -134,16 +134,49 @@ def run_all(dry_run: bool = False) -> list[CheckResult]:
     _log_results(results)
     _write_state(results)
 
-    # Consolidated Telegram notification for issues
-    if needs_notify and not dry_run:
+    # Consolidated Telegram notification — but only for NEW or CHANGED
+    # findings. Standing warnings (dead code awaiting review, storage
+    # drift, vault debt) used to re-ping the operator every cycle with an
+    # identical list; an alarm that repeats itself unchanged is noise and
+    # trains the operator to ignore it (2026-07-15). We fingerprint each
+    # finding (name + message) and persist the set; a finding notifies
+    # once, then stays silent until its message changes or it clears.
+    # Cleared findings are announced too — closure matters.
+    if not dry_run:
+        import hashlib
+        seen_path = Path.home() / ".aos" / "state" / "reconcile-notified.json"
+        seen_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            prev = json.loads(seen_path.read_text())
+        except Exception:
+            prev = {}
+        current = {
+            r.name: hashlib.sha256(f"{r.name}|{r.message}".encode()).hexdigest()[:16]
+            for r in needs_notify
+        }
+        new_or_changed = [
+            r for r in needs_notify
+            if prev.get(r.name) != current[r.name]
+        ]
+        cleared = [name for name in prev if name not in current]
+
         host = socket.gethostname()
-        lines = [f"AOS reconcile issues on {host}:"]
-        for r in needs_notify:
-            emoji = "⚠️" if r.status == Status.NOTIFY else "❌"
-            lines.append(f"  {emoji} {r.name}: {r.message}")
-            if r.detail:
-                lines.append(f"      {r.detail[:200]}")
-        _notify_telegram("\n".join(lines))
+        lines = []
+        if new_or_changed:
+            lines.append(f"AOS reconcile — new findings on {host}:")
+            for r in new_or_changed:
+                emoji = "⚠️" if r.status == Status.NOTIFY else "❌"
+                lines.append(f"  {emoji} {r.name}: {r.message}")
+                if r.detail:
+                    lines.append(f"      {r.detail[:200]}")
+        if cleared:
+            lines.append(f"✅ Cleared since last run: {', '.join(cleared)}")
+        if lines:
+            _notify_telegram("\n".join(lines))
+        try:
+            seen_path.write_text(json.dumps(current, indent=1))
+        except Exception:
+            pass
 
     return results
 
