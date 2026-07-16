@@ -133,7 +133,9 @@ class DeadCodeCheck(ReconcileCheck):
                     pass
 
         # Also check skills for bin script references
-        skills_dir = self.AOS_DIR / ".claude" / "skills"
+        skills_dir = self.AOS_DIR / "core" / "skills"  # skills moved here in wave 1
+        # (was .claude/skills — the stale path made the reference scan blind to
+        # SKILL.md mentions, flagging live entry points like aos-report as dead)
         if skills_dir.exists():
             for skill_file in skills_dir.rglob("SKILL.md"):
                 try:
