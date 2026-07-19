@@ -1,0 +1,13 @@
+name: qareen
+purpose: Qareen — the AOS companion API + ontology backend.
+# Qareen lives under core/qareen (not core/services), so its manifest lives here
+# and the registry loader globs it explicitly alongside core/services/*/service.yaml.
+status: active
+type: resident
+owner_layer: framework
+label: com.aos.qareen
+plist_template: com.aos.qareen.plist.template
+keepalive: true
+liveness: http
+port: 4096
+health_endpoint: /api/health

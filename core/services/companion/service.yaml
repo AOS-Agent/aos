@@ -1,0 +1,13 @@
+name: companion
+purpose: Companion meeting service (FastAPI) — meeting capture + intelligence.
+# Optional and not deployed by default — no framework plist template ships.
+# The FastAPI app binds :7603 but serves no /health route, so liveness is the
+# launchd KeepAlive signal (loaded-is-enough); port is recorded informationally.
+status: optional
+type: resident
+owner_layer: framework
+label: com.aos.companion
+plist_template: null
+keepalive: true
+liveness: keepalive
+port: 7603

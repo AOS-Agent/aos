@@ -1,0 +1,14 @@
+name: whatsmeow
+purpose: WhatsApp bridge (Go / whatsmeow) — relay for the comms WhatsApp adapter.
+status: active
+type: resident
+owner_layer: framework
+# Deployed under the com.agent.* prefix by the WhatsApp integration installer
+# (core/infra/integrations/whatsapp/setup.sh), not from a config/launchagents
+# template — hence plist_template: generated.
+label: com.agent.whatsmeow
+plist_template: generated
+keepalive: true
+liveness: http
+port: 7601
+health_endpoint: /health

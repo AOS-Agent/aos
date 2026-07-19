@@ -1,0 +1,20 @@
+# Service manifest — the single declarative source of identity for this service.
+# Schema: core/services/README.md and core/infra/lib/service_registry.py.
+# Every consumer (watchdog, reconcile checks, heartbeat, intent_classifier,
+# instance_hygiene, migration 083) derives from this — do not hardcode a
+# service's port/health/status anywhere else.
+name: bridge
+purpose: Telegram/Slack companion bridge — routes messages, voice, and commands to AOS.
+status: active
+type: resident
+owner_layer: framework
+label: com.aos.bridge
+plist_template: com.aos.bridge.plist.template
+keepalive: true
+# The bridge's liveness is its Telegram getUpdates poll loop, tracked via a
+# heartbeat file — NOT an HTTP endpoint. Its :4098 API (aiohttp) is optional and
+# was missing during the aos#180 incident, so it must never be treated as the
+# liveness signal. BridgePollLivenessCheck owns wedge detection; service_loaded
+# only asserts the job is loaded.
+liveness: poll_timestamp
+port: 4098

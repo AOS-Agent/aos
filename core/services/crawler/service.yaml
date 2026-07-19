@@ -1,0 +1,12 @@
+name: crawler
+purpose: MCP web-crawling server (crawl4ai) — spawned by MCP clients over stdio.
+# An MCP stdio server: it has no port and no HTTP health, and is launched by an
+# MCP client, not run as a resident daemon. Optional (feature-gated). liveness
+# none — there is no out-of-band signal to probe.
+status: optional
+type: oneshot
+owner_layer: framework
+label: com.aos.crawler
+plist_template: com.aos.crawler.plist.template
+keepalive: false
+liveness: none
