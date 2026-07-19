@@ -1,0 +1,172 @@
+#!/usr/bin/env python3
+"""comms-recall — on-demand recall over your own message history.
+
+Verbatim retrieval over comms.db (FTS5 + person + timeframe). Phase 1 of
+Ambient Knowledge. Access control is enforced inside the engine: restricted
+contacts (privacy_level >= 2) are excluded unless --include-private (an
+explicit, operator-only override).
+
+Usage:
+    comms-recall search <keywords...> [--person REF] [--since DATE] [--until DATE]
+                        [--channel C] [--limit N] [--json] [--include-private]
+    comms-recall person <ref> [--topic "kw..."] [--since DATE] [--until DATE]
+                        [--channel C] [--limit N] [--json] [--include-private]
+    comms-recall get <message_id> [--json] [--include-private]
+
+DATE is 'YYYY-MM-DD'. Search results are snippet-first; `get <message_id>`
+expands one message to full content.
+
+Exit codes:
+    0  success, at least one result
+    1  success, zero results (or message not found)
+    2  usage / runtime error
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+# Make the engine package importable (core/ is parents[2] of this file).
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from engine.comms.recall import DEFAULT_LIMIT, RecallEngine  # noqa: E402
+
+
+def _print_rows_text(rows: list[dict]) -> None:
+    if not rows:
+        print("No results.")
+        return
+    for i, row in enumerate(rows, 1):
+        e = row["entity"]
+        who = e.get("person_name") or e.get("person_id") or "unknown"
+        arrow = "->" if e.get("direction") == "outbound" else "<-"
+        ts = (e.get("timestamp") or "")[:19]
+        text = e.get("snippet", e.get("content", "")) or ""
+        text = text.replace("\n", " ")
+        if e.get("truncated"):
+            text += " …"
+        print(f"{i:>2}. [{ts}] {e.get('channel','?'):<8} {arrow} {who}  "
+              f"(scope={row['scope']}, conf={row['confidence']})")
+        print(f"    {text}")
+        print(f"    id={e.get('message_id')}")
+
+
+def _print_row_text(row: dict) -> None:
+    e = row["entity"]
+    who = e.get("person_name") or e.get("person_id") or "unknown"
+    print(f"id:        {e.get('message_id')}")
+    print(f"channel:   {e.get('channel')}")
+    print(f"direction: {e.get('direction')}")
+    print(f"timestamp: {e.get('timestamp')}")
+    print(f"person:    {who}")
+    print(f"scope:     {row['scope']}   confidence: {row['confidence']}")
+    print("content:")
+    print(e.get("content", ""))
+
+
+def cmd_search(args, engine: RecallEngine) -> int:
+    query = " ".join(args.keywords).strip() or None
+    rows = engine.search(
+        query=query,
+        person=args.person,
+        since=args.since,
+        until=args.until,
+        channel=args.channel,
+        limit=args.limit,
+        include_private=args.include_private,
+    )
+    if args.json:
+        print(json.dumps(rows, indent=2, ensure_ascii=False))
+    else:
+        _print_rows_text(rows)
+    return 0 if rows else 1
+
+
+def cmd_person(args, engine: RecallEngine) -> int:
+    rows = engine.search(
+        query=args.topic,
+        person=args.ref,
+        since=args.since,
+        until=args.until,
+        channel=args.channel,
+        limit=args.limit,
+        include_private=args.include_private,
+    )
+    if args.json:
+        print(json.dumps(rows, indent=2, ensure_ascii=False))
+    else:
+        _print_rows_text(rows)
+    return 0 if rows else 1
+
+
+def cmd_get(args, engine: RecallEngine) -> int:
+    row = engine.get(args.message_id, include_private=args.include_private)
+    if row is None:
+        if args.json:
+            print("null")
+        else:
+            print(f"Message {args.message_id!r} not found.")
+        return 1
+    if args.json:
+        print(json.dumps(row, indent=2, ensure_ascii=False))
+    else:
+        _print_row_text(row)
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(prog="comms-recall", description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    def add_common(sp):
+        sp.add_argument("--since", help="ISO date lower bound (YYYY-MM-DD)")
+        sp.add_argument("--until", help="ISO date upper bound (YYYY-MM-DD)")
+        sp.add_argument("--channel", help="restrict to one channel")
+        sp.add_argument("--limit", type=int, default=DEFAULT_LIMIT,
+                        help=f"max results (default {DEFAULT_LIMIT}, hard cap 100)")
+        sp.add_argument("--json", action="store_true", help="emit contract JSON")
+        sp.add_argument("--include-private", action="store_true",
+                        help="operator-only: include restricted contacts "
+                             "(privacy_level >= 2)")
+
+    sp_search = sub.add_parser("search", help="recall by keywords (+ filters)")
+    sp_search.add_argument("keywords", nargs="*", help="FTS5 keywords")
+    sp_search.add_argument("--person", help="scope to a person (handle/name/alias)")
+    add_common(sp_search)
+    sp_search.set_defaults(func=cmd_search)
+
+    sp_person = sub.add_parser("person", help="recall a person's messages")
+    sp_person.add_argument("ref", help="person handle / name / alias")
+    sp_person.add_argument("--topic", help="optional keywords to narrow")
+    add_common(sp_person)
+    sp_person.set_defaults(func=cmd_person)
+
+    sp_get = sub.add_parser("get", help="expand one message to full content")
+    sp_get.add_argument("message_id")
+    sp_get.add_argument("--json", action="store_true", help="emit contract JSON")
+    sp_get.add_argument("--include-private", action="store_true",
+                        help="operator-only: allow a restricted message")
+    sp_get.set_defaults(func=cmd_get)
+
+    return p
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    engine = RecallEngine()
+    try:
+        return args.func(args, engine)
+    except FileNotFoundError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    except Exception as e:  # noqa: BLE001 - CLI boundary, honest exit code
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())
