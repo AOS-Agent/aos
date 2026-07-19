@@ -525,6 +525,9 @@ async def stream_claude(
             "your next message continues the conversation. Don't ask for confirmation on "
             "routine tasks. If you need to delegate, use the Agent tool with subagent_type: "
             "steward (system health), advisor (analysis), or other installed agents. "
+            "When the operator references a person or topic from a past conversation, recall "
+            "it with `comms-recall search \"<topic>\"` or `comms-recall person \"<name>\"` "
+            "rather than asking them to re-explain. "
             "You have full tool access.",
         ])
 
