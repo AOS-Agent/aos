@@ -1,11 +1,15 @@
 """
-Tests for ServiceLoadedCheck — the generic "deployed plist but no loaded job"
-net (aos#180). Covers the unloaded-service repair, the loaded+healthy pass, the
-by-design interval-job non-flap case (scheduler/slack-watch), and the anti-flap
-cooldown that stops it re-restarting a service another check just restarted.
+Tests for ServiceLoadedCheck — the "deployed plist but no loaded job" net
+(aos#180), now classified by the service registry. Covers the unloaded-service
+repair, the loaded+healthy pass, the poll_timestamp/interval loaded-is-enough
+services (bridge, scheduler), the retired-still-loaded NOTIFY, the optional-
+absent no-op, and the anti-flap cooldown.
 
-All launchd / health / restart I/O is faked; nothing touches real launchd,
-~/.aos/, or the network.
+Service names below are real registry entries so the check's registry lookup
+resolves them: transcriber (active, liveness http, :7602), bridge (active,
+liveness poll_timestamp — loaded-is-enough, never health-probed), listen
+(retired), mesh (optional, liveness http). All launchd / health / restart I/O
+is faked; nothing touches real launchd, ~/.aos/, or the network.
 """
 
 import importlib.util
@@ -117,31 +121,81 @@ def test_unregistered_interval_job_is_restarted(env):
 
 
 def test_loaded_but_unhealthy_outside_cooldown_is_restarted(env):
-    env["write"]("com.aos.bridge", RESIDENT_PLIST)
-    env["state"]["loaded"] = {"com.aos.bridge": True}
-    env["state"]["healthy"] = {"http://127.0.0.1:4098/health": False}
-    env["state"]["restart_age"] = {"com.aos.bridge": None}  # no recent restart
+    # transcriber is liveness=http (:7602), so a loaded-but-unhealthy job IS probed
+    env["write"]("com.aos.transcriber", RESIDENT_PLIST)
+    env["state"]["loaded"] = {"com.aos.transcriber": True}
+    env["state"]["healthy"] = {"http://127.0.0.1:7602/health": False}
+    env["state"]["restart_age"] = {"com.aos.transcriber": None}  # no recent restart
 
     c = _check(env)
     assert c.check() is False
     result = c.fix()
     assert result.status == env["mod"].Status.FIXED
-    assert env["state"]["restarts"] == ["com.aos.bridge"]
+    assert env["state"]["restarts"] == ["com.aos.transcriber"]
 
 
 def test_loaded_but_unhealthy_within_cooldown_is_skipped(env):
     """Anti-flap: don't re-restart a service another check restarted seconds
     ago. Health-triggered restarts respect the cooldown."""
-    env["write"]("com.aos.bridge", RESIDENT_PLIST)
-    env["state"]["loaded"] = {"com.aos.bridge": True}
-    env["state"]["healthy"] = {"http://127.0.0.1:4098/health": False}
-    env["state"]["restart_age"] = {"com.aos.bridge": 20.0}  # restarted 20s ago
+    env["write"]("com.aos.transcriber", RESIDENT_PLIST)
+    env["state"]["loaded"] = {"com.aos.transcriber": True}
+    env["state"]["healthy"] = {"http://127.0.0.1:7602/health": False}
+    env["state"]["restart_age"] = {"com.aos.transcriber": 20.0}  # restarted 20s ago
 
     c = _check(env)
     assert c.check() is False
     result = c.fix()
     assert env["state"]["restarts"] == []  # skipped
     assert result.status == env["mod"].Status.NOTIFY
+
+
+def test_poll_timestamp_service_loaded_is_not_probed(env):
+    """The bridge is liveness=poll_timestamp: once loaded it is healthy as far
+    as this check is concerned (BridgePollLivenessCheck owns wedge detection).
+    Even a failing health probe on its :4098 API must NOT flag or restart it."""
+    env["write"]("com.aos.bridge", RESIDENT_PLIST)
+    env["state"]["loaded"] = {"com.aos.bridge": True}
+    env["state"]["healthy"] = {"http://127.0.0.1:4098/health": False}
+
+    c = _check(env)
+    assert c.check() is True
+    c.fix()
+    assert env["state"]["restarts"] == []
+
+
+def test_retired_service_still_loaded_notifies_but_is_not_restarted(env):
+    """listen is retired: it must NOT be loaded. If it still is, NOTIFY the
+    operator — but never auto-bootout (removal is an operator decision)."""
+    env["write"]("com.aos.listen", RESIDENT_PLIST)
+    env["state"]["loaded"] = {"com.aos.listen": True}
+
+    c = _check(env)
+    assert c.check() is False
+    result = c.fix()
+    assert result.status == env["mod"].Status.NOTIFY
+    assert result.notify is True
+    assert env["state"]["restarts"] == []  # never auto-removed
+
+
+def test_retired_service_not_loaded_is_fine(env):
+    """A retired service that is absent/unloaded is the expected state — OK."""
+    env["write"]("com.aos.listen", RESIDENT_PLIST)
+    env["state"]["loaded"] = {"com.aos.listen": False}
+
+    c = _check(env)
+    assert c.check() is True
+
+
+def test_optional_service_absent_is_not_flagged(env):
+    """mesh is optional: if its plist is deployed but the job is not loaded on
+    this node, that is allowed — never flagged, never restarted."""
+    env["write"]("com.aos.mesh", RESIDENT_PLIST)
+    env["state"]["loaded"] = {"com.aos.mesh": False}
+
+    c = _check(env)
+    assert c.check() is True
+    c.fix()
+    assert env["state"]["restarts"] == []
 
 
 def test_unloaded_ignores_cooldown(env):
