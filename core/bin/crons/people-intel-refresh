@@ -46,8 +46,8 @@ run_step() {
     fi
 }
 
-run_step "imessage-ingest"  "$PYTHON" -m core.qareen.channels.imessage_desktop --days 7
-run_step "email-ingest"     "$PYTHON" -m core.qareen.channels.apple_mail_desktop --days 30
+run_step "imessage-ingest"  "$PYTHON" -m core.engine.comms.channels.imessage_desktop --days 7
+run_step "email-ingest"     "$PYTHON" -m core.engine.comms.channels.apple_mail_desktop --days 30
 run_step "id-enrichment"    "$PYTHON" -m core.engine.people.identity_enrichment
 run_step "extract"          "$PYTHON" -m core.engine.people.intel.cli extract
 run_step "classify"         "$PYTHON" -m core.engine.people.intel.cli classify
