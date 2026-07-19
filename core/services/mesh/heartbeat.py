@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
 import threading
 import time
 import urllib.request
@@ -18,6 +19,26 @@ log = logging.getLogger(__name__)
 
 HEARTBEAT_INTERVAL = 60  # seconds
 OFFLINE_THRESHOLD = 180  # 3 minutes = offline
+
+# Critical-service identity comes from the one registry, not a hardcoded list.
+sys.path.insert(0, str(Path.home() / "aos" / "core" / "infra" / "lib"))
+try:
+    from service_registry import ManifestError, load_registry
+except Exception:  # pragma: no cover — registry always ships; degrade gracefully
+    load_registry = None
+    ManifestError = Exception
+
+
+def _critical_health_urls() -> dict[str, str]:
+    """{name: health_url} for active services with an HTTP health endpoint,
+    excluding mesh itself (a node doesn't heartbeat-check its own daemon)."""
+    if load_registry is None:
+        return {}
+    try:
+        urls = load_registry().active_health_urls()
+    except ManifestError:
+        return {}
+    return {n: u for n, u in urls.items() if n != "mesh"}
 
 
 class HeartbeatSender:
@@ -81,21 +102,19 @@ class HeartbeatSender:
         log.debug("Heartbeat sent to %s", admin_url)
 
     def _check_health(self) -> tuple[str, list[str]]:
-        """Run basic health checks, return (status, errors)."""
+        """Run basic health checks, return (status, errors).
+
+        The set of critical services and their health URLs is derived from the
+        service registry (active services with an HTTP health endpoint), never a
+        hardcoded list — the old list probed the retired eventd and a mislabeled
+        "dashboard" :4096 (that port is qareen)."""
         errors = []
 
-        # Check critical AOS services
-        services = [
-            ("eventd", 4097),
-            ("dashboard", 4096),
-        ]
-
-        for name, port in services:
+        for name, url in _critical_health_urls().items():
             try:
-                url = f"http://127.0.0.1:{port}/health"
                 urllib.request.urlopen(url, timeout=3)
             except Exception:
-                errors.append(f"{name} not responding on :{port}")
+                errors.append(f"{name} not responding at {url}")
 
         if errors:
             return "error" if len(errors) > 1 else "warning", errors

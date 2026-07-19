@@ -1,5 +1,5 @@
 """
-Invariant: The transcriber service is running and healthy on port 7602.
+Invariant: The transcriber service is running and healthy on its declared port.
 
 Full lifecycle:
 - If venv doesn't exist → skip (migration 019 hasn't run yet)
@@ -8,6 +8,11 @@ Full lifecycle:
 - If healthy → OK
 
 See GitHub issue #8: plist template existed but was never instantiated.
+
+The health URL is read from the service registry (transcriber's service.yaml),
+never hardcoded here. A stale local constant (:7601, which is whatsmeow) is what
+made this check bounce a healthy transcriber on every deploy (aos#180); deriving
+from the one manifest is what stops that drift class from recurring.
 """
 
 import json
@@ -20,19 +25,26 @@ from base import CheckResult, ReconcileCheck, Status
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from lib.service_ctl import restart_launchagent
+from lib.service_registry import ManifestError, load_registry
+
+
+def _registry_health_url(name: str) -> str | None:
+    """The health URL for ``name`` from the registry, or None if unavailable."""
+    try:
+        m = load_registry().by_name(name)
+        return m.health_url if m else None
+    except ManifestError:
+        return None
 
 
 class TranscriberServiceCheck(ReconcileCheck):
     name = "transcriber_service"
-    description = "Transcriber service is running and healthy on port 7602"
+    description = "Transcriber service is running and healthy on its declared port"
 
     HOME = Path.home()
     VENV_PYTHON = HOME / ".aos" / "services" / "transcriber" / ".venv" / "bin" / "python"
     SERVICE_MAIN = HOME / "aos" / "core" / "services" / "transcriber" / "main.py"
-    # Port 7602. :7601 is whatsmeow — probing it returned whatsmeow's JSON
-    # (no "status" key), so this check read the transcriber as unhealthy on
-    # EVERY reconcile and bounced a healthy service each deploy (aos#180).
-    HEALTH_URL = "http://127.0.0.1:7602/health"
+    HEALTH_URL = _registry_health_url("transcriber")
     PLIST_NAME = "com.aos.transcriber"
     PLIST_PATH = HOME / "Library" / "LaunchAgents" / "com.aos.transcriber.plist"
     TEMPLATE_PATH = HOME / "aos" / "config" / "launchagents" / "com.aos.transcriber.plist.template"
@@ -77,6 +89,10 @@ class TranscriberServiceCheck(ReconcileCheck):
         if not self.VENV_PYTHON.exists():
             return True
 
+        # Registry unavailable — can't derive the health URL, so don't flap.
+        if not self.HEALTH_URL:
+            return True
+
         # Venv exists — service should be running and healthy
         return self._is_healthy()
 
@@ -85,6 +101,12 @@ class TranscriberServiceCheck(ReconcileCheck):
             return CheckResult(
                 self.name, Status.SKIP,
                 "Transcriber venv not found — run migration 019 first"
+            )
+
+        if not self.HEALTH_URL:
+            return CheckResult(
+                self.name, Status.SKIP,
+                "Transcriber health URL unavailable — service registry did not load"
             )
 
         if not self.SERVICE_MAIN.exists():

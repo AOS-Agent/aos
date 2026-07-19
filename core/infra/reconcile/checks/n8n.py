@@ -1,11 +1,14 @@
 """
-Invariant: The n8n automation service is running and healthy on port 5678.
+Invariant: The n8n automation service is running and healthy on its declared port.
 
 Full lifecycle:
 - If n8n data dir doesn't exist → skip (migration 056 hasn't run yet)
 - If data dir exists but plist missing → instantiate from template, deploy, start
 - If plist exists but service unhealthy → kickstart
 - If healthy → OK
+
+The health URL is read from the service registry (config/services.d/n8n.yaml),
+never hardcoded here.
 """
 
 import subprocess
@@ -18,15 +21,24 @@ from base import CheckResult, ReconcileCheck, Status
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from lib.service_ctl import restart_launchagent
+from lib.service_registry import ManifestError, load_registry
+
+
+def _registry_health_url(name: str) -> str | None:
+    try:
+        m = load_registry().by_name(name)
+        return m.health_url if m else None
+    except ManifestError:
+        return None
 
 
 class N8nServiceCheck(ReconcileCheck):
     name = "n8n_service"
-    description = "n8n automation service is running and healthy on port 5678"
+    description = "n8n automation service is running and healthy on its declared port"
 
     HOME = Path.home()
     N8N_DATA_DIR = HOME / ".aos" / "services" / "n8n"
-    HEALTH_URL = "http://127.0.0.1:5678/healthz"
+    HEALTH_URL = _registry_health_url("n8n")
     PLIST_NAME = "com.aos.n8n"
     PLIST_PATH = HOME / "Library" / "LaunchAgents" / "com.aos.n8n.plist"
     TEMPLATE_PATH = HOME / "aos" / "config" / "launchagents" / "com.aos.n8n.plist.template"
@@ -66,6 +78,10 @@ class N8nServiceCheck(ReconcileCheck):
     def check(self) -> bool:
         # No data dir = migration hasn't run yet, skip
         if not self.N8N_DATA_DIR.exists():
+            return True
+
+        # Registry unavailable — can't derive the health URL, so don't flap.
+        if not self.HEALTH_URL:
             return True
 
         # n8n binary must exist

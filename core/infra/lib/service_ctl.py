@@ -54,21 +54,13 @@ LIFECYCLE_LOG = HOME / ".aos" / "logs" / "service-lifecycle.jsonl"
 SETTLE_TRIES = 5
 BOOTSTRAP_TRIES = 3
 
-# Known service health endpoints. Ports are defined in each service's own code
-# (not declared by the filesystem), so a small explicit map is the honest
-# source of truth. Kept HERE, in the shared choke-point, so the reconcile
-# ServiceLoadedCheck and any future caller share ONE definition rather than the
-# drifting copies that produced the 7601-vs-7602 transcriber bug (aos#180).
-# The state.yaml migration keeps a frozen point-in-time copy by design
-# (migrations must not import evolving lib code).
-KNOWN_HEALTH_URLS = {
-    "bridge": "http://127.0.0.1:4098/health",
-    "transcriber": "http://127.0.0.1:7602/health",
-    "qareen": "http://127.0.0.1:4096/api/health",
-    "n8n": "http://127.0.0.1:5678/healthz",
-    "listen": "http://127.0.0.1:7600/health",
-    "whatsmeow": "http://127.0.0.1:7601/health",
-}
+# Service health endpoints are NOT defined here. They live in the service
+# registry (core/infra/lib/service_registry.py — one manifest per service), the
+# single source of truth. This choke-point is purely restart mechanics; a caller
+# that needs a health URL reads it from the registry (e.g. via
+# load_registry().active_health_urls()). Keeping this file port-free is what
+# stops the 7601-vs-7602 transcriber drift (aos#180) from ever re-appearing in
+# the restart path.
 
 
 def _audit(service: str, action: str, actor: str, result: str, detail: str | None = None) -> None:
