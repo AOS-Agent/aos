@@ -1,0 +1,11 @@
+name: transcriber
+purpose: Local Whisper speech-to-text HTTP service (mlx-whisper).
+status: active
+type: resident
+owner_layer: framework
+label: com.aos.transcriber
+plist_template: com.aos.transcriber.plist.template
+keepalive: true
+liveness: http
+port: 7602        # :7601 is whatsmeow — probing it is what killed the transcriber (aos#180)
+health_endpoint: /health

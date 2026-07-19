@@ -1,0 +1,11 @@
+name: memory
+purpose: MCP persistent-memory server — semantic workspace search over stdio.
+# An MCP stdio server (see crawler): no port, no HTTP health, launched by an MCP
+# client. Optional; liveness none.
+status: optional
+type: oneshot
+owner_layer: framework
+label: com.aos.memory
+plist_template: com.aos.memory.plist.template
+keepalive: false
+liveness: none

@@ -1,0 +1,15 @@
+# A service with a framework launchd presence but no core/services code dir
+# (an external tool AOS wraps). Declared here so its identity — port, health,
+# status — has ONE source the reconcile checks and watchdog derive from, instead
+# of a hardcoded constant in n8n.py.
+name: n8n
+purpose: n8n automation engine — workflow runner behind AOS integrations.
+status: active
+type: resident
+owner_layer: framework
+label: com.aos.n8n
+plist_template: com.aos.n8n.plist.template
+keepalive: true
+liveness: http
+port: 5678
+health_endpoint: /healthz

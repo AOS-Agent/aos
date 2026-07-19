@@ -1,0 +1,15 @@
+name: eventd
+purpose: Event daemon — comms bus, watchers, consumers (retired, aos#183).
+# RETIRED (aos#183). The remaining code references (core/engine/comms/bus.py,
+# preserved-services.yaml) are a separate cleanup — retirement here means
+# monitoring must not treat it as an active service. No framework plist template
+# ships; it was deployed via preserved-services.yaml.
+status: retired
+type: resident
+owner_layer: framework
+label: com.aos.eventd
+plist_template: null
+keepalive: true
+liveness: http
+port: 4097
+health_endpoint: /health

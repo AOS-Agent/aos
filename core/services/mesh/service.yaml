@@ -1,0 +1,12 @@
+name: mesh
+purpose: Mesh node daemon (meshd) — fleet health + agent-to-agent comms.
+# Optional — part of the AOS Mesh initiative; deployed per-node as it rolls out.
+status: optional
+type: resident
+owner_layer: framework
+label: com.aos.mesh
+plist_template: com.aos.mesh.plist
+keepalive: true
+liveness: http
+port: 4100
+health_endpoint: /health

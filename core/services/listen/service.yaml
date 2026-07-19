@@ -1,0 +1,16 @@
+name: listen
+purpose: HTTP job-queue server (retired — zero producers since ~April 2026).
+# RETIRED, operator-approved (aos#180). Must NOT be loaded; monitoring must not
+# probe :7600 or report it DOWN. The directory and instance data (~/.aos/services/
+# listen) are kept as an archive — do NOT delete instance data; that is a
+# separate operator decision. port/health are recorded for historical truth
+# only; no consumer probes a retired service.
+status: retired
+type: resident
+owner_layer: framework
+label: com.aos.listen
+plist_template: com.aos.listen.plist.template
+keepalive: true
+liveness: http
+port: 7600
+health_endpoint: /health
