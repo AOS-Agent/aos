@@ -22,11 +22,15 @@ from .storage_layout import StorageLayoutCheck
 from .symlinks import AgentSymlinkCheck, RuleSymlinkCheck, SkillSymlinkCheck
 from .transcriber import TranscriberServiceCheck
 from .vault_contract import VaultContractCheck
+from .volume_access import VolumeAccessCheck
 
 # Add new checks here — they run in this order on every update cycle.
 ALL_CHECKS = [
     # Runtime protection — must run FIRST to unblock git pull
     RuntimeProtectionCheck,
+
+    # Data layer — AOS-X volume must be accessible before anything trusts reads
+    VolumeAccessCheck,
 
     # Structural — file locations
     McpLocationCheck,
