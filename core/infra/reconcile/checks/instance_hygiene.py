@@ -20,12 +20,38 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from base import CheckResult, ReconcileCheck, Status
 
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+from lib.service_registry import ManifestError, load_registry
+
 AOS = Path.home() / "aos"
 USER = Path.home() / ".aos"
 CLAUDE = Path.home() / ".claude"
 
 PRESERVED_SERVICES_FILE = AOS / "config" / "preserved-services.yaml"
 HYGIENE_STATE_FILE = USER / "config" / "hygiene-known.yaml"
+
+
+def _registry():
+    """The service registry, or None if it fails to load."""
+    try:
+        return load_registry()
+    except ManifestError:
+        return None
+
+
+def _registry_service_names() -> set[str]:
+    """Every service name the registry declares — ANY status. A declared
+    service (active, optional, or retired) is framework-known, so its instance
+    venv is never an orphan; a retired service dir is an expected archive."""
+    reg = _registry()
+    return {m.name for m in reg} if reg else set()
+
+
+def _registry_labels() -> set[str]:
+    """Every launchd label the registry declares (including com.agent.* like
+    whatsmeow) — a declared service's installed plist is never an orphan."""
+    reg = _registry()
+    return {m.label for m in reg} if reg else set()
 
 
 def _load_preserved():
@@ -65,7 +91,8 @@ def _known_orphans():
 
 
 def _framework_services():
-    """Service names the framework declares plus preserved services."""
+    """Service names the framework declares: the registry (any status) plus the
+    pyproject-declared dirs plus preserved services."""
     svc_dir = AOS / "core" / "services"
     declared = set()
     if svc_dir.is_dir():
@@ -73,11 +100,12 @@ def _framework_services():
             d.name for d in svc_dir.iterdir()
             if d.is_dir() and (d / "pyproject.toml").exists()
         }
-    return declared | _load_preserved()["services"]
+    return declared | _registry_service_names() | _load_preserved()["services"]
 
 
 def _framework_launchagents():
-    """LaunchAgent labels the framework declares plus preserved LaunchAgents."""
+    """LaunchAgent labels the framework declares: the registry (any status) plus
+    the config/launchagents templates plus preserved LaunchAgents."""
     la_dir = AOS / "config" / "launchagents"
     labels = set()
     if la_dir.is_dir():
@@ -87,7 +115,7 @@ def _framework_launchagents():
                 labels.add(name.removesuffix(".plist.template"))
             elif name.endswith(".plist"):
                 labels.add(name.removesuffix(".plist"))
-    return labels | _load_preserved()["launchagents"]
+    return labels | _registry_labels() | _load_preserved()["launchagents"]
 
 
 def _installed_launchagents():

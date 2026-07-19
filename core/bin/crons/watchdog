@@ -193,19 +193,18 @@ fi
 if [[ -z "$SERVICES_LIST" ]]; then
     # FAIL LOUD — do NOT silently shrink to a hardcoded list. The instance
     # service map is missing or unparseable; monitoring is degraded until
-    # `aos reconcile` (migration 082) rebuilds it. Alarm once (state-change
-    # dedup) so this doesn't re-ping every 5 minutes, then fall back to a
-    # minimal core set with the CORRECT ports (bridge :4098, transcriber :7602)
-    # so at least the critical services stay watched.
+    # `aos reconcile` (migration 083) rebuilds it. Alarm once (state-change
+    # dedup) so this doesn't re-ping every 5 minutes, then fall back by asking
+    # the service REGISTRY directly for the active-service map — so even the
+    # degraded path derives from the one source of truth, never a hardcoded
+    # list that can drift (aos#180: bridge health none, transcriber :7602,
+    # retired listen excluded — all handled by the registry, not us).
     log "CRITICAL: $STATE_YAML missing or unparseable — service monitoring DEGRADED"
     if check_state_change "state_yaml" "missing"; then
-        notify "<b>AOS watchdog:</b> service map <code>${STATE_YAML}</code> is missing/unparseable. Service monitoring is <b>DEGRADED</b> — run <code>aos reconcile</code> (migration 082 rebuilds it). Falling back to a minimal core list."
+        notify "<b>AOS watchdog:</b> service map <code>${STATE_YAML}</code> is missing/unparseable. Service monitoring is <b>DEGRADED</b> — run <code>aos reconcile</code> (migration 083 rebuilds it from the service registry). Falling back to the registry directly."
     fi
-    SERVICES_LIST="bridge|com.aos.bridge|http://127.0.0.1:4098/health
-qareen|com.aos.qareen|http://127.0.0.1:4096/api/health
-transcriber|com.aos.transcriber|http://127.0.0.1:7602/health
-listen|com.aos.listen|http://127.0.0.1:7600/health
-whatsapp|com.agent.whatsmeow|http://127.0.0.1:7601/health"
+    SERVICES_LIST=$("$AOS_DIR/core/bin/internal/aos-python" \
+        "$AOS_DIR/core/infra/lib/service_registry.py" watchdog-map 2>/dev/null)
 else
     # Map present and parseable — clear any prior degraded-state alarm.
     check_state_change "state_yaml" "present" > /dev/null || true

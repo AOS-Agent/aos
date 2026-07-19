@@ -23,15 +23,31 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from base import CheckResult, ReconcileCheck, Status
 
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+from lib.service_registry import ManifestError, load_registry
+
+
+def _registry_ports() -> dict[str, int]:
+    """{service name: port} from the registry — the single source of port truth,
+    replacing the old hardcoded known_ports map (which drifted, e.g. transcriber
+    :7601 vs :7602, aos#180)."""
+    try:
+        return load_registry().ports()
+    except ManifestError:
+        return {}
+
 
 def _get_running_services() -> list[str]:
     """Get AOS services from LaunchAgents directory.
 
     Reads plist files rather than launchctl to work even if services
     are temporarily stopped. Format: "name (:port)" when port is configured.
+    Ports come from the service registry; the plist is only a fallback for a
+    deployed agent that has no manifest.
     """
     la_dir = Path.home() / "Library" / "LaunchAgents"
     services = []
+    registry_ports = _registry_ports()
 
     for plist in sorted(la_dir.glob("com.aos.*.plist")):
         name = plist.stem.replace("com.aos.", "")
@@ -41,34 +57,23 @@ def _get_running_services() -> list[str]:
         if name in skip:
             continue
 
-        # Try to find port from plist
-        port = None
-        try:
-            text = plist.read_text()
-            # Look for port in EnvironmentVariables or ProgramArguments
-            port_patterns = [
-                r'<key>\w*PORT\w*</key>\s*<string>(\d+)</string>',
-                r'--port[= ](\d+)',
-            ]
-            for pattern in port_patterns:
-                m = re.search(pattern, text)
-                if m:
-                    port = m.group(1)
-                    break
-
-            # Known port mappings
-            known_ports = {
-                "qareen": "4096",
-                "listen": "7600",
-                "whatsmeow": "7601",
-                "eventd": "4097",
-                "transcriber": "7602",
-            }
-            if not port and name in known_ports:
-                port = known_ports[name]
-
-        except Exception:
-            pass
+        # Port: registry first (source of truth), plist-scrape as a fallback
+        # for a deployed agent with no manifest.
+        port = registry_ports.get(name)
+        if not port:
+            try:
+                text = plist.read_text()
+                port_patterns = [
+                    r'<key>\w*PORT\w*</key>\s*<string>(\d+)</string>',
+                    r'--port[= ](\d+)',
+                ]
+                for pattern in port_patterns:
+                    m = re.search(pattern, text)
+                    if m:
+                        port = m.group(1)
+                        break
+            except Exception:
+                pass
 
         if port:
             services.append(f"{name} (:{port})")

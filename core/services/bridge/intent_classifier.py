@@ -15,6 +15,7 @@ Bridge v2 quick commands spec:
 import logging
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 import httpx
@@ -23,6 +24,17 @@ logger = logging.getLogger(__name__)
 
 AOS_DIR = Path.home() / "aos"
 QMD_BIN = Path.home() / ".bun" / "bin" / "qmd"
+
+# The set of services to health-check, their labels, and their URLs come from
+# the one registry — never a hardcoded menu. The old hardcoded list had four
+# bugs at once: qareen mislabeled "Dashboard", the retired "Listen", and the
+# transcriber probed on :7601 (whatsmeow's port) instead of :7602 (aos#180).
+sys.path.insert(0, str(AOS_DIR / "core" / "infra" / "lib"))
+try:
+    from service_registry import ManifestError, load_registry
+except Exception:  # pragma: no cover — registry always ships; degrade gracefully
+    load_registry = None
+    ManifestError = Exception
 
 # ── Intent Definitions ────────────────────────────────
 # Each intent: list of patterns, handler function name
@@ -269,13 +281,13 @@ def classify(text: str) -> tuple[str | None, str | None]:
 
 
 def handle_health_check(text: str) -> str:
-    """Check service health endpoints."""
-    services = [
-        ("Dashboard", "http://127.0.0.1:4096/api/health"),
-        ("Listen", "http://127.0.0.1:7600/health"),
-        ("Transcriber", "http://127.0.0.1:7601/health"),
-        ("WhatsApp", "http://127.0.0.1:7601/health"),
-    ]
+    """Check service health endpoints (derived from the service registry)."""
+    services = []
+    if load_registry is not None:
+        try:
+            services = sorted(load_registry().active_health_urls().items())
+        except ManifestError:
+            services = []
 
     # Bridge is obviously running if we're here
     results = ["🟢 <b>Bridge</b> — running"]

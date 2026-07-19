@@ -2,6 +2,7 @@
 
 import logging
 import subprocess
+import sys
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -14,6 +15,38 @@ from activity_client import log_activity as log_dashboard_activity
 logger = logging.getLogger(__name__)
 
 WORKSPACE = Path.home() / "aos"
+
+# Service identity (which services exist, their health URLs, their status) comes
+# from the one registry — never a hardcoded probe. This is what stops a RETIRED
+# service (listen) from being reported DOWN and a mislabeled port (qareen :4096
+# was labeled "Dashboard") from lingering.
+sys.path.insert(0, str(WORKSPACE / "core" / "infra" / "lib"))
+try:
+    from service_registry import ManifestError, load_registry
+except Exception:  # pragma: no cover — registry always ships; degrade gracefully
+    load_registry = None
+    ManifestError = Exception
+
+
+def _check_services() -> dict[str, dict]:
+    """Probe each ACTIVE service that declares an HTTP health endpoint.
+    Returns {name: {ok: bool}}. Retired/optional services are not probed —
+    a retired service must never surface as DOWN."""
+    results: dict[str, dict] = {}
+    if load_registry is None:
+        return results
+    try:
+        health_urls = load_registry().active_health_urls()
+    except ManifestError:
+        return results
+    for name, url in health_urls.items():
+        ok = False
+        try:
+            ok = httpx.get(url, timeout=3).status_code == 200
+        except Exception:
+            ok = False
+        results[name] = {"ok": ok}
+    return results
 
 # Startup delay to avoid race conditions with other LaunchAgents
 STARTUP_DELAY_SECS = 60
@@ -104,29 +137,9 @@ def _check_health() -> dict:
     except Exception:
         pass
 
-    # Listen server
-    listen_ok = False
-    listen_detail = "DOWN"
-    try:
-        r = httpx.get("http://localhost:7600/jobs", timeout=3)
-        if r.status_code == 200:
-            listen_ok = True
-            jobs = r.json()
-            if isinstance(jobs, list):
-                active_jobs = sum(1 for j in jobs if j.get("status") == "running")
-                listen_detail = f"running ({active_jobs} active)"
-            else:
-                listen_detail = "running"
-    except Exception:
-        pass
-
-    # Dashboard
-    dashboard_ok = False
-    try:
-        r = httpx.get("http://localhost:4096/api/health", timeout=3)
-        dashboard_ok = r.status_code == 200
-    except Exception:
-        pass
+    # Active services with an HTTP health endpoint — derived from the registry,
+    # not hardcoded, so retired services are never probed and never reported DOWN.
+    services = _check_services()
 
     # Bridge (self — always true if we're running)
     bridge_ok = True
@@ -146,9 +159,7 @@ def _check_health() -> dict:
         "disk_pct": disk_pct,
         "ram_pct": ram_pct,
         "mem_free_pct": mem_free_pct,
-        "listen_ok": listen_ok,
-        "listen_detail": listen_detail,
-        "dashboard_ok": dashboard_ok,
+        "services": services,
         "bridge_ok": bridge_ok,
         "pending_tasks": pending_tasks,
     }
@@ -169,10 +180,9 @@ def _find_problems(health: dict) -> list[str]:
             f"Memory pressure critical — {health['mem_free_pct']}% free pages "
             f"(ram used {health['ram_pct']}%) — check for runaway processes"
         )
-    if not health["listen_ok"]:
-        problems.append("Listen server is DOWN")
-    if not health["dashboard_ok"]:
-        problems.append("Dashboard is DOWN")
+    for name, state in health.get("services", {}).items():
+        if not state.get("ok"):
+            problems.append(f"{name} is DOWN")
     if health["pending_tasks"] > 0:
         problems.append(f"{health['pending_tasks']} pending task(s)")
     return problems
@@ -199,7 +209,11 @@ def start_heartbeat(bot_token: str, chat_id: int, interval_minutes: int = 30):
                 if _is_active_hours():
                     health = _check_health()
                     problems = _find_problems(health)
-                    summary = f"disk:{health['disk_pct']}% ram:{health['ram_pct']}% listen:{'ok' if health['listen_ok'] else 'DOWN'}"
+                    svc_summary = " ".join(
+                        f"{n}:{'ok' if s.get('ok') else 'DOWN'}"
+                        for n, s in health.get("services", {}).items()
+                    ) or "no-http-services"
+                    summary = f"disk:{health['disk_pct']}% ram:{health['ram_pct']}% {svc_summary}"
 
                     # Always log to dashboard
                     log_dashboard_activity("ops", "heartbeat", summary=summary)
