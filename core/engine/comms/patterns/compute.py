@@ -26,9 +26,16 @@ from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
-# People DB access
-_PEOPLE_SERVICE = next((p / "people" for p in Path(__file__).resolve().parents if p.name == "engine"), Path.home() / "aos" / "core" / "engine" / "people")
-sys.path.insert(0, str(_PEOPLE_SERVICE))
+# People DB access. compute.py lives at core/engine/comms/patterns/ — the
+# people package is a sibling under engine, i.e. parents[2]/"people". Resolving
+# by fixed depth (not by walking for a parent literally named "engine") keeps
+# this correct whether the scheduler runs it from the dev workspace or from a
+# symlinked release dir (~/aos → aos-releases/<version>): .resolve() rewrites
+# the symlink but preserves the core/engine/comms/patterns structure, so the
+# relative depth is stable while a name-walk could be defeated by the layout.
+_PEOPLE_SERVICE = Path(__file__).resolve().parents[2] / "people"
+if str(_PEOPLE_SERVICE) not in sys.path:
+    sys.path.insert(0, str(_PEOPLE_SERVICE))
 
 import db as people_db
 
