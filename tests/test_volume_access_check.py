@@ -13,8 +13,8 @@ sys.path.insert(0, str(REPO / "core/infra/reconcile"))
 sys.path.insert(0, str(REPO / "core/infra/reconcile/checks"))
 
 import volume_access
-from volume_access import VolumeAccessCheck
 from base import Status
+from volume_access import VolumeAccessCheck
 
 
 def _with_volume(monkeypatch, tmp_path, populate=True):
@@ -34,7 +34,6 @@ def test_healthy_volume_passes(monkeypatch, tmp_path):
 def test_unmounted_fails(monkeypatch, tmp_path):
     _with_volume(monkeypatch, tmp_path, populate=False)
     # never created -> exists() False
-    import shutil
     assert VolumeAccessCheck().check() is False
 
 
