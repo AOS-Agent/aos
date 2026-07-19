@@ -43,7 +43,36 @@ ENRICHMENT (nightly cron):
   → message_entities table → messages.processed = 1
 ```
 
-## How to Search Comms
+## Recall — the agent-facing way to search comms
+
+When a conversation references **a person or a topic from the past** — "what did
+I tell Faisal about the lease", "did we ever discuss the Berlin trip", "when did
+that order ship" — reach for the **recall tool** instead of writing raw SQL. It
+is the single query facade over the message history (like `qmd query` is for the
+vault), with access control enforced inside it.
+
+```bash
+comms-recall search "berlin trip" --limit 10          # by keywords (FTS5)
+comms-recall search "lease" --person "Faisal"          # keywords + person
+comms-recall person "my mom" --since 2026-06-01         # a person's messages
+comms-recall search --since 2026-07-01 --until 2026-07-07  # a timeframe
+comms-recall get im-223330                              # expand one message
+comms-recall search "iftar" --json                      # agent-consumable rows
+```
+
+Every result row is the same contract — `{entity, confidence, source_refs, scope}` —
+so you always know where a fact came from (`source_refs`) and how sensitive it is
+(`scope`). Results are snippet-first and bounded (default 20, max 100); expand a
+single message to full text with `comms-recall get <message_id>`. Confidence is
+`1.0` for these verbatim hits (v1 is FTS + person + timeframe, no inference).
+
+**Privacy is enforced in the tool, not by you.** Restricted contacts
+(`privacy_level >= 2`) are excluded by default. `--include-private` is an
+explicit, operator-only override — never pass it on a contact's behalf.
+
+Engine: `core/engine/comms/recall.py`. CLI: `core/bin/cli/comms-recall`.
+
+## How to Search Comms (raw SQL — prefer `comms-recall` above)
 
 ```sql
 -- Keyword search (sub-millisecond via FTS5):
@@ -67,6 +96,8 @@ WHERE me.entity_id = 'family'
 | `core/engine/comms/orchestrator.py` | Trust cascade (L0-L3) |
 | `core/engine/comms/channels/*.py` | Channel adapters (6 channels) |
 | `core/engine/people/resolver.py` | 5-tier contact resolution |
+| `core/engine/comms/recall.py` | Recall engine — verbatim query facade + in-tool access control |
+| `core/bin/cli/comms-recall` | Recall CLI (search / person / get) |
 | `core/bin/cli/message-person` | Outbound messaging CLI |
 | `core/bin/crons/enrich-comms` | Nightly topic/intent extraction |
 | `core/comms/tests/smoke.md` | 10 smoke tests for the pipeline |
