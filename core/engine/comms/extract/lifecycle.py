@@ -24,6 +24,14 @@ import sys
 import time
 from pathlib import Path
 
+# Make the repo root importable so absolute `core.*` imports resolve when this
+# file is run directly as a script (the cron invokes `python3 .../lifecycle.py`,
+# which gives it no parent package — relative imports would fail). This file
+# lives at core/engine/comms/extract/ — parents[4] is the repo root.
+_REPO_ROOT = Path(__file__).resolve().parents[4]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
 log = logging.getLogger(__name__)
 
 STATE_FILE = Path.home() / ".aos" / "data" / ".extraction-state.json"
@@ -125,7 +133,7 @@ def check_and_run() -> dict:
 
     # Run pipeline
     try:
-        from .pipeline import run_extraction
+        from core.engine.comms.extract.pipeline import run_extraction
         result = run_extraction(days=365, channels=channels_to_extract)
 
         # Run patterns
@@ -161,29 +169,26 @@ def check_and_run() -> dict:
 
 
 def _run_patterns():
-    """Run pattern computation after extraction."""
+    """Run pattern computation after extraction.
+
+    Best-effort: the comms-patterns cron also runs this, so a failure here
+    is logged as a warning rather than aborting the extraction.
+    """
     try:
-        _aos_dev = str(Path.home() / "project" / "aos")
-        _aos_root = str(Path.home() / "aos")
-        for p in [_aos_dev, _aos_root]:
-            if p not in sys.path:
-                sys.path.insert(0, p)
-        from core.comms.patterns.compute import run_compute
+        from core.engine.comms.patterns.compute import run_compute
         run_compute()
     except Exception as e:
         log.warning(f"Pattern compute failed: {e}")
 
 
 def _run_graduation():
-    """Run graduation evaluator after patterns."""
+    """Run graduation evaluator after patterns.
+
+    Best-effort: the comms-graduation cron also runs this, so a failure here
+    is logged as a warning rather than aborting the extraction.
+    """
     try:
-        _people = str(next((p / "people" for p in Path(__file__).resolve().parents if p.name == "engine"), Path.home() / "aos" / "core" / "engine" / "people"))
-        if _people not in sys.path:
-            sys.path.insert(0, _people)
-        _grad = str(Path.home() / "project" / "aos" / "core" / "comms" / "graduation")
-        if _grad not in sys.path:
-            sys.path.insert(0, _grad)
-        from runner import run
+        from core.engine.comms.graduation.runner import run
         run()
     except Exception as e:
         log.warning(f"Graduation evaluator failed: {e}")
@@ -199,7 +204,7 @@ def on_channel_activated(channel: str) -> dict:
     state = _load_state()
 
     try:
-        from .pipeline import run_extraction
+        from core.engine.comms.extract.pipeline import run_extraction
         result = run_extraction(days=365, channels=[channel])
 
         _run_patterns()
