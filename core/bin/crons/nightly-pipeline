@@ -1,23 +1,54 @@
 #!/usr/bin/env bash
-set -e
+# nightly-pipeline — orchestrates the nightly daily-summary steps.
+#
+# Each step is best-effort and non-blocking: a failing step must not stop the
+# others. But a failed step MUST propagate to the script's exit code, otherwise
+# cron telemetry (cron_runs) records a false success and a step can fail silently
+# every night unnoticed. Steps run to completion first; the script then exits
+# nonzero if ANY step failed, with a summary of which.
+set -u
 
-echo "[$(date +%H:%M:%S)] nightly-pipeline starting"
+ts() { date +%H:%M:%S; }
 
-# Step 1: Session analysis (if it's Sunday, the scheduler already ran it — skip)
+echo "[$(ts)] nightly-pipeline starting"
+
+failures=0
+failed_steps=()
+
+run_step() {
+    local label="$1"
+    shift
+    if "$@"; then
+        return 0
+    fi
+    local rc=$?
+    echo "[$(ts)] $label failed (exit $rc, non-fatal — continuing)" >&2
+    failures=$((failures + 1))
+    failed_steps+=("$label")
+}
+
+# Step 1: Session analysis (if it's Sunday, the scheduler already ran the
+# weekly version — skip to avoid double work).
 DAY=$(date +%u)  # 1=Monday, 7=Sunday
 if [ "$DAY" != "7" ]; then
     echo "Running daily session analysis..."
-    ~/aos/core/bin/aos-python ~/aos/core/bin/session-analysis daily 2>&1 || echo "session-analysis failed (non-fatal)"
+    run_step "session-analysis" ~/aos/core/bin/aos-python ~/aos/core/bin/session-analysis daily
 else
     echo "Skipping session-analysis (Sunday — scheduler already ran weekly version)"
 fi
 
 # Step 2: Stale detector
 echo "Running stale detector..."
-~/aos/core/bin/aos-python ~/aos/core/bin/stale-detector 2>&1 || echo "stale-detector failed (non-fatal)"
+run_step "stale-detector" ~/aos/core/bin/aos-python ~/aos/core/bin/stale-detector
 
 # Step 3: Compile daily summary (ensure it ran)
 echo "Running compile-daily..."
-~/aos/core/bin/aos-python ~/aos/core/bin/compile-daily 2>&1 || echo "compile-daily failed (non-fatal)"
+run_step "compile-daily" ~/aos/core/bin/aos-python ~/aos/core/bin/compile-daily
 
-echo "[$(date +%H:%M:%S)] nightly-pipeline done"
+echo "[$(ts)] nightly-pipeline done — $failures failed"
+
+if [ "$failures" -gt 0 ]; then
+    echo "[$(ts)] nightly-pipeline FAILED steps: ${failed_steps[*]}" >&2
+    exit 1
+fi
+exit 0

@@ -16,8 +16,9 @@
 #      (pushname sync runs inside extraction step)
 #
 # Each step's exit code is captured but the script always continues —
-# a single failing step should not block the others. The script exits 0
-# unless every step failed.
+# a single failing step should not block the others. The script exits
+# nonzero if ANY step failed (after running them all), so cron telemetry
+# records the failure instead of a false success.
 set -u
 
 # Resolve project root from the script's own location so the cron works
@@ -32,6 +33,7 @@ ts() { date '+%Y-%m-%d %H:%M:%S'; }
 
 failures=0
 successes=0
+failed_steps=()
 
 run_step() {
     local label="$1"
@@ -41,8 +43,12 @@ run_step() {
         echo "[$(ts)] $label ok"
         successes=$((successes + 1))
     else
-        echo "[$(ts)] $label FAILED (exit $?)" >&2
+        # Capture the step's exit code FIRST — the $(ts) below runs `date`,
+        # which would reset $? to 0 and make every failure log "(exit 0)".
+        local rc=$?
+        echo "[$(ts)] $label FAILED (exit $rc)" >&2
         failures=$((failures + 1))
+        failed_steps+=("$label")
     fi
 }
 
@@ -57,8 +63,11 @@ run_step "compile-profiles" "$PYTHON" -m core.engine.people.intel.cli compile-pr
 
 echo "[$(ts)] people-intel-refresh done — $successes ok, $failures failed"
 
-# Only fail if every step failed.
-if [ "$successes" -eq 0 ]; then
+# Propagate partial failure: ANY failed step makes the whole run exit nonzero so
+# cron telemetry (cron_runs) records a failure instead of a false success. All
+# steps still ran first — partial success is fine, a silent failure is not.
+if [ "$failures" -gt 0 ]; then
+    echo "[$(ts)] people-intel-refresh FAILED steps: ${failed_steps[*]}" >&2
     exit 1
 fi
 exit 0
