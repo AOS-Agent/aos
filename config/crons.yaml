@@ -182,6 +182,20 @@ jobs:
 
   # ── Tier 4: Intelligence ────────────────────────────────────────────────────
 
+  backup-comms:
+    command: bash ~/aos/core/bin/crons/backup-comms
+    at: "03:15"
+    timeout: 300
+    tier: 4
+    description: Snapshots comms.db to AOS-X (rotating 7) before nightly enrichment
+
+  enrich-comms:
+    command: bash ~/aos/core/bin/crons/enrich-comms
+    at: "03:30"
+    timeout: 3000
+    tier: 4
+    description: Nightly Haiku entity extraction into comms.db message_entities (Phase 4)
+
   comms-extract:
     command: python3 ~/aos/core/engine/comms/extract/lifecycle.py
     at: "05:00"

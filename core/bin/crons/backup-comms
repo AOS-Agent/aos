@@ -1,0 +1,22 @@
+#!/bin/bash
+# backup-comms — nightly snapshot of comms.db (Ambient Knowledge Phase 4).
+# Runs at 03:15 via cron, BEFORE enrich-comms (03:30). comms.db (~160MB) is the
+# irreplaceable message store and was previously unbacked; a consistent sqlite3
+# `.backup` snapshot lands on AOS-X (TCC canary watches that volume), rotated to
+# the newest N (config/enrichment.yaml backup.keep, default 7).
+#
+# Exits 0 on a written backup, 1 if AOS-X is unmounted (skip-with-warning, not a
+# hard failure — the drive may simply be detached).
+set -u
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+AOS_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+PYTHON="${PYTHON:-python3}"
+ENGINE="$AOS_ROOT/core/engine/comms/enrich/engine.py"
+
+cd "$AOS_ROOT" || { echo "[backup-comms] cannot cd to $AOS_ROOT" >&2; exit 1; }
+
+ts() { date '+%Y-%m-%d %H:%M:%S'; }
+echo "[backup-comms] $(ts) snapshot comms.db → AOS-X"
+"$PYTHON" "$ENGINE" --backup
+exit $?
