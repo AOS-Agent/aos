@@ -1,0 +1,34 @@
+#!/bin/bash
+# enrich-comms — nightly comms entity enrichment (Ambient Knowledge Phase 4).
+# Runs at 03:30 via cron, after email ingest (people-intel-refresh at 02:00) and
+# after backup-comms (03:15) so the freshest messages are enriched over a DB that
+# was just snapshotted.
+#
+# Runs the enrichment engine in nightly mode: incremental past the extraction
+# watermark, newest-first, bounded to nightly.max_runtime_min (default 45m) —
+# stops cleanly at the budget and resumes the next night. Storage gates inside
+# the engine refuse the run if the DB would breach the growth ceiling or disk is
+# low. Then GCs superseded entities past their TTL.
+#
+# Idempotent: the watermark makes every run pick up exactly where the last left
+# off; a mid-run kill loses only in-flight batches, which re-select next run.
+set -u
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+AOS_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+PYTHON="${PYTHON:-python3}"
+ENGINE="$AOS_ROOT/core/engine/comms/enrich/engine.py"
+
+cd "$AOS_ROOT" || { echo "[enrich-comms] cannot cd to $AOS_ROOT" >&2; exit 1; }
+
+ts() { date '+%Y-%m-%d %H:%M:%S'; }
+
+echo "[enrich-comms] $(ts) nightly enrichment run"
+"$PYTHON" "$ENGINE"
+rc=$?
+
+echo "[enrich-comms] $(ts) gc superseded entities"
+"$PYTHON" "$ENGINE" --gc || true
+
+echo "[enrich-comms] $(ts) done (rc=$rc)"
+exit $rc
