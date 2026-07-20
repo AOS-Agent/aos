@@ -1,0 +1,56 @@
+# AOS Comms Enrichment — Ambient Knowledge Phase 4
+#
+# Config for the entity-extraction engine (core/engine/comms/enrich). Every
+# value here has a code default (core/engine/comms/enrich/config.py); this file
+# overrides them. Missing file = all defaults = graceful (component-lifecycle
+# rule). Read at engine start, never cached across runs.
+
+# ── Extraction ────────────────────────────────────────────────────────────────
+extractor_version: extract@1        # bump to re-run all messages under a new prompt/schema
+model: haiku                        # `claude --print --model <this>`; resolves to claude-haiku-4-5-*
+concurrency: 3                      # HARD CAP. Sample §8: 5 thrashed (25-90s/call), 3 was the sweet spot.
+call_timeout_s: 180                 # per claude --print invocation
+
+# ── Two-tier thresholds (sample §6) ───────────────────────────────────────────
+# Store everything the model is at least `store_min` sure of (retrieval signal).
+# Only entities at/above `surface_min` are surfaceable/liftable (actionable).
+# The band between is retrieval-only — searchable, never a nudge. `surfaceable`
+# is a DERIVED predicate (confidence >= surface_min AND status='active'), not a
+# stored column — the frozen schema stays frozen.
+store_min: 0.60
+surface_min: 0.80
+
+# ── Batching (sample §7 — the fixed ~40K-token harness tax dominates) ─────────
+# Batch per person-day; merge a person's thin days so batches stay dense enough
+# to amortize the per-call tax. Denser batches roughly halve backfill cost.
+min_batch_msgs: 15                  # target floor; days below this merge with the same person's other thin days
+max_batch_msgs: 40                  # cap so a single call's prompt stays bounded
+max_msg_chars: 600                  # per-message content truncation in the prompt
+
+# ── Storage gates (land same-commit; engine REFUSES to run if breached) ───────
+storage:
+  max_comms_db_bytes: 1610612736    # 1.5 GiB projected ceiling (comms.db + entities)
+  min_disk_free_bytes: 10737418240  # 10 GiB free floor on the comms.db volume
+  bytes_per_entity_estimate: 400    # rough per-row cost used for the projection
+
+# ── Garbage collection ────────────────────────────────────────────────────────
+# Entities from a SUPERSEDED extractor_version are pruned after this many days.
+# Active/current-version rows are never GC'd. status='superseded' is set when a
+# newer version re-extracts the same source_ids.
+gc:
+  superseded_ttl_days: 30
+
+# ── Backup (comms.db is irreplaceable; backups on AOS-X are fine — TCC canary) ─
+backup:
+  dir: /Volumes/AOS-X/backups/comms
+  keep: 7                           # rotate: keep this many newest backups
+
+# ── Nightly run bounds ────────────────────────────────────────────────────────
+nightly:
+  max_runtime_min: 45               # stop cleanly at this wall time, resume next night
+  newest_first: true                # most valuable messages first
+
+# ── Backfill bounds (operator-launched; never auto) ───────────────────────────
+backfill:
+  default_max_hours: 8              # off-peak, resumable; --max-hours overrides
+  newest_first: true                # most valuable messages first
