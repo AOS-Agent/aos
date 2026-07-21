@@ -12,10 +12,25 @@ export interface TaskHandoff {
   timestamp?: string;
 }
 
+/** Bug-class / pipeline richness carried in tasks.fields (never flattened). */
+export interface TaskFields {
+  root_cause?: string;
+  code_refs?: string[];
+  fix_approach?: string;
+  severity?: number;      // 1 = crash/highest … 4 = trivial
+  app?: string;           // app registry id → badge
+  build?: string;
+  screen?: string;
+  branch?: string;
+  attempts?: unknown[];
+  proof?: unknown[];
+  [k: string]: unknown;
+}
+
 export interface Task {
   id: string;
   title: string;
-  status: 'todo' | 'active' | 'waiting' | 'done' | 'cancelled';
+  status: 'triage' | 'backlog' | 'todo' | 'active' | 'waiting' | 'in_review' | 'done' | 'cancelled';
   priority: number;
   project: string | null;
   description: string | null;
@@ -31,6 +46,19 @@ export interface Task {
   handoff?: TaskHandoff | null;
   recurrence: string | null;
   source?: string;
+  // Kanban Phase 1: typed states, delegation, bug class.
+  pipeline?: string | null;    // 'bug' for the bug fix loop
+  stage?: string | null;       // fine pipeline stage, e.g. 'fixing'
+  delegate?: string | null;    // agent executing this task
+  held_by?: string | null;     // 'operator' | 'agent:<name>' | 'none'
+  fields?: TaskFields;
+}
+
+/** True when a task is held by an agent (the purple-edge convention). */
+export function heldAgent(task: Pick<Task, 'held_by' | 'delegate'>): string | null {
+  const h = task.held_by;
+  if (h && h.startsWith('agent:')) return h.slice('agent:'.length);
+  return task.delegate ?? null;
 }
 
 export interface InboxItem {
@@ -197,6 +225,82 @@ export function useWorkCounts() {
       total: data?.summary?.total_tasks ?? 0,
     },
     liveTaskId: data?.liveTaskId ?? null,
+    ...rest,
+  };
+}
+
+// ── Delegation — the state transition + task.delegated event ────────────────
+
+/**
+ * Delegate a task to an agent, or take it back (hold). Delegation is a state
+ * transition (spec §3.1): the agent becomes the holder and the task moves into
+ * a started stage; assigned_to (the accountable human) is untouched. No runner
+ * yet (Phase 4-5) — this records the holder + fires task.delegated.
+ */
+export function useDelegate() {
+  const qc = useQueryClient();
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ['work'] });
+    qc.invalidateQueries({ queryKey: ['project-tasks'] });
+  };
+
+  const delegate = useMutation({
+    mutationFn: async ({ id, agent }: { id: string; agent: string }) => {
+      const res = await fetch(`${API}/tasks/${id}/delegate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agent }),
+      });
+      if (!res.ok) throw new Error(`Delegate failed: ${res.status}`);
+      return res.json();
+    },
+    onSuccess: invalidate,
+  });
+
+  const hold = useMutation({
+    mutationFn: async (id: string) => {
+      const res = await fetch(`${API}/tasks/${id}/hold`, { method: 'POST' });
+      if (!res.ok) throw new Error(`Hold failed: ${res.status}`);
+      return res.json();
+    },
+    onSuccess: invalidate,
+  });
+
+  return { delegate, hold };
+}
+
+// ── Board statuses — category-colored columns + bug-stage labels ────────────
+
+export interface StatusDef {
+  id: string;
+  name: string;
+  category: string;
+  color: string;
+  position: number;
+  is_default: boolean;
+  pipeline: string | null;
+}
+
+async function fetchStatuses(): Promise<StatusDef[]> {
+  const res = await fetch(`${API}/statuses`);
+  if (!res.ok) throw new Error(`Statuses API error: ${res.status}`);
+  const data = await res.json();
+  return Array.isArray(data.statuses) ? data.statuses : [];
+}
+
+/** All status definitions. Generic columns (pipeline == null) drive the board;
+ *  bug-pipeline rows (pipeline == 'bug') label bug cards. */
+export function useStatuses() {
+  const { data, ...rest } = useQuery({
+    queryKey: ['statuses'],
+    queryFn: fetchStatuses,
+    staleTime: 300_000,
+  });
+  const all = data ?? [];
+  return {
+    statuses: all,
+    generic: all.filter(s => !s.pipeline),
+    bugStages: all.filter(s => s.pipeline === 'bug'),
     ...rest,
   };
 }

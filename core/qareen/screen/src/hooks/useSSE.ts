@@ -52,7 +52,7 @@ export function useSSE() {
       const WORK_EVENTS = [
         'work', 'work.notify', 'ingest.work',
         'task.created', 'task.updated', 'task.completed',
-        'task.deleted', 'task.status_changed',
+        'task.deleted', 'task.status_changed', 'task.delegated',
       ];
       for (const name of WORK_EVENTS) {
         es.addEventListener(name, (e) => {
