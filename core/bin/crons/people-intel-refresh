@@ -57,6 +57,10 @@ run_step "imessage-ingest"  "$PYTHON" -m core.engine.comms.channels.imessage_des
 # Mail.app stopped running foregrounded on this headless Mac). Incremental by
 # per-account internalDate watermark — first run falls back to a bounded window.
 run_step "email-ingest"     "$PYTHON" -m core.engine.comms.channels.gmail_ingest
+# Slack history via the Web API. Self-bootstrapping schema; incremental by the
+# comms.db watermark. Degrades to a clean skip (exit 0) when the token lacks
+# read scopes, so scope provisioning never turns the nightly run red.
+run_step "slack-ingest"     "$PYTHON" -m core.engine.comms.channels.slack
 run_step "id-enrichment"    "$PYTHON" -m core.engine.people.identity_enrichment
 run_step "extract"          "$PYTHON" -m core.engine.people.intel.cli extract
 run_step "classify"         "$PYTHON" -m core.engine.people.intel.cli classify
