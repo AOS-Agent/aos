@@ -599,7 +599,7 @@ def add_task(title: str, priority: int = 3, project: str = None,
              due: str = None, energy: str = None, context: str = None,
              parent: str = None, source_ref: str = None,
              notes: str = None, pipeline: str = None, stage: str = None,
-             fields: dict = None) -> dict:
+             fields: dict = None, narrate: bool = True) -> dict:
     """Add a new task with project-scoped ID.
 
     Bug-class intake: pass pipeline='bug' with a stage (e.g. 'new') and a fields
@@ -659,7 +659,7 @@ def add_task(title: str, priority: int = 3, project: str = None,
         else:
             task.description = meta_comment
 
-    result = _get_adapter().create(task)
+    result = _get_adapter().create(task, narrate=narrate)
     result_dict = _to_dict(result)
 
     # Fire side effects
