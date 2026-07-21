@@ -206,6 +206,51 @@ def cmd_cancel(args):
         sys.exit(1)
 
 
+def cmd_delegate(args):
+    """Delegate a task to an agent: delegate <task> --to <agent>.
+
+    The state transition (spec §3.1): the agent becomes the holder and the task
+    moves into a started stage. assigned_to (the accountable human) is untouched.
+    Emits task.delegated — the runner's future pickup hook. No runner yet (Phase
+    4-5); this is the tagging vocabulary being born.
+    """
+    if not args or "--to" not in args:
+        print("Usage: delegate <task_id or search> --to <agent>")
+        sys.exit(1)
+    to_idx = args.index("--to")
+    query_str = " ".join(args[:to_idx])
+    agent = args[to_idx + 1] if to_idx + 1 < len(args) else None
+    if not query_str or not agent:
+        print("Usage: delegate <task_id or search> --to <agent>")
+        sys.exit(1)
+    task = _resolve(query_str)
+    result = engine.delegate_task(task["id"], agent)
+    if result:
+        print(f"Delegated {result['id']}: {result['title']}")
+        print(f"  → held by agent:{agent} (assigned_to unchanged; you stay accountable)")
+        if result.get("stage"):
+            print(f"  → stage: {result['stage']}")
+    else:
+        print(f"Task {task['id']} not found")
+        sys.exit(1)
+
+
+def cmd_hold(args):
+    """Take a delegated task back: hold <task>. Operator becomes the holder."""
+    if not args:
+        print("Usage: hold <task_id or search>")
+        sys.exit(1)
+    query_str = " ".join(args)
+    task = _resolve(query_str)
+    result = engine.hold_task(task["id"])
+    if result:
+        print(f"Held {result['id']}: {result['title']}")
+        print("  → back with operator (delegate cleared)")
+    else:
+        print(f"Task {task['id']} not found")
+        sys.exit(1)
+
+
 def cmd_show(args):
     if not args:
         print("Usage: show <task_id or search>")
@@ -1422,6 +1467,8 @@ COMMANDS = {
     "stop": cmd_stop,
     "active": cmd_active,
     "cancel": cmd_cancel,
+    "delegate": cmd_delegate,
+    "hold": cmd_hold,
     "show": cmd_show,
     "list": cmd_list,
     "search": cmd_search,

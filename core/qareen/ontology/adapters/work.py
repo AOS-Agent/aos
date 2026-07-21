@@ -39,6 +39,18 @@ from ..types import (
 )
 from .base import Adapter
 
+# Bug-pipeline definition + generic status seed. Single source of truth shared
+# with the Phase 1 migration so the DB and code cannot drift (spec §3.2/§3.3).
+from core.engine.work.pipelines import (
+    BUG_PIPELINE_ID,
+    BUG_STAGE_ACTIVE,
+    BUG_STAGES,
+    GENERIC_STATUSES,
+    OPEN_CATEGORIES,
+    bug_stage_to_status,
+    is_bug_stage,
+)
+
 
 def _parse_dt(val: str | None) -> datetime | None:
     """Parse an ISO8601 string into a datetime, or return None."""
@@ -241,22 +253,40 @@ class WorkAdapter(Adapter):
                     ON comments(entity_type, entity_id, created_at);
                 """
             )
-            # Seed the default Linear-style status set (category is the machine
-            # spine automation keys off — never the name). No-op if present.
+            # Seed the generic board statuses (category is the machine spine
+            # automation keys off — never the name). No-op if present. The list
+            # lives in pipelines.py so the migration and the adapter share it.
             self._conn.executemany(
                 "INSERT OR IGNORE INTO statuses "
                 "(id, name, category, color, position, is_default) "
                 "VALUES (?, ?, ?, ?, ?, ?)",
+                GENERIC_STATUSES,
+            )
+            # Phase 1 additions: statuses.pipeline column + the bug-pipeline
+            # stages (pipeline='bug'), and the delegate/held_by/fields task
+            # columns. Column-guarded so this is safe on a Phase-0 DB.
+            status_cols = {r[1] for r in self._conn.execute("PRAGMA table_info(statuses)")}
+            if status_cols and "pipeline" not in status_cols:
+                self._conn.execute("ALTER TABLE statuses ADD COLUMN pipeline TEXT")
+            self._conn.executemany(
+                "INSERT OR IGNORE INTO statuses "
+                "(id, name, category, color, position, is_default, pipeline) "
+                "VALUES (?, ?, ?, ?, ?, 0, ?)",
                 [
-                    ("triage", "Triage", "triage", "#BF5AF2", 0, 0),
-                    ("backlog", "Backlog", "backlog", "#6B6560", 1, 0),
-                    ("todo", "Todo", "unstarted", "#6B6560", 2, 1),
-                    ("active", "In Progress", "started", "#0A84FF", 3, 0),
-                    ("waiting", "Waiting", "started", "#FFD60A", 4, 0),
-                    ("done", "Done", "completed", "#30D158", 5, 1),
-                    ("cancelled", "Cancelled", "cancelled", "#6B6560", 6, 0),
+                    (f"bug:{sid}", label, category, color, position, BUG_PIPELINE_ID)
+                    for (sid, label, category, _coarse, color, position) in BUG_STAGES
                 ],
             )
+            task_cols = {r[1] for r in self._conn.execute("PRAGMA table_info(tasks)")}
+            if task_cols:
+                if "delegate" not in task_cols:
+                    self._conn.execute("ALTER TABLE tasks ADD COLUMN delegate TEXT")
+                if "held_by" not in task_cols:
+                    self._conn.execute(
+                        "ALTER TABLE tasks ADD COLUMN held_by TEXT DEFAULT 'operator'"
+                    )
+                if "fields" not in task_cols:
+                    self._conn.execute("ALTER TABLE tasks ADD COLUMN fields TEXT")
             # Inbox provenance + snooze — the ambient proposer stamps a source
             # and the operator can defer an item without deleting it.
             inbox_cols = {r[1] for r in self._conn.execute("PRAGMA table_info(inbox)")}
@@ -928,9 +958,16 @@ class WorkAdapter(Adapter):
             subtask_ids=subtask_ids,
             handoff=handoff,
             pipeline=row["pipeline"],
-            pipeline_stage=None,  # TODO: convert pipeline_stage string
+            pipeline_stage=None,  # PipelineStage enum unused; see .stage below
             recurrence=row["recurrence"],
         )
+        # Phase 1 fields — guarded so a pre-migration row (no columns) is fine.
+        rkeys = row.keys()
+        task.stage = row["pipeline_stage"] if "pipeline_stage" in rkeys else None
+        task.delegate = row["delegate"] if "delegate" in rkeys else None
+        task.held_by = row["held_by"] if "held_by" in rkeys else None
+        if "fields" in rkeys:
+            task.fields = _json_loads(row["fields"], default={}) or {}
         # Attach session links (not part of Task dataclass, added dynamically)
         if sessions:
             task.sessions = sessions  # type: ignore[attr-defined]
@@ -981,12 +1018,20 @@ class WorkAdapter(Adapter):
         The naive ``list(limit=200)`` orders by ``created_at DESC`` and truncates
         — active tasks are old (created long ago, started recently), so they fall
         outside the newest-200 window and the board reads "0 active" while work
-        is in flight. This returns EVERY open task (todo/active/waiting) plus a
-        bounded tail of recently-closed ones, so counts and columns are true.
+        is in flight. This returns EVERY open task plus a bounded tail of
+        recently-closed ones, so counts and columns are true.
+
+        "Open" is category-driven (spec §3.2): every status whose category is
+        unstarted or started — so a new column (e.g. in_review) is included the
+        moment it's seeded, without editing this query. triage/backlog are
+        separate planes; completed/cancelled are the closed tail.
         """
+        open_ids = self._statuses_in_categories(OPEN_CATEGORIES)
+        placeholders = ",".join("?" for _ in open_ids) or "''"
         open_rows = self._conn.execute(
-            "SELECT * FROM tasks WHERE status IN ('todo','active','waiting') "
-            "ORDER BY created_at DESC"
+            f"SELECT * FROM tasks WHERE status IN ({placeholders}) "
+            "ORDER BY created_at DESC",
+            open_ids,
         ).fetchall()
         done_rows = self._conn.execute(
             "SELECT * FROM tasks WHERE status = 'done' "
@@ -999,6 +1044,132 @@ class WorkAdapter(Adapter):
             (cancelled_limit,),
         ).fetchall()
         return [self._row_to_task(r) for r in (*open_rows, *done_rows, *cancelled_rows)]
+
+    # ── Typed states + delegation (Phase 1) ──────────────────────────────
+
+    def _statuses_in_categories(self, categories: tuple[str, ...]) -> list[str]:
+        """Generic board status ids (pipeline IS NULL) in the given categories."""
+        ph = ",".join("?" for _ in categories) or "''"
+        try:
+            rows = self._conn.execute(
+                f"SELECT id FROM statuses "
+                f"WHERE category IN ({ph}) AND (pipeline IS NULL OR pipeline = '') "
+                "ORDER BY position ASC",
+                list(categories),
+            ).fetchall()
+            return [r[0] for r in rows]
+        except sqlite3.Error:
+            return []
+
+    def valid_statuses(self) -> set[str]:
+        """The generic board status ids a task's coarse status may take."""
+        try:
+            rows = self._conn.execute(
+                "SELECT id FROM statuses WHERE pipeline IS NULL OR pipeline = ''"
+            ).fetchall()
+            ids = {r[0] for r in rows}
+        except sqlite3.Error:
+            ids = set()
+        # Always accept the historical TaskStatus values so a fresh/empty
+        # statuses table never rejects a legitimate core transition.
+        ids |= {s.value for s in TaskStatus}
+        return ids
+
+    def _is_valid_status(self, status: str) -> bool:
+        return status in self.valid_statuses()
+
+    def delegate(
+        self,
+        task_id: str,
+        agent: str,
+        *,
+        by: str = "operator",
+        session_id: str | None = None,
+    ) -> Task | None:
+        """Delegate a task to an agent — the state transition (spec §3.1, §4 P1).
+
+        Sets delegate + held_by='agent:<agent>' and moves the task into a
+        started stage (so it reads as picked-up on the board). assigned_to is
+        untouched: the human stays accountable. For a bug-pipeline task the fine
+        stage advances to 'fixing' and the coarse status is synced from it.
+        Records entity_history for each changed field; the caller emits the
+        task.delegated event. Returns the updated task, or None if not found.
+        """
+        row = self._conn.execute(
+            "SELECT * FROM tasks WHERE id = ?", (task_id,)
+        ).fetchone()
+        if not row:
+            return None
+        rkeys = row.keys()
+        old_delegate = row["delegate"] if "delegate" in rkeys else None
+        old_held = row["held_by"] if "held_by" in rkeys else None
+        old_status = row["status"]
+        old_stage = row["pipeline_stage"] if "pipeline_stage" in rkeys else None
+        held = f"agent:{agent}"
+
+        new_stage = old_stage
+        new_status = old_status
+        if row["pipeline"] == BUG_PIPELINE_ID:
+            new_stage = BUG_STAGE_ACTIVE
+            new_status = bug_stage_to_status(new_stage) or "active"
+        elif old_status in self._statuses_in_categories(("triage", "backlog", "unstarted")):
+            # Non-bug task: entering agent hands means work has started.
+            new_status = "active"
+
+        now = _now()
+        self._conn.execute(
+            "UPDATE tasks SET delegate = ?, held_by = ?, status = ?, "
+            "pipeline_stage = ?, started_at = COALESCE(started_at, ?), "
+            "modified_at = ? WHERE id = ?",
+            (agent, held, new_status, new_stage, now, now, task_id),
+        )
+        self._conn.commit()
+
+        self._record_history(task_id, "delegate", old_delegate, agent,
+                             actor=by, session_id=session_id)
+        self._record_history(task_id, "held_by", old_held, held,
+                             actor=by, session_id=session_id)
+        if new_status != old_status:
+            self._record_history(task_id, "status", old_status, new_status,
+                                 actor=by, session_id=session_id)
+        if new_stage != old_stage:
+            self._record_history(task_id, "pipeline_stage", old_stage, new_stage,
+                                 actor=by, session_id=session_id)
+        return self._get_task(task_id)
+
+    def hold(
+        self,
+        task_id: str,
+        *,
+        by: str = "operator",
+        session_id: str | None = None,
+    ) -> Task | None:
+        """Take a task back from an agent — clears delegate, held_by='operator'.
+
+        The inverse of delegate. Status is left where it is (the operator resumes
+        in place). Records history; the caller emits task.delegated with the new
+        holder so the runner drops it from its queue. Returns the updated task.
+        """
+        row = self._conn.execute(
+            "SELECT * FROM tasks WHERE id = ?", (task_id,)
+        ).fetchone()
+        if not row:
+            return None
+        rkeys = row.keys()
+        old_delegate = row["delegate"] if "delegate" in rkeys else None
+        old_held = row["held_by"] if "held_by" in rkeys else None
+        now = _now()
+        self._conn.execute(
+            "UPDATE tasks SET delegate = NULL, held_by = 'operator', "
+            "modified_at = ? WHERE id = ?",
+            (now, task_id),
+        )
+        self._conn.commit()
+        self._record_history(task_id, "delegate", old_delegate, None,
+                             actor=by, session_id=session_id)
+        self._record_history(task_id, "held_by", old_held, "operator",
+                             actor=by, session_id=session_id)
+        return self._get_task(task_id)
 
     def _count_table(self, table: str, filters: dict) -> int:
         clauses = []
@@ -1030,13 +1201,14 @@ class WorkAdapter(Adapter):
         # projects.id so the project_id foreign key always points at a real
         # parent row. Without this, --project <short_id> violated the FK.
         task.project = self._resolve_project_id(task.project)
+        stage_val = task.stage or (task.pipeline_stage.value if task.pipeline_stage else None)
         self._conn.execute(
             "INSERT OR REPLACE INTO tasks "
             "(id, title, status, priority, project_id, description, "
             " assigned_to, created_by, created_at, started_at, "
             " completed_at, due_at, parent_id, pipeline, pipeline_stage, "
-            " recurrence, tags, version, modified_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)",
+            " recurrence, tags, delegate, held_by, fields, version, modified_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)",
             (
                 task.id,
                 task.title,
@@ -1052,9 +1224,12 @@ class WorkAdapter(Adapter):
                 _to_iso(task.due),
                 task.parent_id,
                 task.pipeline,
-                task.pipeline_stage.value if task.pipeline_stage else None,
+                stage_val,
                 task.recurrence,
                 _json_dumps(task.tags),
+                task.delegate,
+                task.held_by or "operator",
+                _json_dumps(task.fields) if task.fields else None,
                 now,
             ),
         )
@@ -1092,7 +1267,26 @@ class WorkAdapter(Adapter):
             "parent": "parent_id",
             "created_by": "created_by",
             "source": "created_by",
+            "delegate": "delegate",
+            "held_by": "held_by",
+            "fields": "fields",
+            "stage": "pipeline_stage",
+            "pipeline_stage": "pipeline_stage",
         }
+
+        # Transition guard (spec §2.6): status is no longer a free string. A write
+        # to an unknown status id is rejected so the board can never drift back to
+        # free-text columns. The valid set is the generic board statuses (the
+        # statuses table, pipeline IS NULL); bug tasks carry their fine stage in
+        # pipeline_stage and a coarse status from this same set.
+        if "status" in fields and fields["status"] is not None:
+            raw = fields["status"]
+            status_val = raw if isinstance(raw, str) else getattr(raw, "value", raw)
+            if not self._is_valid_status(status_val):
+                raise ValueError(
+                    f"invalid status {status_val!r} — not a known board status "
+                    f"({', '.join(sorted(self.valid_statuses()))})"
+                )
 
         sets = []
         params: list[Any] = []
@@ -1108,6 +1302,9 @@ class WorkAdapter(Adapter):
                 params.append(int(val) if not isinstance(val, int) else val)
             elif col == "tags":
                 sets.append("tags = ?")
+                params.append(_json_dumps(val) if val else None)
+            elif col == "fields":
+                sets.append("fields = ?")
                 params.append(_json_dumps(val) if val else None)
             elif col in ("started_at", "completed_at", "due_at"):
                 sets.append(f"{col} = ?")
