@@ -29,7 +29,8 @@ export function useTaskActivity(taskId: string | null | undefined) {
     enabled: !!taskId,
     staleTime: 10_000,
     queryFn: async (): Promise<ActivityEntry[]> => {
-      const res = await fetch(`${API}/tasks/${taskId}/activity`);
+      // Encode the id — task ids carry '#' (aos#42), a URL fragment delimiter.
+      const res = await fetch(`${API}/tasks/${encodeURIComponent(taskId!)}/activity`);
       if (!res.ok) throw new Error(`Activity failed: ${res.status}`);
       const d = await res.json();
       return Array.isArray(d.activity) ? d.activity : [];
@@ -42,7 +43,7 @@ export function useAppendActivity(taskId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (entry: { kind: string; body: string; data?: unknown; actor?: string }) => {
-      const res = await fetch(`${API}/tasks/${taskId}/activity`, {
+      const res = await fetch(`${API}/tasks/${encodeURIComponent(taskId)}/activity`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(entry),

@@ -772,7 +772,7 @@ export default function TasksPage({ initialProjectFilter }: { initialProjectFilt
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   const [groupBy, setGroupBy] = useState('');
   const [activePopover, setActivePopover] = useState<'sort' | 'filter' | 'settings' | null>(null);
-  const [visibleCols, setVisibleCols] = useState<Set<string>>(new Set(['title', 'status', 'priority', 'project', 'due', 'assigned_to']));
+  const [visibleCols, setVisibleCols] = useState<Set<string>>(new Set(['title', 'status', 'priority', 'project', 'activity', 'due', 'assigned_to']));
 
   const tasks = data?.tasks ?? [];
   const inbox = data?.inbox ?? [];
