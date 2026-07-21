@@ -191,16 +191,16 @@ async def _notify_telegram(event: str, rule: ActionRule, payload: dict[str, Any]
         # Compose the notification text
         title = payload.get("title") or payload.get("brief", {}).get("title") or "(untitled)"
         url = payload.get("url") or payload.get("brief", {}).get("url") or ""
-        relevance = payload.get("relevance_score") or payload.get("brief", {}).get("relevance_score")
-        rel_str = f" [{relevance:.2f}]" if isinstance(relevance, (int, float)) else ""
 
+        # A bracketed relevance score ([0.87]) is an internal code — it never
+        # goes on the operator's phone (MESSAGE_STYLE.md → "System alerts").
         label_map = {
             "brief_created": "📥 New",
             "brief_compiled": "📚 Compiled",
             "proposal_pending": "⏸ Review",
         }
-        prefix = label_map.get(event, "ℹ")
-        message = f"{prefix}{rel_str} {title}"
+        prefix = label_map.get(event, "ℹ️")
+        message = f"{prefix} {title}"
         if url:
             message += f"\n{url}"
 
