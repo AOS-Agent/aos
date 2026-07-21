@@ -1,0 +1,164 @@
+#!/usr/bin/env python3
+"""loop-eval — freeze, verify, and run the intelligence loop's eval gate.
+
+Usage:
+    loop-eval freeze <src_dir> [--version VERSION]
+        Build MANIFEST.json in <src_dir> from its messages.jsonl and
+        labels.jsonl (sha256 of each + row counts). <src_dir> becomes a
+        frozen dataset — point AOS_LOOP_EVAL_DIR at it, or pass --dir.
+
+    loop-eval verify [--dir DATASET_DIR]
+        Recompute sha256 of messages.jsonl/labels.jsonl and confirm they
+        still match MANIFEST.json. Exits 1 if the dataset has drifted.
+
+    loop-eval run --judge-module <dotted.path:callable> [--dir DATASET_DIR]
+        Import the judge callable, run it over the frozen dataset, print
+        a markdown report, exit 1 if the gate fails.
+
+Reads: <dataset_dir>/{messages.jsonl,labels.jsonl,MANIFEST.json}
+Writes: <src_dir>/MANIFEST.json (freeze only)
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import hashlib
+import importlib
+import json
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+# Make both import styles work: `engine.loop.*` (core/ on path — see
+# comms-recall) and `core.engine.loop.*` (repo root on path — see
+# compile/llm.py's lazy-import dance). core/ is parents[2] of this file.
+CORE_DIR = Path(__file__).resolve().parents[2]
+REPO_ROOT = CORE_DIR.parent
+for _p in (str(CORE_DIR), str(REPO_ROOT)):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+
+try:
+    from engine.loop import eval_gate  # noqa: E402
+except ImportError:
+    from core.engine.loop import eval_gate  # noqa: E402
+
+
+def _sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    h.update(path.read_bytes())
+    return h.hexdigest()
+
+
+def _count_lines(path: Path) -> int:
+    with path.open() as f:
+        return sum(1 for line in f if line.strip())
+
+
+def cmd_freeze(args: argparse.Namespace) -> int:
+    src_dir = Path(args.src_dir)
+    messages_path = src_dir / "messages.jsonl"
+    labels_path = src_dir / "labels.jsonl"
+
+    for p in (messages_path, labels_path):
+        if not p.exists():
+            print(f"error: missing {p}", file=sys.stderr)
+            return 2
+
+    manifest = {
+        "version": args.version,
+        "frozen_at": datetime.now(timezone.utc).isoformat(),
+        "sha256": {
+            "messages.jsonl": _sha256_file(messages_path),
+            "labels.jsonl": _sha256_file(labels_path),
+        },
+        "counts": {
+            "messages": _count_lines(messages_path),
+            "labels": _count_lines(labels_path),
+        },
+    }
+
+    manifest_path = src_dir / "MANIFEST.json"
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+    print(f"froze {src_dir} -> {manifest_path}")
+    print(json.dumps(manifest, indent=2))
+    return 0
+
+
+def cmd_verify(args: argparse.Namespace) -> int:
+    dataset_dir = Path(args.dir) if args.dir else eval_gate.default_dataset_dir()
+    try:
+        eval_gate.verify_frozen(dataset_dir)
+    except eval_gate.FrozenDatasetError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    print(f"ok: {dataset_dir} matches its MANIFEST.json")
+    return 0
+
+
+def _import_judge(dotted: str):
+    if ":" not in dotted:
+        raise ValueError(
+            f"--judge-module must be 'dotted.path.to.module:callable_name', got {dotted!r}"
+        )
+    module_path, attr = dotted.split(":", 1)
+    module = importlib.import_module(module_path)
+    return getattr(module, attr)
+
+
+def cmd_run(args: argparse.Namespace) -> int:
+    dataset_dir = Path(args.dir) if args.dir else None
+    judge = _import_judge(args.judge_module)
+
+    thresholds = {}
+    if args.machine_fp_max is not None:
+        thresholds["machine_fp_max"] = args.machine_fp_max
+    if args.binary_precision_min is not None:
+        thresholds["binary_precision_min"] = args.binary_precision_min
+    if args.binary_recall_min is not None:
+        thresholds["binary_recall_min"] = args.binary_recall_min
+
+    try:
+        result = asyncio.run(eval_gate.run_gate(judge, dataset_dir=dataset_dir, thresholds=thresholds or None))
+    except eval_gate.FrozenDatasetError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+
+    print(eval_gate.format_report(result))
+    return 0 if result.passed else 1
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Intelligence loop eval gate")
+    sub = parser.add_subparsers(dest="command")
+
+    fr = sub.add_parser("freeze", help="Build MANIFEST.json for a dataset directory")
+    fr.add_argument("src_dir")
+    fr.add_argument("--version", default="1", help="Dataset version label (default: 1)")
+
+    ve = sub.add_parser("verify", help="Verify the frozen dataset hasn't drifted")
+    ve.add_argument("--dir", default=None, help="Dataset dir (default: AOS_LOOP_EVAL_DIR or ~/vault/knowledge/references/loop-eval-v1)")
+
+    ru = sub.add_parser("run", help="Run a judge over the frozen dataset and report")
+    ru.add_argument("--judge-module", required=True, help="dotted.path.to.module:callable")
+    ru.add_argument("--dir", default=None, help="Dataset dir (default: AOS_LOOP_EVAL_DIR or ~/vault/knowledge/references/loop-eval-v1)")
+    ru.add_argument("--machine-fp-max", type=int, default=None)
+    ru.add_argument("--binary-precision-min", type=float, default=None)
+    ru.add_argument("--binary-recall-min", type=float, default=None)
+
+    args = parser.parse_args()
+
+    if args.command == "freeze":
+        return cmd_freeze(args)
+    elif args.command == "verify":
+        return cmd_verify(args)
+    elif args.command == "run":
+        return cmd_run(args)
+    else:
+        parser.print_help()
+        return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())
