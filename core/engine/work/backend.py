@@ -840,6 +840,40 @@ def delete_task(task_id: str) -> bool:
     return _get_adapter().delete(task_id)
 
 
+# ── Activity log (narrative layer) ──────────────────────
+
+def append_activity(task_id: str, kind: str, body: str,
+                    data: dict | None = None, actor: str | None = None) -> dict | None:
+    """Append an activity entry to a task's narrative log.
+
+    The agent/operator hand-append path (attempt / proof / comment / blocked /
+    unblocked / linked). Emits ``task.activity`` so the board timeline updates
+    live. Auto-narration kinds (created/status_changed/…) are refused here —
+    those are written only by the mutation choke point in the adapter.
+    """
+    if get_task(task_id) is None:
+        return None
+    entry = _get_adapter().append_activity(
+        task_id, kind, body, data=data, actor=actor, manual=True,
+    )
+    if entry is None:
+        return None
+    _notify_dashboard({
+        "action": "task.activity",
+        "task_id": task_id,
+        "kind": kind,
+        "actor": entry.get("actor"),
+        "body": body,
+        "ts": entry.get("ts") or datetime.now().isoformat(),
+    })
+    return entry
+
+
+def get_task_activity(task_id: str, limit: int = 200) -> list:
+    """Return a task's narrative activity, oldest-first."""
+    return _get_adapter().list_activity(task_id, limit=limit)
+
+
 def get_subtasks(parent_id: str) -> list:
     """Get all subtasks of a parent task."""
     tasks = _get_adapter().list(filters={"parent_id": parent_id}, limit=10000)
