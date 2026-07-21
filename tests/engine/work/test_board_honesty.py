@@ -21,8 +21,6 @@ from pathlib import Path
 # Make the `qareen` package importable (package root is core/).
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "core"))
 
-import pytest  # noqa: E402
-
 
 # ── entity_history / audit trail ────────────────────────────────────────────
 
@@ -147,8 +145,8 @@ def test_update_task_emits_status_changed(populated_work_env, monkeypatch):
 
 def _make_registry():
     from qareen.events.actions import ActionRegistry
-    from qareen.events.bus import EventBus
     from qareen.events.audit import AuditLog
+    from qareen.events.bus import EventBus
 
     class _MemAudit(AuditLog):
         def __init__(self):
