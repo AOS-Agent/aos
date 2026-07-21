@@ -39,6 +39,11 @@ class AppEntry:
     scheme: str | None = None     # Xcode scheme / build target
     bundle_id: str | None = None  # e.g. com.example.app
     release_branch: str = "main"
+    # App Store Connect intake (ascbuild). platform='web' apps are skipped by
+    # the ASC intake (no TestFlight); asc_app_id is an explicit ASC numeric id
+    # that wins over bundle_id / name matching when present.
+    platform: str = "ios"
+    asc_app_id: str | None = None
 
 
 def _framework_path() -> Path:
@@ -79,6 +84,8 @@ def load_apps() -> dict[str, AppEntry]:
             scheme=spec.get("scheme"),
             bundle_id=spec.get("bundle_id"),
             release_branch=spec.get("release_branch", "main"),
+            platform=spec.get("platform", "ios"),
+            asc_app_id=(str(spec["asc_app_id"]) if spec.get("asc_app_id") else None),
         )
     return out
 

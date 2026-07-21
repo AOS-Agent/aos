@@ -774,12 +774,18 @@ class WorkAdapter(Adapter):
         else:
             return self._count_table("tasks", filters)
 
-    def create(self, obj: Any) -> Any:
+    def create(self, obj: Any, narrate: bool = True) -> Any:
         """Create a new object in storage. Returns the created object.
 
         Supports Task, Project, Goal, and dict objects for inbox/thread:
           - dict with "text" key -> inbox item
           - dict with "title" key and "_type"=="thread" -> thread
+
+        ``narrate`` gates the auto "created" activity beat. It stays True for
+        every normal path; the islah/ASC intake importers set it False so they
+        can write a created beat carrying the ORIGINAL report timestamp (the
+        auto beat would stamp import-time), then reconstruct the rest of the
+        lifecycle with faithful timestamps. Only the Task path honours it.
         """
         if isinstance(obj, Task):
             # Auto-generate ID if empty
@@ -812,7 +818,7 @@ class WorkAdapter(Adapter):
                 else:
                     obj.description = meta_comment
 
-            return self._create_task(obj)
+            return self._create_task(obj, narrate=narrate)
         elif isinstance(obj, Project):
             if not obj.id:
                 obj.id = self._next_id("p")
@@ -1380,7 +1386,7 @@ class WorkAdapter(Adapter):
         ).fetchone()
         return row["cnt"] if row else 0
 
-    def _create_task(self, task: Task) -> Task:
+    def _create_task(self, task: Task, narrate: bool = True) -> Task:
         now = datetime.now().isoformat()
         # Resolve the project handle (id or short_id) to the canonical
         # projects.id so the project_id foreign key always points at a real
@@ -1427,7 +1433,11 @@ class WorkAdapter(Adapter):
 
         self._conn.commit()
 
-        # Narrate the birth of the task (the first line of its story).
+        # Narrate the birth of the task (the first line of its story). Skipped
+        # for intake imports (narrate=False), which write their own created beat
+        # at the original report timestamp — see core/engine/work/intake/.
+        if not narrate:
+            return task
         stage_now = task.stage or stage_val
         body = (
             f'Filed subtask under {task.parent_id}'
