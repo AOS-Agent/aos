@@ -1,6 +1,12 @@
 """
 Migration 087: Board-honesty aux tables + inbox provenance (Kanban Phase 0).
 
+Renumbered from 086 → 087: the original 086_work_board_honesty.py shipped in the
+Phase 0 release (v0.6.21, commit 025d91c) but was clobbered when the envoy commit
+(87e731d, branched pre-Phase-0) merged into main and reverted every shared file
+Phase 0 touched. 086 was subsequently reclaimed by 086_rebuild_release_frontends.
+This restores the Phase 0 bridge at the next free watermark (aos#143 monotonicity).
+
 Migration 050 seeded work.db from the tasks tables only, so a live work.db
 predates three tables that the canonical schema (core/qareen/schemas/qareen.sql)
 already defines and the API already queries: statuses, entity_history, comments.
