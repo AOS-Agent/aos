@@ -33,7 +33,6 @@ from ..activity import (
     is_appendable,
     status_body,
 )
-
 from ..types import (
     Area,
     Goal,
