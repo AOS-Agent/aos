@@ -182,19 +182,19 @@ def run_all(dry_run: bool = False, periodic: bool = False) -> list[CheckResult]:
         ]
         cleared = [name for name in prev if name not in current]
 
+        # Translate findings into plain human copy before they hit Telegram.
+        # The raw name/message/detail still went to the JSONL log above; only
+        # the phone-facing message routes through alert_copy (aos#170). See
+        # core/services/bridge/MESSAGE_STYLE.md → "System alerts".
+        from alert_copy import render_report
         host = socket.gethostname()
-        lines = []
-        if new_or_changed:
-            lines.append(f"AOS reconcile — new findings on {host}:")
-            for r in new_or_changed:
-                emoji = "⚠️" if r.status == Status.NOTIFY else "❌"
-                lines.append(f"  {emoji} {r.name}: {r.message}")
-                if r.detail:
-                    lines.append(f"      {r.detail[:200]}")
-        if cleared:
-            lines.append(f"✅ Cleared since last run: {', '.join(cleared)}")
-        if lines:
-            _notify_telegram("\n".join(lines))
+        message = render_report(
+            [(r.name, r.status.value, r.message, r.detail) for r in new_or_changed],
+            cleared,
+            host,
+        )
+        if message:
+            _notify_telegram(message)
         try:
             seen_path.write_text(json.dumps(current, indent=1))
         except Exception:
