@@ -23,12 +23,28 @@ cd "$AOS_ROOT" || { echo "[enrich-comms] cannot cd to $AOS_ROOT" >&2; exit 1; }
 
 ts() { date '+%Y-%m-%d %H:%M:%S'; }
 
+AMBIENT="$AOS_ROOT/core/bin/cli/comms-ambient"
+
 echo "[enrich-comms] $(ts) nightly enrichment run"
 "$PYTHON" "$ENGINE"
 rc=$?
 
+# rc=42 is the engine's distinct "login expired — paused cleanly" signal (it has
+# already checkpointed and alerted the operator via Telegram). Everything below
+# is pure-DB work that does not need a login, so it still runs to keep the
+# ambient surface fresh; the paused rc is preserved and returned at the end.
+if [ "$rc" -eq 42 ]; then
+    echo "[enrich-comms] $(ts) enrichment PAUSED (login expired) — continuing DB-only maintenance"
+fi
+
 echo "[enrich-comms] $(ts) gc superseded entities"
 "$PYTHON" "$ENGINE" --gc || true
+
+# Ambient maintenance (Phase 5): rebuild per-person snapshots (post-enrichment),
+# expire stale nudges, and propose operator commitments to the work inbox IF
+# config ambient.propose_commitments is enabled (off by default — dry-run).
+echo "[enrich-comms] $(ts) ambient nightly maintenance"
+"$PYTHON" "$AMBIENT" nightly || true
 
 echo "[enrich-comms] $(ts) done (rc=$rc)"
 exit $rc
