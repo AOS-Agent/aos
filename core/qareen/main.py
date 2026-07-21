@@ -358,9 +358,11 @@ async def lifespan(app: FastAPI):
                 create_inbox,
                 create_project,
                 create_task,
+                delegate_task,
                 delete_inbox,
                 delete_project,
                 delete_task,
+                hold_task,
                 update_task,
                 write_handoff,
             )
@@ -368,6 +370,8 @@ async def lifespan(app: FastAPI):
             action_registry.register(create_task)
             action_registry.register(update_task)
             action_registry.register(complete_task)
+            action_registry.register(delegate_task)
+            action_registry.register(hold_task)
             action_registry.register(delete_task)
             action_registry.register(write_handoff)
             action_registry.register(create_project)

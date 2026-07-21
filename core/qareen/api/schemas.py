@@ -97,10 +97,21 @@ class TaskResponse(BaseModel):
 
     pipeline: str | None = Field(None, description="Pipeline processing this task")
     pipeline_stage: PipelineStage | None = Field(None, description="Current pipeline stage")
+    stage: str | None = Field(None, description="Fine-grained named stage within a pipeline (e.g. bug 'fixing')")
     recurrence: str | None = Field(None, description="Cron expression for recurring tasks")
+
+    delegate: str | None = Field(None, description="Agent this task is delegated to (executes it; assigned_to stays accountable)")
+    held_by: str | None = Field(None, description="Current holder: 'operator' | 'agent:<name>' | 'none'")
+    fields: dict = Field(default_factory=dict, description="Bug-class / pipeline richness (root_cause, code_refs, severity, app, …)")
 
     updated: datetime | None = Field(None, description="Last-modified timestamp (staleness signal)")
     live: bool = Field(False, description="A session is actively holding this task right now")
+
+
+class DelegateRequest(BaseModel):
+    """Request body for delegating a task to an agent."""
+
+    agent: str = Field(..., description="Agent id to delegate to", min_length=1)
 
 
 class TaskListResponse(BaseModel):

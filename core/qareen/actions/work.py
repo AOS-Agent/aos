@@ -89,6 +89,49 @@ async def update_task(ontology, task_id: str, **fields) -> dict:
     return result
 
 
+def _task_adapter(ontology):
+    """Resolve the WorkAdapter from the ontology's type registry."""
+    adapters = getattr(ontology, "_adapters", None)
+    return adapters.get(ObjectType.TASK) if adapters else None
+
+
+@action("delegate_task", emits="task.delegated")
+async def delegate_task(ontology, task_id: str, agent: str, **kwargs) -> dict:
+    """Delegate a task to an agent — the state transition (spec §3.1/§4 P1).
+
+    Sets held_by='agent:<agent>' and moves the task into a started stage;
+    assigned_to (the accountable human) is untouched. Emits task.delegated,
+    the runner's future pickup hook.
+    """
+    adapter = _task_adapter(ontology)
+    if adapter is None or not hasattr(adapter, "delegate"):
+        raise RuntimeError("Work adapter not available")
+    by = kwargs.get("actor", "operator")
+    updated = adapter.delegate(task_id, agent, by=by)
+    if updated is None:
+        raise ValueError(f"Task not found: {task_id}")
+    status = updated.status.value if hasattr(updated.status, "value") else updated.status
+    return {
+        "task_id": task_id,
+        "holder": updated.held_by or f"agent:{agent}",
+        "by": by,
+        "status": status,
+    }
+
+
+@action("hold_task", emits="task.delegated")
+async def hold_task(ontology, task_id: str, **kwargs) -> dict:
+    """Take a delegated task back — held_by='operator', delegate cleared."""
+    adapter = _task_adapter(ontology)
+    if adapter is None or not hasattr(adapter, "hold"):
+        raise RuntimeError("Work adapter not available")
+    by = kwargs.get("actor", "operator")
+    updated = adapter.hold(task_id, by=by)
+    if updated is None:
+        raise ValueError(f"Task not found: {task_id}")
+    return {"task_id": task_id, "holder": "operator", "by": by}
+
+
 @action("complete_task", emits="task.completed")
 async def complete_task(ontology, task_id: str, **kwargs) -> dict:
     """Mark a task as done."""

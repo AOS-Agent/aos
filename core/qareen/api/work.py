@@ -18,6 +18,7 @@ from .schemas import (
     CreateInboxRequest,
     CreateProjectRequest,
     CreateTaskRequest,
+    DelegateRequest,
     GoalListResponse,
     GoalResponse,
     InboxItemResponse,
@@ -108,7 +109,11 @@ def _task_to_response(task) -> TaskResponse:
         handoff=handoff,
         pipeline=task.pipeline,
         pipeline_stage=task.pipeline_stage,
+        stage=getattr(task, "stage", None),
         recurrence=task.recurrence,
+        delegate=getattr(task, "delegate", None),
+        held_by=getattr(task, "held_by", None),
+        fields=getattr(task, "fields", None) or {},
         updated=getattr(task, "updated", None),
         live=getattr(task, "live", False),
     )
@@ -335,6 +340,59 @@ async def update_task(
     if task:
         return _task_to_response(task)
     return JSONResponse({"error": "Task not found after update"}, status_code=404)
+
+
+@router.post("/tasks/{task_id}/delegate", response_model=TaskResponse)
+async def delegate_task(
+    body: DelegateRequest,
+    request: Request,
+    task_id: str = Path(..., description="Task ID to delegate"),
+) -> TaskResponse | JSONResponse:
+    """Delegate a task to an agent (the state transition, spec §3.1).
+
+    Emits task.delegated — the runner's future pickup hook. No runner yet
+    (Phase 4-5); this records the holder + state change + event.
+    """
+    registry = getattr(request.app.state, "action_registry", None)
+    ontology = getattr(request.app.state, "ontology", None)
+    if not registry or not ontology:
+        return JSONResponse({"error": "System starting up"}, status_code=503)
+
+    result = await registry.execute(
+        "delegate_task",
+        {"ontology": ontology, "task_id": task_id, "agent": body.agent},
+        actor="operator",
+    )
+    if not result.get("success"):
+        return JSONResponse({"error": result.get("error", "Unknown error")}, status_code=400)
+    task = ontology.get(ObjectType.TASK, task_id)
+    if task:
+        return _task_to_response(task)
+    return JSONResponse({"error": "Task not found after delegate"}, status_code=404)
+
+
+@router.post("/tasks/{task_id}/hold", response_model=TaskResponse)
+async def hold_task(
+    request: Request,
+    task_id: str = Path(..., description="Task ID to take back"),
+) -> TaskResponse | JSONResponse:
+    """Take a delegated task back — operator becomes the holder again."""
+    registry = getattr(request.app.state, "action_registry", None)
+    ontology = getattr(request.app.state, "ontology", None)
+    if not registry or not ontology:
+        return JSONResponse({"error": "System starting up"}, status_code=503)
+
+    result = await registry.execute(
+        "hold_task",
+        {"ontology": ontology, "task_id": task_id},
+        actor="operator",
+    )
+    if not result.get("success"):
+        return JSONResponse({"error": result.get("error", "Unknown error")}, status_code=400)
+    task = ontology.get(ObjectType.TASK, task_id)
+    if task:
+        return _task_to_response(task)
+    return JSONResponse({"error": "Task not found after hold"}, status_code=404)
 
 
 @router.delete("/tasks/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -952,11 +1010,20 @@ async def list_statuses(request: Request) -> JSONResponse:
         return JSONResponse({"statuses": []})
 
     try:
+        # pipeline is NULL for the generic board columns, 'bug' for bug-pipeline
+        # stages — the frontend renders generic columns and reads the bug stage
+        # set to label bug cards. Column-guarded for a pre-Phase-1 statuses table.
+        has_pipeline = any(
+            r[1] == "pipeline" for r in conn.execute("PRAGMA table_info(statuses)")
+        )
+        pcol = "pipeline" if has_pipeline else "NULL AS pipeline"
         cursor = conn.execute(
-            "SELECT id, name, category, color, position, is_default FROM statuses ORDER BY position ASC"
+            f"SELECT id, name, category, color, position, is_default, {pcol} "
+            "FROM statuses ORDER BY position ASC"
         )
         statuses = [
-            {"id": r[0], "name": r[1], "category": r[2], "color": r[3], "position": r[4], "is_default": bool(r[5])}
+            {"id": r[0], "name": r[1], "category": r[2], "color": r[3],
+             "position": r[4], "is_default": bool(r[5]), "pipeline": r[6]}
             for r in cursor.fetchall()
         ]
         return JSONResponse({"statuses": statuses})

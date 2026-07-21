@@ -26,10 +26,13 @@ CREATE TABLE IF NOT EXISTS tasks (
     completed_at    TEXT,
     due_at          TEXT,
     parent_id       TEXT REFERENCES tasks(id),
-    pipeline        TEXT,
-    pipeline_stage  TEXT,
+    pipeline        TEXT,           -- e.g. 'bug' for the bug fix loop
+    pipeline_stage  TEXT,           -- fine stage within the pipeline (e.g. 'fixing')
     recurrence      TEXT,
     tags            TEXT,
+    delegate        TEXT,           -- agent executing this task (Kanban Phase 1); assigned_to stays the accountable human
+    held_by         TEXT DEFAULT 'operator',  -- 'operator' | 'agent:<name>' | 'none'
+    fields          TEXT,           -- JSON: bug-class richness (root_cause, code_refs, severity, app, …)
     version         INTEGER NOT NULL DEFAULT 1,
     modified_by     TEXT,
     modified_at     TEXT
@@ -694,10 +697,11 @@ CREATE TABLE IF NOT EXISTS statuses (
     color       TEXT,
     project_id  TEXT REFERENCES projects(id),
     position    INTEGER NOT NULL DEFAULT 0,
-    is_default  BOOLEAN DEFAULT 0
+    is_default  BOOLEAN DEFAULT 0,
+    pipeline    TEXT   -- NULL = generic board column; 'bug' = a bug-pipeline stage (Kanban Phase 1)
 );
 
--- Default statuses
+-- Default (generic) statuses — the coarse board columns.
 INSERT OR IGNORE INTO statuses (id, name, category, color, position, is_default) VALUES
     ('triage', 'Triage', 'triage', '#BF5AF2', 0, 0),
     ('backlog', 'Backlog', 'backlog', '#6B6560', 1, 0),
@@ -707,6 +711,23 @@ INSERT OR IGNORE INTO statuses (id, name, category, color, position, is_default)
     ('in_review', 'In Review', 'started', '#BF5AF2', 5, 0),
     ('done', 'Done', 'completed', '#30D158', 6, 1),
     ('cancelled', 'Cancelled', 'cancelled', '#6B6560', 7, 0);
+
+-- Bug-pipeline stages (islah's 13 states mapped onto the category spine).
+-- Kept in sync with core/engine/work/pipelines.py (the single source of truth).
+INSERT OR IGNORE INTO statuses (id, name, category, color, position, is_default, pipeline) VALUES
+    ('bug:new', 'New', 'triage', '#BF5AF2', 0, 0, 'bug'),
+    ('bug:triaging', 'Triaging', 'triage', '#BF5AF2', 1, 0, 'bug'),
+    ('bug:needs-info', 'Needs Info', 'started', '#FFD60A', 2, 0, 'bug'),
+    ('bug:confirmed', 'Confirmed', 'unstarted', '#6B6560', 3, 0, 'bug'),
+    ('bug:needs-decision', 'Needs Decision', 'started', '#FFD60A', 4, 0, 'bug'),
+    ('bug:fixing', 'Fixing', 'started', '#0A84FF', 5, 0, 'bug'),
+    ('bug:verifying', 'Verifying', 'started', '#5E5CE6', 6, 0, 'bug'),
+    ('bug:awaiting-approval', 'Awaiting Approval', 'started', '#BF5AF2', 7, 0, 'bug'),
+    ('bug:approved', 'Approved', 'completed', '#30D158', 8, 0, 'bug'),
+    ('bug:shipped', 'Shipped', 'completed', '#30D158', 9, 0, 'bug'),
+    ('bug:reopened', 'Reopened', 'unstarted', '#FF9F0A', 10, 0, 'bug'),
+    ('bug:duplicate', 'Duplicate', 'cancelled', '#6B6560', 11, 0, 'bug'),
+    ('bug:wont-fix', 'Won''t Fix', 'cancelled', '#6B6560', 12, 0, 'bug');
 
 -- ============================================================
 -- ENTITY HISTORY (field-level change tracking)
