@@ -105,7 +105,7 @@ escalate_to_technician() {
 
     log "$name ESCALATING to technician via Listen: $reason"
     date '+%Y-%m-%d %H:%M:%S' > "$escalation_file" 2>/dev/null || true
-    notify "WATCHDOG: <b>${name}</b> is being escalated to the technician. Reason: ${reason}"
+    notify "🔧 <b>${name}</b> keeps failing, so I've handed it to the repair agent to dig into. ${reason}"
 
     local prompt
     prompt="[WATCHDOG ESCALATION] Service: ${name}
@@ -201,7 +201,7 @@ if [[ -z "$SERVICES_LIST" ]]; then
     # retired listen excluded — all handled by the registry, not us).
     log "CRITICAL: $STATE_YAML missing or unparseable — service monitoring DEGRADED"
     if check_state_change "state_yaml" "missing"; then
-        notify "<b>AOS watchdog:</b> service map <code>${STATE_YAML}</code> is missing/unparseable. Service monitoring is <b>DEGRADED</b> — run <code>aos reconcile</code> (migration 083 rebuilds it from the service registry). Falling back to the registry directly."
+        notify "⚠️ I'm watching the services in a limited mode right now — my service map needs rebuilding. Everything's still monitored via a backup route; running a system check will sort it out."
     fi
     SERVICES_LIST=$("$AOS_DIR/core/bin/internal/aos-python" \
         "$AOS_DIR/core/infra/lib/service_registry.py" watchdog-map 2>/dev/null)
@@ -244,7 +244,7 @@ while IFS='|' read -r name label health_url; do
 
     if $alive; then
         if check_state_change "${name}" "up"; then
-            notify "[AOS] <b>${name}</b> is back up."
+            notify "🟢 <b>${name}</b> is back up and running normally."
             log "$name recovered"
         fi
         clear_escalation "$name"
@@ -256,7 +256,7 @@ while IFS='|' read -r name label health_url; do
 
         if (( restarts_24h >= FLAP_THRESHOLD )); then
             log_tail=$(tail -30 "$HOME/.aos/logs/crons/watchdog.log" 2>/dev/null | grep -i "$name" || echo "(no log entries)")
-            escalate_to_technician "$name" "Flapping: restarted ${restarts_24h} times in the last 24 hours and still down" "$log_tail"
+            escalate_to_technician "$name" "It's restarted ${restarts_24h} times in the last day and still won't stay up." "$log_tail"
             continue
         fi
 
@@ -275,19 +275,19 @@ while IFS='|' read -r name label health_url; do
             restarts=$(( restarts + 1 ))
             record_restart "$name"
             check_state_change "${name}" "restarted" > /dev/null || true
-            notify "[AOS] <b>${name}</b> was down — restarted successfully."
+            notify "🔧 <b>${name}</b> had stopped — I restarted it and it's healthy again."
             log "$name restarted OK"
 
             restarts_24h_after=$(count_restarts_24h "$name")
             if (( restarts_24h_after >= FLAP_THRESHOLD )); then
                 log_tail=$(tail -30 "$HOME/.aos/logs/crons/watchdog.log" 2>/dev/null | grep -i "$name" || echo "(no log entries)")
-                escalate_to_technician "$name" "Flapping detected after restart: ${restarts_24h_after} restarts in 24 hours" "$log_tail"
+                escalate_to_technician "$name" "It came back, but it's now restarted ${restarts_24h_after} times in a day — something keeps knocking it over." "$log_tail"
             fi
         else
             record_restart "$name"
             if check_state_change "${name}" "down"; then
                 restarts_24h_new=$(count_restarts_24h "$name")
-                notify "[AOS] <b>${name}</b> is down — restart failed (${restarts_24h_new} failures in 24h)."
+                notify "🔴 <b>${name}</b> is down and I couldn't restart it (${restarts_24h_new} failed tries in the last day). Worth a look when you're at the Mac."
             fi
             log "$name restart failed"
         fi
@@ -300,12 +300,12 @@ rm -f "$SERVICES_TMP"
 # Internet connectivity
 if ping -c1 -W3 1.1.1.1 > /dev/null 2>&1; then
     if check_state_change "internet" "up"; then
-        notify "[AOS] Internet connectivity restored."
+        notify "🟢 Internet is back."
         log "Internet recovered"
     fi
 else
     if check_state_change "internet" "down"; then
-        notify "[AOS] <b>Internet connectivity lost.</b>"
+        notify "🔴 Internet connection is down."
     fi
     log "Internet is DOWN"
     issues=$(( issues + 1 ))
@@ -316,12 +316,12 @@ if command -v tailscale > /dev/null 2>&1; then
     ts_status=$(tailscale status --self 2>/dev/null | head -1)
     if [[ -n "$ts_status" && ! "$ts_status" =~ "stopped" ]]; then
         if check_state_change "tailscale" "up"; then
-            notify "[AOS] Tailscale is back up."
+            notify "🟢 Remote access is back up."
             log "Tailscale recovered"
         fi
     else
         if check_state_change "tailscale" "down"; then
-            notify "[AOS] <b>Tailscale is down.</b> Remote access lost."
+            notify "🔴 Remote access is down — you won't be able to reach this Mac from away."
         fi
         log "Tailscale is DOWN"
         issues=$(( issues + 1 ))
@@ -333,13 +333,13 @@ fi
 disk_pct=$(df -h / | tail -1 | awk '{print $5}' | tr -d '%')
 if (( disk_pct >= 90 )); then
     if check_state_change "disk" "critical"; then
-        notify "[AOS] <b>Disk usage critical: ${disk_pct}%</b>"
+        notify "🚨 The disk is almost full (${disk_pct}%). Worth clearing some space soon."
     fi
     log "Disk usage critical: ${disk_pct}%"
     issues=$(( issues + 1 ))
 elif (( disk_pct >= 80 )); then
     if check_state_change "disk" "warning"; then
-        notify "[AOS] Disk usage warning: ${disk_pct}%"
+        notify "⚠️ The disk is filling up (${disk_pct}%). Might be worth a cleanup when you get a chance."
     fi
     log "Disk usage warning: ${disk_pct}%"
 else
