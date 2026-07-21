@@ -1,0 +1,89 @@
+# FAKE islah ledger — test fixture ONLY. No operator data, no real repos/apps.
+# Shapes the round-trip acceptance for the Phase 3 bugs.yaml import: a bug that
+# walks the full lifecycle (reported → triaged → attempts → proof → awaiting-
+# approval) plus a fresh 'new' bug and a 'confirmed' one.
+version: '0.1'
+bugs:
+- id: ex#1
+  title: 'Study mode: glyphs missing for untranslated words'
+  status: awaiting-approval
+  kind: bug
+  app: example-app
+  source: apple-notes
+  source_ref: notes:example-app:fake1
+  source_text: 'study mode: not rendering glyphs for words that have no translation'
+  reporter: self
+  reported: '2026-07-10T20:05:54Z'
+  build: '55'
+  screen: Study mode
+  symptom: Glyphs do not render for words without a translation
+  severity: 2
+  classification: visual
+  confirmed: true
+  root_cause: Hard guard drops any word whose translation row has a null gloss before glyph resolution
+  code_refs:
+  - WordStore.swift:157
+  - ContentStore.swift:100
+  fix_approach: 'Decouple glyph from gloss: null gloss keeps the wordId so the glyph renders'
+  repo: /path/to/example-app
+  branch: fix/ex1-glyph-null-gloss
+  commits:
+  - sha: abc1234
+    full: abc1234def5678
+    subject: 'fix(study): render glyphs for words without a translation (EX-1)'
+    add: 59
+    del: 4
+    files:
+    - Sources/Core/WordStore.swift
+    - Sources/Features/WordDetailPanel.swift
+  build_status: 'latest TestFlight build: 0.4.0 (56) — VALID'
+  attempts:
+  - n: 1
+    hypothesis: 'Decouple glyph from gloss: null gloss keeps the wordId'
+    sha: ''
+    gate_result: ''
+    at: '2026-07-12T18:39:19Z'
+  - n: 2
+    hypothesis: Committed fix + fail-before test
+    sha: abc1234
+    gate_result: build_pass
+    at: '2026-07-12T18:52:40Z'
+  proof:
+  - kind: before
+    ref: branch fix/ex1-glyph-null-gloss @ abc1234 — diff + fail-before test
+    at: '2026-07-12T18:52:40Z'
+  created: '2026-07-10T20:05:54Z'
+  updated: '2026-07-21T18:19:36Z'
+- id: ex#2
+  title: Widget count does not update on tap
+  status: new
+  kind: bug
+  app: example-web
+  source: apple-notes
+  source_ref: notes:example-app:fake2
+  source_text: 'Widget: the count does not work on tap'
+  reporter: self
+  reported: '2026-07-13T06:39:39Z'
+  symptom: Widget count does not update on tap
+  severity: 2
+  created: '2026-07-13T06:39:39Z'
+  updated: '2026-07-13T06:39:39Z'
+- id: ex#3
+  title: Background text shifts when toggling the top bar
+  status: confirmed
+  kind: bug
+  app: example-app
+  source: apple-notes
+  source_ref: notes:example-app:fake3
+  reporter: self
+  reported: '2026-07-13T06:39:39Z'
+  symptom: Tapping to show/hide the top bar shifts the text
+  severity: 2
+  classification: visual
+  confirmed: true
+  root_cause: Chrome-aware anchor bound into persistent scroll position
+  code_refs:
+  - ReaderView.swift:246
+  fix_approach: Fixed resting anchor; chrome offset only in one-shot glides
+  created: '2026-07-13T06:39:39Z'
+  updated: '2026-07-13T15:37:43Z'
