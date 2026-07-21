@@ -513,6 +513,12 @@ async def stream_claude(
         except Exception:
             pass
         _greeting = f" You talk to the operator ({_op_name})" if _op_name else " You talk to the operator"
+        _ambient = ""
+        try:
+            from core.engine.comms.ambient.digest import bridge_prompt_block
+            _ambient = bridge_prompt_block()
+        except Exception:
+            _ambient = ""
         cmd.extend([
             "--append-system-prompt",
             f"You are {default_agent.capitalize()}, the AOS orchestrator.{_greeting} "
@@ -528,7 +534,7 @@ async def stream_claude(
             "When the operator references a person or topic from a past conversation, recall "
             "it with `comms-recall search \"<topic>\"` or `comms-recall person \"<name>\"` "
             "rather than asking them to re-explain. "
-            "You have full tool access.",
+            "You have full tool access." + _ambient,
         ])
 
     # Session resumption (not for agent dispatches — they get fresh context)
