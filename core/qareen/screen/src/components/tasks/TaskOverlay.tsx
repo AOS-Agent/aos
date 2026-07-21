@@ -16,11 +16,9 @@ import { useWork, type Task, type Project, type Goal } from '@/hooks/useWork';
 import { useUpdateTask, useCreateTask } from '@/hooks/useTasks';
 import { areaTone, taskGoalId } from '@/lib/areaStyle';
 import { Tag } from '@/components/primitives/Tag';
+import { DelegateControl, BugDetails, STAT_COLOR } from '@/components/tasks/BugDelegation';
 import { TaskStatus, TaskPriority } from '@/lib/types';
 import { format, isPast, isToday, isTomorrow, differenceInDays } from 'date-fns';
-
-// ── Shared visual maps (kept in sync with the rest of the task surface) ──────
-const STAT_COLOR: Record<string, string> = { todo: '#6B6560', active: '#0A84FF', waiting: '#FFD60A', done: '#30D158', cancelled: '#4A4540' };
 
 function formatDue(iso: string): { text: string; overdue: boolean } {
   const d = new Date(iso);
@@ -168,6 +166,12 @@ export function TaskOverlay({ taskId, onClose }: { taskId: string; onClose: () =
                 </div>
               )}
 
+              {/* Delegate — the agent that executes (assigned_to stays accountable) */}
+              <div className="flex items-center justify-between text-[14px]">
+                <span className="text-text-quaternary">Delegate</span>
+                <DelegateControl task={task} />
+              </div>
+
               {/* Due */}
               {due && (
                 <div className="flex items-center justify-between text-[14px]">
@@ -179,6 +183,9 @@ export function TaskOverlay({ taskId, onClose }: { taskId: string; onClose: () =
 
             {/* Divider */}
             <div className="border-t border-border mb-5" />
+
+            {/* Bug-class richness — unflattened (root cause, fix, code refs, branch) */}
+            <BugDetails task={task} />
 
             {/* Tags */}
             {task.tags?.length > 0 && (
@@ -250,7 +257,9 @@ function StatusControl({ task }: { task: Task }) {
       <div className="w-2 h-2 rounded-full" style={{ backgroundColor: STAT_COLOR[task.status] }} />
       <select value={task.status} onChange={e => update.mutate({ id: task.id, data: { status: e.target.value as TaskStatus } })}
         className="bg-transparent text-text-secondary outline-none cursor-pointer text-right appearance-none">
+        <option value="triage">Triage</option><option value="backlog">Backlog</option>
         <option value="todo">Todo</option><option value="active">Active</option><option value="waiting">Waiting</option>
+        <option value="in_review">In Review</option>
         <option value="done">Done</option><option value="cancelled">Cancelled</option>
       </select>
     </div>
