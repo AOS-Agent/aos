@@ -22,6 +22,11 @@ def _config_path() -> Path:
     override = os.environ.get("AOS_CONFIG_DIR")
     if override:
         return Path(override) / "enrichment.yaml"
+    # Instance layer wins (per-machine operator choices like propose_commitments
+    # — component-lifecycle rule: framework ships defaults, instance opts in).
+    instance = Path.home() / ".aos" / "config" / "enrichment.yaml"
+    if instance.exists():
+        return instance
     # Framework config ships in the repo; runtime reads the same relative path.
     return _repo_root() / "config" / "enrichment.yaml"
 
