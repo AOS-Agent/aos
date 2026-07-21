@@ -38,6 +38,8 @@ _REPO_ROOT = Path(__file__).resolve().parents[4]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+from core.engine.comms.ambient import digest  # noqa: E402
+
 COMMS_DB = Path.home() / ".aos" / "data" / "comms.db"
 
 SURFACE_MIN = 0.80
@@ -85,6 +87,10 @@ def _select_candidates(conn: sqlite3.Connection, *, surface_min: float,
             src = json.loads(r["source_ids"] or "[]")
         except Exception:
             src = []
+        # Durability gate (operator feedback 2026-07-21): momentary logistics
+        # ("leave in 5 min", "right back") must never become inbox proposals.
+        if not digest._is_durable(fields.get("due"), r["ts"]):
+            continue
         out.append({"entity_id": r["id"], "what": fields.get("what") or r["value"],
                     "due": fields.get("due"), "source_ids": src,
                     "ts": r["ts"], "channel": r["channel"]})

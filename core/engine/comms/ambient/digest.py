@@ -31,9 +31,11 @@ fast UPDATE on a different database.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 # Repo-root bootstrap so `core.engine.comms.*` resolves whether run as a module
@@ -115,6 +117,43 @@ def _fields(row: sqlite3.Row) -> dict:
 
 # ── data accessors (each returns rows, most-recent-first, bounded) ──────────
 
+
+# ── Durability filter (operator feedback 2026-07-21: "the promises seem off") ──
+# The extractor is faithful but literal: "open the door", "leave in 5 min",
+# "be right back" are real commitments for ~10 minutes. Surfacing them weeks
+# later as "you owe" is noise. A commitment is DEAD for digest purposes when:
+#   - its due field implies immediacy (minutes/hours/right now/tonight/on my
+#     way...) and the message is older than 1 day, or
+#   - it has no due field and the message is older than STALE_UNDATED_DAYS
+#     (momentary logistics dominate undated ones; durable promises get
+#     re-extracted from newer messages when people follow up).
+# Extraction stays untouched — full history remains queryable via recall;
+# this gates only what claims operator attention.
+
+_IMMEDIACY_RE = re.compile(
+    r"\b(min|mins|minute|minutes|hour|hours|hr|hrs|sec|secs|second|seconds|"
+    r"right now|right back|rn|omw|on my way|tonight|now|asap|soon|shortly|"
+    r"in a bit|today)\b", re.IGNORECASE)
+STALE_UNDATED_DAYS = 14
+STALE_IMMEDIATE_DAYS = 1
+
+
+def _is_durable(due: str | None, ts: str | None,
+                now: datetime | None = None) -> bool:
+    """True if a commitment still deserves operator attention."""
+    now = now or datetime.now(timezone.utc)
+    try:
+        age_days = (now - datetime.fromisoformat(str(ts)).replace(
+            tzinfo=timezone.utc)).days if ts else 0
+    except (ValueError, TypeError):
+        age_days = 0
+    if due and _IMMEDIACY_RE.search(str(due)):
+        return age_days <= STALE_IMMEDIATE_DAYS
+    if not due:
+        return age_days <= STALE_UNDATED_DAYS
+    return True  # dated, non-immediate: let it ride (calendarish)
+
+
 def owed_by_you(conn, *, surface_min=SURFACE_MIN, include_private=False,
                 limit=_OWED_BY_SHOWN) -> list[dict]:
     """Operator's own open commitments — extracted from OUTBOUND messages."""
@@ -127,6 +166,8 @@ def owed_by_you(conn, *, surface_min=SURFACE_MIN, include_private=False,
     out = []
     for r in conn.execute(sql, (surface_min,)):
         f = _fields(r)
+        if not _is_durable(f.get("due"), r["ts"]):
+            continue
         out.append({"what": f.get("what") or r["value"], "due": f.get("due"),
                     "person": r["person_name"], "ts": r["ts"]})
     return out[:limit] if limit else out
@@ -144,6 +185,8 @@ def owed_to_you(conn, *, surface_min=SURFACE_MIN, include_private=False,
     out = []
     for r in conn.execute(sql, (surface_min,)):
         f = _fields(r)
+        if not _is_durable(f.get("due"), r["ts"]):
+            continue
         out.append({"what": f.get("what") or r["value"], "due": f.get("due"),
                     "person": r["person_name"], "ts": r["ts"]})
     return out[:limit] if limit else out
