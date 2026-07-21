@@ -78,18 +78,16 @@ class NotificationConsumer(EventConsumer):
         if not text:
             return
 
-        # Format based on event type
+        # Format based on event type. A leading emoji is all the framing an
+        # alert needs; the raw event source is an internal slug (e.g.
+        # "triage_consumer") and never belongs on the operator's phone
+        # (MESSAGE_STYLE.md → "System alerts"). It stays in the event/log.
         if event.action == "alert":
             text = f"⚠️ {text}"
         elif event.action == "success":
             text = f"✅ {text}"
         elif event.action == "info":
             text = f"ℹ️ {text}"
-
-        # Add source context if present
-        source = event.data.get("source") or event.source
-        if source:
-            text = f"{text}\n\n— {source}"
 
         # Send via Telegram
         if self.is_configured:
