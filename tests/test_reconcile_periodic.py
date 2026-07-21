@@ -98,8 +98,15 @@ def test_periodic_notifies_only_for_periodic_fix_results(runner, monkeypatch):
     mod.run_all(periodic=True)
 
     joined = "\n".join(runner["sent"])
-    assert "periodic_svc" in joined, "a repaired service must ping the operator"
-    assert "deploy_only" not in joined, "standing deploy-owned conditions must not nag on periodic runs"
+    # A repaired service must ping the operator — but in human copy, not the
+    # raw check slug (aos#170). The alert carries the humanized message, not
+    # "periodic_svc".
+    assert runner["sent"], "a repaired service must ping the operator"
+    assert "dead service" in joined.lower(), "the ping must carry the humanized message"
+    assert "periodic_svc" not in joined, "the raw check slug must never reach the phone"
+    # Standing deploy-owned conditions must not nag on periodic runs, in any form.
+    assert "deploy_only" not in joined
+    assert "deploy fixed" not in joined.lower()
 
 
 def test_deploy_mode_fixes_everything(runner, monkeypatch):
