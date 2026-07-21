@@ -107,6 +107,9 @@ class TaskResponse(BaseModel):
     updated: datetime | None = Field(None, description="Last-modified timestamp (staleness signal)")
     live: bool = Field(False, description="A session is actively holding this task right now")
 
+    activity_count: int = Field(0, description="Number of narrative activity entries on this task")
+    last_activity: dict | None = Field(None, description="Most recent activity {ts, actor, actor_type, kind, body}")
+
 
 class DelegateRequest(BaseModel):
     """Request body for delegating a task to an agent."""

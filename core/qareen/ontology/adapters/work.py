@@ -27,6 +27,13 @@ from core.engine.work.pipelines import (
     bug_stage_to_status,
 )
 
+from ..activity import (
+    ACTIVITY_KINDS,
+    actor_type_of,
+    is_appendable,
+    status_body,
+)
+
 from ..types import (
     Area,
     Goal,
@@ -250,6 +257,30 @@ class WorkAdapter(Adapter):
                 );
                 CREATE INDEX IF NOT EXISTS idx_comments_entity
                     ON comments(entity_type, entity_id, created_at);
+
+                -- task_activity: the NARRATIVE layer (Kanban Phase 2). One row
+                -- per logical event with a human-readable body + JSON data.
+                -- APPEND-ONLY — the two triggers below make UPDATE/DELETE of a
+                -- past entry impossible at the storage level, so history can
+                -- never be rewritten (see core/qareen/ontology/activity.py).
+                CREATE TABLE IF NOT EXISTS task_activity (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_id         TEXT NOT NULL,
+                    ts              TEXT NOT NULL,
+                    actor           TEXT NOT NULL,
+                    kind            TEXT NOT NULL,
+                    body            TEXT NOT NULL,
+                    data            TEXT,
+                    source_event_id TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_activity_task
+                    ON task_activity(task_id, id);
+                CREATE TRIGGER IF NOT EXISTS task_activity_no_update
+                    BEFORE UPDATE ON task_activity
+                    BEGIN SELECT RAISE(ABORT, 'task_activity is append-only'); END;
+                CREATE TRIGGER IF NOT EXISTS task_activity_no_delete
+                    BEFORE DELETE ON task_activity
+                    BEGIN SELECT RAISE(ABORT, 'task_activity is append-only'); END;
                 """
             )
             # Seed the generic board statuses (category is the machine spine
@@ -344,6 +375,140 @@ class WorkAdapter(Adapter):
                 ),
             )
             self._conn.commit()
+        except sqlite3.Error:
+            pass
+
+    # ── Activity log (narrative layer, append-only) ──────────────────────
+    #
+    # entity_history (above) is the forensic per-field log; task_activity is
+    # the narrative per-event log. Both are written from the adapter — the one
+    # choke point every mutation (CLI and API) flows through — so the story and
+    # the field diffs cannot disagree. See core/qareen/ontology/activity.py.
+
+    def append_activity(
+        self,
+        task_id: str,
+        kind: str,
+        body: str,
+        *,
+        data: dict | None = None,
+        actor: str | None = None,
+        actor_type: str | None = None,
+        source_event_id: str | None = None,
+        manual: bool = False,
+    ) -> dict | None:
+        """Append one immutable activity entry. Returns the stored row as a dict.
+
+        There is deliberately no update/delete counterpart — the log is
+        append-only (SQL triggers enforce it too). ``manual=True`` is the
+        agent/operator hand-append path and refuses the auto-narration kinds so
+        a caller cannot forge a system narration.
+        """
+        if kind not in ACTIVITY_KINDS:
+            raise ValueError(
+                f"unknown activity kind {kind!r} "
+                f"(one of {', '.join(ACTIVITY_KINDS)})"
+            )
+        if manual and not is_appendable(kind):
+            raise ValueError(
+                f"kind {kind!r} is written by auto-narration, not appendable by hand"
+            )
+        actor = actor or self._actor
+        ts = _now()
+        payload = _json_dumps(data) if data else None
+        try:
+            cur = self._conn.execute(
+                "INSERT INTO task_activity "
+                "(task_id, ts, actor, kind, body, data, source_event_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (task_id, ts, actor, kind, body, payload, source_event_id),
+            )
+            self._conn.commit()
+            row_id = cur.lastrowid
+        except sqlite3.Error:
+            return None
+        return {
+            "id": row_id,
+            "task_id": task_id,
+            "ts": ts,
+            "actor": actor,
+            "actor_type": actor_type or actor_type_of(actor),
+            "kind": kind,
+            "body": body,
+            "data": data or {},
+            "source_event_id": source_event_id,
+        }
+
+    def _narrate(
+        self,
+        task_id: str,
+        kind: str,
+        body: str,
+        *,
+        data: dict | None = None,
+        actor: str | None = None,
+    ) -> None:
+        """Best-effort auto-narration — never lets a story write break a mutation."""
+        try:
+            self.append_activity(
+                task_id, kind, body, data=data, actor=actor,
+            )
+        except Exception:
+            pass
+
+    def list_activity(self, task_id: str, *, limit: int = 200) -> list[dict]:
+        """The task's activity, oldest-first (the narrative reads top-to-bottom)."""
+        try:
+            rows = self._conn.execute(
+                "SELECT id, task_id, ts, actor, kind, body, data, source_event_id "
+                "FROM task_activity WHERE task_id = ? ORDER BY id ASC LIMIT ?",
+                (task_id, limit),
+            ).fetchall()
+        except sqlite3.Error:
+            return []
+        out = []
+        for r in rows:
+            out.append({
+                "id": r["id"],
+                "task_id": r["task_id"],
+                "ts": r["ts"],
+                "actor": r["actor"],
+                "actor_type": actor_type_of(r["actor"]),
+                "kind": r["kind"],
+                "body": r["body"],
+                "data": _json_loads(r["data"], default={}) or {},
+                "source_event_id": r["source_event_id"],
+            })
+        return out
+
+    def _attach_activity_summary(self, task: Task) -> None:
+        """Attach activity_count + last_activity to a task for the board/list.
+
+        Cheap, indexed, and best-effort — the board card's "last activity" line
+        and the list view's count column read these without an N+1 of endpoint
+        calls. Skipped silently on a DB without the table (pre-Phase-2).
+        """
+        try:
+            cnt = self._conn.execute(
+                "SELECT count(*) FROM task_activity WHERE task_id = ?",
+                (task.id,),
+            ).fetchone()[0]
+            task.activity_count = cnt  # type: ignore[attr-defined]
+            if not cnt:
+                task.last_activity = None  # type: ignore[attr-defined]
+                return
+            r = self._conn.execute(
+                "SELECT ts, actor, kind, body FROM task_activity "
+                "WHERE task_id = ? ORDER BY id DESC LIMIT 1",
+                (task.id,),
+            ).fetchone()
+            task.last_activity = {  # type: ignore[attr-defined]
+                "ts": r["ts"],
+                "actor": r["actor"],
+                "actor_type": actor_type_of(r["actor"]),
+                "kind": r["kind"],
+                "body": r["body"],
+            } if r else None
         except sqlite3.Error:
             pass
 
@@ -866,7 +1031,9 @@ class WorkAdapter(Adapter):
         ).fetchone()
         if not row:
             return None
-        return self._row_to_task(row)
+        task = self._row_to_task(row)
+        self._attach_activity_summary(task)
+        return task
 
     def _session_conn(self):
         """Connection containing sessions/session_tasks (Qareen-owned until aos#131).
@@ -1042,7 +1209,10 @@ class WorkAdapter(Adapter):
             "ORDER BY COALESCE(modified_at, created_at) DESC LIMIT ?",
             (cancelled_limit,),
         ).fetchall()
-        return [self._row_to_task(r) for r in (*open_rows, *done_rows, *cancelled_rows)]
+        tasks = [self._row_to_task(r) for r in (*open_rows, *done_rows, *cancelled_rows)]
+        for t in tasks:
+            self._attach_activity_summary(t)
+        return tasks
 
     # ── Typed states + delegation (Phase 1) ──────────────────────────────
 
@@ -1134,6 +1304,17 @@ class WorkAdapter(Adapter):
         if new_stage != old_stage:
             self._record_history(task_id, "pipeline_stage", old_stage, new_stage,
                                  actor=by, session_id=session_id)
+
+        # One narrative line for the whole delegation (not four field diffs).
+        ndata: dict[str, Any] = {"agent": agent, "by": by, "holder": held}
+        if new_status != old_status:
+            ndata["from_status"] = old_status
+            ndata["to_status"] = new_status
+        if new_stage != old_stage:
+            ndata["from_stage"] = old_stage
+            ndata["to_stage"] = new_stage
+        self._narrate(task_id, "delegated", f"Delegated to {agent}",
+                      data=ndata, actor=by)
         return self._get_task(task_id)
 
     def hold(
@@ -1168,6 +1349,12 @@ class WorkAdapter(Adapter):
                              actor=by, session_id=session_id)
         self._record_history(task_id, "held_by", old_held, "operator",
                              actor=by, session_id=session_id)
+        prior_agent = old_delegate or (
+            old_held[len("agent:"):] if (old_held or "").startswith("agent:") else None
+        )
+        body = f"Taken back from {prior_agent}" if prior_agent else "Held by operator"
+        self._narrate(task_id, "held", body,
+                      data={"by": by, "from_agent": prior_agent}, actor=by)
         return self._get_task(task_id)
 
     def _count_table(self, table: str, filters: dict) -> int:
@@ -1240,6 +1427,27 @@ class WorkAdapter(Adapter):
             self._upsert_handoff(task.id, task.handoff)
 
         self._conn.commit()
+
+        # Narrate the birth of the task (the first line of its story).
+        stage_now = task.stage or stage_val
+        body = (
+            f'Filed subtask under {task.parent_id}'
+            if task.parent_id
+            else f'Created "{task.title}"'
+        )
+        ndata: dict[str, Any] = {}
+        if task.project:
+            ndata["project"] = task.project
+        if isinstance(task.priority, TaskPriority):
+            ndata["priority"] = task.priority.value
+        if task.pipeline:
+            ndata["pipeline"] = task.pipeline
+        if stage_now:
+            ndata["stage"] = stage_now
+        self._narrate(
+            task.id, "created", body, data=ndata or None,
+            actor=task.created_by or self._actor,
+        )
         return task
 
     def _update_task(self, task_id: str, fields: dict) -> Task | None:
@@ -1352,8 +1560,54 @@ class WorkAdapter(Adapter):
                     task_id, col, old, new,
                     actor=actor, actor_type=actor_type, session_id=session_id,
                 )
+                self._narrate_edit(task_id, col, old, new, actor=actor)
 
         return self._get_task(task_id)
+
+    # ── Verbs for a narrated field edit (spec §3.3 narrative layer) ──────
+    _EDIT_VERB = {
+        "title": "Renamed",
+        "description": "Edited description",
+        "priority": None,          # special-cased to "Priority → P{n}"
+        "tags": "Updated tags",
+        "assigned_to": "Reassigned",
+        "due_at": "Changed due date",
+        "project_id": "Moved project",
+        "delegate": "Changed delegate",
+        "held_by": "Changed holder",
+        "pipeline_stage": None,    # special-cased to the stage label
+    }
+
+    def _narrate_edit(self, task_id, col, old, new, *, actor=None) -> None:
+        """Turn one field change into a narrative line (status = its own kind)."""
+        if old == new:
+            return
+        if col == "status":
+            self._narrate(
+                task_id, "status_changed",
+                status_body(str(new)),
+                data={"from": old, "to": new}, actor=actor,
+            )
+            return
+        if col == "pipeline_stage":
+            label = str(new).replace("-", " ") if new else "(none)"
+            self._narrate(
+                task_id, "status_changed", f"Stage → {label}",
+                data={"from": old, "to": new}, actor=actor,
+            )
+            return
+        if col == "priority":
+            self._narrate(
+                task_id, "edited", f"Priority → P{new}",
+                data={"field": "priority", "old": old, "new": new}, actor=actor,
+            )
+            return
+        if col not in self._EDIT_VERB:
+            return  # internal/uninteresting column — no narrative line
+        self._narrate(
+            task_id, "edited", self._EDIT_VERB[col],
+            data={"field": col, "old": old, "new": new}, actor=actor,
+        )
 
     # ── Internal: Project operations ─────────────────────
 
@@ -2363,6 +2617,9 @@ class WorkAdapter(Adapter):
         )
         self._conn.commit()
         self._record_history(task_id, "status", row["status"], "done")
+        if row["status"] != "done":
+            self._narrate(task_id, "status_changed", status_body("done"),
+                          data={"from": row["status"], "to": "done"})
 
         task = self._row_to_task(
             self._conn.execute(
@@ -2417,6 +2674,13 @@ class WorkAdapter(Adapter):
                     (now, now, parent_id),
                 )
                 self._conn.commit()
+                self._record_history(parent_id, "status",
+                                     parent_row["status"], "done",
+                                     actor="system:work")
+                self._narrate(parent_id, "status_changed",
+                              "Completed (all subtasks done)",
+                              data={"from": parent_row["status"], "to": "done"},
+                              actor="system:work")
                 # Cascade up further if this parent also has a parent
                 if parent_row["parent_id"]:
                     self._cascade_parent(parent_row["parent_id"])
@@ -2441,6 +2705,9 @@ class WorkAdapter(Adapter):
         )
         self._conn.commit()
         self._record_history(task_id, "status", row["status"], "active")
+        if row["status"] != "active":
+            self._narrate(task_id, "status_changed", status_body("active"),
+                          data={"from": row["status"], "to": "active"})
         return self._row_to_task(
             self._conn.execute(
                 "SELECT * FROM tasks WHERE id = ?", (task_id,)
