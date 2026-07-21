@@ -2,6 +2,14 @@
 
 All notable changes to AOS. Release notes sent via Telegram after each 4am update.
 
+## v0.6.21 — 2026-07-21
+
+Summary: Releases now ship their frontends. `git archive` only extracts tracked files, so gitignored vite build output (`core/qareen/screen/dist`) never landed in a release — every runtime since the release system took over :4096 served a UI-less qareen backend. The release pipeline now builds vite frontends into each release before freezing it read-only. Also ships envoy — autonomous outbound conversations.
+
+- Added `build_frontends()` to `core/bin/internal/release-manager` — discovers every tracked `package.json` whose `build` script invokes `vite build` (no hardcoded list) and builds it into the release tree during `create` and `convert`, before `chmod a-w`. Reuses the dev repo's `node_modules` via a temporary symlink on dev machines; falls back to `npm ci` on fleet machines. `node_modules` is removed after the build — releases ship `dist/` only.
+- Changed `activate` validation to warn when a vite frontend has no built `dist/index.html`, so a UI-less release can never go unnoticed again. Build failures are non-fatal (backend still runs; the UI is just absent) but loudly logged.
+- Added envoy — autonomous outbound conversations (`core/engine/comms`): the agent can open and carry outbound conversations under the comms trust cascade.
+
 ## v0.6.20 — 2026-07-21
 
 Summary: Ambient Knowledge Phase 5 — injection + knowing→doing. The enriched entity store (Phase 4) now reaches the agent while it works, and starts acting on it behind the scenes. Sessions open already aware of what the operator owes, what's owed to him, his unanswered questions, recent purchases, and the top people nudges; naming a person pulls up what the agent already knows about them; the operator's own promises flow toward the work inbox; and the 600+ nudges that had been rotting unseen finally surface, take feedback, and expire. All read paths are read-only over `comms.db` (the backfill can hold write locks), all access control is reused verbatim from the recall contract, and a login-expiry now pauses the enrichment engine cleanly instead of grinding out a wasted run.
