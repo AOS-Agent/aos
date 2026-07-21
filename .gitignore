@@ -49,3 +49,8 @@ execution_log/
 # Privacy denylist — operator personal data, instance-only (~/.aos/config/).
 # Belt-and-suspenders: it must never be committed even if placed in-repo.
 privacy-denylist.txt
+
+# build artifacts / binaries (aos#192 hygiene)
+.vite/
+whatsmeow-new
+*.migrated
