@@ -1,0 +1,33 @@
+# Apps registry — FRAMEWORK TEMPLATE (example entries only).
+#
+# Maps an app id → where its code lives and how to build it, so a bug-class task
+# (fields.app = "<id>") can be routed to the right repo / scheme / bundle by the
+# board and, later, the code-task runner.
+#
+# This file ships in the framework tree and is git-tracked, so it MUST NOT
+# contain real repo paths, bundle ids, or domains. Put the operator's real apps
+# in the INSTANCE override, which replaces this map wholesale when present:
+#
+#     ~/.aos/config/apps.yaml
+#
+# Instance file shape is identical to the block below. Fields:
+#   name           human label shown on the bug card's app badge
+#   repo           absolute path to the app's git repo (instance-side)
+#   scheme         Xcode scheme / build target
+#   bundle_id      e.g. com.example.app
+#   release_branch branch the fix loop targets (default: main)
+
+apps:
+  example-app:
+    name: Example App
+    repo: /path/to/example-app
+    scheme: ExampleApp
+    bundle_id: com.example.exampleapp
+    release_branch: main
+
+  example-web:
+    name: Example Web
+    repo: /path/to/example-web
+    scheme: null
+    bundle_id: null
+    release_branch: main

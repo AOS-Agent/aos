@@ -47,9 +47,16 @@ class ObjectType(str, Enum):
 
 
 class TaskStatus(str, Enum):
+    # The coarse board columns, one per generic status seeded in the statuses
+    # table. category is the machine spine (statuses.category); these names are
+    # the default columns. TRIAGE/BACKLOG/IN_REVIEW joined the enum in Kanban
+    # Phase 1 so a bug task's coarse status is always expressible.
+    TRIAGE = "triage"
+    BACKLOG = "backlog"
     TODO = "todo"
     ACTIVE = "active"
     WAITING = "waiting"
+    IN_REVIEW = "in_review"
     DONE = "done"
     CANCELLED = "cancelled"
 
@@ -211,9 +218,14 @@ class Task:
     tags: list[str] = field(default_factory=list)
     description: str | None = None
 
-    # Assignment
-    assigned_to: str | None = None  # person or agent id
+    # Assignment vs delegation (spec §3.1): assigned_to stays the human on the
+    # hook; delegate is the agent that executes. held_by is the current holder
+    # token — 'operator' | 'agent:<name>' | 'none' — and delegation is a state
+    # transition that sets it (see WorkAdapter.delegate).
+    assigned_to: str | None = None  # person on the hook (accountable human)
     created_by: str | None = None
+    delegate: str | None = None  # agent id executing this task, or None
+    held_by: str | None = None   # 'operator' | 'agent:<name>' | 'none'
 
     # Dates
     created: datetime | None = None
@@ -231,6 +243,14 @@ class Task:
     # Pipeline state (if this task is being processed)
     pipeline: str | None = None
     pipeline_stage: PipelineStage | None = None
+    # Fine-grained named stage within a domain pipeline (e.g. the bug pipeline's
+    # 'fixing'/'verifying'/'awaiting-approval'). Stored as a free string in the
+    # tasks.pipeline_stage column; the coarse board `status` is synced from it.
+    stage: str | None = None
+    # Bug-class (and other pipeline) structured richness, kept as JSON so it is
+    # not flattened into fixed columns: root_cause, code_refs, fix_approach,
+    # severity, app, build, screen, etc. (dossier §7 risk-1).
+    fields: dict[str, Any] = field(default_factory=dict)
 
     # Recurrence
     recurrence: str | None = None  # cron expression or None
