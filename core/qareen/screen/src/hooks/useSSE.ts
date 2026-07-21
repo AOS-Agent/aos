@@ -40,46 +40,20 @@ export function useSSE() {
         } catch {}
       });
 
-      // Invalidate the work queries so the board live-updates. The bus emits
-      // task.* (API/agent path), work.notify (re-emit), and ingest.work (CLI
-      // path via /api/work/notify) — none of which matched the old 'work'
-      // listener, so the kanban never refreshed from agent or CLI activity.
-      const invalidateWork = () => {
+      es.addEventListener('work', (e) => {
         queryClient.invalidateQueries({ queryKey: ['work'] });
-        queryClient.invalidateQueries({ queryKey: ['project-tasks'] });
-      };
-
-      const WORK_EVENTS = [
-        'work', 'work.notify', 'ingest.work',
-        'task.created', 'task.updated', 'task.completed',
-        'task.deleted', 'task.status_changed',
-      ];
-      for (const name of WORK_EVENTS) {
-        es.addEventListener(name, (e) => {
-          invalidateWork();
-          try {
-            const data = JSON.parse((e as MessageEvent).data);
-            addEvent({
-              id: data.id ?? crypto.randomUUID(),
-              type: 'work_update',
-              source: data.source ?? name,
-              message: data.message ?? '',
-              data,
-              timestamp: data.timestamp ?? new Date().toISOString(),
-            });
-          } catch {}
-        });
-      }
-
-      // Belt-and-suspenders: any event delivered without a matching named
-      // listener (no `event:` field) still refreshes work if it looks work-ish.
-      es.onmessage = (e) => {
         try {
           const data = JSON.parse(e.data);
-          const t = String(data.type ?? data.event_type ?? '');
-          if (t.startsWith('task') || t.includes('work')) invalidateWork();
+          addEvent({
+            id: data.id ?? crypto.randomUUID(),
+            type: 'work_update',
+            source: data.source ?? 'work',
+            message: data.message ?? '',
+            data,
+            timestamp: data.timestamp ?? new Date().toISOString(),
+          });
         } catch {}
-      };
+      });
 
       es.addEventListener('health', (e) => {
         queryClient.invalidateQueries({ queryKey: ['services'] });

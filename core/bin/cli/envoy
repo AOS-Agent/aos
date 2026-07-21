@@ -1,0 +1,15 @@
+#!/usr/bin/env python3
+"""envoy — thin wrapper for core.engine.comms.envoy.cli"""
+import sys
+from pathlib import Path
+
+HOME = Path.home()
+for p in (HOME / "aos", HOME / "project" / "aos"):
+    if (p / "core" / "engine" / "comms" / "envoy").is_dir():
+        sys.path.insert(0, str(p))
+        break
+
+from core.engine.comms.envoy.cli import main  # noqa: E402
+
+if __name__ == "__main__":
+    sys.exit(main())

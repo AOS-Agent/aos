@@ -91,6 +91,71 @@ release_lock() {
 
 trap release_lock EXIT
 
+# ── Frontend builds ────────────────────────────────────────────────────────
+# `git archive` extracts only tracked files — gitignored build artifacts
+# (screen/dist) never land in a release. Any vite frontend the runtime serves
+# as static files from dist/ must be built INTO the release before it is
+# frozen read-only. Frontends are DISCOVERED, not hardcoded: every tracked
+# package.json (outside node_modules) whose "build" script invokes vite.
+#
+# node_modules strategy: reuse the dev repo's installed modules for the same
+# package path via a temporary symlink (fast path, dev machines). If absent,
+# `npm ci` into the release copy (fleet machines). Either way node_modules is
+# removed after the build — releases ship dist/ only.
+#
+# Failures are non-fatal (backend runs without UI — graceful skip per the
+# component-lifecycle rule) but logged loudly, and activate() warns when a
+# frontend has no dist.
+
+build_frontends() {
+    local dir="$1"   # extracted release tree (still writable)
+
+    if ! command -v npm >/dev/null 2>&1; then
+        log "WARN: npm not found — skipping frontend builds (release UIs will be absent)"
+        return 0
+    fi
+
+    local pkg pkgdir rel devmods linked
+    while IFS= read -r pkg; do
+        # Only vite-built static frontends; Next.js etc. need their own server
+        grep -q '"build"[^,]*vite build' "$pkg" || continue
+        pkgdir=$(dirname "$pkg")
+        rel="${pkgdir#"$dir"/}"
+        log "Building frontend: $rel ..."
+
+        linked=0
+        devmods="$DEV_REPO/$rel/node_modules"
+        if [ -n "$DEV_REPO" ] && [ -d "$devmods" ]; then
+            ln -s "$devmods" "$pkgdir/node_modules"
+            linked=1
+        elif ! (cd "$pkgdir" && npm ci --silent --no-audit --no-fund >/dev/null 2>&1); then
+            log "WARN: npm ci failed for $rel — skipping build (UI will be absent)"
+            continue
+        fi
+
+        # Prefer the package's build script; fall back to plain vite build so
+        # tsc type errors can't block a release (dev live-deploy also runs
+        # vite directly).
+        if ! (cd "$pkgdir" && npm run build --silent >/dev/null 2>&1); then
+            log "WARN: npm run build failed for $rel — retrying with vite only"
+            (cd "$pkgdir" && ./node_modules/.bin/vite build --logLevel error >/dev/null 2>&1) || true
+        fi
+
+        # Releases ship dist/ only — drop node_modules (symlink or installed)
+        if [ "$linked" = 1 ]; then
+            rm -f "$pkgdir/node_modules"
+        else
+            rm -rf "$pkgdir/node_modules"
+        fi
+
+        if [ -f "$pkgdir/dist/index.html" ]; then
+            log "  ✓ $rel/dist built ($(du -sh "$pkgdir/dist" | cut -f1))"
+        else
+            log "WARN: $rel build produced no dist/index.html — UI will be absent"
+        fi
+    done < <(find "$dir/core" "$dir/apps" -name package.json -not -path "*/node_modules/*" 2>/dev/null)
+}
+
 # ── Create a new release ───────────────────────────────────────────────────
 
 create() {
@@ -149,6 +214,11 @@ create() {
     cd "$DEV_REPO"
     git archive "$remote_hash" | tar -xf - -C "$tmpdir"
 
+    # Build frontends into the release before it is frozen read-only.
+    # git archive ships only tracked files — screen/dist is gitignored, so
+    # without this step every release serves a UI-less backend (v0.6.16 bug).
+    build_frontends "$tmpdir"
+
     # Move to releases dir
     mv "$tmpdir" "$release_dir"
 
@@ -196,6 +266,14 @@ activate() {
         log "ERROR: Release missing core/"
         test_errors=1
     fi
+
+    # Frontend dist presence — warn only (backend runs, UI would be absent)
+    local fe_pkg
+    while IFS= read -r fe_pkg; do
+        if grep -q '"build"[^,]*vite build' "$fe_pkg" && [ ! -f "$(dirname "$fe_pkg")/dist/index.html" ]; then
+            log "WARN: ${fe_pkg#"$release_dir"/} frontend has no built dist/ — UI will be absent"
+        fi
+    done < <(find "$release_dir/core" "$release_dir/apps" -name package.json -not -path "*/node_modules/*" 2>/dev/null)
 
     # Check Python scripts parse in the new release
     local parse_fail=0
@@ -431,6 +509,7 @@ convert() {
     local tmpdir
     tmpdir=$(mktemp -d)
     git archive HEAD | tar -xf - -C "$tmpdir"
+    build_frontends "$tmpdir"
     mv "$tmpdir" "$release_dir"
     chmod -R a-w "$release_dir"
 

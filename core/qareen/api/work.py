@@ -42,40 +42,6 @@ router = APIRouter(prefix="/api", tags=["work"])
 # ---------------------------------------------------------------------------
 
 
-def _work_adapter(ontology):
-    """Resolve the WorkAdapter backing tasks.
-
-    The activity/comments/statuses endpoints referenced ``ontology._work_adapter``
-    (never set) and ``db.conn`` (the adapter exposes ``_conn``), so they
-    silently returned empty regardless of data. Resolve the real adapter from
-    the type registry.
-    """
-    adapters = getattr(ontology, "_adapters", None)
-    if not adapters:
-        return None
-    return adapters.get(ObjectType.TASK)
-
-
-def _work_conn(ontology):
-    """Return the live sqlite connection for the work DB, or None."""
-    adapter = _work_adapter(ontology)
-    return getattr(adapter, "_conn", None) if adapter is not None else None
-
-
-def _live_task_id() -> str | None:
-    """Task id held by an active session right now, from the live-context file."""
-    import json
-    from pathlib import Path
-    ctx = Path.home() / ".aos" / "work" / ".live-context.json"
-    try:
-        if ctx.exists():
-            data = json.loads(ctx.read_text())
-            return data.get("task_id")
-    except Exception:
-        pass
-    return None
-
-
 def _task_to_response(task) -> TaskResponse:
     """Convert a Task ontology object to a TaskResponse schema."""
     handoff = None
@@ -109,8 +75,6 @@ def _task_to_response(task) -> TaskResponse:
         pipeline=task.pipeline,
         pipeline_stage=task.pipeline_stage,
         recurrence=task.recurrence,
-        updated=getattr(task, "updated", None),
-        live=getattr(task, "live", False),
     )
 
 
@@ -163,48 +127,20 @@ async def get_work(request: Request) -> WorkResponse:
     if not ontology:
         return WorkResponse()
 
-    work_db = _work_adapter(ontology)
-
-    # Authoritative counts — computed over the WHOLE table, not the returned
-    # sample. The old code counted by_status over a 200-row created_at window,
-    # which excluded the (older) active tasks and reported "0 active" while work
-    # was in flight (spec §4 Phase 0 "honest counts").
-    summary: dict[str, Any] = {}
-    if work_db is not None and hasattr(work_db, "summary"):
-        try:
-            summary = work_db.summary()
-        except Exception as e:  # pragma: no cover - defensive
-            logger.warning("summary() failed: %s", e)
-
-    # The live task: whatever session-linked task is being held right now.
-    live_task_id = _live_task_id()
-
-    # Tasks — the honest working set (all open + a bounded tail of closed),
-    # never a truncated newest-created window.
-    if work_db is not None and hasattr(work_db, "board_tasks"):
-        tasks = work_db.board_tasks()
-    else:
-        tasks = ontology.list(ObjectType.TASK, limit=500)
-    for t in tasks:
-        if live_task_id and t.id == live_task_id:
-            t.live = True  # type: ignore[attr-defined]
+    # Tasks
+    tasks = ontology.list(ObjectType.TASK, limit=200)
     task_responses = [_task_to_response(t) for t in tasks]
-
-    # by_status/by_project come from the authoritative summary when available,
-    # falling back to the returned set only if summary is unavailable.
-    by_status: dict[str, int] = dict(summary.get("by_status", {}))
+    by_status: dict[str, int] = {}
     by_project: dict[str, int] = {}
     for t in tasks:
+        s = t.status.value if hasattr(t.status, "value") else str(t.status)
+        by_status[s] = by_status.get(s, 0) + 1
         if t.project:
             by_project[t.project] = by_project.get(t.project, 0) + 1
-    if not by_status:
-        for t in tasks:
-            s = t.status.value if hasattr(t.status, "value") else str(t.status)
-            by_status[s] = by_status.get(s, 0) + 1
 
     task_list = TaskListResponse(
         tasks=task_responses,
-        total=summary.get("total_tasks", len(task_responses)),
+        total=len(task_responses),
         by_status=by_status,
         by_project=by_project,
     )
@@ -228,16 +164,15 @@ async def get_work(request: Request) -> WorkResponse:
 
     # Inbox
     inbox_items: list[InboxItemResponse] = []
-    raw_inbox = ontology.list(ObjectType.TASK, filters={"_type": "inbox"}, limit=100)
+    raw_inbox = ontology.list(ObjectType.TASK, filters={"_type": "inbox"}, limit=50)
     if raw_inbox:
         for item in raw_inbox:
             if isinstance(item, dict):
                 inbox_items.append(InboxItemResponse(
                     id=item.get("id", ""),
                     content=item.get("text", item.get("content", "")),
-                    created=item.get("captured") or item.get("captured_at"),
-                    source=item.get("source") or "manual",
-                    snoozed_until=item.get("snoozed_until"),
+                    created=item.get("captured_at"),
+                    source=item.get("source", item.get("project_id")),
                 ))
 
     # Next task suggestion: first active or first todo task
@@ -258,8 +193,6 @@ async def get_work(request: Request) -> WorkResponse:
         goals=goal_list,
         inbox=inbox_items,
         next_task=next_task,
-        summary=summary,
-        live_task_id=live_task_id,
     )
 
 
@@ -609,85 +542,6 @@ async def delete_inbox_item(
         return JSONResponse({"error": result.get("error", "Unknown error")}, status_code=400)
 
 
-@router.post("/inbox/{inbox_id}/promote", status_code=status.HTTP_201_CREATED)
-async def promote_inbox_item(
-    request: Request,
-    inbox_id: str = Path(..., description="Inbox item ID to promote to a task"),
-) -> JSONResponse:
-    """Promote an inbox item into a real task, then remove the inbox row.
-
-    Body (optional): {title, project, priority}. Deleting the inbox row is the
-    triage decision — ambient proposals keep their comms.db stamp so they are
-    never re-proposed (proposer.py).
-    """
-    registry = getattr(request.app.state, "action_registry", None)
-    ontology = getattr(request.app.state, "ontology", None)
-    if not registry or not ontology:
-        return JSONResponse({"error": "System starting up"}, status_code=503)
-
-    conn = _work_conn(ontology)
-    if conn is None:
-        return JSONResponse({"error": "Database not available"}, status_code=503)
-
-    body = {}
-    try:
-        body = await request.json()
-    except Exception:
-        pass
-
-    row = conn.execute("SELECT text FROM inbox WHERE id = ?", (inbox_id,)).fetchone()
-    if not row:
-        return JSONResponse({"error": f"Inbox item not found: {inbox_id}"}, status_code=404)
-
-    title = (body.get("title") or row[0] or "").strip()
-    result = await registry.execute("create_task", {
-        "ontology": ontology,
-        "title": title,
-        "project": body.get("project"),
-        "priority": int(body.get("priority", 3)),
-    }, actor="operator")
-    if not result.get("success"):
-        return JSONResponse({"error": result.get("error", "Unknown error")}, status_code=400)
-
-    conn.execute("DELETE FROM inbox WHERE id = ?", (inbox_id,))
-    conn.commit()
-    return JSONResponse({"task_id": result["result"]["task_id"], "promoted": inbox_id}, status_code=201)
-
-
-@router.post("/inbox/{inbox_id}/snooze")
-async def snooze_inbox_item(
-    request: Request,
-    inbox_id: str = Path(..., description="Inbox item ID to snooze"),
-) -> JSONResponse:
-    """Defer an inbox item until a timestamp. Body: {until: ISO8601}."""
-    ontology = getattr(request.app.state, "ontology", None)
-    if not ontology:
-        return JSONResponse({"error": "System starting up"}, status_code=503)
-
-    conn = _work_conn(ontology)
-    if conn is None:
-        return JSONResponse({"error": "Database not available"}, status_code=503)
-
-    body = {}
-    try:
-        body = await request.json()
-    except Exception:
-        pass
-    until = body.get("until")
-    if not until:
-        # Default: snooze one day.
-        from datetime import datetime, timedelta
-        until = (datetime.now() + timedelta(days=1)).isoformat()
-
-    cur = conn.execute(
-        "UPDATE inbox SET snoozed_until = ? WHERE id = ?", (until, inbox_id)
-    )
-    conn.commit()
-    if cur.rowcount == 0:
-        return JSONResponse({"error": f"Inbox item not found: {inbox_id}"}, status_code=404)
-    return JSONResponse({"snoozed": inbox_id, "until": until})
-
-
 # ---------------------------------------------------------------------------
 # Task list with server-side filtering, sorting, pagination
 # ---------------------------------------------------------------------------
@@ -809,12 +663,12 @@ async def list_comments(
         return JSONResponse({"comments": []})
 
     # Direct DB query for comments
-    conn = _work_conn(ontology)
-    if conn is None:
+    db = getattr(ontology, "_work_adapter", None)
+    if not db or not hasattr(db, "conn"):
         return JSONResponse({"comments": []})
 
     try:
-        cursor = conn.execute(
+        cursor = db.conn.execute(
             "SELECT id, entity_type, entity_id, parent_id, author_id, author_type, body, created_at, modified_at, is_edited "
             "FROM comments WHERE entity_type = 'task' AND entity_id = ? ORDER BY created_at ASC",
             (task_id,),
@@ -851,8 +705,8 @@ async def create_comment(
     author_id = body.get("author_id", "operator")
     author_type = body.get("author_type", "operator")
 
-    conn = _work_conn(ontology)
-    if conn is None:
+    db = getattr(ontology, "_work_adapter", None)
+    if not db or not hasattr(db, "conn"):
         return JSONResponse({"error": "Database not available"}, status_code=503)
 
     import uuid
@@ -861,12 +715,12 @@ async def create_comment(
     now = datetime.now().isoformat()
 
     try:
-        conn.execute(
+        db.conn.execute(
             "INSERT INTO comments (id, entity_type, entity_id, author_id, author_type, body, created_at) "
             "VALUES (?, 'task', ?, ?, ?, ?, ?)",
             (comment_id, task_id, author_id, author_type, comment_body, now),
         )
-        conn.commit()
+        db.conn.commit()
         return JSONResponse({
             "id": comment_id, "entity_type": "task", "entity_id": task_id,
             "author_id": author_id, "author_type": author_type,
@@ -892,15 +746,15 @@ async def get_activity(
     if not ontology:
         return JSONResponse({"activity": []})
 
-    conn = _work_conn(ontology)
-    if conn is None:
+    db = getattr(ontology, "_work_adapter", None)
+    if not db or not hasattr(db, "conn"):
         return JSONResponse({"activity": []})
 
     try:
         activity = []
 
         # History entries
-        cursor = conn.execute(
+        cursor = db.conn.execute(
             "SELECT field_name, old_value, new_value, actor, actor_type, timestamp "
             "FROM entity_history WHERE entity_type = 'task' AND entity_id = ? "
             "ORDER BY timestamp ASC",
@@ -914,7 +768,7 @@ async def get_activity(
             })
 
         # Comments
-        cursor = conn.execute(
+        cursor = db.conn.execute(
             "SELECT id, author_id, author_type, body, created_at "
             "FROM comments WHERE entity_type = 'task' AND entity_id = ? "
             "ORDER BY created_at ASC",
@@ -947,12 +801,12 @@ async def list_statuses(request: Request) -> JSONResponse:
     if not ontology:
         return JSONResponse({"statuses": []})
 
-    conn = _work_conn(ontology)
-    if conn is None:
+    db = getattr(ontology, "_work_adapter", None)
+    if not db or not hasattr(db, "conn"):
         return JSONResponse({"statuses": []})
 
     try:
-        cursor = conn.execute(
+        cursor = db.conn.execute(
             "SELECT id, name, category, color, position, is_default FROM statuses ORDER BY position ASC"
         )
         statuses = [

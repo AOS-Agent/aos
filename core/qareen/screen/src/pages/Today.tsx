@@ -10,7 +10,7 @@
 
 import { useState } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
-import { useWork, useWorkCounts, type Task, type Project } from '@/hooks/useWork';
+import { useWork, type Task, type Project } from '@/hooks/useWork';
 import { useUpdateTask } from '@/hooks/useTasks';
 import { useTaskOverlay } from '@/components/tasks/TaskOverlayContext';
 import { TaskStatus } from '@/lib/types';
@@ -64,22 +64,17 @@ function TaskRow({ task, tone, showProject, onToggle }: { task: Task; tone: Area
 
 export default function TodayPage({ onProjectClick }: { onProjectClick?: (projectId: string) => void }) {
   const { data, isLoading } = useWork();
-  const { counts } = useWorkCounts();
   const update = useUpdateTask();
   const now = new Date();
 
   const tasks = (data?.tasks ?? []) as Task[];
   const projects = (data?.projects ?? []) as Project[];
   const goals = (data?.goals ?? []) as Goal[];
-  const inboxCount = (data?.inbox ?? []).length;
 
   const notDone = (t: Task) => t.status !== 'done' && t.status !== 'cancelled';
   const overdue = tasks.filter(t => t.due && isPast(new Date(t.due)) && !isToday(new Date(t.due)) && notDone(t));
   const activeTasks = tasks.filter(t => t.status === 'active');
-  // Header chips use the authoritative whole-table counts (not the bounded
-  // task list) so "N active / N todo" is always true.
-  const activeCount = counts.active;
-  const todoCount = counts.todo;
+  const todoCount = tasks.filter(t => t.status === 'todo').length;
   const doneToday = tasks.filter(t => t.status === 'done' && t.completed && isToday(new Date(t.completed)));
 
   const toggleDone = (t: Task, to: TaskStatus) => update.mutate({ id: t.id, data: { status: to } });
@@ -124,9 +119,8 @@ export default function TodayPage({ onProjectClick }: { onProjectClick?: (projec
         {/* Summary stats */}
         <div className="flex items-center gap-6 mb-8 text-[14px]">
           {overdue.length > 0 && <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-red" /><span className="text-red font-[510]">{overdue.length} overdue</span></div>}
-          <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-blue" /><span className="text-text-tertiary">{activeCount} active</span></div>
+          <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-blue" /><span className="text-text-tertiary">{activeTasks.length} active</span></div>
           <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-text-quaternary" /><span className="text-text-tertiary">{todoCount} todo</span></div>
-          {inboxCount > 0 && <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-purple" /><span className="text-text-tertiary">{inboxCount} to triage</span></div>}
           {doneToday.length > 0 && <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-green" /><span className="text-green">{doneToday.length} done today</span></div>}
         </div>
 
