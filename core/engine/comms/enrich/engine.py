@@ -375,12 +375,14 @@ def _coverage(cfg: EnrichConfig) -> dict:
 def _alert_auth_paused(stats: dict) -> None:
     """Telegram the operator that the run paused on an expired login. Best-effort:
     the notify path degrades to a no-op if credentials aren't available."""
-    msg = (f"⚠️ Comms backfill PAUSED — login expired.\n"
-           f"Extracted {stats.get('batches_done', 0)} batches "
-           f"({stats.get('entities_stored', 0)} entities) before pausing; "
-           f"{stats.get('remaining_total', '?')} messages still un-extracted.\n"
-           f"Run <code>claude /login</code> then re-run the backfill — it resumes "
-           f"from the checkpoint.")
+    # Phone-ready copy (MESSAGE_STYLE.md → "System alerts"): what happened +
+    # what to do, no "batches/entities/checkpoint/backfill" jargon.
+    remaining = stats.get("remaining_total")
+    backlog = (f" There are still {remaining} messages waiting."
+               if isinstance(remaining, int) and remaining > 0 else "")
+    msg = (f"😴 Overnight reading paused — my login expired.{backlog} "
+           f"Run /login next time you're at the Mac and I'll pick up right "
+           f"where I left off.")
     try:
         _REPO = Path(__file__).resolve().parents[4]
         core_dir = _REPO / "core"
