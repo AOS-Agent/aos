@@ -9,7 +9,7 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
 import {
   User, Calendar, AlignLeft, Hash, CircleDot, FolderOpen, Clock,
-  Eye, EyeOff, ArrowUp, ArrowDown, EyeOff as HideIcon,
+  Eye, EyeOff, ArrowUp, ArrowDown, EyeOff as HideIcon, MessageSquare,
 } from 'lucide-react';
 import { type Task } from '@/hooks/useWork';
 import { useUpdateTask } from '@/hooks/useTasks';
@@ -41,6 +41,7 @@ const ALL_COLS: ColDef[] = [
   { id: 'due', label: 'Due', icon: Calendar, width: 100, defaultOn: true },
   { id: 'assigned_to', label: 'Assignee', icon: User, width: 100, defaultOn: true },
   { id: 'tags', label: 'Tags', icon: Hash, width: 130, defaultOn: false },
+  { id: 'activity', label: 'Activity', icon: MessageSquare, width: 70, defaultOn: true },
   { id: 'created', label: 'Created', icon: Clock, width: 75, defaultOn: false },
 ];
 
@@ -178,6 +179,11 @@ export function DatabaseView({ tasks, onSelect, selectedId, projects = [], group
       case 'due': return <DueCell task={task} />;
       case 'assigned_to': return <AssigneeCell task={task} />;
       case 'tags': return task.tags?.length ? <div className="flex gap-1 overflow-hidden">{task.tags.slice(0, 2).map(t => <Tag key={t} label={t} color="gray" />)}</div> : <span className="text-[11px] text-text-quaternary opacity-30">—</span>;
+      case 'activity': return task.activity_count ? (
+        <span className="inline-flex items-center gap-1 text-[11px] text-text-quaternary font-mono" title={task.last_activity?.body}>
+          <MessageSquare className="w-[11px] h-[11px]" />{task.activity_count}
+        </span>
+      ) : <span className="text-[11px] text-text-quaternary opacity-30">—</span>;
       case 'created': return <span className="text-[10px] text-text-quaternary font-mono">{new Date(task.created).toLocaleDateString('en', { month: 'short', day: 'numeric' })}</span>;
       default: return null;
     }
