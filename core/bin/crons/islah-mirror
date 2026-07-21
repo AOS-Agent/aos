@@ -1,0 +1,49 @@
+#!/usr/bin/env python3
+"""islah-mirror — one-way mirror of the islah bugs.yaml ledger into work.db.
+
+A reversible seam for the pre-cutover window (dossier risk-1): while the operator
+may still use the islah CLI to append bugs to ``~/.aos/islah/bugs.yaml``, this
+cron mirrors any NEW ledger rows into ``work.db`` on the same idempotent path as
+the one-shot import (migration 091). work.db NEVER writes back to bugs.yaml — the
+mirror is strictly ledger → board. When bugs.yaml retires at Phase-7 cutover this
+cron finds nothing and becomes a no-op (then gets removed).
+
+Idempotent: keyed on ``islah:<id>`` activity markers. Prints the mirrored count
+to stdout (captured by the scheduler's cron log). Exit 0 on success; nonzero only
+on an unexpected failure so cron telemetry records a real problem.
+"""
+
+from __future__ import annotations
+
+import os
+import sys
+from pathlib import Path
+
+# Resolve the repo root from this script's own location so it works from runtime
+# (~/aos) and dev without tweaks: core/bin/crons/islah-mirror → parents[3].
+_ROOT = Path(__file__).resolve().parents[3]
+for _p in (str(_ROOT), str(_ROOT / "core" / "engine" / "work")):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+
+_LEDGER = Path.home() / ".aos" / "islah" / "bugs.yaml"
+
+
+def main() -> int:
+    if not _LEDGER.exists():
+        print("islah-mirror: no bugs.yaml (retired or never present) — nothing to mirror")
+        return 0
+    os.environ.setdefault("AOS_WORK_DB", str(Path.home() / ".aos" / "data" / "work.db"))
+    try:
+        from core.engine.work.intake.islah_import import import_bugs
+        res = import_bugs(_LEDGER)
+    except Exception as e:  # noqa: BLE001 — cron telemetry wants the failure
+        print(f"islah-mirror: FAILED — {e}")
+        return 1
+    print(f"islah-mirror: mirrored {res['created']} new bug(s), "
+          f"{res['skipped']} already present ({res['total']} in ledger)")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -245,6 +245,22 @@ jobs:
     tier: 4
     description: Nightly lint pass — orphans, stale docs, topic refresh, synthesis suggestions
 
+  # ── Kanban Phase 3: islah data plane ────────────────────────────────────────
+
+  ascbuild-sync:
+    command: python3 ~/aos/core/bin/crons/ascbuild-sync
+    every: 1h
+    timeout: 600
+    tier: 4
+    description: App Store Connect intake — TestFlight feedback + beta crashes → bug tasks
+
+  islah-mirror:
+    command: python3 ~/aos/core/bin/crons/islah-mirror
+    every: 30m
+    timeout: 120
+    tier: 4
+    description: One-way mirror of islah bugs.yaml → work.db (reversible seam until cutover)
+
   # ── Planned (scripts not yet built) ─────────────────────────────────────────
   # These entries are placeholders. Scripts will be created when their
   # integration dependencies are ready.
