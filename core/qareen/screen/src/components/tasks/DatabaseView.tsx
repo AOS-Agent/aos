@@ -19,8 +19,8 @@ import { format, isPast, isToday, isTomorrow, differenceInDays } from 'date-fns'
 import type { LucideIcon } from 'lucide-react';
 
 const PRI: Record<number, string> = { 1: '#FF453A', 2: '#FFD60A', 3: '#6B6560', 4: '#0A84FF', 5: '#4A4540' };
-const STAT_COLOR: Record<string, string> = { todo: '#6B6560', active: '#0A84FF', waiting: '#FFD60A', done: '#30D158', cancelled: '#4A4540' };
-const STAT_LABEL: Record<string, string> = { todo: 'Todo', active: 'Active', waiting: 'Waiting', done: 'Done', cancelled: 'Cancelled' };
+const STAT_COLOR: Record<string, string> = { triage: '#BF5AF2', backlog: '#6B6560', todo: '#6B6560', active: '#0A84FF', waiting: '#FFD60A', in_review: '#BF5AF2', done: '#30D158', cancelled: '#4A4540' };
+const STAT_LABEL: Record<string, string> = { triage: 'Triage', backlog: 'Backlog', todo: 'Todo', active: 'Active', waiting: 'Waiting', in_review: 'In Review', done: 'Done', cancelled: 'Cancelled' };
 
 function formatDue(iso: string) {
   const d = new Date(iso);
@@ -69,7 +69,9 @@ function StatusCell({ task }: { task: Task }) {
   return <div className="flex items-center gap-1.5 w-full">
     <div className="w-[6px] h-[6px] rounded-full shrink-0" style={{ backgroundColor: STAT_COLOR[task.status] }} />
     <select value={task.status} onChange={e => upd.mutate({ id: task.id, data: { status: e.target.value as TaskStatus } })} className={selectCls}>
+      <option value="triage">Triage</option><option value="backlog">Backlog</option>
       <option value="todo">Todo</option><option value="active">Active</option><option value="waiting">Waiting</option>
+      <option value="in_review">In Review</option>
       <option value="done">Done</option><option value="cancelled">Cancelled</option>
     </select>
   </div>;

@@ -13,9 +13,9 @@
 import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { Plus, X, ChevronDown, ChevronRight, Search, User, Calendar, GripVertical, ArrowUpDown, SlidersHorizontal, Settings2 } from 'lucide-react';
 import { DndContext, DragOverlay, useDraggable, useDroppable, closestCenter, type DragStartEvent, type DragEndEvent } from '@dnd-kit/core';
-import { useWork, useDelegate, heldAgent, type Task, type InboxItem } from '@/hooks/useWork';
-import { useAgents } from '@/hooks/useAgents';
+import { useWork, heldAgent, type Task, type InboxItem } from '@/hooks/useWork';
 import { useCreateTask, useUpdateTask } from '@/hooks/useTasks';
+import { DelegateControl, BugBadges, BugDetails, stageLabel, AGENT_HUE } from '@/components/tasks/BugDelegation';
 import { useTaskKeyboard } from '@/hooks/useTaskKeyboard';
 import { useTaskOverlay } from '@/components/tasks/TaskOverlayContext';
 import { Tag } from '@/components/primitives/Tag';
@@ -31,90 +31,6 @@ import { format, isPast, isToday, isTomorrow, differenceInDays } from 'date-fns'
 const PRI: Record<number, string> = { 1: '#FF453A', 2: '#FFD60A', 3: '#6B6560', 4: '#0A84FF', 5: '#4A4540' };
 const STAT_COLOR: Record<string, string> = { triage: '#BF5AF2', backlog: '#6B6560', todo: '#6B6560', active: '#0A84FF', waiting: '#FFD60A', in_review: '#BF5AF2', done: '#30D158', cancelled: '#4A4540' };
 const STAT_LABEL: Record<string, string> = { triage: 'Triage', backlog: 'Backlog', todo: 'Todo', active: 'Active', waiting: 'Waiting', in_review: 'In Review', done: 'Done', cancelled: 'Cancelled' };
-// Agent hue — the system's "held by an agent" convention (Phase 0 inbox edge).
-const AGENT_HUE = '#BF5AF2';
-// Bug severity → dot color. 1 = crash/highest, 4 = trivial.
-const SEV_COLOR: Record<number, string> = { 1: '#FF453A', 2: '#FF9F0A', 3: '#FFD60A', 4: '#6B6560' };
-
-/** Fine-stage label for a bug card, e.g. 'awaiting-approval' → 'Awaiting Approval'. */
-function stageLabel(stage?: string | null): string {
-  if (!stage) return '';
-  return stage.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
-}
-
-/** Inline agent picker that delegates a task (or takes it back). Just the state
- *  change + task.delegated event — no runner (Phase 4-5). */
-function DelegateControl({ task, compact = false }: { task: Task; compact?: boolean }) {
-  const { delegate, hold } = useDelegate();
-  const { data: agents = [] } = useAgents();
-  const [open, setOpen] = useState(false);
-  const held = heldAgent(task);
-
-  return (
-    <div className="relative" data-popover onClick={e => e.stopPropagation()}>
-      <button
-        onClick={() => setOpen(o => !o)}
-        title={held ? `Held by agent:${held}` : 'Delegate to an agent'}
-        className={`flex items-center gap-1 rounded-full transition-colors duration-75 ${
-          held
-            ? 'px-1.5 py-[1px] text-[11px] font-[560]'
-            : 'px-1.5 py-[1px] text-[11px] text-text-quaternary hover:text-text-tertiary border border-border-secondary hover:border-border-tertiary'
-        }`}
-        style={held ? { color: AGENT_HUE, backgroundColor: 'rgba(191,90,242,0.12)' } : undefined}
-      >
-        {held ? (
-          <>
-            <span className="w-[6px] h-[6px] rounded-full" style={{ backgroundColor: AGENT_HUE }} />
-            {held}
-          </>
-        ) : (
-          <>{!compact && <User className="w-3 h-3" />}Delegate</>
-        )}
-      </button>
-      {open && (
-        <div className="absolute z-30 top-full right-0 mt-1 w-44 rounded-lg bg-bg-panel border border-border shadow-[0_8px_24px_rgba(0,0,0,0.4)] py-1"
-          data-popover>
-          {held && (
-            <button
-              onClick={() => { hold.mutate(task.id); setOpen(false); }}
-              className="w-full text-left px-3 py-1.5 text-[13px] text-text-tertiary hover:bg-bg-tertiary">
-              Take back (operator)
-            </button>
-          )}
-          <div className="px-3 pt-1 pb-0.5 text-[10px] uppercase tracking-wider text-text-quaternary">Delegate to</div>
-          {agents.filter(a => a.is_active).map(a => (
-            <button key={a.id}
-              onClick={() => { delegate.mutate({ id: task.id, agent: a.name.toLowerCase() }); setOpen(false); }}
-              className="w-full flex items-center gap-2 text-left px-3 py-1.5 text-[13px] text-text-secondary hover:bg-bg-tertiary">
-              <span className="w-[6px] h-[6px] rounded-full" style={{ backgroundColor: a.color || AGENT_HUE }} />
-              {a.name}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-/** Badges shown on a bug-class card: app id + a severity dot. */
-function BugBadges({ task }: { task: Task }) {
-  const f = task.fields ?? {};
-  if (task.pipeline !== 'bug') return null;
-  const sev = typeof f.severity === 'number' ? f.severity : undefined;
-  return (
-    <span className="inline-flex items-center gap-1.5">
-      {f.app && (
-        <span className="px-1.5 py-[1px] rounded text-[10px] font-[560] uppercase tracking-wide text-text-tertiary bg-bg-tertiary border border-border-secondary">
-          {String(f.app)}
-        </span>
-      )}
-      {sev !== undefined && (
-        <span className="w-[7px] h-[7px] rounded-full" title={`Severity ${sev}`}
-          style={{ backgroundColor: SEV_COLOR[sev] ?? '#6B6560' }} />
-      )}
-    </span>
-  );
-}
 
 function formatDue(iso: string): { text: string; overdue: boolean } {
   const d = new Date(iso);
@@ -500,28 +416,7 @@ function DetailPanel({ task, onClose }: { task: Task; onClose: () => void }) {
         </div>
 
         {/* Bug-class details — richness kept unflattened in task.fields */}
-        {task.pipeline === 'bug' && (
-          <div className="mb-5 p-3 rounded-lg bg-bg-secondary border border-border">
-            <div className="flex items-center gap-2 mb-2">
-              <span className="text-[12px] font-[590] uppercase tracking-wider" style={{ color: STAT_COLOR[task.status] ?? '#BF5AF2' }}>
-                Bug{task.stage ? ` · ${stageLabel(task.stage)}` : ''}
-              </span>
-              <BugBadges task={task} />
-            </div>
-            <div className="space-y-2 text-[14px]">
-              {task.fields?.root_cause && <p className="text-text-secondary leading-[1.6]"><span className="text-text-quaternary">Root cause </span>{String(task.fields.root_cause)}</p>}
-              {task.fields?.fix_approach && <p className="text-text-tertiary leading-[1.6]"><span className="text-text-quaternary">Fix </span>{String(task.fields.fix_approach)}</p>}
-              {Array.isArray(task.fields?.code_refs) && task.fields!.code_refs!.length > 0 && (
-                <div className="flex flex-wrap gap-1.5">
-                  {task.fields!.code_refs!.map((r, i) => (
-                    <code key={i} className="px-1.5 py-[1px] rounded text-[11px] font-mono text-text-tertiary bg-bg-tertiary">{String(r)}</code>
-                  ))}
-                </div>
-              )}
-              {task.fields?.branch && <p className="text-[12px] font-mono text-text-quaternary">{String(task.fields.branch)}</p>}
-            </div>
-          </div>
-        )}
+        <BugDetails task={task} />
 
         {/* Divider */}
         <div className="border-t border-border mb-5" />
