@@ -942,53 +942,96 @@ async def create_comment(
 # ---------------------------------------------------------------------------
 
 
+@router.post("/tasks/{task_id}/activity", status_code=status.HTTP_201_CREATED)
+async def append_activity_endpoint(
+    request: Request,
+    task_id: str = Path(..., description="Task ID"),
+) -> JSONResponse:
+    """Append a narrative activity entry (attempt / proof / comment / …).
+
+    The agent/operator hand-append path. Emits task.activity for SSE liveness.
+    Auto-narration kinds (created/status_changed/…) are refused — the system
+    writes those on every mutation.
+    """
+    registry = getattr(request.app.state, "action_registry", None)
+    ontology = getattr(request.app.state, "ontology", None)
+    if not registry or not ontology:
+        return JSONResponse({"error": "System starting up"}, status_code=503)
+
+    body = await request.json()
+    kind = (body.get("kind") or "").strip()
+    text = (body.get("body") or "").strip()
+    if not kind or not text:
+        return JSONResponse({"error": "kind and body are required"}, status_code=400)
+
+    result = await registry.execute("append_activity", {
+        "ontology": ontology,
+        "task_id": task_id,
+        "kind": kind,
+        "body": text,
+        "data": body.get("data"),
+        "actor": body.get("actor"),
+    }, actor=body.get("actor") or "operator")
+    if not result.get("success"):
+        return JSONResponse({"error": result.get("error", "Unknown error")}, status_code=400)
+    return JSONResponse(result["result"], status_code=201)
+
+
 @router.get("/tasks/{task_id}/activity")
 async def get_activity(
     request: Request,
     task_id: str = Path(..., description="Task ID"),
 ) -> JSONResponse:
-    """Get unified activity stream: field changes + comments."""
+    """The task's NARRATIVE activity timeline (task_activity), oldest-first.
+
+    This is the story the card tells — typed events with a human body and an
+    expandable data payload (spec §3.3). Comments are folded in as their own
+    kind. The forensic per-field log (entity_history) is deliberately NOT
+    included here; it is the separate audit layer, not the narrative.
+    """
     ontology = getattr(request.app.state, "ontology", None)
     if not ontology:
         return JSONResponse({"activity": []})
 
+    adapter = _work_adapter(ontology)
     conn = _work_conn(ontology)
-    if conn is None:
+    if adapter is None or conn is None:
         return JSONResponse({"activity": []})
 
     try:
         activity = []
+        if hasattr(adapter, "list_activity"):
+            for a in adapter.list_activity(task_id):
+                activity.append({
+                    "type": "activity",
+                    "id": a["id"],
+                    "kind": a["kind"],
+                    "body": a["body"],
+                    "data": a.get("data") or {},
+                    "actor": a["actor"],
+                    "actor_type": a["actor_type"],
+                    "timestamp": a["ts"],
+                    "source_event_id": a.get("source_event_id"),
+                })
 
-        # History entries
-        cursor = conn.execute(
-            "SELECT field_name, old_value, new_value, actor, actor_type, timestamp "
-            "FROM entity_history WHERE entity_type = 'task' AND entity_id = ? "
-            "ORDER BY timestamp ASC",
-            (task_id,),
-        )
-        for row in cursor.fetchall():
-            activity.append({
-                "type": "change", "field": row[0], "old_value": row[1],
-                "new_value": row[2], "actor": row[3], "actor_type": row[4],
-                "timestamp": row[5],
-            })
+        # Fold comments into the narrative as their own kind.
+        try:
+            cursor = conn.execute(
+                "SELECT id, author_id, author_type, body, created_at "
+                "FROM comments WHERE entity_type = 'task' AND entity_id = ? "
+                "ORDER BY created_at ASC",
+                (task_id,),
+            )
+            for row in cursor.fetchall():
+                activity.append({
+                    "type": "activity", "kind": "comment", "id": row[0],
+                    "actor": row[1], "actor_type": row[2], "body": row[3],
+                    "data": {}, "timestamp": row[4],
+                })
+        except Exception:
+            pass
 
-        # Comments
-        cursor = conn.execute(
-            "SELECT id, author_id, author_type, body, created_at "
-            "FROM comments WHERE entity_type = 'task' AND entity_id = ? "
-            "ORDER BY created_at ASC",
-            (task_id,),
-        )
-        for row in cursor.fetchall():
-            activity.append({
-                "type": "comment", "id": row[0], "actor": row[1],
-                "actor_type": row[2], "body": row[3], "timestamp": row[4],
-            })
-
-        # Sort by timestamp
         activity.sort(key=lambda a: a.get("timestamp", ""))
-
         return JSONResponse({"activity": activity})
     except Exception as e:
         logger.error(f"Failed to get activity: {e}")

@@ -251,6 +251,73 @@ def cmd_hold(args):
         sys.exit(1)
 
 
+def cmd_activity(args):
+    """Show or append a task's narrative activity log (Kanban Phase 2).
+
+    List:    activity <task>
+    Append:  activity <task> --kind attempt --body "..." [--data '{json}'] [--actor agent:advisor]
+
+    Appendable kinds: comment, attempt, proof, blocked, unblocked, linked.
+    Auto-narration (created/status_changed/delegated/held/edited) is written by
+    the system on every mutation — not appendable here.
+    """
+    if not args:
+        print("Usage: activity <task> [--kind K --body \"...\" [--data '{...}'] [--actor A]]")
+        sys.exit(1)
+
+    def _take(flag):
+        if flag in args:
+            i = args.index(flag)
+            return args[i + 1] if i + 1 < len(args) else None
+        return None
+
+    kind = _take("--kind")
+    body = _take("--body")
+    data_raw = _take("--data")
+    actor = _take("--actor") or os.environ.get("AOS_ACTOR")
+
+    # Everything before the first flag is the task query.
+    flag_idx = next((i for i, a in enumerate(args) if a.startswith("--")), len(args))
+    query_str = " ".join(args[:flag_idx])
+    if not query_str:
+        print("Usage: activity <task> ...")
+        sys.exit(1)
+    task = _resolve(query_str)
+
+    # No --kind → list the timeline.
+    if not kind:
+        entries = engine.get_task_activity(task["id"])
+        if not entries:
+            print(f"No activity yet for {task['id']}: {task['title']}")
+            return
+        print(f"\n  {task['id']}  {task['title']}")
+        print(f"  {'=' * 50}")
+        for e in entries:
+            ts = (e.get("ts") or "")[:16].replace("T", " ")
+            print(f"  {ts}  [{e['kind']:14}] {e['actor']:16} {e['body']}")
+        return
+
+    if not body:
+        print("Append requires --body")
+        sys.exit(1)
+    data = None
+    if data_raw:
+        try:
+            data = json.loads(data_raw)
+        except json.JSONDecodeError as e:
+            print(f"--data is not valid JSON: {e}")
+            sys.exit(1)
+    try:
+        entry = engine.append_activity(task["id"], kind, body, data=data, actor=actor)
+    except ValueError as e:
+        print(f"Error: {e}")
+        sys.exit(1)
+    if entry is None:
+        print(f"Task {task['id']} not found")
+        sys.exit(1)
+    print(f"Logged [{kind}] on {task['id']}: {body}")
+
+
 def cmd_show(args):
     if not args:
         print("Usage: show <task_id or search>")
@@ -1469,6 +1536,7 @@ COMMANDS = {
     "cancel": cmd_cancel,
     "delegate": cmd_delegate,
     "hold": cmd_hold,
+    "activity": cmd_activity,
     "show": cmd_show,
     "list": cmd_list,
     "search": cmd_search,

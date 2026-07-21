@@ -153,6 +153,39 @@ async def delete_task(ontology, task_id: str, **kwargs) -> dict:
     return {"task_id": task_id, "deleted": True}
 
 
+@action("append_activity", emits="task.activity")
+async def append_activity(
+    ontology,
+    task_id: str,
+    kind: str,
+    body: str,
+    data: dict | None = None,
+    actor: str | None = None,
+    **kwargs,
+) -> dict:
+    """Append a narrative activity entry to a task (agent/operator hand-append).
+
+    Emits task.activity for SSE liveness. Auto-narration kinds are refused here
+    (manual=True) — the system writes those on every mutation, not the caller.
+    """
+    adapter = _task_adapter(ontology)
+    if adapter is None or not hasattr(adapter, "append_activity"):
+        raise RuntimeError("Work adapter not available")
+    entry = adapter.append_activity(
+        task_id, kind, body, data=data,
+        actor=actor or kwargs.get("actor") or "operator",
+        manual=True,
+    )
+    if entry is None:
+        raise ValueError(f"Could not append activity to {task_id}")
+    return {
+        "task_id": task_id,
+        "activity_id": entry.get("id"),
+        "kind": kind,
+        "body": body,
+    }
+
+
 @action("write_handoff", emits="task.handoff_written")
 async def write_handoff(
     ontology,

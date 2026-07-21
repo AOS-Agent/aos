@@ -353,6 +353,7 @@ async def lifespan(app: FastAPI):
     if action_registry and ontology:
         try:
             from qareen.actions.work import (
+                append_activity,
                 complete_task,
                 create_goal,
                 create_inbox,
@@ -373,6 +374,7 @@ async def lifespan(app: FastAPI):
             action_registry.register(delegate_task)
             action_registry.register(hold_task)
             action_registry.register(delete_task)
+            action_registry.register(append_activity)
             action_registry.register(write_handoff)
             action_registry.register(create_project)
             action_registry.register(delete_project)
