@@ -30,7 +30,6 @@ from core.engine.work.pipelines import (  # noqa: E402
     bug_stage_to_status,
 )
 
-
 # ── category mapping ─────────────────────────────────────────────────────────
 
 # The locked mapping (dossier §6 Phase 1 + spec §3.2). stage → (category, coarse).

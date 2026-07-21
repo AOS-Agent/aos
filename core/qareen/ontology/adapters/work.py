@@ -16,6 +16,17 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
+# Bug-pipeline definition + generic status seed. Single source of truth shared
+# with the Phase 1 migration so the DB and code cannot drift (spec §3.2/§3.3).
+from core.engine.work.pipelines import (
+    BUG_PIPELINE_ID,
+    BUG_STAGE_ACTIVE,
+    BUG_STAGES,
+    GENERIC_STATUSES,
+    OPEN_CATEGORIES,
+    bug_stage_to_status,
+)
+
 from ..types import (
     Area,
     Goal,
@@ -38,18 +49,6 @@ from ..types import (
     WorkflowRun,
 )
 from .base import Adapter
-
-# Bug-pipeline definition + generic status seed. Single source of truth shared
-# with the Phase 1 migration so the DB and code cannot drift (spec §3.2/§3.3).
-from core.engine.work.pipelines import (
-    BUG_PIPELINE_ID,
-    BUG_STAGE_ACTIVE,
-    BUG_STAGES,
-    GENERIC_STATUSES,
-    OPEN_CATEGORIES,
-    bug_stage_to_status,
-    is_bug_stage,
-)
 
 
 def _parse_dt(val: str | None) -> datetime | None:
