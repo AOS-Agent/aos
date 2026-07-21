@@ -166,10 +166,13 @@ def _check_health() -> dict:
 
 
 def _find_problems(health: dict) -> list[str]:
-    """Return a list of human-readable problems. Empty list = all clear."""
+    """Return a list of phone-ready problem lines — each already emoji-led and
+    plain-English (see MESSAGE_STYLE.md → "System alerts"). Empty list = all clear."""
     problems = []
     if health["disk_pct"] > 85:
-        problems.append(f"Disk at {health['disk_pct']}% — consider cleanup")
+        problems.append(
+            f"🚨 The disk is almost full ({health['disk_pct']}%). Worth clearing some space soon."
+        )
     # Raw used-% is the wrong alarm on macOS — the OS keeps RAM ~85% full by
     # design (caching/compression), so a >85% check cries wolf on any healthy
     # busy machine (operator got recurring false alerts, 2026-07-15). Alert on
@@ -177,14 +180,15 @@ def _find_problems(health: dict) -> list[str]:
     # compressor/swap are genuinely struggling.
     if 0 <= health.get("mem_free_pct", -1) < 10:
         problems.append(
-            f"Memory pressure critical — {health['mem_free_pct']}% free pages "
-            f"(ram used {health['ram_pct']}%) — check for runaway processes"
+            "🧠 Memory is under real pressure right now — the Mac may feel sluggish. "
+            "Worth checking for a runaway app when you get a chance."
         )
     for name, state in health.get("services", {}).items():
         if not state.get("ok"):
-            problems.append(f"{name} is DOWN")
+            problems.append(f"🔴 {name} has stopped.")
     if health["pending_tasks"] > 0:
-        problems.append(f"{health['pending_tasks']} pending task(s)")
+        n = health["pending_tasks"]
+        problems.append(f"📋 You've got {n} task{'s' if n != 1 else ''} waiting.")
     return problems
 
 
@@ -223,7 +227,12 @@ def start_heartbeat(bot_token: str, chat_id: int, interval_minutes: int = 30):
                         new_problems = [p for p in problems if p not in last_reported]
 
                         if new_problems:
-                            msg = "Alert:\n" + "\n".join(f"  — {p}" for p in new_problems)
+                            # Each line is already emoji-led and human. Add a
+                            # soft lead only when there's more than one.
+                            if len(new_problems) > 1:
+                                msg = "A couple of things worth knowing:\n\n" + "\n".join(new_problems)
+                            else:
+                                msg = new_problems[0]
                             httpx.post(
                                 f"https://api.telegram.org/bot{bot_token}/sendMessage",
                                 json={"chat_id": chat_id, "text": msg},
