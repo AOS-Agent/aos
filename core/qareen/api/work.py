@@ -116,6 +116,8 @@ def _task_to_response(task) -> TaskResponse:
         fields=getattr(task, "fields", None) or {},
         updated=getattr(task, "updated", None),
         live=getattr(task, "live", False),
+        activity_count=getattr(task, "activity_count", 0) or 0,
+        last_activity=getattr(task, "last_activity", None),
     )
 
 

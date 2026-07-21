@@ -268,6 +268,11 @@ def _task_to_dict(task: Task) -> dict:
         d["subtasks"] = [_task_to_dict(st) if isinstance(st, Task) else _to_dict(st) for st in task.subtasks]
     if hasattr(task, "auto_completed") and getattr(task, "auto_completed", False):
         d["auto_completed"] = True
+    # Kanban Phase 2 — narrative-layer summary for the board card / list column.
+    if getattr(task, "activity_count", None) is not None:
+        d["activity_count"] = task.activity_count
+    if getattr(task, "last_activity", None) is not None:
+        d["last_activity"] = task.last_activity
 
     return d
 
