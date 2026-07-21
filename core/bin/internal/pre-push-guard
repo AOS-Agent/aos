@@ -1,0 +1,46 @@
+#!/bin/bash
+# pre-push-guard — the last door before origin (aos#192).
+#
+# Installed into .git/hooks/pre-push of the dev workspace by the
+# push_guard reconcile check. Blocks the failure classes that hit main
+# on 2026-07-21: personal-data leaks (ungated sibling push), oversized
+# binaries (28MB whatsmeow-new), and stale-tree clobbers that delete
+# shipped migrations/tests (the envoy revert). Override for a genuinely
+# intended push: FORCE_GUARD=1 git push ...
+#
+# stdin: <local ref> <local sha> <remote ref> <remote sha> per line.
+set -u
+[ "${FORCE_GUARD:-0}" = "1" ] && exit 0
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+fail() { echo "✋ pre-push-guard: $1" >&2; echo "   (override: FORCE_GUARD=1 git push)" >&2; exit 1; }
+
+while read -r _local_ref local_sha _remote_ref remote_sha; do
+    [ "$local_sha" = "0000000000000000000000000000000000000000" ] && continue  # deletion
+    if [ "$remote_sha" = "0000000000000000000000000000000000000000" ]; then
+        range="$local_sha"  # new branch: check the tip commit only
+    else
+        range="$remote_sha..$local_sha"
+    fi
+
+    # 1. Shipped-artifact deletion (stale-tree clobber signature)
+    deleted=$(git diff --diff-filter=D --name-only "$range" 2>/dev/null \
+        | grep -E "^core/infra/migrations/[0-9]+_.*\.py$|^tests/.*\.py$" | head -5)
+    [ -n "$deleted" ] && fail "push DELETES shipped migrations/tests — stale-tree clobber? $(echo "$deleted" | tr '\n' ' ')"
+
+    # 2. Oversized binaries
+    big=$(git diff --diff-filter=AM --name-only "$range" 2>/dev/null | while read -r f; do
+        sz=$(git cat-file -s "$local_sha:$f" 2>/dev/null || echo 0)
+        [ "$sz" -gt 5242880 ] && echo "$f ($((sz / 1048576))MB)"
+    done | head -3)
+    [ -n "$big" ] && fail "push adds files >5MB: $big"
+
+    # 3. Personal data (the same scanner ship-check runs)
+    if [ -x "$REPO_ROOT/core/bin/cli/privacy-scan" ]; then
+        if ! python3 "$REPO_ROOT/core/bin/cli/privacy-scan" "$range" >/dev/null 2>&1; then
+            python3 "$REPO_ROOT/core/bin/cli/privacy-scan" "$range" 2>&1 | tail -8 >&2
+            fail "privacy-scan found personal data in the push range"
+        fi
+    fi
+done
+exit 0

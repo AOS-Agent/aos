@@ -15,6 +15,7 @@ from .launchagents import LaunchAgentPythonCheck
 from .log_location import LogLocationCheck
 from .mcp_location import McpLocationCheck
 from .n8n import N8nServiceCheck
+from .push_guard import PushGuardCheck
 from .runtime_protection import RuntimeProtectionCheck
 from .sentinel_plist import SentinelPlistDriftCheck
 from .service_loaded import ServiceLoadedCheck
@@ -31,6 +32,9 @@ ALL_CHECKS = [
 
     # Data layer — AOS-X volume must be accessible before anything trusts reads
     VolumeAccessCheck,
+
+    # Push discipline — dev workspace pre-push guard (aos#192)
+    PushGuardCheck,
 
     # Structural — file locations
     McpLocationCheck,
