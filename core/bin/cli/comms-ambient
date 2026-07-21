@@ -1,0 +1,230 @@
+#!/usr/bin/env python3
+"""comms-ambient — the ambient-knowledge surface (Phase 5).
+
+Turns the enriched entity store into things the agent already knows and actions
+it takes behind the scenes.
+
+Usage:
+    comms-ambient digest [--json] [--no-surface] [--include-private]
+        The bounded SessionStart digest: what you owe, what's owed to you,
+        unanswered questions, recent purchases, top people nudges.
+
+    comms-ambient nudges [--all] [--limit N] [--json]
+    comms-ambient nudges dismiss <nudge_id>
+    comms-ambient nudges act <nudge_id>
+    comms-ambient nudges expire [--days N]
+        List / dispose of people nudges. dismiss + act record surface_feedback
+        so the generator learns. expire GCs pending nudges older than N days.
+
+    comms-ambient profile <person> [--json]
+        The cached mini-profile for a person (as the mention hook sees it).
+
+    comms-ambient propose-tasks [--commit] [--max N] [--json]
+        Operator commitments -> work inbox. DRY RUN by default; --commit writes.
+
+    comms-ambient rebuild [--json]
+        Rebuild per-person snapshots + names index (nightly, post-enrichment).
+
+    comms-ambient nightly [--json]
+        The full nightly maintenance: rebuild snapshots, expire stale nudges,
+        and propose commitments IF config ambient.propose_commitments is true.
+
+Exit codes: 0 ok; 1 nothing found / not applied; 2 usage/runtime error.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(_REPO_ROOT))
+
+from core.engine.comms.ambient import digest as digest_mod  # noqa: E402
+from core.engine.comms.ambient import nudges as nudges_mod  # noqa: E402
+from core.engine.comms.ambient import profile as profile_mod  # noqa: E402
+from core.engine.comms.ambient import proposer as proposer_mod  # noqa: E402
+
+
+def _ambient_config() -> dict:
+    """Read the `ambient` section of config/enrichment.yaml (all keys optional)."""
+    try:
+        import yaml
+        p = _REPO_ROOT / "config" / "enrichment.yaml"
+        if p.exists():
+            raw = yaml.safe_load(p.read_text()) or {}
+            return raw.get("ambient", {}) or {}
+    except Exception:
+        pass
+    return {}
+
+
+def cmd_digest(args) -> int:
+    text = digest_mod.build_digest(include_private=args.include_private,
+                                   surface_nudges=not args.no_surface)
+    if args.json:
+        print(json.dumps({"digest": text, "lines": len(text.splitlines())},
+                         ensure_ascii=False))
+    else:
+        print(text or "(nothing to surface)")
+    return 0 if text else 1
+
+
+def cmd_nudges(args) -> int:
+    action = getattr(args, "action", None)
+    if action == "dismiss":
+        ok = nudges_mod.dismiss(args.nudge_id)
+        print(json.dumps({"dismissed": ok}) if args.json else
+              ("dismissed" if ok else "not found / not pending"))
+        return 0 if ok else 1
+    if action == "act":
+        ok = nudges_mod.act(args.nudge_id)
+        print(json.dumps({"acted": ok}) if args.json else
+              ("acted" if ok else "not found / not pending"))
+        return 0 if ok else 1
+    if action == "expire":
+        n = nudges_mod.expire_stale(after_days=args.days)
+        print(json.dumps({"expired": n}) if args.json else f"expired {n} stale nudges")
+        return 0
+    rows = nudges_mod.list_nudges(limit=args.limit, live_only=not args.all)
+    if args.json:
+        print(json.dumps(rows, indent=2, ensure_ascii=False))
+    else:
+        if not rows:
+            print("No nudges.")
+        for r in rows:
+            print(f"[{r['id']}] p{r.get('priority','?')} {r.get('surface_type','?'):<9} "
+                  f"{r.get('content','')}")
+    return 0 if rows else 1
+
+
+def cmd_profile(args) -> int:
+    # Resolve the reference to a person_id via the 5-tier resolver, then read the
+    # cached snapshot (build it first with `rebuild` if the cache is cold).
+    try:
+        people_dir = _REPO_ROOT / "core" / "engine" / "people"
+        sys.path.insert(0, str(people_dir))
+        import resolver
+        res = resolver.resolve_contact(args.person)
+        pid = res.get("person_id")
+    except Exception as e:
+        print(f"error resolving person: {e}", file=sys.stderr)
+        return 2
+    if not pid:
+        print(f"could not resolve {args.person!r}")
+        return 1
+    snap = profile_mod.load_snapshot(pid)
+    if snap is None:
+        print("no cached snapshot (run `comms-ambient rebuild`) or privacy-restricted")
+        return 1
+    if args.json:
+        print(json.dumps(snap, indent=2, ensure_ascii=False))
+    else:
+        print(json.dumps(snap, indent=2, ensure_ascii=False))
+    return 0
+
+
+def cmd_propose(args) -> int:
+    res = proposer_mod.propose_commitments(dry_run=not args.commit, max_per_run=args.max)
+    if args.json:
+        print(json.dumps(res, indent=2, ensure_ascii=False))
+    else:
+        verb = "created" if not res["dry_run"] else "would create"
+        print(f"{verb} {res['candidates'] if res['dry_run'] else res['created']} "
+              f"inbox item(s){' [DRY RUN]' if res['dry_run'] else ''}")
+        for it in res["items"][:10]:
+            print(f"  - {it['text']}")
+        if len(res["items"]) > 10:
+            print(f"  … +{len(res['items']) - 10} more")
+    return 0
+
+
+def cmd_rebuild(args) -> int:
+    stats = profile_mod.build_all_snapshots()
+    print(json.dumps(stats, indent=2) if args.json else
+          f"snapshots={stats.get('snapshots')} names={stats.get('names')} "
+          f"eligible={stats.get('eligible')}")
+    return 0
+
+
+def cmd_nightly(args) -> int:
+    cfg = _ambient_config()
+    out = {}
+    out["snapshots"] = profile_mod.build_all_snapshots()
+    out["expired_nudges"] = nudges_mod.expire_stale()
+    if cfg.get("propose_commitments", False):
+        out["propose"] = proposer_mod.propose_commitments(
+            dry_run=False, max_per_run=int(cfg.get("propose_max_per_run", 20)))
+    else:
+        out["propose"] = proposer_mod.propose_commitments(
+            dry_run=True, max_per_run=int(cfg.get("propose_max_per_run", 20)))
+        out["propose"]["note"] = "dry-run (ambient.propose_commitments=false)"
+    print(json.dumps(out, indent=2, ensure_ascii=False) if args.json else
+          f"snapshots={out['snapshots'].get('snapshots')} "
+          f"expired_nudges={out['expired_nudges']} "
+          f"propose={'committed ' + str(out['propose'].get('created')) if not out['propose']['dry_run'] else 'dry-run ' + str(out['propose'].get('candidates'))}")
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(prog="comms-ambient", description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    sp = sub.add_parser("digest", help="the bounded ambient digest")
+    sp.add_argument("--json", action="store_true")
+    sp.add_argument("--no-surface", action="store_true",
+                    help="do not mark shown nudges surfaced (read-only preview)")
+    sp.add_argument("--include-private", action="store_true",
+                    help="operator-only: include restricted contacts")
+    sp.set_defaults(func=cmd_digest)
+
+    sp = sub.add_parser("nudges", help="list / dispose people nudges")
+    nsub = sp.add_subparsers(dest="action")
+    for act in ("dismiss", "act"):
+        a = nsub.add_parser(act)
+        a.add_argument("nudge_id")
+        a.add_argument("--json", action="store_true")
+    ex = nsub.add_parser("expire")
+    ex.add_argument("--days", type=int, default=nudges_mod.EXPIRE_AFTER_DAYS)
+    ex.add_argument("--json", action="store_true")
+    sp.add_argument("--all", action="store_true", help="all pending, not just live")
+    sp.add_argument("--limit", type=int, default=None)
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(func=cmd_nudges)
+
+    sp = sub.add_parser("profile", help="a person's cached mini-profile")
+    sp.add_argument("person")
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(func=cmd_profile)
+
+    sp = sub.add_parser("propose-tasks", help="operator commitments -> work inbox")
+    sp.add_argument("--commit", action="store_true", help="actually create items")
+    sp.add_argument("--max", type=int, default=proposer_mod.DEFAULT_MAX_PER_RUN)
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(func=cmd_propose)
+
+    sp = sub.add_parser("rebuild", help="rebuild per-person snapshots + names index")
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(func=cmd_rebuild)
+
+    sp = sub.add_parser("nightly", help="full nightly ambient maintenance")
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(func=cmd_nightly)
+
+    return p
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    try:
+        return args.func(args)
+    except Exception as e:  # noqa: BLE001 - CLI boundary
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())

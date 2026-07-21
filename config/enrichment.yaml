@@ -54,3 +54,11 @@ nightly:
 backfill:
   default_max_hours: 8              # off-peak, resumable; --max-hours overrides
   newest_first: true                # most valuable messages first
+
+# ── Ambient (Phase 5 — injection + knowing→doing) ─────────────────────────────
+# The nightly ambient maintenance (rebuild per-person snapshots, expire stale
+# nudges) always runs. Commitment → work-inbox proposals are GATED here so the
+# work system is never written to until the operator opts in.
+ambient:
+  propose_commitments: false        # true = nightly proposes operator commitments to the work inbox
+  propose_max_per_run: 20           # newest-first cap per night, so the backlog drains gradually
