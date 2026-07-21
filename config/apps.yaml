@@ -14,8 +14,11 @@
 #   name           human label shown on the bug card's app badge
 #   repo           absolute path to the app's git repo (instance-side)
 #   scheme         Xcode scheme / build target
-#   bundle_id      e.g. com.example.app
+#   bundle_id      e.g. com.example.app (also how ASC intake matches the app)
 #   release_branch branch the fix loop targets (default: main)
+#   platform       "ios" (default) or "web" — web apps are skipped by ASC intake
+#   asc_app_id     explicit App Store Connect numeric app id; wins over bundle_id
+#                  / name matching in ascbuild when set (optional)
 
 apps:
   example-app:
@@ -24,6 +27,8 @@ apps:
     scheme: ExampleApp
     bundle_id: com.example.exampleapp
     release_branch: main
+    platform: ios
+    asc_app_id: null       # optional — falls back to bundle_id / name match
 
   example-web:
     name: Example Web
@@ -31,3 +36,4 @@ apps:
     scheme: null
     bundle_id: null
     release_branch: main
+    platform: web          # no TestFlight — ASC intake skips it

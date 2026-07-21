@@ -1,0 +1,53 @@
+#!/usr/bin/env python3
+"""ascbuild-sync — App Store Connect intake into work.db (hourly).
+
+Pulls TestFlight beta feedback (tester screenshots + comments) and beta crash
+submissions for the operator's iOS apps, symbolicates crashes with xcsym, and
+files each as a ``pipeline='bug'`` task on the work board — idempotently, so it
+is safe to poll on a schedule. Replaces islah's ``am.hish.islah.crashsync``.
+
+Graceful config skip (component-lifecycle rule): on a machine with no ASC
+credentials configured (no ASC_ISSUER_ID / ASC_KEY_ID in Keychain, or no .p8),
+this exits 0 with a note rather than failing — the intake is simply inactive
+there. Any OTHER failure exits nonzero so cron telemetry records it.
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+_ROOT = Path(__file__).resolve().parents[3]
+for _p in (str(_ROOT), str(_ROOT / "core" / "engine" / "work")):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+
+
+def main() -> int:
+    from core.engine.work.intake import ascbuild
+
+    try:
+        rep = ascbuild.sync()
+    except ascbuild.AuthError as e:
+        print(f"ascbuild-sync: skipped — {e}")
+        return 0
+    except Exception as e:  # noqa: BLE001 — cron telemetry wants the failure
+        print(f"ascbuild-sync: FAILED — {e}")
+        return 1
+
+    if rep.get("error"):
+        print(f"ascbuild-sync: {rep['error']}")
+        return 0
+    total = 0
+    for app_id, r in rep.get("apps", {}).items():
+        n = len(r.get("screenshots_filed", [])) + len(r.get("crashes_filed", []))
+        total += n
+        if n:
+            print(f"ascbuild-sync: {app_id} — {n} new bug task(s)")
+    print(f"ascbuild-sync: filed {total} item(s) across "
+          f"{len(rep.get('apps', {}))} app(s)")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
