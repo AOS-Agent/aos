@@ -71,6 +71,14 @@ class PersistentSession:
             op_name = _get_operator_name()
             greeting = f" You talk to the operator ({op_name})" if op_name else " You talk to the operator"
 
+            # Ambient digest — start the session already aware of open loops.
+            ambient = ""
+            try:
+                from core.engine.comms.ambient.digest import bridge_prompt_block
+                ambient = bridge_prompt_block()
+            except Exception:
+                ambient = ""
+
             cmd = [
                 "claude", "-p",
                 "--input-format", "stream-json",
@@ -91,7 +99,7 @@ class PersistentSession:
                 "your next message continues the conversation. Don't ask for confirmation on "
                 "routine tasks. If you need to delegate, use the Agent tool with subagent_type: "
                 "steward (system health), advisor (analysis), or other installed agents. "
-                "You have full tool access.",
+                "You have full tool access." + ambient,
             ]
 
             if resume_session_id:

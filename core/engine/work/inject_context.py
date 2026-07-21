@@ -637,6 +637,24 @@ def main():
     except Exception:
         pass  # Never crash the hook
 
+    # --- Ambient digest (comms-derived: knowing → doing) ---
+    # A bounded (<=15 line) block distilled from the enriched entity store:
+    # what the operator owes, what's owed to him, unanswered questions, recent
+    # purchases, and top people nudges. Best-effort: any failure is swallowed so
+    # the hook never blocks session start, and the whole thing is skipped if the
+    # comms substrate isn't present yet.
+    try:
+        core_dir = str(Path.home() / "aos")
+        if core_dir not in sys.path:
+            sys.path.insert(0, core_dir)
+        from core.engine.comms.ambient.digest import build_digest
+        ambient = build_digest(surface_nudges=True)
+        if ambient:
+            lines.append("")
+            lines.append(ambient)
+    except Exception:
+        pass  # Never crash the hook
+
     # --- System Capabilities ---
     # Inject capability map so Chief knows execution methods and fallback chains.
     # This prevents "I can't do X" when 3 other methods exist.
