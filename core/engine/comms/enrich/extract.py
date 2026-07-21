@@ -28,6 +28,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+from core.engine.comms.enrich.authcheck import is_auth_failure
+
 # Frozen extraction prompt (sample §5) + the recommended v1-final tweak that
 # kills the two observed mistypes (rhetorical title → question, past reference →
 # event): the "literal requests / scheduled items only" clause.
@@ -214,13 +216,21 @@ def run_batch(batch, *, model: str, timeout_s: int, max_msg_chars: int,
 
     wall = round(time.time() - t0, 2)
     if rc != 0:
+        # Distinguish an auth/login failure (whole-run fatal — pause + alert)
+        # from an ordinary per-batch error (retry next run).
+        auth = is_auth_failure(err, out, f"rc={rc}")
         return {"batch_key": batch.batch_key, "ok": False,
-                "error": f"rc={rc}", "stderr": (err or "")[:300], "entities": []}
+                "error": "auth_failure" if auth else f"rc={rc}",
+                "auth_failure": auth,
+                "stderr": (err or "")[:300], "entities": []}
     try:
         env = json.loads(out)
     except Exception:
+        auth = is_auth_failure(out, err)
         return {"batch_key": batch.batch_key, "ok": False,
-                "error": "cli_json_fail", "stdout": (out or "")[:300], "entities": []}
+                "error": "auth_failure" if auth else "cli_json_fail",
+                "auth_failure": auth,
+                "stdout": (out or "")[:300], "entities": []}
     parsed = parse_result(env.get("result", ""))
     usage = env.get("usage", {}) or {}
     return {

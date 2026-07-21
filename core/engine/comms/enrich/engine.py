@@ -60,6 +60,10 @@ COMMS_DB = Path.home() / ".aos" / "data" / "comms.db"
 
 _VALID_TYPES = {"topic", "commitment", "transaction", "event", "mention", "question_open"}
 
+# Distinct exit code so the cron wrapper can tell "login expired, paused" apart
+# from a clean run (0) or a hard crash (1).
+AUTH_PAUSE_EXIT = 42
+
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -228,7 +232,8 @@ class EnrichEngine:
                  "skipped_spam": skipped_spam, "batches_total": len(batches),
                  "batches_done": 0, "batches_failed": 0, "messages_extracted": 0,
                  "entities_stored": 0, "by_type": {}, "cost_usd": 0.0,
-                 "stopped_early": False, "remaining_total": remaining}
+                 "stopped_early": False, "auth_paused": False,
+                 "remaining_total": remaining}
         try:
             self._process(conn, batches, live, budget_s, t0, stats)
         finally:
@@ -275,8 +280,15 @@ class EnrichEngine:
                     else:
                         # Failed batch: NOT watermarked → re-selected next run.
                         stats["batches_failed"] += 1
-                    # Refill the pipeline if budget remains.
-                    if time.time() - t0 < budget_s and not live.shutting_down:
+                        if result.get("auth_failure"):
+                            # Login expired: every remaining batch would fail the
+                            # same way. Stop submitting, drain in-flight, and pause
+                            # cleanly — completed batches are already checkpointed.
+                            stats["auth_paused"] = True
+                    # Refill unless budget spent OR we are pausing for auth.
+                    if stats["auth_paused"]:
+                        stats["stopped_early"] = True
+                    elif time.time() - t0 < budget_s and not live.shutting_down:
                         submit_next()
                     else:
                         stats["stopped_early"] = True
@@ -337,6 +349,9 @@ def _cli(argv=None) -> int:
         print(json.dumps(stats, indent=2))
     else:
         _print_stats(stats)
+    if stats.get("auth_paused"):
+        _alert_auth_paused(stats)
+        return AUTH_PAUSE_EXIT
     return 0
 
 
@@ -355,6 +370,26 @@ def _coverage(cfg: EnrichConfig) -> dict:
     return {"extractor_version": cfg.extractor_version, "messages_total": total,
             "messages_extracted": done, "remaining": total - done,
             "entities_active": ents, "by_type": by_type}
+
+
+def _alert_auth_paused(stats: dict) -> None:
+    """Telegram the operator that the run paused on an expired login. Best-effort:
+    the notify path degrades to a no-op if credentials aren't available."""
+    msg = (f"⚠️ Comms backfill PAUSED — login expired.\n"
+           f"Extracted {stats.get('batches_done', 0)} batches "
+           f"({stats.get('entities_stored', 0)} entities) before pausing; "
+           f"{stats.get('remaining_total', '?')} messages still un-extracted.\n"
+           f"Run <code>claude /login</code> then re-run the backfill — it resumes "
+           f"from the checkpoint.")
+    try:
+        _REPO = Path(__file__).resolve().parents[4]
+        core_dir = _REPO / "core"
+        if str(core_dir) not in sys.path:
+            sys.path.insert(0, str(core_dir))
+        from lib.notify import send_telegram
+        send_telegram(msg)
+    except Exception:
+        pass
 
 
 def _print_stats(s: dict) -> None:
