@@ -2,6 +2,15 @@
 
 All notable changes to AOS. Release notes sent via Telegram after each 4am update.
 
+## v0.6.22 — 2026-07-21
+
+Summary: Every AOS→Telegram *system alert* now reads like a person wrote it. The bridge got humanized copy back in v0.6.11, but the alert paths — reconcile findings, the watchdog, the heartbeat, the enrichment auth-pause, the event bus — still shipped raw: check slugs, file paths, "plist"/"migration 083"/"backfill" jargon, and dumped lists of internal names. A reconcile ping used to read "⚠️ dead_code: Dead code detected — 7 orphaned bin scripts: aos-report, eventd…"; it now reads "🧹 Found 7 old scripts nobody uses anymore. Nothing urgent — I'll list them for cleanup whenever you're ready." The translation is centralized so new checks inherit the voice for free.
+
+- Added `core/infra/reconcile/alert_copy.py` — the single place reconcile findings become human. `humanize_finding()` maps each check name to a friendly template (emoji lead + what happened + what I did / what you should do), and `render_report()` assembles the bundled alert. A `strip_jargon()` fallback scrubs paths, filenames, version/commit/migration/task refs, bracketed codes, and snake_case slugs, so an untemplated finding never lands verbatim. The runner keeps the raw `message`/`detail` for the JSONL log and terminal output — only the phone-facing message routes through the translator.
+- Rewrote every non-bridge Telegram emitter to the alert standard: the watchdog's service/network/disk pings (dropped `[AOS]`, `DEGRADED`, `migration 083`, "flapping"), the bridge heartbeat's problem list (dropped "is DOWN", "free pages", "pending task(s)"), the enrichment auth-pause ("😴 Overnight reading paused — my login expired. Run /login…"), the event-bus notifier (no more raw `— source_slug` tail), and the intelligence hook (dropped the bracketed `[0.87]` relevance code).
+- Extended `core/services/bridge/MESSAGE_STYLE.md` with a "System alerts" section: alert anatomy, the never-list (slugs, paths, raw item lists, CI jargon), before/after transformations, and the rule to centralize the check-name→template map with a scrubbing fallback.
+- Tests: `tests/test_alert_copy.py` (22 cases — jargon stripping, path removal, the operator's dead_code example, length bounds, report assembly) plus emitter-regression guards in `tests/test_telegram_message_style.py` (watchdog/heartbeat/enrich/bus/hook copy can't drift back). Updated `tests/test_reconcile_periodic.py` to assert the humanized ping instead of the raw check slug.
+
 ## v0.6.21 — 2026-07-21
 
 Summary: Releases now ship their frontends. `git archive` only extracts tracked files, so gitignored vite build output (`core/qareen/screen/dist`) never landed in a release — every runtime since the release system took over :4096 served a UI-less qareen backend. The release pipeline now builds vite frontends into each release before freezing it read-only. Also ships envoy — autonomous outbound conversations.
