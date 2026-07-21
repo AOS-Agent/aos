@@ -52,6 +52,9 @@ export interface Task {
   delegate?: string | null;    // agent executing this task
   held_by?: string | null;     // 'operator' | 'agent:<name>' | 'none'
   fields?: TaskFields;
+  // Kanban Phase 2: narrative-layer summary (board card line + list column).
+  activity_count?: number;
+  last_activity?: { ts: string; actor: string; actor_type: string; kind: string; body: string } | null;
 }
 
 /** True when a task is held by an agent (the purple-edge convention). */

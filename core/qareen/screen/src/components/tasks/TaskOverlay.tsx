@@ -17,6 +17,7 @@ import { useUpdateTask, useCreateTask } from '@/hooks/useTasks';
 import { areaTone, taskGoalId } from '@/lib/areaStyle';
 import { Tag } from '@/components/primitives/Tag';
 import { DelegateControl, BugDetails, STAT_COLOR } from '@/components/tasks/BugDelegation';
+import { ActivityTimeline } from '@/components/tasks/ActivityTimeline';
 import { TaskStatus, TaskPriority } from '@/lib/types';
 import { format, isPast, isToday, isTomorrow, differenceInDays } from 'date-fns';
 
@@ -209,6 +210,12 @@ export function TaskOverlay({ taskId, onClose }: { taskId: string; onClose: () =
                 </div>
               </div>
             )}
+
+            {/* Divider before the story */}
+            <div className="border-t border-border mb-5" />
+
+            {/* Activity timeline — the card's story (Phase 2) */}
+            <ActivityTimeline taskId={task.id} />
           </div>
         )}
       </div>

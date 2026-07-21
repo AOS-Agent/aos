@@ -22,7 +22,7 @@ import { Tag } from '@/components/primitives/Tag';
 import { DatabaseView } from '@/components/tasks/DatabaseView';
 import { InboxLane, InboxSection } from '@/components/tasks/InboxTriage';
 import { TaskStatus, TaskPriority } from '@/lib/types';
-import { format, isPast, isToday, isTomorrow, differenceInDays } from 'date-fns';
+import { format, isPast, isToday, isTomorrow, differenceInDays, formatDistanceToNow } from 'date-fns';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Helpers
@@ -31,6 +31,10 @@ import { format, isPast, isToday, isTomorrow, differenceInDays } from 'date-fns'
 const PRI: Record<number, string> = { 1: '#FF453A', 2: '#FFD60A', 3: '#6B6560', 4: '#0A84FF', 5: '#4A4540' };
 const STAT_COLOR: Record<string, string> = { triage: '#BF5AF2', backlog: '#6B6560', todo: '#6B6560', active: '#0A84FF', waiting: '#FFD60A', in_review: '#BF5AF2', done: '#30D158', cancelled: '#4A4540' };
 const STAT_LABEL: Record<string, string> = { triage: 'Triage', backlog: 'Backlog', todo: 'Todo', active: 'Active', waiting: 'Waiting', in_review: 'In Review', done: 'Done', cancelled: 'Cancelled' };
+
+function relTime(iso: string): string {
+  try { return formatDistanceToNow(new Date(iso), { addSuffix: true }); } catch { return ''; }
+}
 
 function formatDue(iso: string): { text: string; overdue: boolean } {
   const d = new Date(iso);
@@ -171,6 +175,17 @@ function DraggableCard({ task, onSelect, isFocused }: { task: Task; onSelect: ()
             <span className={`ml-auto ${agent ? '' : 'opacity-0 group-hover:opacity-100 transition-opacity duration-75'}`}>
               <DelegateControl task={task} compact />
             </span>
+          </div>
+        )}
+        {/* Last-activity line — the card's latest story beat (Phase 2) */}
+        {task.last_activity && (
+          <div className="mt-1.5 pl-[22px] flex items-center gap-1.5 text-[11px] text-text-quaternary truncate">
+            <span
+              className="w-[5px] h-[5px] rounded-full shrink-0"
+              style={{ backgroundColor: task.last_activity.actor_type === 'agent' ? AGENT_HUE : task.last_activity.actor_type === 'system' ? '#6B6560' : '#0A84FF' }}
+            />
+            <span className="truncate">{task.last_activity.body}</span>
+            <span className="opacity-60 shrink-0">· {relTime(task.last_activity.ts)}</span>
           </div>
         )}
       </button>

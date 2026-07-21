@@ -47,12 +47,15 @@ export function useSSE() {
       const invalidateWork = () => {
         queryClient.invalidateQueries({ queryKey: ['work'] });
         queryClient.invalidateQueries({ queryKey: ['project-tasks'] });
+        // Phase 2: the open card's narrative timeline + any single-task fetch.
+        queryClient.invalidateQueries({ queryKey: ['activity'] });
+        queryClient.invalidateQueries({ queryKey: ['task'] });
       };
 
       const WORK_EVENTS = [
         'work', 'work.notify', 'ingest.work',
         'task.created', 'task.updated', 'task.completed',
-        'task.deleted', 'task.status_changed', 'task.delegated',
+        'task.deleted', 'task.status_changed', 'task.delegated', 'task.activity',
       ];
       for (const name of WORK_EVENTS) {
         es.addEventListener(name, (e) => {
