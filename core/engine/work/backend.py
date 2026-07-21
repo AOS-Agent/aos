@@ -712,35 +712,11 @@ def cancel_task(task_id: str) -> dict | None:
 
 
 def update_task(task_id: str, **fields) -> dict | None:
-    """Update arbitrary fields on a task.
-
-    Emits ``task.status_changed`` when the status actually changes, carrying
-    ``updated_from`` (the prior status) — the signal the board needs to live-
-    update and the audit seed the runner will consume later. Previously this
-    path was silent (spec §2.4), so ``work update`` never reached the browser.
-    """
-    before = get_task(task_id)
+    """Update arbitrary fields on a task."""
     result = _get_adapter().update(task_id, fields)
     if result is None:
         return None
-    result_dict = _to_dict(result)
-
-    old_status = before.get("status") if before else None
-    new_status = result_dict.get("status")
-    if old_status is not None and new_status != old_status:
-        _log_activity("task_status_changed", task_id,
-                      result_dict.get("title"), result_dict.get("project"),
-                      detail=f"{old_status} → {new_status}")
-        _notify_dashboard({
-            "action": "task.status_changed",
-            "task_id": task_id,
-            "title": result_dict.get("title"),
-            "project": result_dict.get("project"),
-            "status": new_status,
-            "updated_from": {"status": old_status},
-            "ts": datetime.now().isoformat(),
-        })
-    return result_dict
+    return _to_dict(result)
 
 
 def delete_task(task_id: str) -> bool:
@@ -995,14 +971,8 @@ def add_inbox(text: str, source: str = "manual", confidence: float = None) -> di
     return _to_dict(result) if not isinstance(result, dict) else result
 
 
-def promote_inbox(inbox_id: str, as_title: str = None,
-                  project: str = None, priority: int = 3) -> dict | None:
-    """Promote an inbox item to a task, then remove the inbox row.
-
-    Deleting the inbox row IS the triage decision — for ambient proposals the
-    comms.db stamp is retained (proposer.py), so a promoted/dismissed item is
-    never re-proposed.
-    """
+def promote_inbox(inbox_id: str, as_title: str = None) -> dict | None:
+    """Promote an inbox item to a task."""
     adapter = _get_adapter()
     row = adapter._conn.execute(
         "SELECT * FROM inbox WHERE id = ?", (inbox_id,)
@@ -1012,20 +982,11 @@ def promote_inbox(inbox_id: str, as_title: str = None,
     title = as_title or row["text"]
     adapter._conn.execute("DELETE FROM inbox WHERE id = ?", (inbox_id,))
     adapter._conn.commit()
-    return add_task(title, project=project, priority=priority, source="inbox")
-
-
-def snooze_inbox(inbox_id: str, until: str) -> bool:
-    """Defer an inbox item until ``until`` (ISO8601 timestamp)."""
-    return _get_adapter().snooze_inbox(inbox_id, until)
+    return add_task(title, source="inbox")
 
 
 def delete_inbox(inbox_id: str) -> bool:
-    """Delete (dismiss) an inbox item.
-
-    For an ambient proposal this is the dismissal — the comms.db entity keeps
-    its ``ontology_id`` stamp (proposer.py), so it stays out of future runs.
-    """
+    """Delete an inbox item."""
     adapter = _get_adapter()
     cur = adapter._conn.execute("DELETE FROM inbox WHERE id = ?", (inbox_id,))
     adapter._conn.commit()

@@ -13,13 +13,12 @@
 import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { Plus, X, ChevronDown, ChevronRight, Search, User, Calendar, GripVertical, ArrowUpDown, SlidersHorizontal, Settings2 } from 'lucide-react';
 import { DndContext, DragOverlay, useDraggable, useDroppable, closestCenter, type DragStartEvent, type DragEndEvent } from '@dnd-kit/core';
-import { useWork, type Task, type InboxItem } from '@/hooks/useWork';
+import { useWork, type Task } from '@/hooks/useWork';
 import { useCreateTask, useUpdateTask } from '@/hooks/useTasks';
 import { useTaskKeyboard } from '@/hooks/useTaskKeyboard';
 import { useTaskOverlay } from '@/components/tasks/TaskOverlayContext';
 import { Tag } from '@/components/primitives/Tag';
 import { DatabaseView } from '@/components/tasks/DatabaseView';
-import { InboxLane, InboxSection } from '@/components/tasks/InboxTriage';
 import { TaskStatus, TaskPriority } from '@/lib/types';
 import { format, isPast, isToday, isTomorrow, differenceInDays } from 'date-fns';
 
@@ -121,10 +120,8 @@ function StatusGroup({ status, tasks, onSelect, selectedId, focusedId, defaultOp
 
 function DraggableCard({ task, onSelect, isFocused }: { task: Task; onSelect: () => void; isFocused?: boolean }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: task.id });
-  const update = useUpdateTask();
   const due = task.due ? formatDue(task.due) : null;
   const done = task.status === 'done';
-  const live = (task as Task & { live?: boolean }).live;
 
   return (
     <div ref={setNodeRef} data-task-id={task.id}
@@ -137,18 +134,9 @@ function DraggableCard({ task, onSelect, isFocused }: { task: Task; onSelect: ()
           <div {...listeners} {...attributes} className="mt-[3px] shrink-0 cursor-grab active:cursor-grabbing opacity-0 group-hover:opacity-40 transition-opacity duration-75">
             <GripVertical className="w-3 h-3 text-text-quaternary" />
           </div>
-          {/* Inline done toggle — the shared useUpdateTask action, same as every view */}
-          <button
-            onClick={e => { e.stopPropagation(); update.mutate({ id: task.id, data: { status: done ? TaskStatus.TODO : TaskStatus.DONE } }); }}
-            aria-label={done ? 'Mark not done' : 'Mark done'}
-            className="w-[16px] h-[16px] rounded-full border-[1.5px] flex items-center justify-center shrink-0 mt-[3px] cursor-pointer transition-all duration-75"
-            style={{ borderColor: done ? '#30D158' : 'rgba(255,245,235,0.15)', backgroundColor: done ? '#30D158' : 'transparent' }}>
-            {done && <svg width="8" height="6" viewBox="0 0 10 8" fill="none"><path d="M1 4L3.5 6.5L9 1" stroke="#14130E" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>}
-          </button>
           <div className="w-[6px] h-[6px] rounded-full mt-[7px] shrink-0" style={{ backgroundColor: PRI[task.priority] }} />
           <span className={`text-[15px] leading-[1.45] line-clamp-2 ${done ? 'text-text-quaternary line-through' : 'text-text-secondary'}`}
     >{task.title}</span>
-          {live && <span className="ml-auto mt-[6px] w-[7px] h-[7px] rounded-full shrink-0 bg-green animate-pulse" title="A session is working this now" />}
         </div>
         {(task.project || due) && (
           <div className="flex items-center gap-2 mt-1.5 pl-[22px] text-[12px] text-text-quaternary">
@@ -183,8 +171,8 @@ function DroppableColumn({ status, tasks, onSelect, focusedId }: { status: strin
   );
 }
 
-function BoardView({ tasks, inbox = [], projects = [], onSelect, onStatusChange, focusedId }: {
-  tasks: Task[]; inbox?: InboxItem[]; projects?: string[]; onSelect: (t: Task) => void; onStatusChange: (taskId: string, newStatus: string) => void; focusedId?: string;
+function BoardView({ tasks, onSelect, onStatusChange, focusedId }: {
+  tasks: Task[]; onSelect: (t: Task) => void; onStatusChange: (taskId: string, newStatus: string) => void; focusedId?: string;
 }) {
   const [activeId, setActiveId] = useState<string | null>(null);
   const activeTask = activeId ? tasks.find(t => t.id === activeId) : null;
@@ -208,7 +196,6 @@ function BoardView({ tasks, inbox = [], projects = [], onSelect, onStatusChange,
   return (
     <DndContext onDragStart={handleDragStart} onDragEnd={handleDragEnd} collisionDetection={closestCenter}>
       <div className="flex gap-3 h-full p-2">
-        <InboxLane items={inbox} projects={projects} />
         <DroppableColumn status="todo" tasks={byStatus('todo')} onSelect={onSelect} focusedId={focusedId} />
         <DroppableColumn status="active" tasks={byStatus('active')} onSelect={onSelect} focusedId={focusedId} />
         <DroppableColumn status="waiting" tasks={byStatus('waiting')} onSelect={onSelect} focusedId={focusedId} />
@@ -732,7 +719,6 @@ export default function TasksPage({ initialProjectFilter }: { initialProjectFilt
   const [visibleCols, setVisibleCols] = useState<Set<string>>(new Set(['title', 'status', 'priority', 'project', 'due', 'assigned_to']));
 
   const tasks = data?.tasks ?? [];
-  const inbox = data?.inbox ?? [];
   const projects = useMemo(() => [...new Set(tasks.map(t => t.project).filter(Boolean) as string[])], [tasks]);
 
   const filtered = useMemo(() => {
@@ -1011,7 +997,6 @@ export default function TasksPage({ initialProjectFilter }: { initialProjectFilt
         <div className="flex-1 min-h-0 overflow-y-auto px-2">
           {view === 'stream' && (
             <>
-              <InboxSection items={inbox} projects={projects} />
               <StatusGroup status="active" tasks={byStatus('active')} onSelect={openPeek} selectedId={selected?.id} focusedId={focusedId ?? undefined} />
               <StatusGroup status="todo" tasks={byStatus('todo')} onSelect={openPeek} selectedId={selected?.id} focusedId={focusedId ?? undefined} />
               <StatusGroup status="waiting" tasks={byStatus('waiting')} onSelect={openPeek} selectedId={selected?.id} focusedId={focusedId ?? undefined} />
@@ -1019,15 +1004,10 @@ export default function TasksPage({ initialProjectFilter }: { initialProjectFilt
             </>
           )}
           {view === 'board' && (
-            <BoardView tasks={filtered} inbox={inbox} projects={projects} onSelect={openPeek} focusedId={focusedId ?? undefined}
+            <BoardView tasks={filtered} onSelect={openPeek} focusedId={focusedId ?? undefined}
               onStatusChange={(taskId, newStatus) => updateTask.mutate({ id: taskId, data: { status: newStatus as TaskStatus } })} />
           )}
-          {view === 'list' && (
-            <>
-              <InboxSection items={inbox} projects={projects} defaultOpen={false} />
-              <DatabaseView tasks={filtered} onSelect={openPeek} selectedId={selected?.id} projects={projects} groupBy={groupBy} onGroupByChange={setGroupBy} visibleCols={visibleCols} />
-            </>
-          )}
+          {view === 'list' && <DatabaseView tasks={filtered} onSelect={openPeek} selectedId={selected?.id} projects={projects} groupBy={groupBy} onGroupByChange={setGroupBy} visibleCols={visibleCols} />}
           {/* Today view is now a top-level tab in Work.tsx */}
 
           {filtered.length === 0 && !creating && (
