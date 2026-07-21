@@ -140,7 +140,7 @@ def _dead_code(message: str, detail: str | None) -> str:
 def _storage_layout(message: str, detail: str | None) -> str:
     n = _first_int(message or "")
     size = _size(message or "")
-    where = f" ({size} sitting on the internal disk)" if size else ""
+    where = f" ({size})" if size else ""
     subj = f"{n} {_plural(n, 'folder')}" if n else "Some folders"
     return (f"📦 {subj} that belong on the external drive are on the internal disk"
             f"{where}. I'll move them on the next cleanup pass.")
