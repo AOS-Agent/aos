@@ -179,9 +179,144 @@ class WorkAdapter(Adapter):
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._conn.row_factory = sqlite3.Row
+        # Who is credited for mutations in the audit trail (entity_history).
+        # The CLI sets AOS_ACTOR; API/agent paths pass an explicit actor.
+        self._actor = os.environ.get("AOS_ACTOR", "operator")
+        self._ensure_aux_schema()
 
     def close(self):
         self._conn.close()
+
+    # ── Auxiliary schema (audit trail, status defs, comments) ────────────
+    #
+    # These tables live in the canonical schema (core/qareen/schemas/qareen.sql)
+    # but migration 050 seeded work.db from the tasks tables only, so a live
+    # work.db predates them. Ensure they exist at runtime — idempotent, cheap,
+    # and covers fresh installs and the test fixture without depending on a
+    # migration having run first. Migration 086 does the same for auditability.
+
+    def _ensure_aux_schema(self) -> None:
+        """Create the audit/status/comment tables if missing. Idempotent."""
+        try:
+            self._conn.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS entity_history (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    entity_type TEXT NOT NULL,
+                    entity_id   TEXT NOT NULL,
+                    field_name  TEXT NOT NULL,
+                    old_value   TEXT,
+                    new_value   TEXT,
+                    actor       TEXT NOT NULL,
+                    actor_type  TEXT NOT NULL,
+                    timestamp   TEXT NOT NULL,
+                    session_id  TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_history_entity
+                    ON entity_history(entity_type, entity_id, timestamp);
+
+                CREATE TABLE IF NOT EXISTS statuses (
+                    id          TEXT PRIMARY KEY,
+                    name        TEXT NOT NULL,
+                    category    TEXT NOT NULL,
+                    color       TEXT,
+                    project_id  TEXT,
+                    position    INTEGER NOT NULL DEFAULT 0,
+                    is_default  BOOLEAN DEFAULT 0
+                );
+
+                CREATE TABLE IF NOT EXISTS comments (
+                    id          TEXT PRIMARY KEY,
+                    entity_type TEXT NOT NULL,
+                    entity_id   TEXT NOT NULL,
+                    parent_id   TEXT,
+                    author_id   TEXT NOT NULL,
+                    author_type TEXT NOT NULL,
+                    body        TEXT NOT NULL,
+                    created_at  TEXT NOT NULL,
+                    modified_at TEXT,
+                    is_edited   BOOLEAN DEFAULT 0
+                );
+                CREATE INDEX IF NOT EXISTS idx_comments_entity
+                    ON comments(entity_type, entity_id, created_at);
+                """
+            )
+            # Seed the default Linear-style status set (category is the machine
+            # spine automation keys off — never the name). No-op if present.
+            self._conn.executemany(
+                "INSERT OR IGNORE INTO statuses "
+                "(id, name, category, color, position, is_default) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                [
+                    ("triage", "Triage", "triage", "#BF5AF2", 0, 0),
+                    ("backlog", "Backlog", "backlog", "#6B6560", 1, 0),
+                    ("todo", "Todo", "unstarted", "#6B6560", 2, 1),
+                    ("active", "In Progress", "started", "#0A84FF", 3, 0),
+                    ("waiting", "Waiting", "started", "#FFD60A", 4, 0),
+                    ("done", "Done", "completed", "#30D158", 5, 1),
+                    ("cancelled", "Cancelled", "cancelled", "#6B6560", 6, 0),
+                ],
+            )
+            # Inbox provenance + snooze — the ambient proposer stamps a source
+            # and the operator can defer an item without deleting it.
+            inbox_cols = {r[1] for r in self._conn.execute("PRAGMA table_info(inbox)")}
+            if inbox_cols:  # inbox table exists
+                if "source" not in inbox_cols:
+                    self._conn.execute("ALTER TABLE inbox ADD COLUMN source TEXT")
+                if "snoozed_until" not in inbox_cols:
+                    self._conn.execute(
+                        "ALTER TABLE inbox ADD COLUMN snoozed_until TEXT"
+                    )
+            self._conn.commit()
+        except sqlite3.Error:
+            # A read-only or locked DB must not crash adapter construction;
+            # the endpoints degrade gracefully (empty history/statuses).
+            pass
+
+    def _record_history(
+        self,
+        entity_id: str,
+        field: str,
+        old_value: Any,
+        new_value: Any,
+        *,
+        entity_type: str = "task",
+        actor: str | None = None,
+        actor_type: str | None = None,
+        session_id: str | None = None,
+    ) -> None:
+        """Append a field-change row to the audit trail. Best-effort.
+
+        This is the single write path both the CLI and the API flow through
+        (every mutation lands in the adapter), so the audit trail cannot
+        disagree with the tasks table.
+        """
+        if old_value == new_value:
+            return
+        actor = actor or self._actor
+        if actor_type is None:
+            actor_type = "operator" if actor in ("operator", "cli") else "agent"
+        try:
+            self._conn.execute(
+                "INSERT INTO entity_history "
+                "(entity_type, entity_id, field_name, old_value, new_value, "
+                " actor, actor_type, timestamp, session_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    entity_type,
+                    entity_id,
+                    field,
+                    None if old_value is None else str(old_value),
+                    None if new_value is None else str(new_value),
+                    actor,
+                    actor_type,
+                    _now(),
+                    session_id,
+                ),
+            )
+            self._conn.commit()
+        except sqlite3.Error:
+            pass
 
     # ── ID Generation (private) ──────────────────────────
 
@@ -799,6 +934,9 @@ class WorkAdapter(Adapter):
         # Attach session links (not part of Task dataclass, added dynamically)
         if sessions:
             task.sessions = sessions  # type: ignore[attr-defined]
+        # Carry last-modified so the API can surface staleness. Not a Task field.
+        if "modified_at" in row.keys():
+            task.updated = _parse_dt(row["modified_at"])  # type: ignore[attr-defined]
         return task
 
     def _list_tasks(
@@ -836,6 +974,31 @@ class WorkAdapter(Adapter):
 
         rows = self._conn.execute(query, params).fetchall()
         return [self._row_to_task(r) for r in rows]
+
+    def board_tasks(self, *, done_limit: int = 100, cancelled_limit: int = 40) -> list[Task]:
+        """Return the honest working set for the board.
+
+        The naive ``list(limit=200)`` orders by ``created_at DESC`` and truncates
+        — active tasks are old (created long ago, started recently), so they fall
+        outside the newest-200 window and the board reads "0 active" while work
+        is in flight. This returns EVERY open task (todo/active/waiting) plus a
+        bounded tail of recently-closed ones, so counts and columns are true.
+        """
+        open_rows = self._conn.execute(
+            "SELECT * FROM tasks WHERE status IN ('todo','active','waiting') "
+            "ORDER BY created_at DESC"
+        ).fetchall()
+        done_rows = self._conn.execute(
+            "SELECT * FROM tasks WHERE status = 'done' "
+            "ORDER BY COALESCE(completed_at, modified_at, created_at) DESC LIMIT ?",
+            (done_limit,),
+        ).fetchall()
+        cancelled_rows = self._conn.execute(
+            "SELECT * FROM tasks WHERE status = 'cancelled' "
+            "ORDER BY COALESCE(modified_at, created_at) DESC LIMIT ?",
+            (cancelled_limit,),
+        ).fetchall()
+        return [self._row_to_task(r) for r in (*open_rows, *done_rows, *cancelled_rows)]
 
     def _count_table(self, table: str, filters: dict) -> int:
         clauses = []
@@ -956,6 +1119,13 @@ class WorkAdapter(Adapter):
         if not sets:
             return self._get_task(task_id)
 
+        # Snapshot the pre-update row so every changed field lands in the audit
+        # trail (entity_history) — the seed for the activity stream and the
+        # source of truth for "who moved this task, when".
+        before = self._conn.execute(
+            "SELECT * FROM tasks WHERE id = ?", (task_id,)
+        ).fetchone()
+
         sets.append("modified_at = ?")
         params.append(datetime.now().isoformat())
         params.append(task_id)
@@ -964,6 +1134,29 @@ class WorkAdapter(Adapter):
             f"UPDATE tasks SET {', '.join(sets)} WHERE id = ?", params
         )
         self._conn.commit()
+
+        if before is not None:
+            before_cols = before.keys()
+            actor = fields.get("_actor")
+            actor_type = fields.get("_actor_type")
+            session_id = fields.get("_session_id")
+            for key, val in fields.items():
+                col = field_map.get(key)
+                if not col or col not in before_cols:
+                    continue
+                old = before[col]
+                new = val.value if hasattr(val, "value") else val
+                if col in ("tags",):
+                    new = _json_dumps(new) if new else None
+                elif col in ("started_at", "completed_at", "due_at"):
+                    new = _to_iso(new) if isinstance(new, datetime) else new
+                elif col == "priority":
+                    new = int(new) if not isinstance(new, int) else new
+                self._record_history(
+                    task_id, col, old, new,
+                    actor=actor, actor_type=actor_type, session_id=session_id,
+                )
+
         return self._get_task(task_id)
 
     # ── Internal: Project operations ─────────────────────
@@ -1177,32 +1370,56 @@ class WorkAdapter(Adapter):
     def _list_inbox(
         self, filters: dict, limit: int, offset: int
     ) -> list[dict]:
+        clauses = []
+        params: list[Any] = []
+        # Snoozed items are hidden until their snooze elapses (the operator
+        # deferred them). include_snoozed surfaces them anyway.
+        if not filters.get("include_snoozed"):
+            clauses.append("(snoozed_until IS NULL OR snoozed_until <= ?)")
+            params.append(_now())
+        where = " AND ".join(clauses) if clauses else "1=1"
+        params.extend([limit, offset])
         rows = self._conn.execute(
-            "SELECT * FROM inbox ORDER BY captured_at DESC LIMIT ? OFFSET ?",
-            (limit, offset),
+            f"SELECT * FROM inbox WHERE {where} "
+            f"ORDER BY captured_at DESC LIMIT ? OFFSET ?",
+            params,
         ).fetchall()
         return [self._row_to_inbox(r) for r in rows]
 
     @staticmethod
     def _row_to_inbox(row: sqlite3.Row) -> dict:
         """Convert an inbox table row to a normalized dict."""
+        cols = row.keys()
         return {
             "id": row["id"],
             "text": row["text"],
             "captured": row["captured_at"] or "",
-            "source": "manual",
+            "source": (row["source"] if "source" in cols and row["source"] else "manual"),
+            "snoozed_until": (row["snoozed_until"] if "snoozed_until" in cols else None),
         }
 
     def _create_inbox(
         self, text: str, source: str = "manual", confidence: float | None = None
     ) -> dict:
-        """Create an inbox item. Returns normalized dict."""
+        """Create an inbox item. Returns normalized dict.
+
+        ``source`` is persisted (the ambient proposer stamps
+        'ambient-commitment') so the UI can distinguish proposed work from
+        manual captures and render its provenance receipt.
+        """
         iid = self._next_id("i")
         now = _now()
-        self._conn.execute(
-            "INSERT INTO inbox (id, text, captured_at) VALUES (?, ?, ?)",
-            (iid, text, now),
-        )
+        cols = {r[1] for r in self._conn.execute("PRAGMA table_info(inbox)")}
+        if "source" in cols:
+            self._conn.execute(
+                "INSERT INTO inbox (id, text, captured_at, source) VALUES (?, ?, ?, ?)",
+                (iid, text, now, source),
+            )
+        else:
+            self._conn.execute(
+                "INSERT INTO inbox (id, text, captured_at) VALUES (?, ?, ?)",
+                (iid, text, now),
+            )
         self._conn.commit()
         item = {
             "id": iid,
@@ -1213,6 +1430,14 @@ class WorkAdapter(Adapter):
         if confidence is not None:
             item["confidence"] = confidence
         return item
+
+    def snooze_inbox(self, inbox_id: str, until: str) -> bool:
+        """Defer an inbox item until ``until`` (ISO8601). Returns True if set."""
+        cur = self._conn.execute(
+            "UPDATE inbox SET snoozed_until = ? WHERE id = ?", (until, inbox_id)
+        )
+        self._conn.commit()
+        return cur.rowcount > 0
 
     # ── Internal: Thread operations ──────────────────────
 
@@ -1941,6 +2166,7 @@ class WorkAdapter(Adapter):
             (now, now, task_id),
         )
         self._conn.commit()
+        self._record_history(task_id, "status", row["status"], "done")
 
         task = self._row_to_task(
             self._conn.execute(
@@ -2018,6 +2244,7 @@ class WorkAdapter(Adapter):
             (now, now, task_id),
         )
         self._conn.commit()
+        self._record_history(task_id, "status", row["status"], "active")
         return self._row_to_task(
             self._conn.execute(
                 "SELECT * FROM tasks WHERE id = ?", (task_id,)

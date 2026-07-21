@@ -99,6 +99,9 @@ class TaskResponse(BaseModel):
     pipeline_stage: PipelineStage | None = Field(None, description="Current pipeline stage")
     recurrence: str | None = Field(None, description="Cron expression for recurring tasks")
 
+    updated: datetime | None = Field(None, description="Last-modified timestamp (staleness signal)")
+    live: bool = Field(False, description="A session is actively holding this task right now")
+
 
 class TaskListResponse(BaseModel):
     """List of tasks with summary counts."""
@@ -240,7 +243,8 @@ class InboxItemResponse(BaseModel):
     id: str = Field(..., description="Inbox item ID")
     content: str = Field(..., description="Raw captured text")
     created: datetime | None = Field(None, description="Capture timestamp")
-    source: str | None = Field(None, description="Where this came from", examples=["voice", "chat"])
+    source: str | None = Field(None, description="Where this came from", examples=["voice", "chat", "ambient-commitment"])
+    snoozed_until: str | None = Field(None, description="Deferred until this timestamp, if snoozed")
 
 
 class CreateInboxRequest(BaseModel):
@@ -263,6 +267,11 @@ class WorkResponse(BaseModel):
     goals: GoalListResponse = Field(default_factory=GoalListResponse)
     inbox: list[InboxItemResponse] = Field(default_factory=list)
     next_task: TaskResponse | None = Field(None, description="Suggested next task")
+    summary: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Authoritative whole-table counts (total_tasks, by_status, ...)",
+    )
+    live_task_id: str | None = Field(None, description="Task a session is holding right now, if any")
 
 
 # ---------------------------------------------------------------------------

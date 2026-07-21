@@ -72,10 +72,21 @@ async def update_task(ontology, task_id: str, **fields) -> dict:
     allowed = {"title", "status", "priority", "project", "tags",
                "description", "assigned_to", "due", "started", "completed"}
     task_fields = {k: v for k, v in fields.items() if k in allowed}
+    # Snapshot prior status so the emitted event can carry updated_from — the
+    # diff consumers need without keeping a shadow copy of prior state (§3.5).
+    prior = ontology.get(ObjectType.TASK, task_id)
+    old_status = None
+    if prior is not None:
+        old_status = prior.status.value if hasattr(prior.status, "value") else prior.status
     updated = ontology.update(ObjectType.TASK, task_id, task_fields)
     if updated is None:
         raise ValueError(f"Task not found: {task_id}")
-    return {"task_id": task_id, "updated_fields": list(task_fields.keys())}
+    new_status = updated.status.value if hasattr(updated.status, "value") else updated.status
+    result = {"task_id": task_id, "updated_fields": list(task_fields.keys())}
+    if "status" in task_fields:
+        result["status"] = new_status
+        result["updated_from"] = {"status": old_status}
+    return result
 
 
 @action("complete_task", emits="task.completed")

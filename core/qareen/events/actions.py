@@ -333,17 +333,84 @@ class ActionRegistry:
             return
 
         try:
-            event = Event(
-                event_type=definition.emits,
-                source="action_registry",
-                payload={
-                    "action": definition.name,
-                    "result": result,
-                },
-            )
+            event = self._build_event(definition, result)
             await self._bus.emit(event)
+            # A status change is worth its own event: the board keys liveness
+            # off it and it seeds the audit trail (spec §3, §4 Phase 0). Emit it
+            # in addition to task.updated so consumers can subscribe narrowly.
+            extra = self._build_status_changed(definition, result)
+            if extra is not None:
+                await self._bus.emit(extra)
         except Exception:
             logger.exception("Failed to emit event for action '%s'", definition.name)
+
+    def _build_event(self, definition: ActionDefinition, result: Any) -> Event:
+        """Construct the typed event for an action.
+
+        Previously every action emitted a bare ``Event`` with the structured
+        data buried in ``payload``, so downstream ``hasattr(event, "task_id")``
+        / ``getattr(event, "project")`` checks always failed and GitHub sync
+        never fired on the API path (spec §2.4). Build the real typed event so
+        task_id/title/project are first-class attributes.
+        """
+        from .types import TaskCompleted, TaskCreated, TaskDeleted, TaskUpdated
+
+        emits = definition.emits or ""
+        data = result if isinstance(result, dict) else {}
+        payload = {"action": definition.name, "result": result}
+
+        if emits == "task.created":
+            return TaskCreated(
+                source="action_registry", payload=payload,
+                task_id=data.get("task_id", ""),
+                title=data.get("title", ""),
+                project=data.get("project"),
+            )
+        if emits == "task.updated":
+            return TaskUpdated(
+                source="action_registry", payload=payload,
+                task_id=data.get("task_id", ""),
+                changed_fields=tuple(data.get("updated_fields", [])),
+            )
+        if emits == "task.completed":
+            return TaskCompleted(
+                source="action_registry", payload=payload,
+                task_id=data.get("task_id", ""),
+                title=data.get("title", ""),
+                project=data.get("project"),
+            )
+        if emits == "task.deleted":
+            return TaskDeleted(
+                source="action_registry", payload=payload,
+                task_id=data.get("task_id", ""),
+            )
+        return Event(event_type=emits, source="action_registry", payload=payload)
+
+    @staticmethod
+    def _build_status_changed(definition: ActionDefinition, result: Any) -> Event | None:
+        """Emit ``task.status_changed`` when an action changed a task's status."""
+        data = result if isinstance(result, dict) else {}
+        task_id = data.get("task_id")
+        if not task_id:
+            return None
+        emits = definition.emits or ""
+        new_status = None
+        updated_from = data.get("updated_from")
+        if emits == "task.completed":
+            new_status = "done"
+        elif emits == "task.updated" and "status" in (data.get("updated_fields") or []):
+            new_status = data.get("status")
+        if new_status is None and updated_from is None:
+            return None
+        return Event(
+            event_type="task.status_changed",
+            source="action_registry",
+            payload={
+                "task_id": task_id,
+                "status": new_status,
+                "updated_from": updated_from or {},
+            },
+        )
 
     async def _run_side_effects(
         self, definition: ActionDefinition, params: dict[str, Any], result: Any
