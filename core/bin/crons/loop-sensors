@@ -1,0 +1,52 @@
+#!/usr/bin/env python3
+"""loop-sensors — nightly Intelligence Loop sensor pass.
+
+Runs the deterministic sensors (comms_entities, initiative_drift), then
+the eval-gated friction judge (skipped, loudly, if the current judge
+version has no gate-pass marker), then lazy-expires stale proposals.
+
+Registered in config/crons.yaml. One-shot; no resident process (council
+decision: no new substrate, no daemons).
+"""
+
+import asyncio
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path.home() / "aos"))
+sys.path.insert(0, str(Path.home() / "aos" / "core"))
+
+try:
+    from engine.loop import signals
+    from engine.loop.sensors import comms_entities, friction, initiative_drift
+except ImportError:
+    from core.engine.loop import signals
+    from core.engine.loop.sensors import comms_entities, friction, initiative_drift
+
+
+def main() -> int:
+    ce = comms_entities.run()
+    print(f"[loop-sensors] comms_entities: {len(ce)} signals")
+
+    drift = initiative_drift.run()
+    print(f"[loop-sensors] initiative_drift: {len(drift)} signals")
+
+    try:
+        summary = asyncio.run(friction.run())
+        note = " (aborted on quota limit)" if summary["aborted_on_limit"] else ""
+        print(
+            f"[loop-sensors] friction_judge: {summary['signals']} signals "
+            f"from {summary['judged']} judged messages across "
+            f"{summary['sessions']} sessions{note}"
+        )
+    except friction.GateNotPassed as exc:
+        # Loud skip — the council gate is doing its job, not an error.
+        print(f"[loop-sensors] friction_judge SKIPPED: {exc}")
+
+    lapsed = signals.lazy_expire()
+    print(f"[loop-sensors] lazy_expire: {lapsed} proposals lapsed")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

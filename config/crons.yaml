@@ -121,6 +121,13 @@ jobs:
     tier: 2
     description: Analyzes session patterns for friction and improvements
 
+  loop-sensors:
+    command: python3 ~/aos/core/bin/crons/loop-sensors
+    at: "03:40"
+    timeout: 1800
+    tier: 2
+    description: Intelligence Loop nightly sensors (comms entities, initiative drift, eval-gated friction judge)
+
   stale-detector:
     command: python3 ~/aos/core/bin/crons/stale-detector
     at: "08:00"

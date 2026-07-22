@@ -126,6 +126,23 @@ def cmd_run(args: argparse.Namespace) -> int:
         return 1
 
     print(eval_gate.format_report(result))
+    if result.passed and getattr(args, "record", False):
+        import json as _json
+        from datetime import datetime, timezone
+
+        try:
+            from engine.loop import judge as _judge_mod
+        except ImportError:
+            from core.engine.loop import judge as _judge_mod
+        marker = Path.home() / ".aos" / "data" / "loop" / "judge-gate-pass.json"
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(_json.dumps({
+            "judge_version": _judge_mod.version_hash(),
+            "passed_at": datetime.now(timezone.utc).isoformat(),
+            "dataset": str(dataset_dir or eval_gate.default_dataset_dir()),
+            "metrics": result.metrics,
+        }, indent=2, default=str))
+        print(f"gate-pass marker written: {marker}")
     return 0 if result.passed else 1
 
 
@@ -142,6 +159,7 @@ def main() -> int:
 
     ru = sub.add_parser("run", help="Run a judge over the frozen dataset and report")
     ru.add_argument("--judge-module", required=True, help="dotted.path.to.module:callable")
+    ru.add_argument("--record", action="store_true", help="on PASS, write the judge gate-pass marker")
     ru.add_argument("--dir", default=None, help="Dataset dir (default: AOS_LOOP_EVAL_DIR or ~/vault/knowledge/references/loop-eval-v1)")
     ru.add_argument("--machine-fp-max", type=int, default=None)
     ru.add_argument("--binary-precision-min", type=float, default=None)
