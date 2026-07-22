@@ -88,7 +88,10 @@ def _run_cli(prompt: str, model: str, system: str | None, timeout_s: int) -> str
         try:
             return _run_cli_once(prompt, model, system, timeout_s)
         except (FileNotFoundError, LLMError) as exc:
-            transient = isinstance(exc, FileNotFoundError) or "not found" in str(exc)
+            msg = str(exc)
+            transient = isinstance(exc, FileNotFoundError) or any(
+                t in msg for t in ("not found", "not find", "ENOENT")
+            )
             if not transient or attempt == 2:
                 raise
             last_exc = exc
