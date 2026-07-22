@@ -77,7 +77,7 @@ def _make_checks(mod):
 def test_periodic_only_fixes_periodic_fix_checks(runner, monkeypatch):
     mod = runner["mod"]
     checks, calls = _make_checks(mod)
-    monkeypatch.setattr(mod, "_load_checks", lambda: checks)
+    monkeypatch.setattr(mod, "_load_checks", lambda: (checks, []))
 
     results = mod.run_all(periodic=True)
 
@@ -93,7 +93,7 @@ def test_periodic_only_fixes_periodic_fix_checks(runner, monkeypatch):
 def test_periodic_notifies_only_for_periodic_fix_results(runner, monkeypatch):
     mod = runner["mod"]
     checks, _ = _make_checks(mod)
-    monkeypatch.setattr(mod, "_load_checks", lambda: checks)
+    monkeypatch.setattr(mod, "_load_checks", lambda: (checks, []))
 
     mod.run_all(periodic=True)
 
@@ -112,7 +112,7 @@ def test_periodic_notifies_only_for_periodic_fix_results(runner, monkeypatch):
 def test_deploy_mode_fixes_everything(runner, monkeypatch):
     mod = runner["mod"]
     checks, calls = _make_checks(mod)
-    monkeypatch.setattr(mod, "_load_checks", lambda: checks)
+    monkeypatch.setattr(mod, "_load_checks", lambda: (checks, []))
 
     mod.run_all(dry_run=False)
 
@@ -123,7 +123,7 @@ def test_deploy_mode_fixes_everything(runner, monkeypatch):
 def test_periodic_uses_separate_dedup_file(runner, monkeypatch):
     mod = runner["mod"]
     checks, _ = _make_checks(mod)
-    monkeypatch.setattr(mod, "_load_checks", lambda: checks)
+    monkeypatch.setattr(mod, "_load_checks", lambda: (checks, []))
 
     mod.run_all(periodic=True)
     periodic_seen = runner["tmp"] / ".aos" / "state" / "reconcile-notified-periodic.json"
