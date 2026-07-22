@@ -20,12 +20,21 @@ Contract proven here:
 """
 
 import subprocess
+import sys
+from pathlib import Path
 
-import backend  # noqa: F401 — also puts the repo root on sys.path
-import engine
-import pytest
+# Standalone bootstrap: the `aos test` harness runs this file directly, so
+# set up sys.path the way pytest's conftest would (repo root + work engine dir).
+_REPO = Path(__file__).resolve().parent.parent
+for _p in (str(_REPO), str(_REPO / "core" / "engine" / "work")):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
-from core.qareen.ontology import listeners
+import backend  # noqa: E402,F401 — also puts the repo root on sys.path
+import engine  # noqa: E402
+import pytest  # noqa: E402
+
+from core.qareen.ontology import listeners  # noqa: E402
 
 # (module, create_fn_name, close_fn_name)
 GH_MODULES = [
