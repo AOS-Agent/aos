@@ -251,6 +251,102 @@ def cmd_hold(args):
         sys.exit(1)
 
 
+def cmd_runner(args):
+    """Control the generic work runner (Kanban Phase 4).
+
+    Subcommands:
+      runner status            what's running / recently finished / queued
+      runner cancel <task>     SIGTERM the worker for a task, mark run cancelled
+      runner enable            deploy + load the service and flip enabled: true
+      runner disable           set enabled: false (pause spawning; stays loaded)
+
+    The runner ships OFF. Autonomous agent spawning is opt-in — `runner enable`
+    is the deliberate step; `runner disable` is the global kill switch.
+    """
+    from runner import RunnerConfig, WorkRunner  # local import — heavy deps
+
+    sub = args[0] if args else "status"
+
+    if sub == "status":
+        runner = WorkRunner(RunnerConfig.load(), backend_mod=engine)
+        st = runner.status()
+        print(f"Runner: enabled={st['enabled']}  cap={st['max_concurrent']}  "
+              f"live-workers={st['in_process_workers']}")
+        if st["running"]:
+            print("\nRunning:")
+            for r in st["running"]:
+                print(f"  {r['id']}  {r['task_id']:12s}  {r['agent']:10s}  pid={r['pid']}  since {r['started_at']}")
+        else:
+            print("\nRunning: (none)")
+        if st["recent"]:
+            print("\nRecent:")
+            for r in st["recent"]:
+                tail = f" — {r['reason']}" if r.get("reason") else ""
+                print(f"  {r['task_id']:12s}  {r['agent']:10s}  {r['state']:14s}{tail}")
+        return
+
+    if sub == "cancel":
+        if len(args) < 2:
+            print("Usage: runner cancel <task_id or search>")
+            sys.exit(1)
+        task = _resolve(" ".join(args[1:]))
+        runner = WorkRunner(RunnerConfig.load(), backend_mod=engine)
+        ok = runner.cancel(task["id"])
+        print(f"Cancelled runner for {task['id']}" if ok
+              else f"No live/running runner for {task['id']}")
+        return
+
+    if sub in ("enable", "disable"):
+        _runner_toggle(enable=(sub == "enable"))
+        return
+
+    print(f"Unknown runner subcommand: {sub}")
+    print("Usage: runner [status | cancel <task> | enable | disable]")
+    sys.exit(1)
+
+
+def _runner_toggle(enable: bool):
+    """Flip runner.enabled in the instance config; on enable, also render + load
+    the LaunchAgent (the opt-in step). On disable, leave the service loaded and
+    idle — the kill switch pauses spawning without an unload."""
+    import subprocess
+    from pathlib import Path
+
+    import yaml
+
+    cfg_path = Path.home() / ".aos" / "config" / "work-runner.yaml"
+    cfg = {}
+    if cfg_path.exists():
+        cfg = yaml.safe_load(cfg_path.read_text()) or {}
+    cfg["enabled"] = enable
+    cfg_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg_path.write_text(yaml.safe_dump(cfg, sort_keys=False))
+    print(f"Set runner.enabled = {enable} in {cfg_path}")
+
+    if not enable:
+        print("Spawning paused. Service stays loaded (in-flight workers finish + park).")
+        return
+
+    # Render the plist from the service-dir template (not auto-globbed, so the
+    # runner is never deployed until this deliberate opt-in) and load it.
+    home = Path.home()
+    for root in (home / "aos", home / "project" / "aos"):
+        tmpl = root / "core" / "services" / "work_runner" / "com.aos.work-runner.plist.template"
+        if tmpl.exists():
+            break
+    else:
+        print("Could not find plist template; service not loaded.")
+        return
+    plist = home / "Library" / "LaunchAgents" / "com.aos.work-runner.plist"
+    plist.write_text(tmpl.read_text().replace("__HOME__", str(home)))
+    subprocess.run(["launchctl", "unload", str(plist)], capture_output=True, text=True)
+    res = subprocess.run(["launchctl", "load", str(plist)], capture_output=True, text=True)
+    if res.returncode == 0:
+        print(f"Loaded com.aos.work-runner ({plist}). Runner is live.")
+    else:
+        print(f"Wrote plist but load reported: {res.stderr.strip()}")
+
+
 def cmd_activity(args):
     """Show or append a task's narrative activity log (Kanban Phase 2).
 
@@ -1537,6 +1633,7 @@ COMMANDS = {
     "delegate": cmd_delegate,
     "hold": cmd_hold,
     "activity": cmd_activity,
+    "runner": cmd_runner,
     "show": cmd_show,
     "list": cmd_list,
     "search": cmd_search,
