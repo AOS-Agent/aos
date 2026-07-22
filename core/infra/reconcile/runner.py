@@ -17,6 +17,7 @@ import sys
 import traceback
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Optional
 
 # Add parent to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
@@ -27,10 +28,99 @@ LOG_FILE = Path.home() / ".aos" / "logs" / "reconcile.jsonl"
 STATE_FILE = Path.home() / ".aos" / "data" / "reconcile-state.json"
 
 
-def _load_checks() -> list[type[ReconcileCheck]]:
-    """Import all checks from the checks/ package."""
-    from checks import ALL_CHECKS
-    return ALL_CHECKS
+def _load_checks() -> tuple[list[type[ReconcileCheck]], list[CheckResult]]:
+    """Import every check. Returns (check_classes, import_failures).
+
+    The fast path is the curated ALL_CHECKS registry, which fixes run order.
+    That registry lives in checks/__init__.py and imports every check module at
+    module scope, so ONE bad import raises there and takes every other check
+    down with it — before run_all() has logged anything.
+
+    That is not hypothetical. A relative import in deployment_health.py
+    resolved under pytest but not under this runner's sys.path layout, and
+    silently disabled all 22 checks on a live machine for ~3.5 months. Nothing
+    reached the logs and the state file simply stopped updating, so reconcile
+    read as dormant rather than dead.
+
+    So when the registry import fails, fall back to loading each check module
+    on its own: modules that import are kept and run, modules that do not are
+    returned as ERROR results. Reconcile degrades to (N-1) checks and says so,
+    instead of silently dropping to zero.
+    """
+    try:
+        from checks import ALL_CHECKS
+        return list(ALL_CHECKS), []
+    except Exception as e:
+        registry_failure = CheckResult(
+            "reconcile_check_registry",
+            Status.ERROR,
+            f"checks/__init__.py failed to import ({e}) — fell back to "
+            "per-module loading; run order and check set are not guaranteed",
+            detail=traceback.format_exc(),
+            notify=True,
+        )
+        classes, module_failures = _load_checks_individually()
+        return classes, [registry_failure] + module_failures
+
+
+def _load_checks_individually(
+    checks_dir: Optional[Path] = None,
+) -> tuple[list[type[ReconcileCheck]], list[CheckResult]]:
+    """Degraded path: load each check module directly from its file.
+
+    Loads by file path rather than `import checks.<name>`, because importing a
+    submodule would re-run the checks/__init__.py that just failed.
+
+    Two deliberate compromises, both preferable to running nothing: run order
+    falls back to filename order, and any check defined on disk but excluded
+    from ALL_CHECKS will run here. This path is only reached when the registry
+    is already broken.
+
+    checks_dir is injectable so tests can point it at a fixture directory
+    instead of importing every real check.
+    """
+    import importlib.util
+
+    if checks_dir is None:
+        checks_dir = Path(__file__).parent / "checks"
+    loaded: list[type[ReconcileCheck]] = []
+    failures: list[CheckResult] = []
+    seen: set[str] = set()
+
+    for path in sorted(checks_dir.glob("*.py")):
+        if path.stem.startswith("_"):
+            continue
+        mod_name = f"_reconcile_check_{path.stem}"
+        try:
+            spec = importlib.util.spec_from_file_location(mod_name, path)
+            if spec is None or spec.loader is None:
+                raise ImportError(f"could not build an import spec for {path.name}")
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[mod_name] = module
+            spec.loader.exec_module(module)
+        except Exception as e:
+            sys.modules.pop(mod_name, None)
+            failures.append(CheckResult(
+                f"load:{path.stem}",
+                Status.ERROR,
+                f"Check module failed to import: {e}",
+                detail=traceback.format_exc(),
+                notify=True,
+            ))
+            continue
+
+        for obj in vars(module).values():
+            if (
+                isinstance(obj, type)
+                and issubclass(obj, ReconcileCheck)
+                and obj is not ReconcileCheck
+                and obj.__module__ == mod_name
+                and obj.__name__ not in seen
+            ):
+                seen.add(obj.__name__)
+                loaded.append(obj)
+
+    return loaded, failures
 
 
 def _notify_telegram(message: str):
@@ -109,9 +199,12 @@ def run_all(dry_run: bool = False, periodic: bool = False) -> list[CheckResult]:
             reconcile owns (dead code, storage drift, vault debt) are logged but
             not re-pinged every 30 minutes.
     """
-    check_classes = _load_checks()
-    results = []
-    needs_notify = []
+    check_classes, load_failures = _load_checks()
+    # Import failures are results in their own right — they must be logged and
+    # notified, not swallowed. A check that cannot load is a check that is not
+    # protecting anything.
+    results = list(load_failures)
+    needs_notify = [r for r in load_failures if r.notify]
 
     for cls in check_classes:
         c = cls()
