@@ -1,0 +1,47 @@
+# Work Runner configuration — Default Template
+# Copied to ~/.aos/config/work-runner.yaml on install (migration 092).
+#
+# The generic agent-driven-kanban runner (Kanban Phase 4). It polls work.db for
+# tasks delegated to an agent and spawns a headless claude worker for each, up to
+# a hard concurrency cap. It NEVER auto-completes a task — a finished worker
+# leaves it in a review state for a human; a failed worker parks it for attention.
+#
+# ── KILL SWITCH ──────────────────────────────────────────────────────────────
+# `enabled` ships FALSE. This is autonomous agent spawning on a Claude *subscription*
+# (no API key, session-limited) — the operator opts in deliberately. Flip to true
+# AND load the service (`work runner enable`) to activate. Set back to false at any
+# time to globally pause spawning without unloading the service; in-flight workers
+# finish and park, no new ones start.
+enabled: false
+
+# Bounded concurrency (spec §3.7) — a subscription, not an API key. Never fan out.
+max_concurrent: 2
+
+# Per-task wall-clock cap. Over this, the worker's process group is killed and the
+# task is parked for attention.
+spawn_timeout_seconds: 600
+
+# How often the board is polled (the board is the queue, spec §3.4).
+poll_interval_seconds: 15
+
+# Trust gate (spec §3.8): a delegated task only auto-spawns if the delegate agent's
+# capability trust level (from trust.yaml) is >= this floor. Below it, the task is
+# parked "awaiting operator go" instead of spawned. `always_escalate` capabilities
+# in trust.yaml are a hard floor regardless of level.
+#   0 SHADOW · 1 APPROVAL · 2 SEMI-AUTO · 3 FULL-AUTO
+trust_floor: 1
+
+# The capability name used to look up trust when a task doesn't declare one in its
+# fields. An agent that doesn't declare this capability reads as untrusted for it.
+default_capability: task_execution
+
+# Tool allowlist handed to the headless worker (Sentinel-shaped spawn).
+allowed_tools: "Read,Write,Edit,Glob,Grep,Bash,WebSearch,WebFetch"
+
+# Model override for the worker, or null to use the agent's default model.
+model: null
+
+# Terminal states. A successful run moves the task here (NEVER 'done' — a human
+# approves); a failed run / trust-park moves it to needs_attention_status.
+review_status: in_review
+needs_attention_status: waiting
