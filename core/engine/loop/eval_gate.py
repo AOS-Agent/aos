@@ -6,7 +6,7 @@ to the judge prompt or model ships, it must clear this gate against a
 frozen, hand-labeled dataset — so a prompt tweak that looks better on a
 handful of examples can't silently regress on the rest.
 
-Dataset layout (default: ~/vault/knowledge/references/loop-eval-v1/,
+Dataset layout (default: ~/vault/knowledge/references/loop-eval-v1.1/,
 override with AOS_LOOP_EVAL_DIR):
 
     messages.jsonl   one row per message:
@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
-LABELS = ("correction", "frustration", "overreach", "retry", "none")
+LABELS = ("correction", "defect_report", "frustration", "overreach", "retry", "none")
 FRICTION_LABELS = tuple(l for l in LABELS if l != "none")
 
 DEFAULT_THRESHOLDS = {
@@ -53,7 +53,7 @@ def default_dataset_dir() -> Path:
     override = os.environ.get("AOS_LOOP_EVAL_DIR")
     if override:
         return Path(override)
-    return Path.home() / "vault" / "knowledge" / "references" / "loop-eval-v1"
+    return Path.home() / "vault" / "knowledge" / "references" / "loop-eval-v1.1"
 
 
 def _sha256_file(path: Path) -> str:
