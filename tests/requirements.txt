@@ -1,8 +1,12 @@
 # Test-suite third-party deps — CI installs from this file.
-# Verified minimal: clean venv + these six -> 656 passed (2026-07-15).
+# Verified minimal: clean venv + these eight -> full suite green (2026-07-22).
 pytest
 pyyaml
 rapidfuzz
 networkx
 phonenumbers
 httpx
+# core/engine/work/intake/ascbuild.py imports these at module scope, so
+# tests/engine/work/test_ascbuild_intake.py fails collection without them.
+pyjwt
+requests
