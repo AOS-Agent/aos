@@ -1,0 +1,16 @@
+name: work-runner
+purpose: Generic agent-driven-kanban runner — spawns a headless agent for a delegated task (Kanban Phase 4).
+# OPTIONAL by design: this is autonomous agent spawning. It ships OFF
+# (runner.enabled: false in ~/.aos/config/work-runner.yaml) and is not deployed
+# on a fresh install — the operator opts in with `work runner enable`, which
+# renders + loads the plist and flips the kill-switch. Because status=optional,
+# ServiceLoadedCheck treats "not loaded" as fine (never restarts an absent
+# opt-in service); once the operator loads it, it's held to the loaded bar.
+# liveness=none: it binds no port and owns its own poll interval + KeepAlive.
+status: optional
+type: resident
+owner_layer: framework
+label: com.aos.work-runner
+plist_template: com.aos.work-runner.plist.template
+keepalive: true
+liveness: none
