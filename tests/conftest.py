@@ -8,6 +8,7 @@ real operator data.
 """
 
 import sqlite3
+import subprocess
 import sys
 from pathlib import Path
 
@@ -31,6 +32,41 @@ def _make_work_db(path: Path) -> Path:
     conn.commit()
     conn.close()
     return path
+
+
+# ---------------------------------------------------------------------------
+# Suite-wide tripwire: no test may ever shell out to the `gh` CLI.
+#
+# The work engine syncs project="aos" tasks to GitHub Issues. Before it was
+# guarded (AOS_GITHUB_SYNC opt-in + pytest detection), fixtures in this suite
+# filed ~1,900 real issues on the public repo. The guard prevents that at the
+# source; this tripwire makes any regression fail the suite loudly instead of
+# silently spamming GitHub again.
+# ---------------------------------------------------------------------------
+
+_REAL_SUBPROCESS_RUN = subprocess.run
+
+
+@pytest.fixture(autouse=True)
+def no_gh_subprocess(monkeypatch):
+    """Fail any test that tries to invoke the `gh` CLI."""
+
+    def guarded_run(*args, **kwargs):
+        cmd = args[0] if args else kwargs.get("args")
+        prog = ""
+        if isinstance(cmd, (list, tuple)) and cmd:
+            prog = str(cmd[0])
+        elif isinstance(cmd, str):
+            parts = cmd.split()
+            prog = parts[0] if parts else ""
+        if Path(prog).name == "gh":
+            raise RuntimeError(
+                f"Blocked `gh` invocation from the test suite: {cmd!r}. "
+                "Tests must never reach GitHub — see AOS_GITHUB_SYNC guard."
+            )
+        return _REAL_SUBPROCESS_RUN(*args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", guarded_run)
 
 
 # ---------------------------------------------------------------------------
