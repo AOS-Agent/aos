@@ -115,3 +115,12 @@ async def judge(text: str, prev_snippet: str | None = None) -> dict:
     if verdict is None:
         raise llm.LLMError(f"judge returned unparseable verdict: {raw[:200]}")
     return verdict
+
+
+def version_hash() -> str:
+    """Stable hash of the judge's behavior-defining inputs (prompt + model).
+    The eval gate records this on PASS; the nightly sensor refuses to run
+    a judge whose hash has no matching pass marker."""
+    import hashlib
+
+    return hashlib.sha256((SYSTEM_PROMPT + "|" + MODEL).encode()).hexdigest()[:12]
