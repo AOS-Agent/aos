@@ -21,11 +21,13 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import signal
 import subprocess
 import threading
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable
 
 from core.engine.comms.enrich.authcheck import is_auth_failure
@@ -57,6 +59,28 @@ explanation, no markdown fences:
 confidence: your calibrated 0-1 certainty the entity is real and correctly typed.
 source_ids: the message id(s) the entity came from. Every entity MUST cite >=1 id.
 Unknown field values: use null. Never fabricate names, amounts, or dates."""
+
+
+
+def _claude_bin() -> str:
+    """Resolve the `claude` binary by absolute path.
+
+    Cron/LaunchAgent runs with a stripped PATH that omits Homebrew, so a
+    bare "claude" argv[0] raises FileNotFoundError under the scheduler
+    (worked interactively, crashed every night at 03:30 — 2026-07-22).
+    Honor an explicit override, then PATH, then the common install dirs.
+    """
+    override = os.environ.get("AOS_CLAUDE_BIN")
+    if override and Path(override).exists():
+        return override
+    found = shutil.which("claude")
+    if found:
+        return found
+    for cand in ("/opt/homebrew/bin/claude", "/usr/local/bin/claude",
+                 str(Path.home() / ".local/bin/claude")):
+        if Path(cand).exists():
+            return cand
+    return "claude"  # last resort: let it fail loudly with a clear message
 
 
 def build_prompt(batch, *, max_msg_chars: int) -> str:
@@ -197,10 +221,19 @@ def run_batch(batch, *, model: str, timeout_s: int, max_msg_chars: int,
     """Extract one batch. Returns a result dict with entities + usage/telemetry
     or an error marker. Registers/tears down its process group around the call."""
     prompt = build_prompt(batch, max_msg_chars=max_msg_chars)
-    cmd = ["claude", "--print", "--model", model,
+    cmd = [_claude_bin(), "--print", "--model", model,
            "--system-prompt", SYSTEM_PROMPT, "--output-format", "json"]
     t0 = time.time()
-    proc = _spawn(cmd)
+    try:
+        proc = _spawn(cmd)
+    except (FileNotFoundError, OSError) as e:
+        # Spawn itself failed (e.g. claude not on PATH under cron). One bad
+        # batch must never crash the whole nightly run — return a batch error
+        # so it's counted + retried, not a traceback. Flag it distinctly so
+        # the engine can pause if EVERY batch fails to spawn.
+        return {"batch_key": batch.batch_key, "ok": False,
+                "error": f"spawn_failed: {e}", "spawn_failed": True,
+                "entities": []}
     live.register(proc.pid)
     try:
         try:
