@@ -17,6 +17,7 @@ import os
 import re
 import sqlite3
 import subprocess
+import sys
 import tempfile
 import urllib.request
 from datetime import date, datetime
@@ -34,10 +35,31 @@ AOS_REPO = "hishamalhadi/aos"  # GitHub repo for issue sync
 # ── GitHub Issues sync (public roadmap) ────────────────────
 # Only syncs: title, priority label, open/closed status.
 # No handoff, notes, sessions, or personal data ever leaves the machine.
+# Opt-in: requires AOS_GITHUB_SYNC=1. Never runs under pytest.
+
+def _in_pytest() -> bool:
+    """True when running inside a pytest process."""
+    return "pytest" in sys.modules or "PYTEST_CURRENT_TEST" in os.environ
+
+
+def _gh_sync_enabled() -> bool:
+    """GitHub Issues sync is opt-in: requires AOS_GITHUB_SYNC=1 in the env.
+
+    Hard-disabled under pytest regardless of the env var, so test fixtures
+    that create project="aos" tasks can never file real issues on AOS_REPO
+    (the unguarded suite filed ~1,900 of them).
+    """
+    if _in_pytest():
+        return False
+    return os.environ.get("AOS_GITHUB_SYNC", "").strip().lower() in ("1", "true", "yes")
+
 
 def _gh_create_issue(task_id: str, title: str, priority: int = 3,
                      subtask_titles: list[str] | None = None) -> str | None:
     """Create a GitHub Issue. Returns the issue URL or None on failure."""
+    if not _gh_sync_enabled():
+        _gh_log.debug("GitHub sync disabled (set AOS_GITHUB_SYNC=1 to enable)")
+        return None
     try:
         labels = f"task,P{priority}"
         body = f"**Task ID:** `{task_id}`"
@@ -66,6 +88,9 @@ def _gh_create_issue(task_id: str, title: str, priority: int = 3,
 
 def _gh_close_issue(task_id: str) -> bool:
     """Close a GitHub Issue by searching for its task ID in the title."""
+    if not _gh_sync_enabled():
+        _gh_log.debug("GitHub sync disabled (set AOS_GITHUB_SYNC=1 to enable)")
+        return False
     try:
         # Find the issue number by searching
         result = subprocess.run(
