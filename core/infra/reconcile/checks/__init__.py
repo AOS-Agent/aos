@@ -15,6 +15,7 @@ from .launchagents import LaunchAgentPythonCheck
 from .log_location import LogLocationCheck
 from .mcp_location import McpLocationCheck
 from .n8n import N8nServiceCheck
+from .power_autorestart import PowerAutorestartCheck
 from .push_guard import PushGuardCheck
 from .runtime_protection import RuntimeProtectionCheck
 from .sentinel_plist import SentinelPlistDriftCheck
@@ -86,6 +87,11 @@ ALL_CHECKS = [
 
     # Hardware — disk SMART health monitoring
     DiskSmartCheck,
+
+    # Hardware — power: `pmset autorestart 1` survives macOS updates and
+    # NVRAM/SMC resets, so a headless Mac reboots after a power cut.
+    # NOTIFY-only (pmset -a needs sudo); skipped on battery-equipped Macs.
+    PowerAutorestartCheck,
 
     # Context — CLAUDE.md dynamic content matches system state
     ContextFreshnessCheck,
