@@ -21,6 +21,7 @@ import logging
 import os
 import re
 import subprocess
+import sys
 import tempfile
 from datetime import datetime
 from pathlib import Path
@@ -137,10 +138,30 @@ def _write_activity_sync(event: Event) -> None:
             fcntl.flock(lf, fcntl.LOCK_UN)
 
 
+def _in_pytest() -> bool:
+    """True when running inside a pytest process."""
+    return "pytest" in sys.modules or "PYTEST_CURRENT_TEST" in os.environ
+
+
+def _gh_sync_enabled() -> bool:
+    """GitHub Issues sync is opt-in: requires AOS_GITHUB_SYNC=1 in the env.
+
+    Hard-disabled under pytest regardless of the env var, so test fixtures
+    that create project="aos" tasks can never file real issues on AOS_REPO
+    (the unguarded suite filed ~1,900 of them).
+    """
+    if _in_pytest():
+        return False
+    return os.environ.get("AOS_GITHUB_SYNC", "").strip().lower() in ("1", "true", "yes")
+
+
 def _gh_create_issue_sync(
     task_id: str, title: str, priority: int = 3
 ) -> str | None:
     """Create a GitHub Issue for an AOS task. Returns issue URL or None."""
+    if not _gh_sync_enabled():
+        logger.debug("GitHub sync disabled (set AOS_GITHUB_SYNC=1 to enable)")
+        return None
     labels = f"task,P{priority}"
     body = f"**Task ID:** `{task_id}`"
 
@@ -164,6 +185,9 @@ def _gh_create_issue_sync(
 
 def _gh_close_issue_sync(task_id: str) -> bool:
     """Close a GitHub Issue by searching for its task ID in the title."""
+    if not _gh_sync_enabled():
+        logger.debug("GitHub sync disabled (set AOS_GITHUB_SYNC=1 to enable)")
+        return False
     # Find the issue number
     result = subprocess.run(
         [
