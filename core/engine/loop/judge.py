@@ -32,7 +32,7 @@ MODEL = os.environ.get("AOS_LOOP_JUDGE_MODEL", "haiku")
 
 SYSTEM_PROMPT = """You classify single messages from a human operator's terminal sessions with an AI agent. Your output feeds a self-improvement system, so precision matters more than recall: when genuinely torn, prefer "none".
 
-Answer with STRICT JSON only, no prose: {"machine_text": <bool>, "label": "<correction|frustration|overreach|retry|none>"}
+Answer with STRICT JSON only, no prose: {"machine_text": <bool>, "label": "<correction|defect_report|frustration|overreach|retry|none>"}
 
 STEP 1 — machine_text. Is this text a HUMAN operator typing in the moment? Set machine_text=true (and label="none", always) if the text is generated or pasted content:
 - agent/system prompts ("You are Envoy...", "You are an AI agent...")
@@ -42,13 +42,15 @@ STEP 1 — machine_text. Is this text a HUMAN operator typing in the moment? Set
 Fragmented human notes with typos are NOT machine text — humans type messily.
 
 STEP 2 — label (only if machine_text=false). Friction means the operator is pushing back on what the agent DID:
-- "correction": the operator contradicts or faults a SPECIFIC prior agent action, output, or claim ("no that's not what I meant", "you missed X", "that's not the same font", "you're in the WRONG explorer", "your fix didn't work — it's still broken"). INCLUDES feedback on the agent's ongoing behavior ("your status updates need to be cleaner", "stop working in this session, use another").
+- "defect_report": the operator reports a flaw, bug, or quality shortfall in an ARTIFACT the agent built — UI defects ("the email isn't centered", "the glyphs are cut off", "arabic is left-aligned, should be right"), broken behavior ("zoom is broken", "clicking sign-in blanks the page", "where did the status line go?"), missing or wrong content in a produced document ("you missed the verses from X", "this should have been in the lesson"), or output quality shortfalls ("the rebuild didn't do a good job", "the extracted data seems off"). Needs NO emotional charge — a calm, even question-phrased report of something broken in agent work counts ("why is the email not centered?"). Distinct from design preference: "I want it blue instead" is none; "it's rendering wrong / broken / missing" is defect_report.
+- "correction": the operator contradicts or faults the agent's UNDERSTANDING, CLAIM, or interaction behavior ("no that's not what I meant", "you missed X", "that's not the same font", "you're in the WRONG explorer", "your fix didn't work — it's still broken"). INCLUDES feedback on the agent's ongoing behavior ("your status updates need to be cleaner", "stop working in this session, use another").
   THE HARD BOUNDARY — all of these are "none", not correction:
   * design iteration and creative redirection, even when it voices dislike: "I don't like the visuals, let's think through the light/states", "the shapes are too basic, how do we make this 10x", "I'm not liking the direction — gain some grounding and I'll share my ideas"
   * brand-new instructions or preferences with no prior agent action faulted: "make the kaaba bigger", "get rid of the sun in the dial", "this should be mobile first"
   * asking the agent to double-check or be careful BEFORE any mistake is found: "make sure we're building this correctly", "I hope you looked deeply into X"
   * answering the agent's question with a different choice than it proposed
   The test: is a specific thing the agent already DID or CLAIMED being called wrong? If the message only shapes what happens NEXT, it is "none".
+  PRECEDENCE when mixed: emotional heat (caps, repetition, exasperation) -> "frustration"; else artifact flaw -> "defect_report"; else misunderstanding/claim -> "correction". Plain questions ("did you launch something?") and plain requests ("can you put it on my phone") are "none".
 - "frustration": annoyance AT the agent's behavior or results — repeated failed fixes ("THE SHIFT IS STILL THERE"), emphatic caps about broken output ("MORE DOESNT OPEN A DROPDOWN"), impatience with the agent's pace ("what's taking so long"), "why did you / what are you doing". A bug report phrased as a neutral question with no emotional charge ("why is it when you click sign in it goes blank?") is "none" — frustration needs heat: repetition, caps, exasperation, or blame.
 - "overreach": the operator calls out that the agent did MORE than asked or acted without approval.
 - "retry": the operator asks to redo/rerun/revert because the attempt failed — INCLUDING failures of the surrounding system (API errors, stalled jobs), not just agent mistakes. EXCLUDES retries the operator attributes to their own environment ("sorry, my wifi was off — try again") — that is "none".
@@ -57,6 +59,9 @@ STEP 2 — label (only if machine_text=false). Friction means the operator is pu
 Calibration examples (synthetic):
 - "You are Scout, an AI agent researching flights on behalf of..." -> {"machine_text": true, "label": "none"}
 - "no no, I wanted the sidebar on the LEFT, you moved the whole panel" -> {"machine_text": false, "label": "correction"}
+- "the save button is cut off on the profile page" -> {"machine_text": false, "label": "defect_report"}
+- "why is the date showing in english numerals? it should be arabic" -> {"machine_text": false, "label": "defect_report"}
+- "chapter 3 is missing the last two sections you said were included" -> {"machine_text": false, "label": "defect_report"}
 - "bro its STILL broken. third time. what are you even doing" -> {"machine_text": false, "label": "frustration"}
 - "I only asked you to draft it, why did you send the email??" -> {"machine_text": false, "label": "overreach"}
 - "hit another rate limit error, run it again" -> {"machine_text": false, "label": "retry"}
@@ -67,7 +72,7 @@ Calibration examples (synthetic):
 - "why does the page go blank after login?" -> {"machine_text": false, "label": "none"}
 - "Batch: 17 message(s), channel=whatsapp. Messages: [wa_1024] (inbound) hey..." -> {"machine_text": true, "label": "none"}"""
 
-_VALID_LABELS = {"correction", "frustration", "overreach", "retry", "none"}
+_VALID_LABELS = {"correction", "defect_report", "frustration", "overreach", "retry", "none"}
 
 
 def _build_prompt(text: str, prev_snippet: str | None) -> str:
