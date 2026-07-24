@@ -114,7 +114,7 @@ def resolve_topic(topic: str | None, kind: str = "info") -> str:
 
 def _send_raw(token: str, chat_id: int | str, text: str,
               thread_id: int | None = None, parse_mode: str | None = "HTML",
-              silent: bool = False) -> tuple[bool, str]:
+              silent: bool = False, no_preview: bool = False) -> tuple[bool, str]:
     """One sendMessage call. Returns (ok, error_description)."""
     payload: dict = {
         "chat_id": chat_id,
@@ -125,6 +125,8 @@ def _send_raw(token: str, chat_id: int | str, text: str,
         payload["parse_mode"] = parse_mode
     if thread_id:
         payload["message_thread_id"] = thread_id
+    if no_preview:
+        payload["disable_web_page_preview"] = True
 
     req = urllib.request.Request(
         f"https://api.telegram.org/bot{token}/sendMessage",
@@ -147,7 +149,7 @@ def _send_raw(token: str, chat_id: int | str, text: str,
 
 def send_notification(text: str, topic: str | None = None, kind: str = "info",
                       parse_mode: str | None = "HTML",
-                      silent: bool = False) -> dict:
+                      silent: bool = False, no_preview: bool = False) -> dict:
     """Deliver a notification, never silently dropping it.
 
     Returns a result dict: {"delivered": bool, "target": "topic:work" |
@@ -172,7 +174,7 @@ def send_notification(text: str, topic: str | None = None, kind: str = "info",
 
     # Tier: group + topic thread
     if group_id and thread_id:
-        ok, err = _send_raw(token, group_id, text, thread_id, parse_mode, silent)
+        ok, err = _send_raw(token, group_id, text, thread_id, parse_mode, silent, no_preview)
         if ok:
             return {"delivered": True, "target": f"topic:{resolved}", "error": None}
         lowered = err.lower()
@@ -181,7 +183,7 @@ def send_notification(text: str, topic: str | None = None, kind: str = "info",
 
     # Tier: group General (topics disabled/deleted, or no thread known)
     if group_id:
-        ok, err = _send_raw(token, group_id, text, None, parse_mode, silent)
+        ok, err = _send_raw(token, group_id, text, None, parse_mode, silent, no_preview)
         if ok:
             if thread_id:
                 log.warning("Topic %r unavailable — delivered to group General", resolved)
@@ -191,7 +193,7 @@ def send_notification(text: str, topic: str | None = None, kind: str = "info",
     # Tier: operator DM
     chat_id = _get_secret("TELEGRAM_CHAT_ID")
     if chat_id:
-        ok, err = _send_raw(token, chat_id, text, None, parse_mode, silent)
+        ok, err = _send_raw(token, chat_id, text, None, parse_mode, silent, no_preview)
         if ok:
             return {"delivered": True, "target": "dm", "error": None}
         log.error("All notification targets failed: %s", err)
