@@ -1,0 +1,23 @@
+#!/bin/bash
+# track-backfill — nightly comms-history sweep through the detection
+# pipeline, DRY-RUN ONLY. Prints what a real backfill would enqueue
+# (candidates, priors) without writing anything; --write stays an
+# operator-run decision until the eval set validates thresholds.
+set -u
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+AOS_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+QAREEN_VENV="$HOME/.aos/services/qareen/.venv/bin/python"
+
+if [ -x "$QAREEN_VENV" ]; then
+    PYTHON="$QAREEN_VENV"
+else
+    PYTHON="$AOS_ROOT/core/bin/internal/aos-python"
+fi
+
+cd "$AOS_ROOT/core" || { echo "[track-backfill] cannot cd to $AOS_ROOT/core" >&2; exit 1; }
+
+ts() { date '+%Y-%m-%d %H:%M:%S'; }
+echo "[track-backfill] $(ts) dry-run sweep of comms.db"
+
+"$PYTHON" -m qareen.tracking.backfill

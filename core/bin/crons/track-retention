@@ -1,0 +1,26 @@
+#!/bin/bash
+# track-retention — daily carrier-retention report, DRY-RUN ONLY.
+#
+# Prints which delivered shipments are past their carrier's mandated
+# retention window (DHL: 30 days after delivery, per its API terms) and
+# what a purge would remove. Actually purging requires an operator-run
+# `python3 -m qareen.tracking.retention --apply` — the cron deliberately
+# never deletes.
+set -u
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+AOS_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+QAREEN_VENV="$HOME/.aos/services/qareen/.venv/bin/python"
+
+if [ -x "$QAREEN_VENV" ]; then
+    PYTHON="$QAREEN_VENV"
+else
+    PYTHON="$AOS_ROOT/core/bin/internal/aos-python"
+fi
+
+cd "$AOS_ROOT/core" || { echo "[track-retention] cannot cd to $AOS_ROOT/core" >&2; exit 1; }
+
+ts() { date '+%Y-%m-%d %H:%M:%S'; }
+echo "[track-retention] $(ts) retention dry-run"
+
+"$PYTHON" -m qareen.tracking.retention

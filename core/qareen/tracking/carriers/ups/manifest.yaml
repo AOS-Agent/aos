@@ -1,0 +1,89 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# UPS carrier pack (auto-tracker#14)
+#
+# Sources (researched 2026-07-24):
+#   - developer.ups.com — Track API v1 + OAuth2 docs
+#   - Number format/check digit: jkeen/tracking_number_data couriers/ups.json
+# ⚠ DOC-DERIVED: validated against docs + public test numbers only. Per the
+#   onboarding pipeline this pack stays canary until a real captured API
+#   response (post-credential) replaces the fixtures and confirms the maps.
+# ─────────────────────────────────────────────────────────────────────────────
+
+carrier: ups
+display_name: UPS
+
+# OAuth2 client credentials: POST the token endpoint with HTTP Basic
+# (base64(client_id:client_secret)) and form grant_type=client_credentials.
+# Cache the token with expiry-60s margin (engine client concern).
+auth:
+  model: oauth2_client_credentials
+  keychain_keys:
+    - UPS_CLIENT_ID_PROD
+    - UPS_CLIENT_SECRET_PROD
+
+endpoints:
+  base: https://onlinetools.ups.com
+  token: https://onlinetools.ups.com/security/v1/oauth/token
+  # GET, Authorization: Bearer <token>. {number} = canonical tracking number.
+  track: https://onlinetools.ups.com/api/track/v1/details/{number}
+  # Track Alert (push webhook) subscription registration — POST JSON with the
+  # tracking number + our callback URL. Polling remains source of truth;
+  # the webhook only reduces latency (see initiative §3).
+  webhook_subscribe: https://onlinetools.ups.com/api/trackalert/v1/subscription/standard/json
+
+tracking:
+  patterns:
+    # 1Z + 6-char shipper + 2-char service + 7-char package id + check digit.
+    - '1Z[0-9A-Z]{16}'
+    # UPS waybill numbers (Air/WorldWide Express docs): A/H/J/K/T/V + 10 digits.
+    - '[AHJKTV][0-9]{10}'
+  check_digit: ups_mod10
+
+url_templates:
+  - https://www.ups.com/track?tracknum={number}
+  - https://wwwapps.ups.com/WebTracking/track?track=yes&trackNums={number}
+
+capabilities:
+  edd: true   # deliveryDate / scheduled-delivery elements
+  pod: true   # signature + delivery photo via Track Alert w/ Photo
+  push: true  # Track Alert webhook API (14-day TTL — auto re-register)
+
+# UPS activity status codes (status.code) → canonical milestones.
+# Codes not listed normalize to milestone: null (kept raw, never guessed).
+status_map:
+  MP: label_created      # Order Processed: Ready for UPS
+  BK: label_created      # Shipper created a label, UPS has not received the package yet
+  OR: picked_up          # Origin Scan
+  PU: picked_up          # Pickup Scan
+  AR: in_transit         # Arrival Scan
+  DP: in_transit         # Departure Scan
+  DS: in_transit         # Destination Scan
+  WD: in_transit         # Warehouse Scan
+  OT: out_for_delivery   # Out For Delivery
+  DL: delivered          # Delivered
+  KB: delivered          # Delivered (front desk/reception)
+  X: exception           # Exception
+  XD: exception          # Exception (delayed)
+  NA: failed_attempt     # Not available for delivery attempt
+  RS: returned           # Returned to Shipper
+
+# Track API v1 response shape: trackResponse.shipment[0].package[0].
+# UPS splits event date/time (YYYYMMDD / HHMMSS); `date` rides as the raw
+# timestamp string — the storage layer parses it (plus gmtDate/gmtTime).
+response_map:
+  events: $.trackResponse.shipment[0].package[0].activity[*]
+  eta: $.trackResponse.shipment[0].package[0].deliveryDate[0].date
+  event_fields:
+    timestamp: $.date
+    code: $.status.code
+    description: $.status.description
+    location: $.location.address.city
+
+rate_limits:
+  # UPS publishes no fixed daily quota for Track; budget conservatively with
+  # headroom for probes. Tune after first live week.
+  requests_per_day: 500
+  min_interval_seconds: 1
+
+retention:
+  delete_days_after_delivery: null

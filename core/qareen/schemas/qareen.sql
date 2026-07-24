@@ -868,3 +868,166 @@ CREATE TABLE IF NOT EXISTS remote_access (
     updated_at      TEXT,
     error_message   TEXT
 );
+
+-- ============================================================
+-- AUTO TRACKER (shipment intelligence — migration 093)
+-- ============================================================
+-- Shipment tracking storage. The runtime store
+-- (qareen.tracking.store.ShipmentStore) self-initializes from
+-- SCHEMA_SQL in core/qareen/tracking/store.py, which is the single
+-- source of truth for this DDL; migration 093 applies that same string
+-- to ~/.aos/data/qareen.db. Keep this section byte-identical to
+-- store.SCHEMA_SQL — the section below is generated from it.
+--
+-- Key rules:
+-- * shipment_events is APPEND-ONLY (carrier APIs purge history; we don't).
+-- * Number-recycling guard lives in the store: terminal/archived shipments
+--   never merge new polls — a recycled number forks a new shipments row.
+-- * tracking_state holds watermarks, the singleton lock, per-carrier
+--   quota-exhausted-until markers, and token buckets (opaque strings).
+
+CREATE TABLE IF NOT EXISTS shipments (
+    id              TEXT PRIMARY KEY,
+    tracking_number TEXT NOT NULL,          -- canonical (engine.canonicalize)
+    carrier         TEXT NOT NULL,          -- pack slug, e.g. 'ups'
+    direction       TEXT NOT NULL DEFAULT 'inbound',  -- inbound|outbound|return
+    milestone       TEXT NOT NULL DEFAULT 'label_created',
+    eta             TEXT,                   -- ISO 8601
+    merchant        TEXT,
+    merchant_domain TEXT,
+    category        TEXT,                   -- from domain_rules / LLM
+    label           TEXT,                   -- user-facing free-text label
+    person_id       TEXT,                   -- ontology link (about → person)
+    privacy_level   INTEGER NOT NULL DEFAULT 0,  -- propagated from people.db
+    source          TEXT NOT NULL DEFAULT 'manual',  -- api|email|manual|digest
+    confidence      REAL NOT NULL DEFAULT 1.0,
+    status          TEXT NOT NULL DEFAULT 'active',  -- active|delivered|expired|archived
+    first_seen      TEXT NOT NULL,          -- ISO 8601; part of the dedup key
+    next_poll_at    TEXT,                   -- scheduler due-queue column
+    created         TEXT NOT NULL,
+    updated         TEXT NOT NULL
+);
+-- Hot paths: scheduler due-queue, number lookup/dedup.
+CREATE INDEX IF NOT EXISTS idx_shipments_poll
+    ON shipments(status, next_poll_at);
+CREATE INDEX IF NOT EXISTS idx_shipments_number
+    ON shipments(tracking_number);
+CREATE INDEX IF NOT EXISTS idx_shipments_carrier_number
+    ON shipments(carrier, tracking_number);
+
+-- Append-only event store. The carrier API is a source, never the store.
+CREATE TABLE IF NOT EXISTS shipment_events (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    shipment_id TEXT NOT NULL REFERENCES shipments(id),
+    seq         INTEGER NOT NULL,           -- assigned by the store (max+1)
+    timestamp   TEXT,                       -- carrier-reported event time
+    fetched_at  TEXT NOT NULL,              -- when we pulled it from the API
+    milestone   TEXT,                       -- NULL when unmapped; raw kept
+    description TEXT,
+    location    TEXT,
+    raw_json    TEXT,                       -- unmodified carrier event JSON
+    UNIQUE(shipment_id, seq)
+);
+CREATE INDEX IF NOT EXISTS idx_events_shipment_seq
+    ON shipment_events(shipment_id, seq);
+
+-- Many numbers per shipment: international handoffs (DHL eCommerce → USPS
+-- last mile, UPS Mail Innovations → USPS, Chit Chats → USPS, S10 UPU
+-- numbers shared across national posts) and multi-package orders.
+CREATE TABLE IF NOT EXISTS shipment_numbers (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    shipment_id TEXT NOT NULL REFERENCES shipments(id),
+    carrier     TEXT NOT NULL,              -- carrier this number belongs to
+    number      TEXT NOT NULL,              -- canonical
+    role        TEXT NOT NULL DEFAULT 'handoff',  -- primary|handoff
+    created     TEXT NOT NULL,
+    UNIQUE(shipment_id, carrier, number)
+);
+CREATE INDEX IF NOT EXISTS idx_numbers_lookup
+    ON shipment_numbers(carrier, number);
+
+CREATE TABLE IF NOT EXISTS orders (
+    id              TEXT PRIMARY KEY,
+    merchant        TEXT,
+    merchant_domain TEXT,
+    order_number    TEXT NOT NULL,
+    order_date      TEXT,
+    total           REAL,
+    currency        TEXT,
+    created         TEXT NOT NULL,
+    updated         TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_orders_number
+    ON orders(merchant_domain, order_number);
+
+CREATE TABLE IF NOT EXISTS order_items (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    order_id  TEXT NOT NULL REFERENCES orders(id),
+    name      TEXT NOT NULL,
+    qty       INTEGER NOT NULL DEFAULT 1,
+    price     REAL,
+    sku       TEXT,
+    image_url TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_items_order ON order_items(order_id);
+
+-- Shipments link to orders N:M (multi-package orders; combined shipments).
+CREATE TABLE IF NOT EXISTS order_shipments (
+    order_id    TEXT NOT NULL REFERENCES orders(id),
+    shipment_id TEXT NOT NULL REFERENCES shipments(id),
+    PRIMARY KEY (order_id, shipment_id)
+);
+CREATE INDEX IF NOT EXISTS idx_order_shipments_shipment
+    ON order_shipments(shipment_id);
+
+-- The detection flywheel: sender/domain → carrier hit rates.
+CREATE TABLE IF NOT EXISTS detection_priors (
+    kind    TEXT NOT NULL,                  -- sender|domain
+    key     TEXT NOT NULL,                  -- sender address or domain
+    carrier TEXT NOT NULL,
+    hits    INTEGER NOT NULL DEFAULT 0,     -- candidate confirmed
+    misses  INTEGER NOT NULL DEFAULT 0,     -- candidate rejected
+    updated TEXT NOT NULL,
+    PRIMARY KEY (kind, key, carrier)
+);
+
+-- User-editable domain → category + display name. One click assigns an
+-- unknown domain and the rule sticks.
+CREATE TABLE IF NOT EXISTS domain_rules (
+    domain       TEXT PRIMARY KEY,
+    category     TEXT,
+    display_name TEXT,
+    created      TEXT NOT NULL,
+    updated      TEXT NOT NULL
+);
+
+-- Approval queue for low-confidence detections.
+CREATE TABLE IF NOT EXISTS shipment_candidates (
+    id             TEXT PRIMARY KEY,
+    candidate_json TEXT NOT NULL,           -- full detection payload
+    layer          TEXT NOT NULL,           -- detection layer that produced it
+    confidence     REAL,
+    status         TEXT NOT NULL DEFAULT 'pending',  -- pending|confirmed|rejected
+    created        TEXT NOT NULL,
+    resolved_at    TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_candidates_status
+    ON shipment_candidates(status, created);
+
+-- Hand-labeled eval set for confidence-threshold tuning.
+CREATE TABLE IF NOT EXISTS detection_eval (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    candidate_json TEXT NOT NULL,
+    layer          TEXT NOT NULL,
+    predicted      TEXT,                    -- what the pipeline decided
+    label          TEXT,                    -- ground truth (human)
+    labeled_at     TEXT
+);
+
+-- Key-value state: watermarks, singleton lock, per-carrier
+-- quota-exhausted-until, token buckets.
+CREATE TABLE IF NOT EXISTS tracking_state (
+    key     TEXT PRIMARY KEY,
+    value   TEXT,
+    updated TEXT NOT NULL
+);

@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  DOC-DERIVED fixture (auto-tracker#19): Get Tracking Details response
+  per the CPC Track web service docs (developer-developpeur
+  .canadapost-postescanada.ca), event identifiers from the CPC tracking
+  scan events code table. NOT a live capture — replace with an anonymized
+  real response after Canada Post program approval and re-validate.
+-->
+<tracking-detail>
+  <pin>0073938000549297</pin>
+  <active-exists>1</active-exists>
+  <archive-exists/>
+  <date-expected>2024-01-08</date-expected>
+  <expected-delivery-date>2024-01-08</expected-delivery-date>
+  <actual-delivery-date>2024-01-05</actual-delivery-date>
+  <dest-postal-id>M5V1J1</dest-postal-id>
+  <service-name>Xpresspost</service-name>
+  <service-name-2>XPRESPOST</service-name-2>
+  <customer-ref-1/>
+  <customer-ref-2/>
+  <return-pin/>
+  <signature-image-exists>true</signature-image-exists>
+  <suppress-signature>false</suppress-signature>
+  <delivery-options>
+    <item>
+      <delivery-option>CH_SIGN_OPT</delivery-option>
+      <delivery-option-description>Signature</delivery-option-description>
+    </item>
+  </delivery-options>
+  <significant-events>
+    <occurrence>
+      <event-identifier>1476</event-identifier>
+      <event-date-time>2024-01-05T12:03:24</event-date-time>
+      <event-time-zone>EST</event-time-zone>
+      <event-description>Delivered</event-description>
+      <signatory-name>R EXAMPLE</signatory-name>
+      <event-site>TORONTO</event-site>
+      <event-province>ON</event-province>
+      <event-retail-location-id/>
+      <event-retail-name/>
+    </occurrence>
+    <occurrence>
+      <event-identifier>500</event-identifier>
+      <event-date-time>2024-01-05T08:15:00</event-date-time>
+      <event-time-zone>EST</event-time-zone>
+      <event-description>Out for delivery</event-description>
+      <signatory-name/>
+      <event-site>TORONTO</event-site>
+      <event-province>ON</event-province>
+      <event-retail-location-id/>
+      <event-retail-name/>
+    </occurrence>
+    <occurrence>
+      <event-identifier>100</event-identifier>
+      <event-date-time>2024-01-04T21:40:00</event-date-time>
+      <event-time-zone>EST</event-time-zone>
+      <event-description>Item processed</event-description>
+      <signatory-name/>
+      <event-site>MISSISSAUGA</event-site>
+      <event-province>ON</event-province>
+      <event-retail-location-id/>
+      <event-retail-name/>
+    </occurrence>
+    <occurrence>
+      <event-identifier>1300</event-identifier>
+      <event-date-time>2024-01-03T16:05:00</event-date-time>
+      <event-time-zone>EST</event-time-zone>
+      <event-description>Item accepted</event-description>
+      <signatory-name/>
+      <event-site>BRAMPTON</event-site>
+      <event-province>ON</event-province>
+      <event-retail-location-id/>
+      <event-retail-name/>
+    </occurrence>
+  </significant-events>
+</tracking-detail>

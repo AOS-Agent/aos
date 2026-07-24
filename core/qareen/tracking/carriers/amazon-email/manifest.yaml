@@ -1,0 +1,106 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# AMAZON (EMAIL-EVENT PSEUDO-CARRIER)
+#
+# Amazon Logistics has NO retail tracking API. This pack is a pseudo-carrier:
+# its "source of truth" is Amazon's lifecycle emails (order confirmation →
+# shipped → out-for-delivery → delivered), already flowing through comms.db.
+# The parser lives in core/qareen/tracking/email_events.py; this manifest
+# exists so the pack loads, lints, and resolves like every other carrier,
+# and so the channel's honest limits are declared in data, not folklore:
+#
+#   - auth.model: none          — no credentials, no OAuth, no endpoints
+#   - endpoints: null           — nothing to poll; events arrive via email
+#   - response_map: {}          — no API response to map (emails, not JSON)
+#   - rate_limits: {}           — no polling budget; the scheduler must never
+#                                 queue this pack for HTTP polling
+#   - source: email             — the UI must never confuse these milestones
+#                                 with API tracking (no live GPS; freshness
+#                                 depends on emails arriving)
+#
+# Pseudo-shipments are keyed by Amazon order ID; TBA numbers detected in
+# email text are linked to their order (or key a bare pseudo-shipment when
+# no order is known). See initiative section "4. Email-event channel".
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Pack slug — MUST match this directory's name.
+carrier: amazon-email
+
+# Human-readable name for the dashboard.
+display_name: Amazon (email)
+
+# ── Auth ─────────────────────────────────────────────────────────────────────
+# No API, no credentials. model: none means the linter requires no Keychain
+# keys — there is nothing to authenticate against.
+auth:
+  model: none
+
+# ── Endpoints ────────────────────────────────────────────────────────────────
+# Deliberately null: this pack has no HTTP surface. The scheduler's
+# poll-for-HTTP path must skip packs whose endpoints.base is null; the
+# email-event channel is the only producer of events for this carrier.
+endpoints:
+  base: null
+  track: null
+
+# ── Tracking-number recognition ──────────────────────────────────────────────
+tracking:
+  # Amazon Logistics tracking IDs: "TBA" + digits. Bounded and flat (linter
+  # idiom) — these patterns run over arbitrary message text. Matched after
+  # canonicalization (spaces/hyphens stripped, uppercased).
+  patterns:
+    - 'TBA[0-9]{10,15}'
+  # Amazon publishes no check-digit algorithm for TBA numbers.
+  check_digit: null
+
+# ── Carrier URL templates (detection layer 0) ────────────────────────────────
+# TBA tracking only works inside the Amazon account — there is no public
+# tracking URL to extract numbers from.
+url_templates: []
+
+# ── Capabilities ─────────────────────────────────────────────────────────────
+capabilities:
+  edd: false   # emails hint at dates ("arriving today") but no machine ETA
+  pod: true    # photo-on-delivery emails surface as delivered events
+  push: false  # no webhook; events arrive as emails through comms.db
+
+# ── Status map ───────────────────────────────────────────────────────────────
+# The "carrier codes" here are the email lifecycle kinds produced by
+# email_events.parse_amazon_email — the mapping is declared in data so the
+# milestone vocabulary stays canonical and linter-checked.
+status_map:
+  ORDER_CONFIRMED: label_created
+  SHIPPED: in_transit
+  OUT_FOR_DELIVERY: out_for_delivery
+  DELIVERED: delivered
+  DELIVERY_ATTEMPTED: failed_attempt
+  DELIVERY_DELAYED: exception
+
+# ── Response map ─────────────────────────────────────────────────────────────
+# Empty mapping: there is no API response shape to map. The parser builds
+# TrackingEvents directly from email text.
+response_map: {}
+
+# ── Rate limits / budget ─────────────────────────────────────────────────────
+# Empty mapping: no HTTP polling happens for this pack, so there is no
+# budget to enforce.
+rate_limits: {}
+
+# ── Retention ────────────────────────────────────────────────────────────────
+# No carrier-side deletion mandate (no API terms to honor); our own event
+# store is append-only per the append-only-store rule.
+retention:
+  delete_days_after_delivery: null
+
+# ── Email-channel extension (pseudo-carrier declaration) ─────────────────────
+# Extension point used by the email-event channel and the scheduler. Unknown
+# top-level keys are ignored by the generic engine/linter, so this block is
+# how a pack honestly declares "I am email-sourced, do not poll me".
+email_channel:
+  source: email                # Shipment.source / event raw source
+  key: order_id                # pseudo-shipments key on Amazon order ID
+  parser: parse_amazon_email   # callable in core/qareen/tracking/email_events.py
+  sender_domains:
+    - amazon.com
+    - amazon.ca
+  multi_package: true          # one order may emit several TBA numbers
+  bare_number_fallback: true   # TBA without a known order keys its own shipment

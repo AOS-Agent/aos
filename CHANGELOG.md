@@ -2,6 +2,20 @@
 
 All notable changes to AOS. Release notes sent via Telegram after each 4am update.
 
+## v0.7.0 — 2026-07-24
+
+Summary: Auto Tracker — sovereign shipment intelligence for AOS/Qareen. "Where is everything?" finally has one answer: a new subsystem that detects tracking numbers from your messages, polls carriers directly with your own credentials (no aggregator, your data stays home), and surfaces everything on a live `/shipments` dashboard, in the morning briefing, and to Chief.
+
+- Added `core/qareen/tracking/` — a pack-driven tracking engine: carriers are data (one manifest YAML per carrier, discovered from the filesystem), with packs for UPS, FedEx, USPS, DHL, Canada Post, and an `amazon-email` pseudo-carrier, all lint-validated with ReDoS guards and check-digit validators.
+- Added the auto-detect pipeline on the comms bus — tracking URLs, carrier digests, body patterns, and context scoring with a `detection_priors` flywheel; ≥0.85 auto-adds, 0.5–0.85 lands in a one-tap approval queue, probe/LLM layers ship log-only until the eval gate tunes them.
+- Added Chit Chats outbound sync and the Amazon email-event channel (order → shipped → out-for-delivery → delivered from lifecycle emails), plus a 90-day backfill sweep with watermarks and report-before-write.
+- Added the due-queue poll scheduler with per-carrier token budgets, OAuth token lifecycle with single-flight refresh, 429 backoff, startup auth self-test, and out-for-delivery/delivered/exception nudges (dashboard + Telegram).
+- Added `/api/shipments` (REST + manual paste-box add + approval queue + domain rules + eval labeling) and the hardened UPS Track Alert webhook (128-bit secret path, schema allowlist, polling stays source of truth).
+- Added the `/shipments` dashboard in Qareen screen: arriving-today strip, milestone kanban, scan timelines, "what's in the box" order items, one-click domain categorization, and `/shipments/eval` for hand-labeling detection candidates.
+- Added order/item extraction via the existing Haiku enrichment, international handoff handling (Chit Chats → USPS, DHL eCommerce → USPS, S10 UPU), lane analytics with predicted-vs-carrier ETAs, and the DHL 30-day retention enforcer (report-then-ask, audit-logged).
+- Added the `aos track` CLI (`add`, `add-number`, `list`, `show`, `validate`, `canary`, `graduate`) and the carrier onboarding pipeline — no pack goes live without parsing green against captured fixtures.
+- Added migration `093_auto_tracker_init` (shipments, events, numbers, orders, priors, rules, eval, state tables), the `tracker_health` reconcile check, a 📦 SHIPMENTS section in the morning briefing, and cron entries for polling, Chit Chats sync, backfill, and retention.
+
 ## v0.6.26 — 2026-07-22
 
 Summary: Kanban Phase 4 — the generic runner. "Delegate to agent" stops being a label and becomes a running worker. When a task is delegated to an agent, an opt-in service picks it up off the board, assembles a lean brief, spawns a headless `claude` in its own process group, and lets the agent narrate its work into the task's activity log. It NEVER auto-completes: a finished worker parks the task in review for a human to approve, a failed or silent worker parks it for attention — nothing is ever silently dropped. This is the *domain-agnostic* runner (Sentinel-shaped spawn, poll-the-board authority); islah's iOS dispatch strategy rides on top as a later code-task-class plugin and its guts never leak in here.

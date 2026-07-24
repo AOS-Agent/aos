@@ -1,0 +1,11 @@
+{
+  "_fixture_note": "DOC-DERIVED fixture (auto-tracker#14): UPS error envelope per the Track API docs (developer.ups.com), e.g. invalid/unknown tracking number (HTTP 400). NOT a live capture — replace with a real captured error post-credential.",
+  "response": {
+    "errors": [
+      {
+        "code": "TV1001",
+        "message": "Invalid tracking number"
+      }
+    ]
+  }
+}

@@ -1,0 +1,141 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# USPS carrier pack (auto-tracker#14)
+#
+# Sources (researched 2026-07-24):
+#   - developers.usps.com / github.com/USPS/api-examples — NEW OAuth2 API v3
+#     (legacy Web Tools XML retired 2026-01-25; only this API works)
+#   - Number formats/check digit: jkeen/tracking_number_data couriers/usps.json
+#   - PTR event codes: USPS Product Tracking & Reporting code list
+# ⚠ DOC-DERIVED: stays canary until a real captured response confirms the maps.
+# ─────────────────────────────────────────────────────────────────────────────
+
+carrier: usps
+display_name: USPS
+
+# OAuth2 client credentials: POST token endpoint with a JSON body
+# {"client_id", "client_secret", "grant_type": "client_credentials"}.
+# Requires a free USPS Business Account; tracking is in the default bundle.
+auth:
+  model: oauth2_client_credentials
+  keychain_keys:
+    - USPS_CLIENT_ID_PROD
+    - USPS_CLIENT_SECRET_PROD
+
+endpoints:
+  base: https://apis.usps.com
+  token: https://apis.usps.com/oauth2/v3/token
+  # GET, Authorization: Bearer <token>. expand=DETAIL returns the full event list.
+  track: https://apis.usps.com/tracking/v3/tracking/{number}?expand=DETAIL
+
+tracking:
+  patterns:
+    - '[0-9]{20}'        # 20-digit (e.g. 7112…, 0307…)
+    - '[0-9]{22}'        # 22-digit (94…, 92…, 93…, 95…)
+    - '9[0-9]{25}'       # 26-digit IMpb (9-prefixed, no routing block)
+    - '420[0-9]{23}'     # 26-digit IMpb w/ 420 ZIP routing prefix
+    - '420[0-9]{27}'     # 30-digit IMpb w/ 420 ZIP routing prefix
+    - '420[0-9]{31}'     # 34-digit IMpd variant w/ 420 routing prefix
+  check_digit: usps_mod10
+
+url_templates:
+  - https://tools.usps.com/go/TrackConfirmAction?tLabels={number}
+  - https://tools.usps.com/go/TrackConfirmAction_input?origTrackNum={number}
+
+capabilities:
+  edd: true    # expectedDeliveryDate on v3r2 responses when available
+  pod: false   # no signature/PoD in the tracking API
+  push: false  # no USPS webhook — poll
+
+# USPS PTR event codes (trackingEvents[].eventCode) → canonical milestones.
+# Source: USPS Product Tracking & Reporting (PTR) code list.
+status_map:
+  GX: label_created      # Shipping Label Created
+  MA: label_created      # Manifest received (pre-shipment)
+  MR: label_created      # Reverse manifest
+  '80': label_created      # Picked up by shipping partner, USPS awaits item
+  '81': label_created      # Arrived shipping partner site, USPS awaits item
+  '82': label_created      # Departed shipping partner site, USPS awaits item
+  '03': picked_up          # USPS in possession of item / acceptance
+  OA: picked_up          # Origin acceptance (calculated)
+  TM: picked_up          # Shipment received, acceptance pending
+  '83': picked_up          # Tendered to Postal Service
+  '10': in_transit         # Processed through USPS facility
+  '34': in_transit         # In transit (Registered Mail processing)
+  A1: in_transit         # Arrive USPS facility
+  AE: in_transit         # Arrive USPS facility (O&D container)
+  AD: in_transit         # Acceptance at destination
+  E1: in_transit         # Departed (container)
+  EF: in_transit         # Depart USPS facility
+  T1: in_transit         # Depart USPS facility
+  L1: in_transit         # Depart USPS facility (loaded)
+  SF: in_transit         # Depart Post Office
+  DE: in_transit         # Depart USPS facility (O&D container)
+  OD: in_transit         # Processed at USPS destination facility
+  '41': in_transit         # Received at opening unit
+  '06': in_transit         # Forwarded
+  '07': in_transit         # Arrival at unit (delivery office)
+  OF: out_for_delivery   # Out for Delivery
+  PC: out_for_delivery   # Sorting/processing complete (precedes OF)
+  '59': out_for_delivery   # On route
+  LD: out_for_delivery   # Arrival at destination address (letter geo-data)
+  '01': delivered          # Delivered
+  '43': delivered          # Picked up (at postal facility)
+  '60': delivered          # Tendered to agent for final delivery
+  '61': delivered          # Received by agent
+  '63': delivered          # Delivered to recipient by agent
+  '02': failed_attempt     # Notice left
+  '52': failed_attempt     # Notice left (customer instructions)
+  '51': failed_attempt     # Business closed
+  '53': failed_attempt     # Receptacle blocked
+  '54': failed_attempt     # Receptacle full / item oversized
+  '55': failed_attempt     # No secure location available
+  '56': failed_attempt     # No authorized recipient available
+  '30': failed_attempt     # No access (delivery)
+  '31': failed_attempt     # Return to sender / not picked up
+  '04': exception          # Refused
+  '05': exception          # Unable to deliver — problem with address
+  '08': exception          # Missent
+  '11': exception          # Seized by law enforcement
+  '12': exception          # Visible damage
+  '15': exception          # Mis-shipped
+  '16': exception          # Available for returns agent (dropped at wrong facility)
+  '33': exception          # Dead mail / sent to recovery center
+  '44': exception          # Intercepted
+  '57': exception          # Delivery exception — local weather delay
+  '71': exception          # Rescheduled to next delivery day
+  '72': exception          # Delivery exception — animal interference
+  DX: exception          # Delivery status not updated
+  LX: exception          # Processing exception
+  OX: exception          # Processing exception — other delay
+  TX: exception          # Processing exception — transportation delay
+  WX: exception          # Weather delay
+  '09': returned           # Return to sender
+  '21': returned           # No such number
+  '22': returned           # Insufficient address
+  '23': returned           # Moved, left no address
+  '24': returned           # Forward expired
+  '25': returned           # Addressee unknown
+  '26': returned           # Vacant
+  '27': returned           # Unclaimed / being returned to sender
+  '28': returned           # Return to sender
+  '29': returned           # Return to sender
+
+# Tracking API v3 (?expand=DETAIL) response shape (documented example in
+# USPS/api-examples README). expectedDeliveryDate is v3r2-only — null when absent.
+response_map:
+  events: $.trackingEvents[*]
+  eta: $.expectedDeliveryDate
+  event_fields:
+    timestamp: $.eventTimestamp
+    code: $.eventCode
+    description: $.eventType
+    location: $.eventCity
+
+rate_limits:
+  # USPS default quota is per-hour on the developer plan (~60 calls/hr);
+  # confirm the app's actual quota at signup and tune.
+  requests_per_day: 1400
+  min_interval_seconds: 60
+
+retention:
+  delete_days_after_delivery: null

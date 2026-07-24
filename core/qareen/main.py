@@ -339,6 +339,26 @@ async def lifespan(app: FastAPI):
         except Exception:
             logger.exception("Failed to register intelligence adapter")
 
+        # Shipment adapter (Auto Tracker) — duck-typed on the tracking
+        # store; pass the db path like the other adapters.
+        try:
+            from qareen.ontology.adapters.shipment import ShipmentAdapter
+            from qareen.ontology.types import ObjectType
+
+            shipment_object_type = getattr(ObjectType, "SHIPMENT", None)
+            if shipment_object_type is None:
+                logger.debug("ObjectType.SHIPMENT not yet defined — skipping shipment adapter")
+            else:
+                shipment_adapter = ShipmentAdapter(
+                    db_path=str(AOS_DATA / "data" / "qareen.db"),
+                )
+                ontology.register_adapter(shipment_object_type, shipment_adapter)
+                logger.info("Shipment adapter registered (SHIPMENT)")
+        except ImportError:
+            logger.debug("Shipment ontology adapter not yet built")
+        except Exception:
+            logger.exception("Failed to register shipment adapter")
+
     # -- Initialize audit log --------------------------------------------
 
     if audit_log:
@@ -891,6 +911,7 @@ _api_routers = [
     ("qareen.api.git", "git"),
     ("qareen.api.remote_access", "remote_access"),
     ("qareen.api.approvals", "approvals"),
+    ("qareen.api.shipments", "shipments"),
 ]
 
 for module_path, name in _api_routers:

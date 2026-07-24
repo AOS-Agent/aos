@@ -74,6 +74,20 @@ export function useSSE() {
         });
       }
 
+      // Shipments — Auto Tracker bus events keep the board, detail page,
+      // approval queue, and eval queue live.
+      const invalidateShipments = () => {
+        queryClient.invalidateQueries({ queryKey: ['shipments'] });
+        queryClient.invalidateQueries({ queryKey: ['shipment'] });
+        queryClient.invalidateQueries({ queryKey: ['shipment-candidates'] });
+        queryClient.invalidateQueries({ queryKey: ['shipment-domain-rules'] });
+        queryClient.invalidateQueries({ queryKey: ['shipment-eval'] });
+      };
+      const SHIPMENT_EVENTS = ['shipment.updated', 'shipment.milestone', 'shipment.candidate'];
+      for (const name of SHIPMENT_EVENTS) {
+        es.addEventListener(name, () => invalidateShipments());
+      }
+
       // Belt-and-suspenders: any event delivered without a matching named
       // listener (no `event:` field) still refreshes work if it looks work-ish.
       es.onmessage = (e) => {

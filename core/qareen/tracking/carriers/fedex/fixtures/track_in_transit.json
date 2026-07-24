@@ -1,0 +1,83 @@
+{
+  "_fixture_note": "DOC-DERIVED fixture (auto-tracker#14): assembled from the FedEx Track API v1 documented response shape (developer.fedex.com) on 2026-07-24. NOT a live capture — replace with an anonymized real response after credential signup and re-validate the response_map.",
+  "transactionId": "a0f1c2d3-0000-4000-8000-exampledoc01",
+  "output": {
+    "completeTrackResults": [
+      {
+        "trackingNumber": "986578788855",
+        "trackResults": [
+          {
+            "trackingNumberInfo": {
+              "trackingNumber": "986578788855",
+              "carrierCode": "FDXE",
+              "trackingNumberUniqueId": "245811~986578788855~FDXE"
+            },
+            "latestStatusDetail": {
+              "code": "IT",
+              "derivedCode": "IT",
+              "statusByLocale": "In transit",
+              "description": "In transit",
+              "scanLocation": {
+                "city": "MEMPHIS",
+                "stateOrProvinceCode": "TN",
+                "postalCode": "38116",
+                "countryCode": "US"
+              }
+            },
+            "dateAndTimes": [
+              { "type": "ESTIMATED_DELIVERY", "dateTime": "2024-01-08T16:30:00-05:00" }
+            ],
+            "estimatedDeliveryTimeWindow": {
+              "type": "ESTIMATED_DELIVERY",
+              "window": {
+                "begins": "2024-01-08T08:00:00-05:00",
+                "ends": "2024-01-08T20:00:00-05:00"
+              }
+            },
+            "scanEvents": [
+              {
+                "date": "2024-01-05T09:32:00-06:00",
+                "eventType": "DP",
+                "eventDescription": "Departed FedEx location",
+                "derivedStatus": "In transit",
+                "derivedStatusCode": "IT",
+                "scanLocation": {
+                  "city": "MEMPHIS",
+                  "stateOrProvinceCode": "TN",
+                  "postalCode": "38116",
+                  "countryCode": "US"
+                }
+              },
+              {
+                "date": "2024-01-04T22:10:00-06:00",
+                "eventType": "AR",
+                "eventDescription": "Arrived at FedEx hub",
+                "derivedStatus": "In transit",
+                "derivedStatusCode": "IT",
+                "scanLocation": {
+                  "city": "MEMPHIS",
+                  "stateOrProvinceCode": "TN",
+                  "postalCode": "38116",
+                  "countryCode": "US"
+                }
+              },
+              {
+                "date": "2024-01-03T14:00:00-05:00",
+                "eventType": "OC",
+                "eventDescription": "Shipment information sent to FedEx",
+                "derivedStatus": "Label created",
+                "derivedStatusCode": "OC",
+                "scanLocation": {
+                  "city": "ROCHESTER",
+                  "stateOrProvinceCode": "NY",
+                  "postalCode": "14624",
+                  "countryCode": "US"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

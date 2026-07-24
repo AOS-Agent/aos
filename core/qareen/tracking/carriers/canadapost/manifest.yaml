@@ -1,0 +1,195 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Canada Post carrier pack (auto-tracker#19)
+#
+# Sources (researched 2026-07-24):
+#   - developer-developpeur.canadapost-postescanada.ca — Track web service
+#     (Get Tracking Details, REST, XML responses — hence mapper.py)
+#   - Event identifiers: CPC "tracking scan events" code table
+#   - Number format/check digit: jkeen/tracking_number_data couriers/canadapost.json
+# ⚠ DOC-DERIVED: stays canary until a real captured response confirms the maps.
+#   Canada Post approval is manual (days) — nothing is gated on this pack.
+# ─────────────────────────────────────────────────────────────────────────────
+
+carrier: canadapost
+display_name: Canada Post
+
+# API key = username:password pair, sent as HTTP Basic auth. Dev environment
+# uses ct.soa-gw.canadapost.ca with separate dev keys (…_DEV suffix).
+auth:
+  model: basic
+  keychain_keys:
+    - CANADAPOST_API_USERNAME_PROD
+    - CANADAPOST_API_PASSWORD_PROD
+
+endpoints:
+  base: https://soa-gw.canadapost.ca
+  # GET with Accept: application/vnd.cpc.track-v2+xml — response is XML,
+  # mapped to the response_map dict shape by mapper.py in this directory.
+  track: https://soa-gw.canadapost.ca/rs/ship/track/pin/{number}/detail
+  accept: application/vnd.cpc.track-v2+xml
+
+tracking:
+  patterns:
+    - '[0-9]{16}'                 # domestic 16-digit PIN
+    - '[A-Z]{2}[0-9]{9}CA'        # UPU S10 international (…CA)
+  check_digit: canadapost_mod10
+
+url_templates:
+  - https://www.canadapost-postescanada.ca/track-reperage/en#/search?searchFor={number}
+  - https://www.canadapost.ca/trackweb/en#/details/{number}
+
+capabilities:
+  edd: true    # expected-delivery-date / date-expected
+  pod: true    # signature image flag + signatory name on delivery
+  push: false  # no webhook — poll
+
+# CPC <event-identifier> codes → canonical milestones (from the CPC tracking
+# scan events code table). Mapper passes the identifier through as `code`.
+status_map:
+  '1300': picked_up        # Item accepted
+  '1301': picked_up        # Item accepted at the Post Office
+  '1302': picked_up        # Item accepted at the Post Office
+  '1303': picked_up        # Return item accepted at Post Office
+  '100': in_transit        # Item processed
+  '102': in_transit
+  '104': in_transit
+  '105': in_transit
+  '106': in_transit
+  '107': in_transit
+  '170': in_transit        # Item processed
+  '175': in_transit        # Item in transit
+  '400': in_transit        # Item arrived
+  '405': in_transit        # Item arrived (vehicle)
+  '410': in_transit        # Item departed (vehicle)
+  '804': in_transit        # Item in transit
+  '113': in_transit        # Item arrived at partner facility
+  '114': in_transit        # Item departed partner facility
+  '115': in_transit        # Item transferred to partner
+  '116': in_transit        # Item transferred to partner
+  '130': in_transit        # International item released from Customs
+  '701': in_transit        # Item has arrived in Canada
+  '710': in_transit        # Item arrived in Canada damaged — sent for processing
+  '800': in_transit        # Presented to CBSA for customs review
+  '900': in_transit        # Released from Customs for processing by Canada Post
+  '910': in_transit        # Released by Customs, now with Canada Post
+  '174': out_for_delivery  # Item out for delivery
+  '500': out_for_delivery  # Out for delivery
+  '610': delivered         # Item is with your concierge or building manager
+  '611': delivered         # Item is at recipient's front door
+  '612': delivered         # Item is at recipient's side door
+  '613': delivered         # Item is at or in recipient's garage
+  '614': delivered         # Item is at recipient's address
+  '615': delivered         # Item received at recipient's address
+  '616': delivered         # Item is in community mailbox / parcel locker
+  '617': delivered         # Item is in recipient's mailroom
+  '618': delivered
+  '619': delivered         # Item is with recipient's delivery partner
+  '620': delivered
+  '1405': delivered        # Delivered to automated parcel locker
+  '1406': delivered        # Item picked up from automated parcel locker
+  '1408': delivered        # Delivered (signature)
+  '1409': delivered
+  '1421': delivered        # Delivered to recipient's front door
+  '1422': delivered        # … side door
+  '1423': delivered        # … back door
+  '1424': delivered        # … garage
+  '1425': delivered        # … superintendent / concierge
+  '1426': delivered        # … parcel box
+  '1427': delivered        # … safe drop location
+  '1428': delivered
+  '1429': delivered
+  '1430': delivered
+  '1431': delivered
+  '1432': delivered
+  '1433': delivered
+  '1434': delivered
+  '1441': delivered        # Delivered to community mailbox or parcel locker
+  '1442': delivered
+  '1461': delivered        # Delivered to your concierge or building manager
+  '1462': delivered
+  '1463': delivered        # Delivered to mailroom
+  '1465': delivered
+  '1466': delivered
+  '1467': delivered
+  '1468': delivered
+  '1469': delivered
+  '1471': delivered        # Delivered to recipient's delivery partner
+  '1472': delivered
+  '1475': delivered
+  '1476': delivered        # Delivered
+  '630': failed_attempt    # Unable to deliver to locker
+  '700': failed_attempt
+  '1407': failed_attempt   # Item available for pick-up
+  '1410': failed_attempt   # Item on hold at recipient's request
+  '1411': failed_attempt   # Business closed — second attempt
+  '1412': failed_attempt   # Verifying recipient's address
+  '1414': failed_attempt   # Rescheduled for next business day
+  '1435': failed_attempt   # Notice card left
+  '1436': failed_attempt
+  '1437': failed_attempt
+  '1438': failed_attempt
+  '1443': failed_attempt   # Attempted delivery — rescheduled
+  '1444': failed_attempt   # Delivery scheduled for next business day
+  '1450': failed_attempt   # Item on hold at a secure facility
+  '1473': failed_attempt   # Delivered to mailroom (attempted class)
+  '1479': failed_attempt   # Notice card left
+  '117': exception         # Item on hold — documentation irregularity
+  '118': exception         # Item held — outside partner service area
+  '120': exception         # Item on hold — incorrect/incomplete address
+  '121': exception         # Item on hold — refused/unclaimed
+  '127': exception         # Item held at customs
+  '810': exception         # Item held by Customs
+  '150': exception         # Hold period expired — disposed of
+  '159': exception         # Delayed — extreme weather
+  '160': exception         # Delayed — public authority/demonstration
+  '161': exception         # Delayed — labour disruption
+  '162': exception         # Delayed — transportation delay
+  '163': exception         # Delayed — power outage
+  '171': exception         # Verifying address — possible delay
+  '172': exception         # Re-routed — processing error
+  '173': exception         # Customer addressing error
+  '179': exception         # Item cannot be delivered
+  '621': exception         # Delivery delayed to next business day
+  '622': exception
+  '623': exception
+  '624': exception
+  '625': exception
+  '626': exception
+  '627': exception
+  '628': exception
+  '629': exception         # Locker pickup expired
+  '1245': exception        # Item could not be redirected
+  '167': returned          # Returned to sender — insufficient postage
+  '168': returned          # Returned to sender — product requirements
+  '169': returned          # Returned to sender — label issue
+  '181': returned          # Shipping label invalid — returned
+  '182': returned          # Documentation incomplete — returned
+  '183': returned          # Service suspended to country — returned
+  '184': returned          # Non-mailable matter — returned
+  '1100': returned         # Refused by Customs — returned
+  '1415': returned         # Returned — incomplete address
+  '1416': returned         # Returned — recipient not located
+  '1417': returned         # Refused by recipient — returned
+  '1418': returned         # Returned — proof of age not provided
+  '1419': returned         # Unclaimed — returned
+  '1420': returned         # Being returned to sender
+
+# Shape of the dict produced by mapper.py (XML → dict). The engine client
+# runs the mapper before applying response_map.
+response_map:
+  events: $.events[*]
+  eta: $.eta
+  event_fields:
+    timestamp: $.timestamp
+    code: $.code
+    description: $.description
+    location: $.location
+
+rate_limits:
+  # CPC throttles per API key (offenders blocked up to a minute); defaults
+  # are per-key, so stay gentle. Tune after first live week.
+  requests_per_day: 1000
+  min_interval_seconds: 3
+
+retention:
+  delete_days_after_delivery: null

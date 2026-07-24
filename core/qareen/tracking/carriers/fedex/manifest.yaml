@@ -1,0 +1,87 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# FedEx carrier pack (auto-tracker#14)
+#
+# Sources (researched 2026-07-24):
+#   - developer.fedex.com — Track API v1 + OAuth docs
+#   - Number formats/check digits: jkeen/tracking_number_data couriers/fedex.json
+# ⚠ DOC-DERIVED: stays canary until a real captured response confirms the maps.
+# ─────────────────────────────────────────────────────────────────────────────
+
+carrier: fedex
+display_name: FedEx
+
+# OAuth2 client credentials: POST token endpoint, form-encoded
+# grant_type=client_credentials&client_id=…&client_secret=…
+auth:
+  model: oauth2_client_credentials
+  keychain_keys:
+    - FEDEX_CLIENT_ID_PROD
+    - FEDEX_CLIENT_SECRET_PROD
+
+endpoints:
+  base: https://apis.fedex.com
+  token: https://apis.fedex.com/oauth/token
+  # NOTE: method POST (JSON body), not GET. The client substitutes {number}
+  # into the body template the same way as the URL.
+  track: https://apis.fedex.com/track/v1/trackingnumbers
+  method: POST
+  body: '{"includeDetailedScans": true, "trackingInfo": [{"trackingNumberInfo": {"trackingNumber": "{number}"}}]}'
+
+tracking:
+  patterns:
+    - '[0-9]{12}'              # Express
+    - '[0-9]{15}'              # Ground
+    - '00[0-9]{16}'            # Ground SSCC-18
+    - '96[0-9]{20}'            # Ground (96 format, 22 digits)
+    - '(?:96|10)[0-9]{32}'     # Ground GSN / Express (34 digits)
+    - '92[0-9]{20}'            # SmartPost (22 digits, 92 prefix)
+    - '61[0-9]{18}'            # SmartPost (20 digits, 61 SCNC prefix)
+    - '420[0-9]{27}'           # SmartPost w/ 420 ZIP routing prefix (30 digits)
+  check_digit: fedex
+
+url_templates:
+  - https://www.fedex.com/fedextrack/?trknbr={number}
+  - https://www.fedex.com/apps/fedextrack/?tracknumbers={number}
+
+capabilities:
+  edd: true    # dateAndTimes ESTIMATED_DELIVERY / estimatedDeliveryTimeWindow
+  pod: true    # signature proof of delivery element on delivered shipments
+  push: false  # no FedEx webhook — poll
+
+# FedEx scanEvents eventType codes → canonical milestones.
+status_map:
+  OC: label_created      # Shipment information sent to FedEx
+  PU: picked_up          # Picked up
+  AR: in_transit         # Arrived at FedEx location
+  DP: in_transit         # Departed FedEx location
+  IT: in_transit         # In transit
+  AF: in_transit         # At FedEx destination facility
+  FD: in_transit         # At FedEx destination facility
+  TR: in_transit         # In transit (transfer)
+  OD: out_for_delivery   # On FedEx vehicle for delivery
+  DL: delivered          # Delivered
+  DE: exception          # Delivery exception
+  SE: exception          # Shipment exception
+  CD: exception          # Clearance delay (customs)
+  CA: exception          # Shipment canceled by sender
+  RR: returned           # Return to shipper requested/returned
+
+# Track API v1 response shape. eta: dateAndTimes is a typed array — the
+# engine client prefers the entry whose type == "ESTIMATED_DELIVERY"; index 0
+# is the common case and what the doc-derived fixture carries.
+response_map:
+  events: $.output.completeTrackResults[0].trackResults[0].scanEvents[*]
+  eta: $.output.completeTrackResults[0].trackResults[0].dateAndTimes[0].dateTime
+  event_fields:
+    timestamp: $.date
+    code: $.eventType
+    description: $.eventDescription
+    location: $.scanLocation.city
+
+rate_limits:
+  # No published hard cap for Track API; budget conservatively.
+  requests_per_day: 500
+  min_interval_seconds: 1
+
+retention:
+  delete_days_after_delivery: null

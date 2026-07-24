@@ -1,0 +1,45 @@
+#!/bin/bash
+# track-chitchats — daily Chit Chats outbound sync.
+#
+# Pulls the operator's Chit Chats labels into the tracking store
+# (incremental from the last-sync checkpoint in tracking_state) and links
+# last-mile handoff numbers (Chit Chats → USPS/Canada Post). No
+# credentials in Keychain → the sync reports missing_credentials and
+# exits 0 (outbound sync is optional).
+#
+# NOTE: chitchats.py has no __main__ CLI, so this wrapper drives
+# ChitChatsSync via inline Python.
+set -u
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+AOS_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+QAREEN_VENV="$HOME/.aos/services/qareen/.venv/bin/python"
+
+if [ -x "$QAREEN_VENV" ]; then
+    PYTHON="$QAREEN_VENV"
+else
+    PYTHON="$AOS_ROOT/core/bin/internal/aos-python"
+fi
+
+cd "$AOS_ROOT" || { echo "[track-chitchats] cannot cd to $AOS_ROOT" >&2; exit 1; }
+
+ts() { date '+%Y-%m-%d %H:%M:%S'; }
+echo "[track-chitchats] $(ts) syncing Chit Chats labels"
+
+"$PYTHON" - <<'PY'
+import logging
+import sys
+
+sys.path.insert(0, "core")
+
+from qareen.tracking.chitchats import ChitChatsSync
+from qareen.tracking.store import ShipmentStore
+
+logging.basicConfig(
+    level=logging.INFO, format="%(levelname)s %(name)s: %(message)s"
+)
+
+store = ShipmentStore()
+summary = ChitChatsSync(store).sync()
+print("track-chitchats: %s" % summary)
+PY
