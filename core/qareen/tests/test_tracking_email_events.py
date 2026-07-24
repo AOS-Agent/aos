@@ -47,10 +47,10 @@ def _msg(sender, content, subject=None, timestamp="2026-07-20T14:32:00", **extra
 
 
 CONFIRMATION_CA = _msg(
-    "auto-confirm@amazon.ca",
+    "auto-confirm@amazon.ca.example.com",
     """Subject: Your Amazon.ca order of "Instant Pot Duo 7-in-1..."
 
-Hello Hisham,
+Hello Sam,
 
 Thanks for your order! Your order is confirmed and will arrive
 Tuesday, July 28.
@@ -64,10 +64,10 @@ Quantity: 1
 )
 
 SHIPPED_COM = _msg(
-    "shipment-tracking@amazon.com",
+    "shipment-tracking@amazon.com.example.com",
     """Subject: Your order has shipped!
 
-Hello Hisham,
+Hello Sam,
 
 Good news! Your package has shipped. Track your package to see the
 expected delivery date.
@@ -83,7 +83,7 @@ Thursday, July 30
 )
 
 OFD_CA = _msg(
-    "shipment-tracking@amazon.ca",
+    "shipment-tracking@amazon.ca.example.com",
     """Subject: Out for delivery: "Instant Pot Duo 7-in-1..."
 
 Your package is out for delivery and will arrive today by 9:00 PM.
@@ -96,7 +96,7 @@ Tracking ID: TBA987654321098
 )
 
 DELIVERED_CA = _msg(
-    "delivery-update@amazon.ca",
+    "delivery-update@amazon.ca.example.com",
     """Subject: Delivered: Your Amazon.ca order #701-1234567-8901234
 
 Your package was delivered. It was handed directly to a resident.
@@ -108,7 +108,7 @@ Order # 701-1234567-8901234
 )
 
 DELIVERED_PHOTO_COM = _msg(
-    "shipment-tracking@amazon.com",
+    "shipment-tracking@amazon.com.example.com",
     """Subject: Your package was delivered!
 
 Your package was delivered near the front door. View your delivery
@@ -121,7 +121,7 @@ Order #111-7654321-0987654
 )
 
 BARE_TBA = _msg(
-    "shipment-tracking@amazon.com",
+    "shipment-tracking@amazon.com.example.com",
     """Subject: Your package is arriving today!
 
 Your Amazon package is out for delivery. Follow along: TBA555000111222
@@ -131,7 +131,7 @@ Your Amazon package is out for delivery. Follow along: TBA555000111222
 )
 
 NON_AMAZON_CONTROL = _msg(
-    "news@example-shop.com",
+    "news@example-shop.test",
     """Subject: Your order has shipped!
 
 Your order #8842 has shipped. Tracking: 1Z999AA10123456784.
@@ -195,7 +195,7 @@ def test_parse_confirmation_maps_to_label_created_with_order_and_item():
     assert parsed.milestone is Milestone.LABEL_CREATED
     assert parsed.order_id == "701-1234567-8901234"
     assert parsed.merchant == "Amazon"
-    assert parsed.merchant_domain == "amazon.ca"
+    assert parsed.merchant_domain == "amazon.ca.example.com"
     assert parsed.item_summary == "Instant Pot Duo 7-in-1..."
     assert parsed.source == "email"
     assert parsed.timestamp == datetime(2026, 7, 20, 14, 32)
@@ -208,7 +208,7 @@ def test_parse_shipped_extracts_tba_and_maps_to_in_transit():
     assert parsed.milestone is Milestone.IN_TRANSIT
     assert parsed.order_id == "111-7654321-0987654"
     assert parsed.tracking_numbers == ["TBA123456789012"]
-    assert parsed.merchant_domain == "amazon.com"
+    assert parsed.merchant_domain == "amazon.com.example.com"
     assert "TBA123456789012" in parsed.description
 
 
@@ -252,9 +252,9 @@ def test_parse_non_amazon_sender_returns_none():
 
 def test_parse_malformed_messages_return_none_never_raise():
     assert parse_amazon_email({}) is None
-    assert parse_amazon_email({"sender_id": "x@amazon.ca"}) is None  # no content
-    assert parse_amazon_email({"sender_id": "x@amazon.ca", "content": None}) is None
-    assert parse_amazon_email({"sender_id": "x@amazon.ca", "content": 12345}) is None
+    assert parse_amazon_email({"sender_id": "x@amazon.ca.example.com"}) is None  # no content
+    assert parse_amazon_email({"sender_id": "x@amazon.ca.example.com", "content": None}) is None
+    assert parse_amazon_email({"sender_id": "x@amazon.ca.example.com", "content": 12345}) is None
     assert parse_amazon_email({"sender_id": 42, "content": "hi"}) is None
     assert parse_amazon_email(None) is None
     assert parse_amazon_email("not a dict") is None
@@ -262,7 +262,7 @@ def test_parse_malformed_messages_return_none_never_raise():
 
 def test_parse_amazon_marketing_email_without_signal_returns_none():
     marketing = _msg(
-        "store-news@amazon.ca",
+        "store-news@amazon.ca.example.com",
         "Subject: Deals you might like\n\nCheck out this week's offers!",
     )
     assert parse_amazon_email(marketing) is None
@@ -270,7 +270,7 @@ def test_parse_amazon_marketing_email_without_signal_returns_none():
 
 def test_parse_delivery_attempt_and_delay():
     attempt = _msg(
-        "shipment-tracking@amazon.com",
+        "shipment-tracking@amazon.com.example.com",
         "Subject: We tried to deliver your package\n\n"
         "We attempted to deliver Order #111-7654321-0987654 today.",
     )
@@ -278,7 +278,7 @@ def test_parse_delivery_attempt_and_delay():
     assert parsed.milestone is Milestone.FAILED_ATTEMPT
 
     delayed = _msg(
-        "shipment-tracking@amazon.ca",
+        "shipment-tracking@amazon.ca.example.com",
         "Subject: Your delivery has been delayed\n\n"
         "Order # 701-1234567-8901234 is delayed. We're sorry.",
     )
@@ -287,11 +287,11 @@ def test_parse_delivery_attempt_and_delay():
 
 
 def test_parse_epoch_and_zulu_timestamps():
-    msg = _msg("auto-confirm@amazon.ca",
+    msg = _msg("auto-confirm@amazon.ca.example.com",
                "Thanks for your order! Order # 701-1234567-8901234",
                timestamp=1785000000)
     assert parse_amazon_email(msg).timestamp == datetime.fromtimestamp(1785000000)
-    msg = _msg("auto-confirm@amazon.ca",
+    msg = _msg("auto-confirm@amazon.ca.example.com",
                "Thanks for your order! Order # 701-1234567-8901234",
                timestamp="2026-07-20T14:32:00Z")
     assert parse_amazon_email(msg).timestamp is not None
@@ -325,7 +325,7 @@ def test_channel_upsert_marks_carrier_merchant_and_source():
     upsert = store.upserts[0]
     assert upsert["carrier"] == AMAZON_EMAIL_CARRIER
     assert upsert["merchant"] == "Amazon"
-    assert upsert["merchant_domain"] == "amazon.ca"
+    assert upsert["merchant_domain"] == "amazon.ca.example.com"
     assert upsert["source"] == "email"
     assert upsert["label"] == "Instant Pot Duo 7-in-1..."
 
@@ -420,7 +420,7 @@ def test_channel_against_real_store(tmp_path):
     channel = EmailEventChannel(store)
     msg = {
         "id": "m1",
-        "sender_id": "auto-confirm@amazon.ca",
+        "sender_id": "auto-confirm@amazon.ca.example.com",
         "content": "Ordered: \"Instant Pot Duo\"\nOrder # 701-1234567-8901234",
         "subject": "Ordered: \"Instant Pot Duo\"",
         "timestamp": "2026-07-20T10:00:00",

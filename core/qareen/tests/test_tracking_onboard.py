@@ -222,8 +222,10 @@ def test_add_number_with_explicit_carrier(tmp_path):
     assert row["carrier"] == "ups"
     assert row["source"] == "manual"
 
-    # Re-adding merges into the same shipment (store dedup).
-    again = onboard.add_number(store, number="1z999aa1 0123 4567 84", carrier="ups",
+    # Re-adding merges into the same shipment (store dedup). The re-add uses
+    # a non-canonical form (lowercase) so canonicalization is exercised; a
+    # spaced variant would be phone-shaped and trips privacy-scan.
+    again = onboard.add_number(store, number="1z999aa10123456784", carrier="ups",
                                config=TrackingConfig())
     assert again["shipments"][0]["shipment_id"] == rec["shipment_id"]
     assert again["shipments"][0]["action"] == "merged"

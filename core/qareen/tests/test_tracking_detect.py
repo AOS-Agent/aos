@@ -72,11 +72,11 @@ def packs(tmp_path):
     carriers = tmp_path / "carriers"
     _write_pack(carriers, "ups", _manifest(
         "ups", ["1Z[0-9A-Z]{16}"],
-        url_templates=["https://www.ups.com/track?tracknum={number}"],
+        url_templates=["https://www.ups.example.com/track?tracknum={number}"],
     ))
     _write_pack(carriers, "usps", _manifest(
         "usps", ["[0-9]{22}"],
-        url_templates=["https://tools.usps.com/go/TrackConfirmAction?tLabels={number}"],
+        url_templates=["https://tools.usps.example.com/go/TrackConfirmAction?tLabels={number}"],
     ))
     _write_pack(carriers, "acme", _manifest(
         "acme", ["[0-9]{11}"], check_digit="mod10",
@@ -145,7 +145,7 @@ def _msg(text, sender="shipping@merchant.example", channel="email", **kw):
 
 def test_url_extraction_gives_number_and_carrier(packs):
     result = detect.detect(
-        _msg("Your order shipped! Track it: https://www.ups.com/track?tracknum=%s" % UPS_NUMBER),
+        _msg("Your order shipped! Track it: https://www.ups.example.com/track?tracknum=%s" % UPS_NUMBER),
         packs,
     )
     assert len(result.candidates) == 1
@@ -158,7 +158,7 @@ def test_url_extraction_gives_number_and_carrier(packs):
 
 def test_url_with_extra_query_params_still_matches(packs):
     result = detect.detect(
-        _msg("see https://www.ups.com/track?tracknum=%s&loc=en_US&requester=ST/" % UPS_NUMBER),
+        _msg("see https://www.ups.example.com/track?tracknum=%s&loc=en_US&requester=ST/" % UPS_NUMBER),
         packs,
     )
     assert [c.tracking_number for c in result.candidates] == [UPS_NUMBER]
@@ -166,14 +166,14 @@ def test_url_with_extra_query_params_still_matches(packs):
 
 def test_url_with_garbage_number_is_dropped(packs):
     result = detect.detect(
-        _msg("https://www.ups.com/track?tracknum=ZZZ"), packs,
+        _msg("https://www.ups.example.com/track?tracknum=ZZZ"), packs,
     )
     assert result.candidates == []
 
 
 def test_spaced_number_canonicalizes_from_usps_url(packs):
     spaced = "9400 1000 0000 0000 0000 01"
-    url = "https://tools.usps.com/go/TrackConfirmAction?tLabels=%s" % spaced.replace(" ", "%20")
+    url = "https://tools.usps.example.com/go/TrackConfirmAction?tLabels=%s" % spaced.replace(" ", "%20")
     result = detect.detect(_msg(url), packs)
     assert [c.tracking_number for c in result.candidates] == [USPS_NUMBER]
 
@@ -182,11 +182,18 @@ def test_spaced_number_canonicalizes_from_usps_url(packs):
 
 
 def test_usps_informed_delivery_digest_is_authoritative(packs):
+    # Custom DigestSpec on a reserved domain — same shape as the built-in
+    # USPS spec, but fixtures never name a real carrier domain.
+    specs = [detect.DigestSpec(
+        carrier="usps",
+        sender_domains=("usps.example.com",),
+        subject_keywords=("informed delivery", "daily digest"),
+    )]
     result = detect.detect(_msg(
         "Packages arriving today:\n%s\n1 item" % USPS_NUMBER,
-        sender="USPSInformedDelivery@usps.com",
+        sender="USPSInformedDelivery@usps.example.com",
         subject="Your Daily Digest for Informed Delivery",
-    ), packs)
+    ), packs, digest_specs=specs)
     digest = [c for c in result.candidates if c.layer == "digest"]
     assert len(digest) == 1
     assert digest[0].carrier == "usps"
@@ -238,7 +245,7 @@ def test_check_digit_valid_number_survives(packs):
 
 def test_carrier_domain_match_boosts_body_candidate(packs):
     result = detect.detect(_msg(
-        "your package %s is on the way" % UPS_NUMBER, sender="noreply@ups.com",
+        "your package %s is on the way" % UPS_NUMBER, sender="noreply@ups.example.com",
     ), packs)
     body = [c for c in result.candidates if c.layer == "body"]
     assert len(body) == 1
@@ -409,7 +416,7 @@ def test_dedup_merges_same_number_multiple_sources(packs):
 
 
 def test_url_and_body_layers_merge_in_one_message(packs):
-    text = "https://www.ups.com/track?tracknum=%s also bare: %s" % (UPS_NUMBER, UPS_NUMBER)
+    text = "https://www.ups.example.com/track?tracknum=%s also bare: %s" % (UPS_NUMBER, UPS_NUMBER)
     result = detect.detect(_msg(text), packs)
     ups = [c for c in result.candidates if c.tracking_number == UPS_NUMBER]
     assert len(ups) == 1
@@ -469,7 +476,7 @@ def test_missing_people_db_never_blocks(packs, tmp_path):
 
 def test_persist_bands_candidates_into_store(packs):
     store = FakeStore()
-    url_msg = _msg("https://www.ups.com/track?tracknum=%s" % UPS_NUMBER)
+    url_msg = _msg("https://www.ups.example.com/track?tracknum=%s" % UPS_NUMBER)
     body_msg = _msg("tracking %s" % UPS_NUMBER, sender="x@nowhere.example")
     url_msg["message_id"] = 1
     body_msg["message_id"] = 2
@@ -521,7 +528,7 @@ def test_consumer_processes_event_and_never_raises(packs):
     event = Event(
         type="comms.message_received",
         data={
-            "sender": "noreply@ups.com",
+            "sender": "noreply@ups.example.com",
             "channel": "email",
             "text": "your package %s shipped" % UPS_NUMBER,
             "conversation_id": "c1",
@@ -573,7 +580,7 @@ def test_persist_against_real_store(tmp_path):
                 source={
                     "message_id": 42,
                     "channel": "email",
-                    "sender": "orders@acme-shop.com",
+                    "sender": "orders@acme-shop.example.com",
                 },
             ),
             detect.DetectionCandidate(

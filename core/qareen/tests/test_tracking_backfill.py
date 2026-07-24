@@ -120,12 +120,13 @@ def comms_db(tmp_path):
         # id 2 — recent, tracking URL (auto-add)
         ("email", "in", "noreply@merchant.example",
          "shipped! https://www.ups.com/track?tracknum=%s" % UPS_NUMBER, _recent(2)),
-        # id 3 — recent, bare number (queue band)
-        ("imessage", "in", "+15551234567", "yo track %s" % UPS_NUMBER, _recent(1)),
+        # id 3 — recent, bare number (queue band); sender is a NANP fictional
+        # 555-01XX number (the range reserved for examples)
+        ("imessage", "in", "+12025550123", "yo track %s" % UPS_NUMBER, _recent(1)),
         # id 4 — outbound, skipped
         ("email", "out", "me", "here is the number %s" % UPS_NUMBER, _recent(1)),
         # id 5 — recent, no tracking content
-        ("imessage", "in", "+15559998888", "what's for dinner", _recent(0)),
+        ("imessage", "in", "+12025550124", "what's for dinner", _recent(0)),
     ])
 
 

@@ -210,7 +210,7 @@ def test_patch_rejections(env):
 # -- candidates ---------------------------------------------------------------
 
 
-def _enqueue_candidate(store, sender="orders@acme-shop.com"):
+def _enqueue_candidate(store, sender="orders@acme-shop.example.com"):
     return store.enqueue_candidate(
         {
             "tracking_number": UPS_NUMBER,
@@ -219,7 +219,7 @@ def _enqueue_candidate(store, sender="orders@acme-shop.com"):
             "layer": "body",
             "source": {"channel": "email", "sender": sender},
             "sources": [{"channel": "email", "sender": sender}],
-            "context": {"sender_domain": "acme-shop.com"},
+            "context": {"sender_domain": "acme-shop.example.com"},
         },
         layer="body",
         confidence=0.6,
@@ -236,7 +236,7 @@ def test_candidate_confirm_creates_shipment_and_prior(env):
     # The UI re-fetches on shipment.updated.
     assert "shipment.updated" in env.bus.types()
 
-    prior = env.store.get_prior("domain", "acme-shop.com", "ups")
+    prior = env.store.get_prior("domain", "acme-shop.example.com", "ups")
     assert prior["hits"] == 1
     assert prior["misses"] == 0
 
@@ -253,7 +253,7 @@ def test_candidate_reject_records_miss(env):
     assert resp.status_code == 200
     assert resp.json()["status"] == "rejected"
 
-    prior = env.store.get_prior("domain", "acme-shop.com", "ups")
+    prior = env.store.get_prior("domain", "acme-shop.example.com", "ups")
     assert prior["hits"] == 0
     assert prior["misses"] == 1
     # Rejection never materializes a shipment.
