@@ -9,9 +9,10 @@ const API_TARGET = `http://localhost:${API_PORT}`
 export default defineConfig({
   plugins: [
     react(),
-    // PWA disabled temporarily — workbox-build has a compatibility issue
-    // with the current vite-plugin-pwa version (assignWith error).
-    // Re-enable once vite-plugin-pwa is updated.
+    // PWA is off. vite-plugin-pwa was removed from devDependencies: it was
+    // already disabled here, and its vite@^7 peer cap broke `npm ci` for the
+    // release frontend build. To re-enable, add vite-plugin-pwa@^1.3.0 (the
+    // first release accepting vite@^8) and register VitePWA below.
   ],
   resolve: {
     alias: {
