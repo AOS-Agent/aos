@@ -23,6 +23,7 @@ import {
   LayoutGrid,
   Filter,
   Radar,
+  Package,
   type LucideIcon,
 } from 'lucide-react';
 import { useUIStore } from '@/store/ui';
@@ -47,6 +48,8 @@ const NAV_ITEMS: NavEntry[] = [
   { label: 'Go to System', href: '/system', icon: Activity, keywords: ['health', 'services'] },
   { label: 'Go to Analytics', href: '/analytics', icon: BarChart3, keywords: ['stats', 'chart'] },
   { label: 'Go to People', href: '/people', icon: Users, keywords: ['contacts', 'person'] },
+  { label: 'Go to Shipments', href: '/shipments', icon: Package, keywords: ['shipment', 'package', 'tracking', 'delivery', 'parcel'] },
+  { label: 'Go to Shipment Eval', href: '/shipments/eval', icon: Package, keywords: ['eval', 'label', 'detection', 'shipment'] },
   { label: 'Go to Settings', href: '/settings', icon: Settings, keywords: ['settings', 'preferences'] },
 ];
 

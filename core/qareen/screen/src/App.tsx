@@ -24,6 +24,9 @@ const IntelligenceFeed = lazy(() => import('@/pages/IntelligenceFeed'));
 const IntelligenceDetail = lazy(() => import('@/pages/IntelligenceDetail'));
 const IntelligenceSources = lazy(() => import('@/pages/IntelligenceSources'));
 const Knowledge = lazy(() => import('@/pages/Knowledge'));
+const Shipments = lazy(() => import('@/pages/Shipments'));
+const ShipmentDetail = lazy(() => import('@/pages/ShipmentDetail'));
+const ShipmentsEval = lazy(() => import('@/pages/ShipmentsEval'));
 
 // ── Review: pages with real UI, kept for evaluation ──
 const Calendar = lazy(() => import('@/pages/Calendar'));
@@ -49,6 +52,11 @@ export default function App() {
         <Route path="/agents/:id" element={<AgentConfig />} />
         <Route path="/skills" element={<Skills />} />
         <Route path="/org" element={<Org />} />
+
+        {/* ── Shipments — Auto Tracker dashboard ── */}
+        <Route path="/shipments" element={<Shipments />} />
+        <Route path="/shipments/eval" element={<ShipmentsEval />} />
+        <Route path="/shipments/:id" element={<ShipmentDetail />} />
 
         {/* ── Knowledge — unified home for intelligence, library, topics, pipeline ── */}
         <Route path="/knowledge" element={<Knowledge />} />

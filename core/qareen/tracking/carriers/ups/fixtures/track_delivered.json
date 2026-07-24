@@ -1,0 +1,130 @@
+{
+  "_fixture_note": "DOC-DERIVED fixture (auto-tracker#14): assembled from the UPS Track API v1 documented response shape (developer.ups.com) on 2026-07-24. NOT a live capture — replace with an anonymized real response after credential signup (onboarding pipeline step 3) and re-validate the response_map against it.",
+  "trackResponse": {
+    "shipment": [
+      {
+        "inquiryNumber": "1Z999AA10123456784",
+        "package": [
+          {
+            "trackingNumber": "1Z999AA10123456784",
+            "deliveryDate": [
+              { "type": "DEL", "date": "20240105" }
+            ],
+            "currentStatus": {
+              "code": "DL",
+              "type": "D",
+              "description": "Delivered",
+              "simplifiedTextDescription": "Delivered"
+            },
+            "activity": [
+              {
+                "location": {
+                  "address": {
+                    "city": "ANYTOWN",
+                    "stateProvince": "GA",
+                    "postalCode": "30340",
+                    "countryCode": "US",
+                    "country": "US"
+                  }
+                },
+                "status": {
+                  "type": "D",
+                  "description": "Delivered",
+                  "code": "DL",
+                  "statusCode": "KB"
+                },
+                "date": "20240105",
+                "time": "120300",
+                "gmtDate": "2024-01-05",
+                "gmtTime": "17:03:00",
+                "gmtOffset": "-05:00"
+              },
+              {
+                "location": {
+                  "address": {
+                    "city": "ANYTOWN",
+                    "stateProvince": "GA",
+                    "postalCode": "30340",
+                    "countryCode": "US",
+                    "country": "US"
+                  }
+                },
+                "status": {
+                  "type": "I",
+                  "description": "Out For Delivery Today",
+                  "code": "OT",
+                  "statusCode": "OT"
+                },
+                "date": "20240105",
+                "time": "081200",
+                "gmtDate": "2024-01-05",
+                "gmtTime": "13:12:00",
+                "gmtOffset": "-05:00"
+              },
+              {
+                "location": {
+                  "address": {
+                    "city": "ATLANTA",
+                    "stateProvince": "GA",
+                    "postalCode": "30301",
+                    "countryCode": "US",
+                    "country": "US"
+                  }
+                },
+                "status": {
+                  "type": "I",
+                  "description": "Arrival Scan",
+                  "code": "AR",
+                  "statusCode": "AR"
+                },
+                "date": "20240104",
+                "time": "210500",
+                "gmtDate": "2024-01-05",
+                "gmtTime": "02:05:00",
+                "gmtOffset": "-05:00"
+              },
+              {
+                "location": {
+                  "address": {
+                    "city": "ATLANTA",
+                    "stateProvince": "GA",
+                    "postalCode": "30301",
+                    "countryCode": "US",
+                    "country": "US"
+                  }
+                },
+                "status": {
+                  "type": "I",
+                  "description": "Origin Scan",
+                  "code": "OR",
+                  "statusCode": "OR"
+                },
+                "date": "20240103",
+                "time": "173000",
+                "gmtDate": "2024-01-03",
+                "gmtTime": "22:30:00",
+                "gmtOffset": "-05:00"
+              },
+              {
+                "location": {
+                  "address": {}
+                },
+                "status": {
+                  "type": "M",
+                  "description": "Order Processed: Ready for UPS",
+                  "code": "MP",
+                  "statusCode": "MP"
+                },
+                "date": "20240102",
+                "time": "090000",
+                "gmtDate": "2024-01-02",
+                "gmtTime": "14:00:00",
+                "gmtOffset": "-05:00"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

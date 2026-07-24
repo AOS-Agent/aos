@@ -1,0 +1,76 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# DHL carrier pack (auto-tracker#19)
+#
+# Sources (researched 2026-07-24):
+#   - developer.dhl.com — Shipment Tracking - Unified API (covers ALL DHL
+#     divisions: Express, Paket DE, eCommerce, Freight, in one API)
+#   - Status codes: DHL support KB — pre-transit | transit | delivered |
+#     failure | unknown
+#   - Number formats/check digit: jkeen/tracking_number_data couriers/dhl.json
+# ⚠ DOC-DERIVED: stays canary until a real captured response confirms the maps.
+# ─────────────────────────────────────────────────────────────────────────────
+
+carrier: dhl
+display_name: DHL
+
+# Static API key sent in the DHL-API-Key header. Signup at developer.dhl.com
+# is human-reviewed; the starting tier is 250 calls/day, 1 call/5s (see
+# rate_limits — sized exactly from that quota).
+auth:
+  model: api_key
+  header: DHL-API-Key
+  keychain_keys:
+    - DHL_API_KEY_PROD
+
+endpoints:
+  base: https://api-eu.dhl.com
+  # GET; {number} is substituted into the trackingNumber query param.
+  track: https://api-eu.dhl.com/track/shipments?trackingNumber={number}
+
+tracking:
+  patterns:
+    - '[0-9]{10}'                                   # Express waybill
+    - '[0-9]{11}'                                   # Express waybill (11)
+    - 'J[A-Z]{2,3}[0-9]{9,10}'                      # Express piece ID (JJD…/JVGL…)
+    - '(?:GM|LX|RX|UV|CN|SG|TH|IN|HK|MY)[0-9A-Z]{12,39}'  # eCommerce (GM… etc.)
+    - '[0-9]{14}'                                   # eCommerce 14-digit
+  check_digit: dhl_mod7
+
+url_templates:
+  - https://www.dhl.com/en/express/tracking.html?brand=DHL&AWB={number}
+  - https://ecommerceportal.dhl.com/track?trackingnumber={number}
+
+capabilities:
+  edd: true    # estimatedTimeOfDelivery
+  pod: true    # proof of delivery on delivered shipments
+  push: false  # Push Unified exists but needs a tier upgrade — poll for now
+
+# DHL Unified Tracking statusCode enum → canonical milestones. DHL exposes
+# no out-for-delivery granularity at this tier (statusCode stays "transit").
+status_map:
+  pre-transit: label_created
+  transit: in_transit
+  delivered: delivered
+  failure: exception
+
+# Unified Tracking response: shipments[0] with status + events[]; each event
+# carries timestamp, location.address.addressLocality, description, statusCode.
+response_map:
+  events: $.shipments[0].events[*]
+  eta: $.shipments[0].estimatedTimeOfDelivery
+  event_fields:
+    timestamp: $.timestamp
+    code: $.statusCode
+    description: $.description
+    location: $.location.address.addressLocality
+
+rate_limits:
+  # Exact starting-tier quota from DHL: 250 calls/day, 1 call/5s.
+  # Sized with headroom: polls budgeted at 240 so probes can never starve.
+  requests_per_day: 240
+  min_interval_seconds: 5
+
+retention:
+  # DHL legal terms REQUIRE deleting tracking data 30 days after delivery.
+  # The retention enforcer purges on schedule, logged to the audit trail.
+  delete_days_after_delivery: 30

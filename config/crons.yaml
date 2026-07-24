@@ -268,6 +268,37 @@ jobs:
     tier: 4
     description: One-way mirror of islah bugs.yaml → work.db (reversible seam until cutover)
 
+  # ── Auto Tracker ────────────────────────────────────────────────────────────
+
+  track-poll:
+    command: bash ~/aos/core/bin/crons/track-poll
+    every: 30m
+    active_hours: "06:00-23:00"
+    timeout: 300
+    tier: 4
+    description: Polls due shipments through carrier APIs (due-queue scheduler, one pass; singleton-locked)
+
+  track-chitchats:
+    command: bash ~/aos/core/bin/crons/track-chitchats
+    at: "06:45"
+    timeout: 300
+    tier: 4
+    description: Daily Chit Chats outbound sync into the tracking store
+
+  track-backfill:
+    command: bash ~/aos/core/bin/crons/track-backfill
+    at: "03:50"
+    timeout: 600
+    tier: 4
+    description: Nightly comms-history sweep through the detection pipeline (dry-run report only)
+
+  track-retention:
+    command: bash ~/aos/core/bin/crons/track-retention
+    at: "04:45"
+    timeout: 120
+    tier: 4
+    description: Daily carrier-retention report (DHL 30-day window; dry-run only, purge stays operator-gated)
+
   # ── Planned (scripts not yet built) ─────────────────────────────────────────
   # These entries are placeholders. Scripts will be created when their
   # integration dependencies are ready.

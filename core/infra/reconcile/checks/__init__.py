@@ -21,6 +21,7 @@ from .sentinel_plist import SentinelPlistDriftCheck
 from .service_loaded import ServiceLoadedCheck
 from .storage_layout import StorageLayoutCheck
 from .symlinks import AgentSymlinkCheck, RuleSymlinkCheck, SkillSymlinkCheck
+from .tracker_health import TrackerHealthCheck
 from .transcriber import TranscriberServiceCheck
 from .vault_contract import VaultContractCheck
 from .volume_access import VolumeAccessCheck
@@ -118,6 +119,11 @@ ALL_CHECKS = [
     # still-unloaded/health-less service. periodic_fix=True — the one service
     # check allowed to repair between deploys.
     ServiceLoadedCheck,
+
+    # Auto Tracker — carrier packs lint-load, qareen.db tracking tables
+    # exist, scheduler singleton lock not stale, carrier Keychain keys not
+    # half-configured. Report-only (NOTIFY); never repairs.
+    TrackerHealthCheck,
 
     # Instance hygiene — diff framework declarations against instance state,
     # clean orphaned service venvs, stale LaunchAgents, broken symlinks,

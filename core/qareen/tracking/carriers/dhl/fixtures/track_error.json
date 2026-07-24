@@ -1,0 +1,6 @@
+{
+  "_fixture_note": "DOC-DERIVED fixture (auto-tracker#19): DHL Unified Tracking error envelope per developer.dhl.com docs, e.g. unknown tracking number (HTTP 404). NOT a live capture — replace with a real captured error post-credential.",
+  "status": 404,
+  "title": "No result found",
+  "detail": "No shipment found for the given tracking number 3318810000."
+}

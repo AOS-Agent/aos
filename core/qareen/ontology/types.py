@@ -44,6 +44,11 @@ class ObjectType(str, Enum):
     # ramble, bridge forward). Distinct from NOTE: a CAPTURE always has an
     # external source_url and may be backed by an intelligence_briefs row.
     CAPTURE = "capture"
+    # Auto Tracker: a tracked shipment (qareen.tracking store) and a merchant
+    # order it may be part_of. ORDER exists as a link target; the Shipment
+    # adapter derives part_of links from the order_shipments table.
+    SHIPMENT = "shipment"
+    ORDER = "order"
 
 
 class TaskStatus(str, Enum):
@@ -152,6 +157,11 @@ class LinkType(str, Enum):
     # Session links
     RUN_BY = "run_by"
     PARTICIPANTS = "participants"
+
+    # Shipment links (Auto Tracker). ABOUT covers shipment→person;
+    # RECEIVED_VIA covers shipment→source message; PART_OF is
+    # shipment→order (and reusable for other containment relations).
+    PART_OF = "part_of"
 
 
 @dataclass
@@ -774,6 +784,39 @@ class Conversation:
     message_count: int = 0
     unread_count: int = 0
     metadata: dict[str, Any] = field(default_factory=dict)
+
+
+# ---------------------------------------------------------------------------
+# Shipment tracking (Auto Tracker)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class Shipment:
+    """One tracked shipment, surfaced through the ontology.
+
+    Backed by the qareen.tracking store (shipments table). Distinct from
+    ``qareen.tracking.models.Shipment`` (the pipeline dataclass): this is the
+    ontology view — milestone is a plain string so the ontology layer never
+    imports the tracking pipeline, and it carries the store columns the
+    pipeline model omits (category, person_id).
+    """
+    id: str
+    tracking_number: str  # canonical (no spaces/hyphens, uppercased)
+    carrier: str  # pack slug, e.g. "ups"
+    milestone: str = "label_created"  # canonical milestone value
+    status: str = "active"  # active | delivered | expired | archived
+    direction: str = "inbound"  # inbound | outbound | return
+    eta: datetime | None = None
+    merchant: str | None = None
+    merchant_domain: str | None = None
+    category: str | None = None  # from domain_rules / LLM
+    label: str | None = None  # user-facing free-text label
+    person_id: str | None = None  # about → person link
+    source: str = "manual"  # api | email | manual | digest
+    confidence: float = 1.0
+    first_seen: datetime | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
 
 
 # ---------------------------------------------------------------------------

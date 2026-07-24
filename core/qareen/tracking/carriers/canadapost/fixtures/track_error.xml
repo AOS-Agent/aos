@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  DOC-DERIVED fixture (auto-tracker#19): CPC error envelope per the CPC
+  Errors and Codes table (code 004 "No Pin History"). NOT a live capture —
+  replace with a real captured error post-approval.
+-->
+<messages xmlns="http://www.canadapost.ca/ws/messages">
+  <message>
+    <code>004</code>
+    <description>No Pin History</description>
+  </message>
+</messages>

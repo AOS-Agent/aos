@@ -1,0 +1,14 @@
+{
+  "_fixture_note": "DOC-DERIVED fixture (auto-tracker#14): USPS v3 API error envelope per the api-examples error inventory (github.com/USPS/api-examples), e.g. tracking number not found (HTTP 400/404). NOT a live capture — replace with a real captured error post-credential.",
+  "apiVersion": "/tracking/v3",
+  "error": {
+    "code": "404",
+    "message": "Tracking number not found.",
+    "errors": [
+      {
+        "title": "Tracking Not Found",
+        "detail": "No tracking information exists for tracking number 9400111206206406260000."
+      }
+    ]
+  }
+}

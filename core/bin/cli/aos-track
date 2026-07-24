@@ -1,0 +1,301 @@
+#!/usr/bin/env python3
+"""aos track — Auto Tracker CLI: manual adds, shipment listing, and the
+new-carrier onboarding pipeline (initiative §7 lane 4 + §8).
+
+Usage:
+    aos track add <carrier>                 Scaffold carriers/<slug>/ from _template
+    aos track add-number <number> [--carrier X] [--text BLOB]
+    aos track list [--status active]
+    aos track show <shipment_id>
+    aos track validate <carrier>            Fixture-validation gate (green/red diff)
+    aos track canary <carrier> [--force]    Silent tracking, accuracy logged
+    aos track graduate <carrier> [--force]  Promote to active (joins detection)
+    aos track status                        Lifecycle overview of all packs
+
+Global options:
+    --db PATH            qareen.db path (default ~/.aos/data/qareen.db)
+    --carriers-dir PATH  pack tree (default: dev workspace ~/project/aos when
+                         present, else the runtime tree this CLI ships in)
+    --json               machine-readable output
+
+All logic lives in qareen.tracking.onboard — this is the thin shell.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+from pathlib import Path
+
+# Package root is core/ — parents[2] of this file.
+CORE_DIR = Path(__file__).resolve().parents[2]
+if str(CORE_DIR) not in sys.path:
+    sys.path.insert(0, str(CORE_DIR))
+
+from qareen.tracking import onboard, packs  # noqa: E402
+from qareen.tracking.config import TrackingConfig  # noqa: E402
+from qareen.tracking.store import ShipmentStore  # noqa: E402
+
+
+def _default_carriers_dir() -> Path:
+    """Scaffold/validate target. New carriers are authored in the dev
+    workspace (~/project/aos) and shipped to main — the runtime tree
+    (~/aos) is read-only by house rule. Non-dev machines fall back to the
+    tree this CLI actually runs from."""
+    override = os.environ.get("AOS_CARRIERS_DIR")
+    if override:
+        return Path(override)
+    dev = Path.home() / "project" / "aos" / "core" / "qareen" / "tracking" / "carriers"
+    if dev.is_dir():
+        return dev
+    return packs.CARRIERS_DIR
+
+
+def _print_json(payload) -> None:
+    print(json.dumps(payload, indent=2, default=str))
+
+
+# ── Subcommands ──────────────────────────────────────────────────────────
+
+
+def cmd_add(args) -> int:
+    carriers_dir = Path(args.carriers_dir) if args.carriers_dir else _default_carriers_dir()
+    store = ShipmentStore(args.db)
+    target = onboard.scaffold(args.carrier, carriers_dir=carriers_dir, store=store)
+    print("✓ Scaffolded %s" % target)
+    print()
+    print("  Edit the manifest: %s" % (target / "manifest.yaml"))
+    print("  Drop captured fixtures in: %s" % (target / "fixtures"))
+    print()
+    print(onboard.checklist(args.carrier))
+    return 0
+
+
+def cmd_add_number(args) -> int:
+    store = ShipmentStore(args.db)
+    carriers_dir = Path(args.carriers_dir) if args.carriers_dir else None
+    result = onboard.add_number(
+        store,
+        number=args.number,
+        text=args.text,
+        carrier=args.carrier,
+        carriers_dir=carriers_dir,
+        config=TrackingConfig.load(),
+    )
+    if args.json:
+        _print_json(result)
+        return 0
+    for rec in result["shipments"]:
+        verb = "Added" if rec["action"] == "added" else "Merged into existing"
+        print(
+            "✓ %s shipment %s — %s (%s, confidence %.2f)"
+            % (verb, rec["shipment_id"], rec["tracking_number"], rec["carrier"], rec["confidence"])
+        )
+    for rec in result["candidates"]:
+        print(
+            "? Queued for approval %s — %s (%s, confidence %.2f)"
+            % (rec["candidate_id"], rec["tracking_number"], rec["carrier"], rec["confidence"])
+        )
+    for rec in result["ignored"]:
+        print(
+            "✗ Ignored %s (%s) — %s"
+            % (rec["tracking_number"], rec["carrier"], rec.get("reason", ""))
+        )
+    if not (result["shipments"] or result["candidates"] or result["ignored"]):
+        print("No tracking number found. Try --carrier <slug> if you know it.")
+        return 1
+    return 0
+
+
+def cmd_list(args) -> int:
+    store = ShipmentStore(args.db)
+    rows = onboard.list_shipments(store, status=args.status)
+    if args.json:
+        _print_json({"shipments": rows})
+        return 0
+    if not rows:
+        print("No shipments%s." % (" with status '%s'" % args.status if args.status else ""))
+        return 0
+    for row in rows:
+        eta = ("  eta %s" % str(row["eta"])[:10]) if row.get("eta") else ""
+        label = ("  “%s”" % row["label"]) if row.get("label") else ""
+        print(
+            "%s  %-12s %-26s %-16s %-10s%s%s"
+            % (row["id"], row["carrier"], row["tracking_number"], row["milestone"], row["status"], eta, label)
+        )
+    print("\n%d shipment(s)" % len(rows))
+    return 0
+
+
+def cmd_show(args) -> int:
+    store = ShipmentStore(args.db)
+    detail = onboard.shipment_detail(store, args.shipment_id)
+    if detail is None:
+        print("No such shipment: %s" % args.shipment_id, file=sys.stderr)
+        return 1
+    if args.json:
+        _print_json(detail)
+        return 0
+    row = detail["shipment"]
+    print("%s — %s %s" % (row["id"], row["carrier"].upper(), row["tracking_number"]))
+    print(
+        "  milestone: %s   status: %s   source: %s   confidence: %.2f"
+        % (row["milestone"], row["status"], row["source"], row["confidence"])
+    )
+    for key in ("eta", "merchant", "label", "category", "first_seen"):
+        if row.get(key):
+            print("  %s: %s" % (key, row[key]))
+    for num in detail["numbers"]:
+        print("  number: %s (%s, %s)" % (num["number"], num["carrier"], num["role"]))
+    if detail["events"]:
+        print("  events:")
+        for event in detail["events"]:
+            print(
+                "    [%s] %s  %s  %s"
+                % (
+                    event["seq"],
+                    (event["timestamp"] or "?")[:16],
+                    event["milestone"] or "-",
+                    event["description"],
+                )
+            )
+    else:
+        print("  events: none yet")
+    return 0
+
+
+def cmd_validate(args) -> int:
+    carriers_dir = Path(args.carriers_dir) if args.carriers_dir else _default_carriers_dir()
+    report = onboard.validate_pack(args.carrier, carriers_dir=carriers_dir)
+    if args.json:
+        _print_json(
+            {
+                "slug": report.slug,
+                "ok": report.ok,
+                "problems": report.problems,
+                "fixtures": [
+                    {
+                        "name": f.name,
+                        "ok": f.ok,
+                        "kind": f.kind,
+                        "events": f.events,
+                        "problems": f.problems,
+                        "notes": f.notes,
+                    }
+                    for f in report.fixtures
+                ],
+            }
+        )
+    else:
+        print(report.render())
+    return 0 if report.ok else 1
+
+
+def cmd_canary(args) -> int:
+    carriers_dir = Path(args.carriers_dir) if args.carriers_dir else _default_carriers_dir()
+    store = ShipmentStore(args.db)
+    record = onboard.canary(args.carrier, store, carriers_dir=carriers_dir, force=args.force)
+    print(
+        "✓ %s is now CANARY (since %s) — tracks silently, accuracy logged; "
+        "patterns stay out of detection until graduation."
+        % (args.carrier, record["since"])
+    )
+    if args.force:
+        print("  ⚠ forced — fixture validation was bypassed")
+    return 0
+
+
+def cmd_graduate(args) -> int:
+    carriers_dir = Path(args.carriers_dir) if args.carriers_dir else _default_carriers_dir()
+    store = ShipmentStore(args.db)
+    record = onboard.graduate(args.carrier, store, carriers_dir=carriers_dir, force=args.force)
+    print(
+        "✓ %s GRADUATED to active (since %s) — patterns + URL templates "
+        "join detection." % (args.carrier, record["since"])
+    )
+    if args.force:
+        print("  ⚠ forced — fixture validation was bypassed")
+    return 0
+
+
+def cmd_status(args) -> int:
+    carriers_dir = Path(args.carriers_dir) if args.carriers_dir else _default_carriers_dir()
+    store = ShipmentStore(args.db)
+    rows = onboard.lifecycle(store, carriers_dir=carriers_dir)
+    if args.json:
+        _print_json({"packs": rows})
+        return 0
+    if not rows:
+        print("No packs found in %s" % carriers_dir)
+        return 0
+    for row in rows:
+        since = ("  since %s" % str(row["since"])[:10]) if row.get("since") else ""
+        note = ("  — %s" % row["note"]) if row.get("note") else ""
+        print("%-14s %-12s%s%s" % (row["slug"], row["state"], since, note))
+    return 0
+
+
+# ── Argument parsing ─────────────────────────────────────────────────────
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="aos track",
+        description="Auto Tracker CLI — manual adds + new-carrier onboarding pipeline",
+    )
+    parser.add_argument("--db", default=None, help="qareen.db path (default ~/.aos/data/qareen.db)")
+    parser.add_argument("--carriers-dir", default=None, help="carrier pack tree (default: dev workspace, else runtime)")
+    parser.add_argument("--json", action="store_true", help="machine-readable output")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    p = sub.add_parser("add", help="scaffold a new carrier pack from _template")
+    p.add_argument("carrier", help="pack slug, e.g. 'purolator'")
+    p.set_defaults(func=cmd_add)
+
+    p = sub.add_parser("add-number", help="manual add: number or pasted text blob")
+    p.add_argument("number", nargs="?", default=None, help="tracking number")
+    p.add_argument("--carrier", default=None, help="pack slug (skip detection)")
+    p.add_argument("--text", default=None, help="pasted text blob to scan")
+    p.set_defaults(func=cmd_add_number)
+
+    p = sub.add_parser("list", help="list shipments")
+    p.add_argument("--status", default=None, help="filter: active|delivered|expired|archived")
+    p.set_defaults(func=cmd_list)
+
+    p = sub.add_parser("show", help="shipment detail + event timeline")
+    p.add_argument("shipment_id")
+    p.set_defaults(func=cmd_show)
+
+    p = sub.add_parser("validate", help="validate pack mappings against captured fixtures")
+    p.add_argument("carrier")
+    p.set_defaults(func=cmd_validate)
+
+    p = sub.add_parser("canary", help="promote pack to canary (silent tracking)")
+    p.add_argument("carrier")
+    p.add_argument("--force", action="store_true", help="bypass the validation gate")
+    p.set_defaults(func=cmd_canary)
+
+    p = sub.add_parser("graduate", help="promote pack to active (joins detection)")
+    p.add_argument("carrier")
+    p.add_argument("--force", action="store_true", help="bypass the validation gate")
+    p.set_defaults(func=cmd_graduate)
+
+    p = sub.add_parser("status", help="lifecycle overview of all packs")
+    p.set_defaults(func=cmd_status)
+
+    return parser
+
+
+def main(argv=None) -> int:
+    args = build_parser().parse_args(argv)
+    try:
+        return args.func(args)
+    except onboard.OnboardError as exc:
+        print("✗ %s" % exc, file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

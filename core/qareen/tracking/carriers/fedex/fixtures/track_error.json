@@ -1,0 +1,13 @@
+{
+  "_fixture_note": "DOC-DERIVED fixture (auto-tracker#14): FedEx error envelope per the Track API docs (developer.fedex.com), e.g. unknown tracking number (HTTP 404). NOT a live capture — replace with a real captured error post-credential.",
+  "transactionId": "a0f1c2d3-0000-4000-8000-exampledoc02",
+  "errors": [
+    {
+      "code": "TRACKING.TRACKINGNUMBER.NOTFOUND",
+      "message": "Tracking number not found. Please check the tracking number and try again.",
+      "parameterList": [
+        { "key": "trackingNumber", "value": "986578788800" }
+      ]
+    }
+  ]
+}

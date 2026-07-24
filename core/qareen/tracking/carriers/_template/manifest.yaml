@@ -1,0 +1,136 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# CARRIER PACK TEMPLATE — copy this directory to `carriers/<slug>/` and edit.
+#
+# Core principle: carriers are data, not code. This manifest is EVERYTHING the
+# generic engine needs to track, detect, and normalize a carrier — no Python
+# changes required. The linter (core/qareen/tracking/linter.py) must pass; run
+# the tracking tests after editing.
+#
+# Conventions (non-negotiable):
+#   - Secrets NEVER appear here — only the NAMES of macOS Keychain keys
+#     (set values via `agent-secret set <NAME>`).
+#   - `carrier` must equal this directory's name.
+#   - Tracking patterns must be BOUNDED and FLAT (no `*`, `+`, `{n,}`, no
+#     quantified groups containing quantifiers) — the linter enforces this
+#     as a ReDoS guard; these run over arbitrary message text.
+#   - No pack goes live without validation against a real captured API
+#     response (see the initiative's onboarding pipeline).
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Pack slug — MUST match this directory's name (lowercase, no spaces).
+carrier: _template
+
+# Human-readable name for the dashboard.
+display_name: Template Carrier
+
+# ── Auth ─────────────────────────────────────────────────────────────────────
+# How the engine authenticates. model is one of:
+#   oauth2_client_credentials  (UPS, FedEx, USPS — token endpoint + cache)
+#   api_key                    (DHL — static header, e.g. DHL-API-Key)
+#   basic                      (Canada Post — user:pass API key)
+#   none                       (email-event pseudo-carriers like amazon-email)
+auth:
+  model: api_key
+  # model: api_key sends a static header — declare its NAME here (e.g. DHL
+  # uses `header: DHL-API-Key`). The generic client honors this; without it
+  # the client raises at track time.
+  # header: X-Api-Key
+  # Keychain key NAMES only — values live in macOS Keychain, never in files.
+  # Label environments explicitly (…_PROD vs …_SANDBOX) to avoid the classic
+  # sandbox-returns-fake-data confusion. Omit for model: none.
+  keychain_keys:
+    - TEMPLATE_API_KEY_PROD
+
+# ── Endpoints ────────────────────────────────────────────────────────────────
+endpoints:
+  base: https://api.example-carrier.com
+  # OAuth2 token endpoint (model: oauth2_client_credentials only).
+  # token: https://api.example-carrier.com/oauth/token
+  # Tracking endpoint. {number} is substituted with the CANONICAL number.
+  track: https://api.example-carrier.com/track/v1/shipments/{number}
+  # HTTP verb for the track call (default GET). POST carriers (FedEx) also
+  # declare a JSON body template — {number} is substituted there too.
+  # method: POST
+  # body: '{"trackingInfo": [{"trackingNumberInfo": {"trackingNumber": "{number}"}}]}'
+  # Non-JSON APIs declare their Accept header here. XML media types route the
+  # response through this pack's mapper.py (`track_xml_to_dict`) before the
+  # response_map is applied (Canada Post style).
+  # accept: application/vnd.cpc.track-v2+xml
+
+# ── Tracking-number recognition ──────────────────────────────────────────────
+tracking:
+  # Regexes matched (fullmatch, after canonicalization: spaces/hyphens
+  # stripped, uppercased) against candidate numbers. LINTER RULES:
+  # bounded quantifiers only ({n} or {n,m}) and no nested quantifiers.
+  patterns:
+    - '1Z[0-9A-Z]{16}'        # example: UPS-style
+    - '[0-9]{22}'             # example: USPS-style
+  # Check-digit validator name from the registry
+  # (core/qareen/tracking/checkdigits.py). Check digits kill garbage
+  # candidates (phone numbers, order IDs, dates) for free before any probe
+  # budget is spent. Registered today: mod10 (Luhn). Later packs register
+  # carrier-specific algorithms (USPS weighted mod-10, FedEx mod-11).
+  # Set to null if the carrier has no check digit.
+  check_digit: mod10
+
+# ── Carrier URL templates (detection layer 0) ────────────────────────────────
+# Public tracking-URL shapes. The detection layer extracts numbers from
+# tracking URLs in emails/messages — the URL gives number AND carrier for
+# free, the highest-precision signal. {number} marks the capture position.
+url_templates:
+  - https://www.example-carrier.com/track?tracknum={number}
+  - https://www.example-carrier.com/tracking/{number}
+
+# ── Capabilities ─────────────────────────────────────────────────────────────
+capabilities:
+  edd: true    # API reports an estimated delivery date
+  pod: true    # API provides proof of delivery (signature/photo)
+  push: false  # carrier offers webhook push (UPS Track Alert = true)
+
+# ── Status map ───────────────────────────────────────────────────────────────
+# Carrier status codes → canonical milestones. Keys are matched exactly,
+# then case-insensitively. Values MUST be one of:
+#   label_created | picked_up | in_transit | out_for_delivery | delivered
+#   exception | failed_attempt | returned | expired
+# Codes not listed here normalize to milestone: null (kept raw, never
+# guessed) — extend this map from real captured responses, not docs alone.
+status_map:
+  LABEL_CREATED: label_created
+  PICKED_UP: picked_up
+  IN_TRANSIT: in_transit
+  OUT_FOR_DELIVERY: out_for_delivery
+  DELIVERED: delivered
+  DELIVERY_ATTEMPTED: failed_attempt
+  EXCEPTION: exception
+  RETURNED_TO_SENDER: returned
+  EXPIRED: expired
+
+# ── Response map ─────────────────────────────────────────────────────────────
+# JSONPath subset ($, .key, [N], [*]) into the carrier's track response.
+# Validated by the linter; verified against a captured fixture before the
+# pack goes live. `events` points at the scan-event array; `event_fields`
+# maps each event onto normalized fields.
+response_map:
+  events: $.trackDetails[0].scanEvents[*]
+  eta: $.trackDetails[0].estimatedDeliveryDate
+  event_fields:
+    timestamp: $.date
+    code: $.eventCode
+    description: $.eventDescription
+    location: $.scanLocation.city
+
+# ── Rate limits / budget ─────────────────────────────────────────────────────
+# The scheduler enforces a token bucket + daily budget per carrier, with
+# exponential backoff on HTTP 429. Size these from the carrier's real quota
+# (e.g. DHL starts at 250 calls/day, 1 call/5s) with headroom for probes —
+# probes have a SEPARATE budget and can never starve polling.
+rate_limits:
+  requests_per_day: 240
+  min_interval_seconds: 5
+
+# ── Retention ────────────────────────────────────────────────────────────────
+# Some carriers' legal terms require deleting tracking data N days after
+# delivery (DHL: 30). The retention enforcer purges on schedule, logged to
+# the audit trail. null = keep forever.
+retention:
+  delete_days_after_delivery: null

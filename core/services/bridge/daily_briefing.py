@@ -195,13 +195,86 @@ def _scan_initiatives() -> list[dict]:
     return results
 
 
+# ── Shipments (Auto Tracker) ────────────────────────────────────────────
+
+# Canonical tracking milestones → plain words (MESSAGE_STYLE.md: the reader
+# shouldn't have to decode "out_for_delivery").
+_MILESTONE_WORDS = {
+    "label_created": "label created",
+    "picked_up": "picked up",
+    "in_transit": "in transit",
+    "out_for_delivery": "out for delivery",
+    "exception": "needs attention",
+    "failed_attempt": "delivery attempt failed — needs attention",
+}
+
+QAREEN_DB = Path.home() / ".aos" / "data" / "qareen.db"
+
+
+def _shipment_name(item: dict) -> str:
+    """What to call a shipment on a phone: the user's label, else the
+    merchant, else '<CARRIER> package'."""
+    name = item.get("label") or item.get("merchant")
+    if name:
+        return str(name)
+    carrier = str(item.get("carrier") or "").upper()
+    return "%s package" % carrier if carrier else "Package"
+
+
+def _shipments_section(tz) -> list:
+    """📦 SHIPMENTS section lines, or [] when there's nothing to say.
+
+    Sourced from the Auto Tracker store (qareen.db) via
+    qareen.tracking.analytics. Fully wrapped: ANY tracking failure (missing
+    db, import error, locked sqlite) drops the section — it must never
+    break the briefing.
+    """
+    try:
+        import sys
+        if not QAREEN_DB.exists():
+            return []
+        core_dir = str(Path.home() / "aos" / "core")
+        if core_dir not in sys.path:
+            sys.path.insert(0, core_dir)
+        from qareen.tracking import analytics
+        from qareen.tracking.store import ShipmentStore
+
+        store = ShipmentStore(QAREEN_DB)
+        arriving = analytics.arriving_today(store, tz=tz)
+        issues = analytics.exceptions(store)
+        if not arriving and not issues:
+            return []
+
+        parts = []
+        if arriving:
+            parts.append("%d arriving today" % len(arriving))
+        if issues:
+            parts.append(
+                "%d exception%s" % (len(issues), "" if len(issues) == 1 else "s")
+            )
+        lines = ["  " + ", ".join(parts)]
+        for item in (arriving + issues)[:MAX_ITEMS]:
+            if item.get("milestone") in ("exception", "failed_attempt"):
+                words = _MILESTONE_WORDS[item["milestone"]]
+            elif item.get("milestone") == "out_for_delivery":
+                words = _MILESTONE_WORDS["out_for_delivery"]
+            else:
+                words = "arriving today"
+            lines.append("  \u2022 <b>%s</b> — %s" % (_shipment_name(item), words))
+        return lines
+    except Exception as e:
+        logger.debug(f"Shipments section unavailable: {e}")
+        return []
+
+
 # ── BLUF briefing builder ─────────────────────────────────────────────
 
 
 def _build_briefing() -> str:
     """Build the BLUF daily briefing.
 
-    Sections: URGENT, IMPORTANT, THINK ABOUT, PEOPLE, OVERNIGHT.
+    Sections: URGENT, IMPORTANT, THINK ABOUT, PEOPLE, MESSAGES,
+    SHIPMENTS (conditional), OVERNIGHT (conditional).
     No system metrics, no trust scores — delta only.
     """
     tz_name, _, _ = _get_config()
@@ -429,6 +502,13 @@ def _build_briefing() -> str:
             lines.append(f"  \U0001f4ac {name} ({channel}) — {ago}")
             if preview:
                 lines.append(f"    {preview[:80]}")
+        lines.append("")
+
+    # SHIPMENTS (only if something is arriving or needs attention)
+    shipments = _shipments_section(tz)
+    if shipments:
+        lines.append("\U0001f4e6 <b>SHIPMENTS</b>")
+        lines.extend(shipments)
         lines.append("")
 
     # OVERNIGHT (only if applicable)

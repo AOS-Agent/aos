@@ -1,0 +1,87 @@
+{
+  "_fixture_note": "DOC-DERIVED fixture (auto-tracker#19): assembled from the DHL Shipment Tracking - Unified documented response shape (developer.dhl.com) on 2026-07-24. NOT a live capture — replace with an anonymized real response after API-key approval and re-validate the response_map.",
+  "shipments": [
+    {
+      "id": "3318810025",
+      "service": "express",
+      "origin": {
+        "address": {
+          "addressLocality": "LEIPZIG - Saxony - Germany",
+          "countryCode": "DE"
+        }
+      },
+      "destination": {
+        "address": {
+          "addressLocality": "TORONTO - Ontario - Canada",
+          "countryCode": "CA"
+        }
+      },
+      "status": {
+        "timestamp": "2024-01-05T13:03:00",
+        "location": {
+          "address": {
+            "addressLocality": "TORONTO - Ontario - Canada",
+            "countryCode": "CA"
+          }
+        },
+        "statusCode": "delivered",
+        "status": "Delivered",
+        "description": "Delivered - Signed for by R EXAMPLE"
+      },
+      "estimatedTimeOfDelivery": "2024-01-05T19:00:00",
+      "details": {
+        "proofOfDelivery": {
+          "signatureUrl": "https://api-eu.dhl.com/track/shipments/3318810025/proof-of-delivery",
+          "documentUrl": null,
+          "signedBy": "R EXAMPLE"
+        },
+        "totalNumberOfPieces": 1,
+        "pieceIds": ["JD014600003311881025"]
+      },
+      "events": [
+        {
+          "timestamp": "2024-01-05T13:03:00",
+          "location": {
+            "address": {
+              "addressLocality": "TORONTO - Ontario - Canada",
+              "countryCode": "CA"
+            }
+          },
+          "statusCode": "delivered",
+          "status": "Delivered",
+          "description": "Delivered - Signed for by R EXAMPLE"
+        },
+        {
+          "timestamp": "2024-01-05T08:41:00",
+          "location": {
+            "address": {
+              "addressLocality": "TORONTO - Ontario - Canada",
+              "countryCode": "CA"
+            }
+          },
+          "statusCode": "transit",
+          "status": "With delivery courier",
+          "description": "With delivery courier TORONTO - Canada"
+        },
+        {
+          "timestamp": "2024-01-04T22:15:00",
+          "location": {
+            "address": {
+              "addressLocality": "LEIPZIG - Saxony - Germany",
+              "countryCode": "DE"
+            }
+          },
+          "statusCode": "transit",
+          "status": "Departed from DHL facility",
+          "description": "Departed from DHL facility LEIPZIG - Germany"
+        },
+        {
+          "timestamp": "2024-01-03T11:20:00",
+          "statusCode": "pre-transit",
+          "status": "Shipment information received",
+          "description": "Shipment information received"
+        }
+      ]
+    }
+  ]
+}
