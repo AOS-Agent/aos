@@ -18,35 +18,10 @@ The bridge listens for that pattern and routes via `council say`.
 """
 from __future__ import annotations
 
-import json
 import re
-import subprocess
-import urllib.parse
-import urllib.request
 from pathlib import Path
 
 
-def _get_secret(name: str) -> str | None:
-    try:
-        out = subprocess.run(
-            ["security", "find-generic-password", "-s", name, "-w"],
-            capture_output=True, text=True, timeout=5,
-        )
-        if out.returncode == 0:
-            return out.stdout.strip()
-    except Exception:
-        pass
-    # Fall back to agent-secret CLI
-    try:
-        out = subprocess.run(
-            [str(Path.home() / "aos/core/bin/cli/agent-secret"), "get", name],
-            capture_output=True, text=True, timeout=5,
-        )
-        if out.returncode == 0:
-            return out.stdout.strip()
-    except Exception:
-        pass
-    return None
 
 
 def _extract_section(memo: str, header: str) -> str:
@@ -57,12 +32,7 @@ def _extract_section(memo: str, header: str) -> str:
 
 
 def send_to_telegram(memo_path: str, topic: str, council_id: str) -> dict:
-    """Send the council synthesis to operator's Telegram."""
-    token = _get_secret("TELEGRAM_BOT_TOKEN")
-    chat_id = _get_secret("TELEGRAM_CHAT_ID")
-    if not token or not chat_id:
-        return {"ok": False, "reason": "missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID"}
-
+    """Send the council synthesis to operator's Telegram (knowledge topic)."""
     memo = Path(memo_path).read_text()
     # Strip frontmatter
     if memo.startswith("---"):
@@ -96,16 +66,13 @@ def send_to_telegram(memo_path: str, topic: str, council_id: str) -> dict:
     if len(body) > 4000:
         body = body[:3990] + "…"
 
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
-    data = urllib.parse.urlencode({
-        "chat_id": chat_id,
-        "text": body,
-        "parse_mode": "HTML",
-        "disable_web_page_preview": "true",
-    }).encode()
+    # Topic-routed delivery: knowledge topic, falls back General -> DM.
+    import sys
+    sys.path.insert(0, str(Path.home() / "aos" / "core" / "engine"))
     try:
-        with urllib.request.urlopen(url, data=data, timeout=10) as resp:
-            result = json.loads(resp.read())
-            return {"ok": result.get("ok", False), "result": result}
+        from notify.router import send_notification
+        result = send_notification(body, topic="knowledge",
+                                   parse_mode="HTML", no_preview=True)
+        return {"ok": result["delivered"], "result": result}
     except Exception as e:
         return {"ok": False, "reason": str(e)}

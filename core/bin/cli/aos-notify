@@ -40,6 +40,7 @@ def main() -> int:
     parser.set_defaults(kind="info")
     parser.add_argument("--silent", action="store_true", help="No push notification sound")
     parser.add_argument("--plain", action="store_true", help="Disable HTML parse mode")
+    parser.add_argument("--no-preview", action="store_true", help="Disable link previews")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(message)s")

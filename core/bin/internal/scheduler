@@ -81,26 +81,10 @@ def check_reboot():
                     subprocess.run(["launchctl", "load", str(plist)], capture_output=True, timeout=5)
                     log(f"Loaded {la} after reboot")
 
-        # Send Telegram notification if configured
-        try:
-            token_result = subprocess.run(
-                [str(HOME / "aos" / "core" / "bin" / "agent-secret"), "get", "TELEGRAM_BOT_TOKEN"],
-                capture_output=True, text=True, timeout=5)
-            chat_result = subprocess.run(
-                [str(HOME / "aos" / "core" / "bin" / "agent-secret"), "get", "TELEGRAM_CHAT_ID"],
-                capture_output=True, text=True, timeout=5)
-            token = token_result.stdout.strip()
-            chat_id = chat_result.stdout.strip()
-            if token and chat_id:
-                msg = f"System rebooted at {boot_time.strftime('%H:%M')}. Services restarted. Uptime: {uptime_seconds}s."
-                data = json.dumps({"chat_id": chat_id, "text": msg}).encode()
-                req = urllib.request.Request(
-                    f"https://api.telegram.org/bot{token}/sendMessage",
-                    data=data, headers={"Content-Type": "application/json"}, method="POST")
-                urllib.request.urlopen(req, timeout=10)
-                log("Sent reboot notification to Telegram")
-        except Exception:
-            pass  # Telegram notification is best-effort
+        # Send Telegram notification if configured (topic-routed, best-effort)
+        msg = f"System rebooted at {boot_time.strftime('%H:%M')}. Services restarted. Uptime: {uptime_seconds}s."
+        if _send_telegram(msg, topic="system") is True:
+            log("Sent reboot notification to Telegram")
 
         # Mark this boot as handled
         LAST_BOOT_FILE.write_text(boot_key)
@@ -447,37 +431,27 @@ def _tail_log_lines(log_file: Path, n: int = 5) -> list:
     return meaningful[-n:]
 
 
-def _send_telegram(text: str):
+def _send_telegram(text: str, topic: str = "alerts"):
     """Send a Telegram message to the operator. Best-effort.
 
-    Returns True on success, False if Telegram credentials are missing (graceful
-    skip — machines without Telegram configured shouldn't error), or None if a
-    send was attempted but failed. Reads secrets via the agent-secret CLI.
+    Routes via aos-notify to the forum topic (falls back group -> DM).
+    Returns True on success, False if Telegram credentials are missing
+    (graceful skip — machines without Telegram configured shouldn't
+    error), or None if a send was attempted but failed.
     """
-    agent_secret = HOME / "aos" / "core" / "bin" / "agent-secret"
     try:
-        token = subprocess.run(
-            [str(agent_secret), "get", "TELEGRAM_BOT_TOKEN"],
-            capture_output=True, text=True, timeout=5,
-        ).stdout.strip()
-        chat_id = subprocess.run(
-            [str(agent_secret), "get", "TELEGRAM_CHAT_ID"],
-            capture_output=True, text=True, timeout=5,
-        ).stdout.strip()
-    except Exception:
-        return None
-    if not token or not chat_id:
-        return False  # Telegram not configured — graceful skip
-    try:
-        data = json.dumps({"chat_id": chat_id, "text": text}).encode()
-        req = urllib.request.Request(
-            f"https://api.telegram.org/bot{token}/sendMessage",
-            data=data, headers={"Content-Type": "application/json"}, method="POST",
+        result = subprocess.run(
+            [str(HOME / "aos" / "core" / "bin" / "cli" / "aos-notify"),
+             text, "--topic", topic, "--plain"],
+            capture_output=True, text=True, timeout=30,
         )
-        urllib.request.urlopen(req, timeout=10)
-        return True
     except Exception:
         return None
+    if result.returncode == 0:
+        return True
+    if "no bot token" in result.stderr or "no delivery target" in result.stderr:
+        return False  # Telegram not configured — graceful skip
+    return None
 
 
 def _maybe_alert_failure(name: str, entry: dict, log_file: Path):

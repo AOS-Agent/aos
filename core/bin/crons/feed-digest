@@ -18,12 +18,11 @@ if [ ! -x "$AGENT_SECRET" ]; then
     exit 1
 fi
 
-# ── Fetch credentials ────────────────────────────────────
+# ── Check credentials (delivery itself goes through aos-notify) ──
 
 BOT_TOKEN=$("$AGENT_SECRET" get TELEGRAM_BOT_TOKEN 2>/dev/null)
-CHAT_ID=$("$AGENT_SECRET" get TELEGRAM_CHAT_ID 2>/dev/null)
 
-if [ -z "$BOT_TOKEN" ] || [ -z "$CHAT_ID" ]; then
+if [ -z "$BOT_TOKEN" ]; then
     echo "[feed-digest] Telegram credentials not configured in Keychain"
     exit 0
 fi
@@ -75,16 +74,9 @@ while IFS='|' read -r title _ score _ source_name; do
     fi
 done <<< "$BRIEFS"
 
-# ── Send via Telegram Bot API ────────────────────────────
+# ── Send via topic-routed aos-notify (knowledge topic) ────
 
-HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
-    -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
-    -d "chat_id=${CHAT_ID}" \
-    -d "text=${MSG}" \
-    -d "disable_web_page_preview=true" \
-)
-
-if [ "$HTTP_CODE" = "200" ]; then
+if "$HOME/aos/core/bin/cli/aos-notify" "$MSG" --topic knowledge --plain --no-preview > /dev/null 2>&1; then
     echo "[feed-digest] Telegram digest sent (${TOTAL_UNREAD} unread)"
 
     # Mark these as surfaced
@@ -98,5 +90,5 @@ WHERE status = 'unread'
 SQL
 
 else
-    echo "[feed-digest] Telegram send failed (HTTP $HTTP_CODE)"
+    echo "[feed-digest] Telegram send failed (aos-notify non-zero exit)"
 fi
