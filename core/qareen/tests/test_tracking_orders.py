@@ -59,7 +59,7 @@ def _make_comms_db(path: Path, messages) -> Path:
 
 
 ORDER_EMAIL = (
-    "From: orders@digikey.com\n"
+    "From: orders@digikey.example.com\n"
     "Thank you for your order! Order confirmation #75123456\n"
     "Order date: 2024-01-04\n"
     "1x Oscilloscope Probe Kit — $89.00 (SKU: PROBE-1)\n"
@@ -80,20 +80,20 @@ RESTRICTED_EMAIL = (
 @pytest.fixture
 def comms_db(tmp_path):
     return _make_comms_db(tmp_path / "comms.db", [
-        {"id": 1, "sender_id": "orders@digikey.com", "content": ORDER_EMAIL},
+        {"id": 1, "sender_id": "orders@digikey.example.com", "content": ORDER_EMAIL},
         {"id": 2, "sender_id": "sam@example.com", "content": NOT_ORDER_EMAIL},
         # outbound copy of the same email — must not be scanned
         {"id": 3, "sender_id": "me@example.com", "content": ORDER_EMAIL,
          "direction": "out"},
         # privacy-restricted sender
-        {"id": 4, "sender_id": "restricted@shop.com", "content": RESTRICTED_EMAIL},
+        {"id": 4, "sender_id": "restricted@shop.example.com", "content": RESTRICTED_EMAIL},
     ])
 
 
 VALID_PAYLOAD = {
     "order": {
         "merchant": "DigiKey",
-        "merchant_domain": "digikey.com",
+        "merchant_domain": "digikey.example.com",
         "order_number": "75123456",
         "order_date": "2024-01-04",
         "total": 114.00,
@@ -190,8 +190,8 @@ def test_parse_default_domain_fallback():
 
 
 def test_sender_domain():
-    assert sender_domain("orders@digikey.com") == "digikey.com"
-    assert sender_domain("Jane <jane@shop.example.co.uk>") == "shop.example.co.uk"
+    assert sender_domain("orders@digikey.example.com") == "digikey.example.com"
+    assert sender_domain("Jane <jane@shop.example.net>") == "shop.example.net"
     assert sender_domain("not-an-address") is None
     assert sender_domain(None) is None
 
@@ -219,7 +219,7 @@ def fake_extractor_factory(payloads_by_snippet):
 
 def test_backfill_dry_run_writes_nothing(comms_db):
     store = FakeStore()
-    extractor = fake_extractor_factory({"digikey.com": VALID_PAYLOAD})
+    extractor = fake_extractor_factory({"digikey.example.com": VALID_PAYLOAD})
     report = run_backfill(comms_db, store=store, extractor=extractor, write=False)
 
     assert report["scanned"] == 2  # both order emails; outbound + lunch skipped
@@ -230,9 +230,9 @@ def test_backfill_dry_run_writes_nothing(comms_db):
 
 def test_backfill_write_persists_and_links(comms_db):
     store = FakeStore()
-    extractor = fake_extractor_factory({"digikey.com": VALID_PAYLOAD})
+    extractor = fake_extractor_factory({"digikey.example.com": VALID_PAYLOAD})
     def link_lookup(domain):
-        return ["shp_1", "shp_2"] if domain == "digikey.com" else []
+        return ["shp_1", "shp_2"] if domain == "digikey.example.com" else []
     report = run_backfill(
         comms_db,
         store=store,
@@ -245,7 +245,7 @@ def test_backfill_write_persists_and_links(comms_db):
     assert len(store.orders) == 1
     order = store.orders[0]
     assert order["order_number"] == "75123456"
-    assert order["merchant_domain"] == "digikey.com"
+    assert order["merchant_domain"] == "digikey.example.com"
     assert order["total"] == 114.00
     assert [i["name"] for i in order["items"]] == [
         "Oscilloscope Probe Kit", "USB-C Cable",
@@ -256,11 +256,11 @@ def test_backfill_write_persists_and_links(comms_db):
 
 
 def test_backfill_privacy_excluded(comms_db, monkeypatch):
-    # restricted@shop.com is privacy_level 3 → excluded before extraction
+    # restricted@shop.example.com is privacy_level 3 → excluded before extraction
     real_lookup = orders.sender_privacy_level
 
     def fake_privacy(sender, people_db_path=None):
-        if sender == "restricted@shop.com":
+        if sender == "restricted@shop.example.com":
             return 3
         return 0
 
@@ -304,7 +304,7 @@ def test_backfill_prefilter_drops_non_orders(comms_db):
 
 
 def test_render_report_smoke(comms_db):
-    extractor = fake_extractor_factory({"digikey.com": VALID_PAYLOAD})
+    extractor = fake_extractor_factory({"digikey.example.com": VALID_PAYLOAD})
     report = run_backfill(comms_db, extractor=extractor)
     text = render_report(report)
     assert "DRY-RUN" in text
@@ -316,7 +316,7 @@ def test_render_report_smoke(comms_db):
 def test_main_dry_run(comms_db, monkeypatch, capsys):
     monkeypatch.setattr(
         orders, "claude_extractor",
-        fake_extractor_factory({"digikey.com": VALID_PAYLOAD}),
+        fake_extractor_factory({"digikey.example.com": VALID_PAYLOAD}),
     )
     rc = orders.main(["--backfill", "--comms-db", str(comms_db), "--limit", "10"])
     assert rc == 0

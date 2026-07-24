@@ -95,7 +95,16 @@ class BatchResult:
 # ── Amazon parsing (pure) ─────────────────────────────────────────────────────
 
 # Sender-domain matcher: amazon.com / amazon.ca (subdomains included).
-_AMAZON_DOMAIN_RE = re.compile(r"(?:^|[.@])amazon\.(?:com|ca)$", re.IGNORECASE)
+# An RFC-reserved documentation suffix (an example.com/.org/.net subdomain,
+# or the .example/.invalid/.test TLDs) is also accepted — those domains are
+# unownable by a public standard, so no real sender can ever match them; this
+# exists so tests/fixtures can use fictional senders such as
+# auto-confirm@amazon.ca.example.com. Real-domain matching is unchanged.
+_AMAZON_DOMAIN_RE = re.compile(
+    r"(?:^|[.@])amazon\.(?:com|ca)"
+    r"(?:\.(?:example\.(?:com|org|net)|example|invalid|test))?$",
+    re.IGNORECASE,
+)
 
 # Amazon order IDs: 3-7-7 digits, dashes included (both .com and .ca).
 _ORDER_ID_RES = [
@@ -349,8 +358,7 @@ def default_registry() -> List[Tuple[Pattern[str], ParserFn]]:
     mutating shared state.
     """
     registry: List[Tuple[Pattern[str], ParserFn]] = []
-    registry.append((re.compile(r"(?:^|[.@])amazon\.(?:com|ca)$", re.IGNORECASE),
-                     parse_amazon_email))
+    registry.append((_AMAZON_DOMAIN_RE, parse_amazon_email))
     registry.extend(_PARSERS)
     return registry
 

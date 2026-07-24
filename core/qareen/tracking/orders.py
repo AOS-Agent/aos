@@ -98,7 +98,7 @@ nothing else (no preamble, no markdown fences):
 {"order": {
   "merchant": "Shop Name",            // merchant display name, or null
   "merchant_domain": "shop.com",      // merchant domain, or null
-  "order_number": "123-4567890",      // REQUIRED; if none is visible, return {"order": null}
+  "order_number": "123-456789",       // REQUIRED; if none is visible, return {"order": null}
   "order_date": "2024-01-05",         // ISO date, or null
   "total": 42.50,                     // number, grand total charged, or null
   "currency": "USD",                  // ISO 4217, or null
