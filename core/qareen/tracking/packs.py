@@ -57,7 +57,30 @@ class CarrierPack:
 
     @property
     def patterns(self) -> List[str]:
+        """Every pattern the carrier recognizes — the VALIDATION set.
+
+        Use for judging a number that arrived through a trusted path
+        (manual add, a carrier URL, a carrier digest). Recall matters here;
+        the number is already known to be a tracking number.
+        """
         return list(self.tracking.get("patterns") or [])
+
+    @property
+    def scan_patterns(self) -> List[str]:
+        """Patterns safe to run over raw message text — the DETECTION set.
+
+        `patterns` minus `body_scan_exclude`. Some legitimate formats are
+        indistinguishable from ordinary text: DHL's bare 10/11/14-digit
+        waybills match phone numbers, and a 2-letter prefix plus alnum
+        matches English words under the case-insensitive body scan. Those
+        stay valid for validation but must never drive free-text detection.
+
+        A pattern listed in `body_scan_exclude` that is not in `patterns`
+        is a manifest error (caught by the linter) — the exclude list is a
+        filter over the real set, not a second source of truth.
+        """
+        excluded = set(self.tracking.get("body_scan_exclude") or [])
+        return [p for p in self.patterns if p not in excluded]
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         return "CarrierPack(%r)" % self.slug

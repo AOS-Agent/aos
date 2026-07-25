@@ -7,8 +7,10 @@
 # singleton lock (tracking_state 'scheduler:lock') makes overlapping runs
 # harmless — a second pass exits immediately as {"locked": true}.
 #
-# NOTE: scheduler.py has no __main__ CLI yet (tracked as a follow-up), so
-# this wrapper drives run_once via inline Python.
+# This wrapper delegates to `python3 -m qareen.tracking.scheduler --once`.
+# Do NOT reintroduce an inline copy of the run_once call here: the previous
+# inline version drifted from scheduler.main() (broken format string, and no
+# Notifier passed), and failed 23/23 runs while the module CLI was correct.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -26,29 +28,5 @@ cd "$AOS_ROOT" || { echo "[track-poll] cannot cd to $AOS_ROOT" >&2; exit 1; }
 ts() { date '+%Y-%m-%d %H:%M:%S'; }
 echo "[track-poll] $(ts) polling due shipments"
 
-"$PYTHON" - <<'PY'
-import logging
-import sys
-from datetime import datetime, timezone
-
-sys.path.insert(0, "core")
-
-from qareen.tracking.packs import load_packs
-from qareen.tracking.scheduler import TrackingScheduler
-from qareen.tracking.store import ShipmentStore
-
-logging.basicConfig(
-    level=logging.INFO, format="%(levelname)s %(name)s: %(message)s"
-)
-
-store = ShipmentStore()  # ~/.aos/data/qareen.db, self-initializing
-packs = load_packs()
-scheduler = TrackingScheduler(store, packs)
-now = datetime.now(timezone.utc).replace(tzinfo=None)
-report = scheduler.run_once(now)
-print(
-    "track-poll: polled=%(polled)d transitions=%(transitions)d "
-    "archived=%(archived)d locked=%(locked)s errors=%d"
-    % (report, len(report.get("errors", [])))
-)
-PY
+PYTHONPATH="$AOS_ROOT/core${PYTHONPATH:+:$PYTHONPATH}" \
+    "$PYTHON" -m qareen.tracking.scheduler --once

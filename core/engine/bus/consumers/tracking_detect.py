@@ -108,7 +108,16 @@ class TrackingDetectConsumer(EventConsumer):
             "timestamp": data.get("timestamp") or event.timestamp,
             "from_me": False,
         }
+        self.detect_message(message)
 
+    def detect_message(self, message: dict) -> int:
+        """Run detection over one normalized message dict; return #candidates.
+
+        The single detection path shared by both bus front-ends: the
+        eventd/EventBus route (``_process`` above) and the live CommsBus
+        route (``core.comms.consumers.tracking_detect``). Keep detection
+        logic here so the two front-ends can never drift apart.
+        """
         from qareen.tracking import detect as _detect
 
         config = self._get_config()
@@ -119,11 +128,11 @@ class TrackingDetectConsumer(EventConsumer):
         if result.skipped_reason:
             log.debug(
                 "tracking_detect: skipped %s message (%s)",
-                message["channel"], result.skipped_reason,
+                message.get("channel", ""), result.skipped_reason,
             )
-            return
+            return 0
         if not result.candidates:
-            return
+            return 0
 
         counts = _detect.persist(result, store, config)
         for cand in result.candidates:
@@ -133,10 +142,11 @@ class TrackingDetectConsumer(EventConsumer):
                 cand.tracking_number,
                 cand.confidence,
                 cand.layer,
-                message["channel"],
-                message["sender"],
+                message.get("channel", ""),
+                message.get("sender", ""),
             )
         log.debug("tracking_detect: persisted %s", counts)
+        return len(result.candidates)
 
     def health(self) -> dict:
         return {

@@ -15,6 +15,15 @@ import yaml
 
 # Make the `qareen` package importable (package root is core/)
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+# ...and the repo root, so consumers can be imported as `core.bus.*`.
+#
+# Deliberately NOT `engine.bus.*`: core/engine/ is a namespace package, and
+# tests/conftest.py puts core/engine/work/ on sys.path for the whole session
+# — where engine.py shadows the `engine` namespace whenever both suites are
+# collected together. These two tests failed in every full-suite run for
+# that reason. The `core.` prefix resolves through core/bus → engine/bus
+# and is immune to the shadowing.
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from qareen.tracking import detect  # noqa: E402
 from qareen.tracking.config import TrackingConfig, action_for  # noqa: E402
@@ -520,8 +529,8 @@ def test_config_missing_file_uses_defaults(tmp_path):
 
 
 def test_consumer_processes_event_and_never_raises(packs):
-    from engine.bus.consumers.tracking_detect import TrackingDetectConsumer
-    from engine.bus.event import Event
+    from core.bus.consumers.tracking_detect import TrackingDetectConsumer
+    from core.bus.event import Event
 
     store = FakeStore()
     consumer = TrackingDetectConsumer(packs=packs, store=store, config=TrackingConfig())
@@ -546,8 +555,8 @@ def test_consumer_processes_event_and_never_raises(packs):
 
 
 def test_consumer_skips_from_me(packs):
-    from engine.bus.consumers.tracking_detect import TrackingDetectConsumer
-    from engine.bus.event import Event
+    from core.bus.consumers.tracking_detect import TrackingDetectConsumer
+    from core.bus.event import Event
 
     store = FakeStore()
     consumer = TrackingDetectConsumer(packs=packs, store=store, config=TrackingConfig())

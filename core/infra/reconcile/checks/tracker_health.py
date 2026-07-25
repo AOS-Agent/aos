@@ -16,12 +16,20 @@ needs an operator, not an auto-repair):
      of its manifest's Keychain keys resolve or none do. A partial set
      means someone added one secret and forgot the rest — polls for that
      carrier will fail with auth errors.
+  e) The tracking crons are actually SUCCEEDING. Sub-checks (a)-(d) are
+     all structural — they inspect config and schema, never execution.
+     v0.7.0 shipped with track-poll crashing on every single run (23/23,
+     a format-string TypeError in the cron wrapper) while this check
+     reported green, because nothing here had any notion of whether the
+     system had ever done its job. A tracker whose poller has never
+     succeeded is not healthy, however well-formed its manifests are.
 
 Runs under the reconcile runner with plain sys.path; the qareen package is
 imported from ~/aos/core explicitly.
 """
 
 import json
+import re
 import sqlite3
 import subprocess
 import sys
@@ -39,6 +47,16 @@ AGENT_SECRET = AOS / "core" / "bin" / "agent-secret"
 
 LOCK_KEY = "scheduler:lock"
 LOCK_STALE_SECONDS = 24 * 3600  # TTL is 5 min; 24h = unambiguously dead
+
+CRON_LOG_DIR = HOME / ".aos" / "logs" / "crons"
+# The crons whose failure means the tracker is not doing its job. A cron
+# with no log at all is NOT a finding — it may simply not be scheduled on
+# this machine (framework code, no instance config = graceful skip).
+TRACKING_CRONS = ("track-poll", "track-chitchats")
+# Last N END records to consider when deciding "never succeeds".
+CRON_LOG_WINDOW = 10
+# AOS cron log format: "--- [<timestamp>] END <name> (exit: N, duration: Ns) ---"
+_END_RE = re.compile(r"END\s+\S+\s+\(exit:\s*(\d+)")
 
 AUTO_TRACKER_TABLES = (
     "shipments",
@@ -71,14 +89,29 @@ def _secret_get(name):
 
 def _load_packs():
     """Import qareen.tracking.packs from the framework and load all packs.
-    Returns (packs_dict, error_string)."""
+    Returns (packs_dict, error_string).
+
+    The sys.path insertion is scoped and reverted. A reconcile run loads
+    every check into one process, so a check that permanently prepends a
+    tree to sys.path changes how *later* checks resolve their imports —
+    and `core/engine/work/engine.py` shadows the `engine` namespace
+    package exactly this way. Import, then put the path back.
+    """
+    added = False
     try:
         if str(QAREEN_CORE) not in sys.path:
             sys.path.insert(0, str(QAREEN_CORE))
+            added = True
         from qareen.tracking import packs as packs_mod
         return packs_mod.load_packs(), None
     except Exception as exc:
         return None, "%s: %s" % (type(exc).__name__, exc)
+    finally:
+        if added:
+            try:
+                sys.path.remove(str(QAREEN_CORE))
+            except ValueError:
+                pass
 
 
 def _db_has_tables():
@@ -139,6 +172,33 @@ def _half_configured(packs):
     return problems
 
 
+def _cron_failures():
+    """Tracking crons whose recent runs are failing.
+
+    Returns [(cron_name, last_exit, fails, total)] for crons whose MOST
+    RECENT run failed. A cron with no log is skipped entirely — absence of
+    a log means "not scheduled here", which is a legitimate state, not a
+    fault. Only completed runs (END records) are considered, so a run in
+    flight is never mistaken for a failure.
+    """
+    problems = []
+    for name in TRACKING_CRONS:
+        log = CRON_LOG_DIR / ("%s.log" % name)
+        try:
+            text = log.read_text(errors="replace")
+        except OSError:
+            continue  # no log → not scheduled on this machine
+        exits = [int(m) for m in _END_RE.findall(text)]
+        if not exits:
+            continue  # started but never finished a run yet
+        window = exits[-CRON_LOG_WINDOW:]
+        if window[-1] != 0:
+            problems.append(
+                (name, window[-1], sum(1 for e in window if e != 0), len(window))
+            )
+    return problems
+
+
 def _findings():
     """All current violations as human-readable strings."""
     findings = []
@@ -174,6 +234,19 @@ def _findings():
                 % (slug, ", ".join(missing))
             )
 
+    for name, last_exit, fails, total in _cron_failures():
+        if fails == total:
+            findings.append(
+                "cron %s has failed every one of its last %d runs "
+                "(exit %d) — the tracker is not running"
+                % (name, total, last_exit)
+            )
+        else:
+            findings.append(
+                "cron %s last run failed (exit %d; %d/%d recent runs failed)"
+                % (name, last_exit, fails, total)
+            )
+
     return findings
 
 
@@ -181,7 +254,8 @@ class TrackerHealthCheck(ReconcileCheck):
     name = "tracker_health"
     description = (
         "Auto Tracker healthy: packs lint-load, qareen.db tables exist, "
-        "scheduler lock not stale, carrier credentials not half-configured"
+        "scheduler lock not stale, carrier credentials not half-configured, "
+        "tracking crons succeeding"
     )
     # Report-only: check() detects, fix() notifies. No destructive repair.
 
