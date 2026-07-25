@@ -11,13 +11,31 @@ import json
 import os
 import re
 import sqlite3
-import uuid
-from datetime import date, datetime
-from pathlib import Path
-from typing import Any
 
 # Bug-pipeline definition + generic status seed. Single source of truth shared
 # with the Phase 1 migration so the DB and code cannot drift (spec §3.2/§3.3).
+#
+# Path bootstrap (fix 2026-07-25): the qareen service runs with `core/` as the
+# import root (top package `qareen`), so a bare `core.engine.*` import throws
+# ModuleNotFoundError there — which silently dropped the whole work adapter and
+# made every task/project/goal query return empty (the work board showed 0 tasks).
+# Put the project root on sys.path the way backend.py does so `core.*` resolves
+# from any harness (service, CLI, tests). Same dual-path class as aos#167.
+import sys as _sys
+import uuid
+from datetime import date, datetime
+from pathlib import Path
+from pathlib import Path as _Path
+from typing import Any
+
+_root = _Path(__file__).resolve()
+for _ in range(8):
+    _root = _root.parent
+    if (_root / "core" / "qareen").is_dir():
+        if str(_root) not in _sys.path:
+            _sys.path.insert(0, str(_root))
+        break
+
 from core.engine.work.pipelines import (
     BUG_PIPELINE_ID,
     BUG_STAGE_ACTIVE,
