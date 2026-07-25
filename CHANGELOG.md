@@ -2,6 +2,20 @@
 
 All notable changes to AOS. Release notes sent via Telegram after each 4am update.
 
+## v0.7.1 — 2026-07-25
+
+Summary: Auto Tracker actually runs now. v0.7.0 shipped a complete tracking library that was connected to almost nothing — the poll cron had failed every run since release, detection was never registered on the live message bus, notifications were unreachable, and order extraction had no caller. Four one-line seams, each invisible because the health check only inspected structure and never execution.
+
+- Fixed `track-poll` crashing on every run — the cron inlined its own copy of the scheduler call with mixed `%(named)s`/`%d` placeholders, failing 23/23 runs while `scheduler.main()` was correct all along. It now calls the module CLI, which also wires the `Notifier` the cron never passed
+- Fixed shipment detection never running — `TrackingDetectConsumer` was written for the EventBus (`process(event)`) but the live bus calls `process(list[Message])`, so registering it raw would have failed silently inside its own never-raise guard. Adds a proper CommsBus adapter, with detection logic shared so the two front-ends can't drift
+- Changed consumer registration failures to log at `WARNING` instead of `DEBUG` — a consumer that fails to register is otherwise invisible while its feature silently never runs
+- Added order and line-item extraction from Chit Chats payloads — the API already returned structured `line_items`, and the code was using `order_id` to build a display string while a separate unscheduled LLM-over-email extractor was meant to recover the same data. Backfilled 21 orders and 27 items with no model call
+- Fixed DHL patterns matching phone numbers and English words — measured 120 distinct false matches across 40,000 real messages, now zero. Adds `body_scan_exclude` to the pack schema, splitting `patterns` (validation, recall) from `scan_patterns` (free-text detection, precision), so real waybills stay valid for manual add and carrier URLs
+- Added a liveness sub-check to `tracker_health` — it reported green through the entire release because it only checked packs, schema, lock, and credentials, never whether a cron had ever succeeded. It now watches cron exit codes; a missing log is not a finding and an in-flight run is not a failure
+- Fixed `tracker_health` permanently prepending the runtime tree to `sys.path`, which changed how later reconcile checks resolved their imports
+- Fixed `aos self-test` shipping red on every install — `test_tracking_onboard` used `copytree`, which preserves mode bits, so copies of the read-only `~/aos` tree were unwritable. Passed in the dev workspace, failed everywhere else
+- Fixed the tracking consumer tests failing in every full-suite run — `tests/conftest.py` puts `core/engine/work` on `sys.path`, where `engine.py` shadows the `engine` namespace package
+
 ## v0.7.0 — 2026-07-24
 
 Summary: Auto Tracker — sovereign shipment intelligence for AOS/Qareen. "Where is everything?" finally has one answer: a new subsystem that detects tracking numbers from your messages, polls carriers directly with your own credentials (no aggregator, your data stays home), and surfaces everything on a live `/shipments` dashboard, in the morning briefing, and to Chief.
