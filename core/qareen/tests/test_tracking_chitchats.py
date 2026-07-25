@@ -363,3 +363,172 @@ def test_sync_against_real_store(tmp_path):
     assert summary2["events"] == 0
     assert len(store.list_shipments()) == 1
     assert len(store.events_for(row["id"])) == 2
+
+
+# --- Order enrichment from line_items ------------------------------------------
+#
+# v0.7.0 read order_id only to build a display label and threw away the rest of
+# the payload, while a separate LLM-over-email extractor was written to recover
+# the same data. These cover the free path: structured order data straight from
+# the Chit Chats response.
+
+
+def _cc_with_items(**overrides):
+    return _cc_shipment(
+        value="30.00",
+        value_currency="USD",
+        line_items=[
+            {
+                "quantity": 2,
+                "description": "KING 30mL skincare",
+                "value_amount": "15.00",
+                "sku_code": "KING-30",
+            },
+            {
+                "quantity": 1,
+                "description": "Sample sachet",
+                "value_amount": None,
+                "sku_code": None,
+            },
+        ],
+        **overrides,
+    )
+
+
+class OrderStore(FakeStore):
+    """FakeStore + the order half of the protocol."""
+
+    def __init__(self, upsert_raises=None):
+        super().__init__()
+        self.orders = []       # kwargs passed to upsert_order
+        self.links = []        # (shipment_id, order_id)
+        self._upsert_raises = upsert_raises
+        self._oseq = 0
+
+    def upsert_order(self, **kw):
+        if self._upsert_raises:
+            raise self._upsert_raises
+        self.orders.append(kw)
+        self._oseq += 1
+        return "ord-%d" % self._oseq
+
+    def link_shipment_order(self, shipment_id, order_id):
+        self.links.append((shipment_id, order_id))
+
+
+def test_sync_persists_order_and_line_items():
+    store = OrderStore()
+    client, _ = _client_for([_cc_with_items()])
+
+    summary = ChitChatsSync(store, client=client).sync()
+
+    assert summary["orders"] == 1
+    assert summary["order_items"] == 2
+    assert len(store.orders) == 1
+
+    order = store.orders[0]
+    assert order["order_number"] == "NU-1042"
+    assert order["merchant"] == "shopify"
+    assert order["total"] == 30.00
+    assert order["currency"] == "USD"
+
+    items = order["items"]
+    assert [i["name"] for i in items] == ["KING 30mL skincare", "Sample sachet"]
+    assert items[0]["qty"] == 2
+    assert items[0]["price"] == 15.00
+    assert items[0]["sku"] == "KING-30"
+    assert items[1]["price"] is None
+    assert items[1]["sku"] is None
+
+
+def test_sync_links_order_to_shipment():
+    store = OrderStore()
+    client, _ = _client_for([_cc_with_items()])
+
+    ChitChatsSync(store, client=client).sync()
+
+    shipment_id = store.shipments[("chitchats", "ABCD1234")][0]
+    assert store.links == [(shipment_id, "ord-1")]
+
+
+def test_merchant_domain_stays_null_so_email_orders_can_merge_later():
+    """order_store is a platform name, not a domain.
+
+    upsert_order dedups on (merchant_domain, order_number); inventing a
+    domain here would fragment against real email-extracted orders.
+    """
+    store = OrderStore()
+    client, _ = _client_for([_cc_with_items()])
+
+    ChitChatsSync(store, client=client).sync()
+
+    assert store.orders[0]["merchant_domain"] is None
+
+
+def test_shipment_without_order_id_skips_order():
+    store = OrderStore()
+    client, _ = _client_for([_cc_with_items(order_id=None)])
+
+    summary = ChitChatsSync(store, client=client).sync()
+
+    assert summary["synced"] == 1
+    assert summary["orders"] == 0
+    assert store.orders == []
+
+
+def test_order_recorded_even_when_line_items_absent():
+    """An order with no itemization is still an order worth knowing about."""
+    store = OrderStore()
+    client, _ = _client_for([_cc_shipment(value="12.50", value_currency="CAD")])
+
+    summary = ChitChatsSync(store, client=client).sync()
+
+    assert summary["orders"] == 1
+    assert summary["order_items"] == 0
+    assert store.orders[0]["items"] is None
+
+
+def test_malformed_line_items_are_skipped_not_fatal():
+    store = OrderStore()
+    client, _ = _client_for([
+        _cc_shipment(
+            line_items=[
+                "not-a-dict",
+                {"description": "  ", "quantity": 3},      # blank name
+                {"description": "Real item", "quantity": "bogus"},
+                None,
+            ]
+        )
+    ])
+
+    summary = ChitChatsSync(store, client=client).sync()
+
+    items = store.orders[0]["items"]
+    assert [i["name"] for i in items] == ["Real item"]
+    assert items[0]["qty"] == 1  # junk quantity falls back to 1
+    assert summary["errors"] == 0
+
+
+def test_order_failure_does_not_sink_the_shipment_sync():
+    """Order enrichment is best-effort; the shipment must still land."""
+    store = OrderStore(upsert_raises=RuntimeError("db locked"))
+    client, _ = _client_for([_cc_with_items()])
+
+    summary = ChitChatsSync(store, client=client).sync()
+
+    assert summary["synced"] == 1
+    assert summary["orders"] == 0
+    assert summary["errors"] == 1
+    assert ("chitchats", "ABCD1234") in store.shipments
+
+
+def test_store_without_order_api_is_skipped_cleanly():
+    """Backward compat: older instances / fakes lack upsert_order."""
+    store = FakeStore()  # no upsert_order
+    client, _ = _client_for([_cc_with_items()])
+
+    summary = ChitChatsSync(store, client=client).sync()
+
+    assert summary["synced"] == 1
+    assert summary["orders"] == 0
+    assert summary["errors"] == 0

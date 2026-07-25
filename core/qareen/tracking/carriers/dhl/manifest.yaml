@@ -28,12 +28,52 @@ endpoints:
   track: https://api-eu.dhl.com/track/shipments?trackingNumber={number}
 
 tracking:
+  # PRECISION NOTE (2026-07-25) — read before adding a pattern here.
+  #
+  # Body scanning is case-insensitive (detect._scan_regex) and has no
+  # context gate, so every pattern below runs against raw message text
+  # from every channel. Measured against the real 255K-message comms.db,
+  # the original pattern set produced 120 distinct matches in a 40K-message
+  # sample, essentially all false:
+  #
+  #   INFRASTRUCTURE, INTERPRETATION   ← 'IN' + 12 alnum, under IGNORECASE
+  #   14-digit strings                 ← international phone numbers
+  #   10- and 11-digit strings         ← domestic phone numbers
+  #
+  # (Shapes only. The observed strings were real contacts' phone numbers and
+  # are deliberately not reproduced here — this file is public.)
+  #
+  # Bare-digit waybill patterns cannot be distinguished from phone numbers
+  # in free text, and dhl_mod7 only filters 6/7 of them by chance. They are
+  # therefore NOT body-scan patterns. DHL numbers in real mail almost always
+  # arrive with a dhl.com URL or a carrier digest, so the URL and digest
+  # layers still recover them at higher confidence.
+  #
+  # These formats are REAL and stay valid for manual add, carrier URLs, and
+  # digests (engine.validate_number uses the full list). They are excluded
+  # from free-text scanning only — see body_scan_exclude below.
   patterns:
-    - '[0-9]{10}'                                   # Express waybill
-    - '[0-9]{11}'                                   # Express waybill (11)
-    - 'J[A-Z]{2,3}[0-9]{9,10}'                      # Express piece ID (JJD…/JVGL…)
-    - '(?:GM|LX|RX|UV|CN|SG|TH|IN|HK|MY)[0-9A-Z]{12,39}'  # eCommerce (GM… etc.)
-    - '[0-9]{14}'                                   # eCommerce 14-digit
+    - '[0-9]{10}'                       # Express waybill (mod-7 checked)
+    - '[0-9]{11}'                       # Express waybill, 11-digit
+    - '[0-9]{14}'                       # eCommerce, 14-digit
+    - 'J[A-Z]{2,3}[0-9]{9,10}'          # Express piece ID (JJD…/JVGL…)
+    - 'GM[0-9A-Z]{12,39}'               # eCommerce GM… (digits or mixed)
+    - '(?:LX|RX|UV|CN|SG|TH|IN|HK|MY)[0-9A-Z]{12,39}'  # eCommerce, other prefixes
+
+  # Valid formats that must never drive free-text detection. Each entry must
+  # also appear in `patterns` above (the linter enforces this).
+  #
+  # GM… is deliberately NOT excluded: no English word starts "GM" and runs
+  # 12+ alphanumerics, so it is safe to scan and carries most eCommerce
+  # recall. The IN/MY/CN/TH prefixes are the opposite — under the
+  # case-insensitive body scan they matched INFRASTRUCTURE and
+  # INTERPRETATION in the real corpus.
+  body_scan_exclude:
+    - '[0-9]{10}'   # indistinguishable from a 10-digit phone number
+    - '[0-9]{11}'   # indistinguishable from an 11-digit phone number
+    - '[0-9]{14}'   # matches invoice numbers, intl. phone numbers, ids
+    - '(?:LX|RX|UV|CN|SG|TH|IN|HK|MY)[0-9A-Z]{12,39}'  # matches English words
+
   check_digit: dhl_mod7
 
 url_templates:

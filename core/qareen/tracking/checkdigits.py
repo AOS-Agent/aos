@@ -187,9 +187,16 @@ def dhl_mod7(number: str) -> bool:
     """DHL Express check digit: int(serial) % 7 == check digit (10–11 digits).
 
     DHL formats without a check digit (JJD…/JVGL… piece IDs, GM…
-    e-commerce, 14-digit e-commerce) return True once they match their
+    e-commerce, S10-style e-commerce) return True once they match their
     documented shape — the check digit only exists for Express waybills.
     Worked example: 3318810025 → 331881002 % 7 = 5.
+
+    The accepted shapes below MUST stay in step with
+    carriers/dhl/manifest.yaml `tracking.patterns`. A shape validated here
+    but not matched there is dead code; a shape matched there but not
+    validated here is silently dropped after detection. The manifest
+    carries a precision note explaining why the bare-digit e-commerce
+    pattern was removed — do not re-add it here either.
     """
     if number.isdigit() and 10 <= len(number) <= 11:
         return int(number[:-1]) % 7 == int(number[-1])

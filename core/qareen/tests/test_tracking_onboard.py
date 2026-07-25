@@ -13,6 +13,7 @@ tree.
 import importlib.machinery
 import importlib.util
 import shutil
+import stat
 import sys
 from pathlib import Path
 
@@ -43,6 +44,17 @@ def _tmp_carriers(tmp_path, *slugs) -> Path:
     shutil.copytree(REAL_CARRIERS / "_template", root / "_template")
     for slug in slugs:
         shutil.copytree(REAL_CARRIERS / slug, root / slug)
+
+    # copytree preserves mode bits. The framework tree (~/aos) is read-only
+    # by AOS convention, so on a real install the *copies* inherit r--r--r--
+    # and every test that rewrites a manifest dies with PermissionError.
+    # That is why `aos self-test` shipped red out of the box while passing
+    # in the dev workspace. Make the working copy writable.
+    for path in root.rglob("*"):
+        if path.is_file():
+            path.chmod(path.stat().st_mode | stat.S_IWUSR)
+        elif path.is_dir():
+            path.chmod(path.stat().st_mode | stat.S_IWUSR | stat.S_IXUSR)
     return root
 
 

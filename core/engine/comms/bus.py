@@ -86,6 +86,7 @@ class MessageBus:
         _consumer_classes = [
             ("core.comms.consumers.people_intel", "PeopleIntelConsumer"),
             ("core.comms.consumers.pattern_update", "PatternUpdateConsumer"),
+            ("core.comms.consumers.tracking_detect", "TrackingDetectConsumer"),
             ("core.comms.orchestrator", "CommsOrchestrator"),
         ]
         for mod_path, cls_name in _consumer_classes:
@@ -95,7 +96,11 @@ class MessageBus:
                 consumer = getattr(mod, cls_name)()
                 self.register_consumer(consumer)
             except Exception as e:
-                log.debug(f"Could not load consumer {cls_name}: {e}")
+                # WARNING, not DEBUG: a consumer that fails to register is
+                # invisible at runtime — the bus keeps working and its
+                # feature silently never runs. Auto Tracker's detection
+                # pipeline was dark for a full release behind this line.
+                log.warning(f"Could not load consumer {cls_name}: {e}")
 
     @property
     def adapters(self):

@@ -241,6 +241,32 @@ def map_status(status: Any) -> Milestone:
     return Milestone.LABEL_CREATED
 
 
+def _as_float(value: Any) -> Optional[float]:
+    """Coerce a Chit Chats money field to float. None on anything unusable.
+
+    The API returns money as decimal *strings* ("30.00") and omits or nulls
+    fields freely, so this must tolerate None, "", and junk.
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return None
+    return None if out != out else out  # drop NaN
+
+
+def _as_int(value: Any, default: int = 1) -> int:
+    """Coerce a quantity to a positive int, falling back to `default`."""
+    if value is None or isinstance(value, bool):
+        return default
+    try:
+        out = int(float(value))
+    except (TypeError, ValueError):
+        return default
+    return out if out >= 1 else default
+
+
 def _parse_dt(value: Any) -> Optional[datetime]:
     """Parse an ISO-8601 string; naive values assumed UTC. None on junk."""
     if not isinstance(value, str) or not value.strip():
@@ -394,7 +420,15 @@ class ChitChatsSync:
             }
 
         now = self._now()
-        summary = {"ok": True, "synced": 0, "handoffs": 0, "events": 0, "errors": 0}
+        summary = {
+            "ok": True,
+            "synced": 0,
+            "handoffs": 0,
+            "events": 0,
+            "orders": 0,
+            "order_items": 0,
+            "errors": 0,
+        }
         for raw in raw_shipments:
             try:
                 self._sync_one(raw, now, summary)
@@ -406,13 +440,90 @@ class ChitChatsSync:
         self.store.set_state(STATE_LAST_SYNC, checkpoint)
         summary["synced_at"] = checkpoint
         log.info(
-            "Chit Chats sync: %d shipment(s), %d handoff(s), %d event(s), %d error(s)",
+            "Chit Chats sync: %d shipment(s), %d handoff(s), %d event(s), "
+            "%d order(s)/%d item(s), %d error(s)",
             summary["synced"],
             summary["handoffs"],
             summary["events"],
+            summary["orders"],
+            summary["order_items"],
             summary["errors"],
         )
         return summary
+
+    def _sync_order(
+        self, raw: Dict[str, Any], shipment_id: str, summary: Dict[str, Any]
+    ) -> None:
+        """Persist order + line items straight from the Chit Chats payload.
+
+        Chit Chats already returns fully structured order data — ``order_id``,
+        ``order_store``, and a ``line_items`` array with quantity/description/
+        value/SKU. v0.7.0 read ``order_id`` only to build a display label and
+        discarded the rest, while a separate LLM-over-email extractor
+        (``orders.py``) was written to recover the same information. This is
+        the free path: no model call, no email parsing, no API key.
+
+        Best-effort by design — order enrichment must never fail a shipment
+        sync. The store is a duck-typed seam, so a store without the order
+        API (older instances, test fakes) simply skips.
+        """
+        upsert = getattr(self.store, "upsert_order", None)
+        if not callable(upsert):
+            return
+
+        order_number = raw.get("order_id")
+        if order_number in (None, ""):
+            return
+        order_number = str(order_number).strip()
+        if not order_number:
+            return
+
+        items = []
+        for li in raw.get("line_items") or []:
+            if not isinstance(li, dict):
+                continue
+            name = (li.get("description") or "").strip()
+            if not name:
+                continue
+            items.append(
+                {
+                    "name": name,
+                    "qty": _as_int(li.get("quantity"), default=1),
+                    "price": _as_float(li.get("value_amount")),
+                    "sku": (li.get("sku_code") or None),
+                }
+            )
+
+        try:
+            order_id = upsert(
+                order_number=order_number,
+                merchant=raw.get("order_store") or None,
+                # Left NULL deliberately: order_store is a platform name
+                # ("shopify"), not a domain, and upsert_order dedups on
+                # (merchant_domain, order_number). Inventing a domain here
+                # would fragment against real email-extracted orders later.
+                merchant_domain=None,
+                order_date=raw.get("ship_date") or raw.get("created_at"),
+                total=_as_float(raw.get("value")),
+                currency=raw.get("value_currency") or None,
+                items=items or None,
+            )
+        except Exception as exc:  # never fail the shipment sync
+            log.warning(
+                "chitchats: order %s enrichment failed (%s)", order_number, exc
+            )
+            summary["errors"] = summary.get("errors", 0) + 1
+            return
+
+        link = getattr(self.store, "link_shipment_order", None)
+        if callable(link):
+            try:
+                link(shipment_id, order_id)
+            except Exception as exc:
+                log.warning("chitchats: order link failed (%s)", exc)
+
+        summary["orders"] = summary.get("orders", 0) + 1
+        summary["order_items"] = summary.get("order_items", 0) + len(items)
 
     def _sync_one(self, raw: Dict[str, Any], now: datetime, summary: Dict[str, Any]) -> None:
         shipment = map_shipment(raw, now=now)
@@ -443,6 +554,9 @@ class ChitChatsSync:
             )
             self.store.set_state(milestone_key, shipment.milestone.value)
             summary["events"] += 1
+
+        # Order contents — free, no LLM, no email parsing.
+        self._sync_order(raw, shipment_id, summary)
 
         # Last-mile handoff: Chit Chats inducts into USPS/Canada Post/etc.;
         # the response then carries the final carrier + tracking number.

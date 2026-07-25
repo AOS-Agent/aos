@@ -171,6 +171,31 @@ def lint_manifest(manifest: Dict[str, Any], source: Optional[str] = None) -> Lis
         else:
             for pattern in patterns:
                 problems.extend(lint_pattern(pattern))
+
+        # body_scan_exclude filters `patterns`; it is never a second source
+        # of truth. An entry that matches nothing in `patterns` is almost
+        # always a typo, and it fails OPEN — the pattern keeps scanning raw
+        # message text while the manifest claims it was excluded.
+        excluded = tracking.get("body_scan_exclude")
+        if excluded is not None:
+            if not isinstance(excluded, list):
+                problems.append(
+                    "%s: tracking.body_scan_exclude must be a list" % where
+                )
+            elif isinstance(patterns, list):
+                for pattern in excluded:
+                    if pattern not in patterns:
+                        problems.append(
+                            "%s: tracking.body_scan_exclude entry %r is not in "
+                            "tracking.patterns — it excludes nothing"
+                            % (where, pattern)
+                        )
+                if len(set(excluded)) == len(patterns) and patterns:
+                    problems.append(
+                        "%s: tracking.body_scan_exclude excludes every pattern "
+                        "— this carrier could never be detected in text" % where
+                    )
+
         validator = tracking.get("check_digit")
         if validator is not None and validator not in checkdigits.names():
             problems.append(

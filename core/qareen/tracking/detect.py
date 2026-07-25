@@ -436,8 +436,12 @@ def _scan_regex(pack: CarrierPack) -> re.Pattern:
     longer token; case-insensitive because canonicalization uppercases
     anyway. Patterns are linter-guaranteed bounded and flat (ReDoS guard),
     so running them over arbitrary message text is safe.
+
+    Uses `scan_patterns`, NOT `patterns`: formats that are legitimate but
+    indistinguishable from ordinary text (bare-digit waybills vs phone
+    numbers) are excluded here while staying valid for validate_number.
     """
-    alternation = "|".join("(?:%s)" % p for p in pack.patterns)
+    alternation = "|".join("(?:%s)" % p for p in pack.scan_patterns)
     return re.compile(r"(?<![0-9A-Za-z])(?:%s)(?![0-9A-Za-z])" % alternation, re.IGNORECASE)
 
 
