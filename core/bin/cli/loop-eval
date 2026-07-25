@@ -66,8 +66,13 @@ def cmd_freeze(args: argparse.Namespace) -> int:
             print(f"error: missing {p}", file=sys.stderr)
             return 2
 
+    # Preserve prior manifest fields (version note etc.) across re-freezes.
+    manifest_path_prev = src_dir / "MANIFEST.json"
+    prev = json.loads(manifest_path_prev.read_text()) if manifest_path_prev.exists() else {}
+
     manifest = {
-        "version": args.version,
+        "version": args.version or prev.get("version", "v1"),
+        "manifest_version": "1.0",
         "frozen_at": datetime.now(timezone.utc).isoformat(),
         "sha256": {
             "messages.jsonl": _sha256_file(messages_path),
@@ -78,6 +83,13 @@ def cmd_freeze(args: argparse.Namespace) -> int:
             "labels": _count_lines(labels_path),
         },
     }
+    if prev.get("note"):
+        manifest["note"] = prev["note"]
+    split_path = src_dir / "split.json"
+    if split_path.exists():
+        manifest["manifest_version"] = "1.2"
+        manifest["sha256"]["split.json"] = _sha256_file(split_path)
+        manifest["counts"]["split"] = json.loads(split_path.read_text())["counts"]
 
     manifest_path = src_dir / "MANIFEST.json"
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
@@ -107,9 +119,66 @@ def _import_judge(dotted: str):
     return getattr(module, attr)
 
 
+def cmd_split(args: argparse.Namespace) -> int:
+    """Generate a deterministic row-level stratified dev/test split.
+    Strata = (label, machine_text); seed-shuffled within stratum; test
+    gets ~22% per stratum with a floor of 2 for friction classes."""
+    import random
+
+    dataset_dir = Path(args.dir) if args.dir else eval_gate.default_dataset_dir()
+    split_path = dataset_dir / "split.json"
+    if split_path.exists() and not args.force:
+        print(f"error: {split_path} exists (use --force to regenerate — "
+              f"this invalidates every pass marker)", file=sys.stderr)
+        return 1
+    labels = []
+    with (dataset_dir / "labels.jsonl").open() as fh:
+        for line in fh:
+            if line.strip():
+                labels.append(json.loads(line))
+    strata: dict[tuple, list] = {}
+    for r in labels:
+        strata.setdefault((r["label"], bool(r.get("machine_text"))), []).append(
+            (r["session"], r["idx"])
+        )
+    total = len(labels)
+    frac = args.test_size / total
+    rng = random.Random(args.seed)
+    test_keys = []
+    for stratum, keys in sorted(strata.items()):
+        keys = sorted(keys)
+        rng.shuffle(keys)
+        k = round(len(keys) * frac)
+        label = stratum[0]
+        if label != "none":
+            k = max(k, min(2, len(keys)))  # floor of 2 for friction classes
+        test_keys.extend(keys[:k])
+    test_keys.sort()
+    split_path.write_text(json.dumps({
+        "split_version": "s1",
+        "dataset": dataset_dir.name,
+        "seed": args.seed,
+        "method": "stratified-row(label,machine_text)",
+        "counts": {"test": len(test_keys), "dev": total - len(test_keys)},
+        "test": [list(k) for k in test_keys],
+    }, indent=1))
+    print(f"split.json written: test={len(test_keys)} dev={total - len(test_keys)}")
+    print("now re-freeze: loop-eval freeze <dir>  (writes MANIFEST v1.2 incl. split hash)")
+    return 0
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     dataset_dir = Path(args.dir) if args.dir else None
-    judge = _import_judge(args.judge_module)
+    split = getattr(args, "split", "dev")
+    if getattr(args, "record", False) and split != "test":
+        print("error: --record is only valid with --split test (the pass marker "
+              "certifies a held-out test pass, never dev/all)", file=sys.stderr)
+        return 1
+    judge_fn = _import_judge(args.judge_module)
+    # Prefer the deployed pipeline (prefilter + batched judge) when the
+    # judge's module exposes it — the gate must measure what ships.
+    judge_module = importlib.import_module(args.judge_module.split(":", 1)[0])
+    pipeline = getattr(judge_module, "classify_pipeline", None)
 
     thresholds = {}
     if args.machine_fp_max is not None:
@@ -120,7 +189,11 @@ def cmd_run(args: argparse.Namespace) -> int:
         thresholds["binary_recall_min"] = args.binary_recall_min
 
     try:
-        result = asyncio.run(eval_gate.run_gate(judge, dataset_dir=dataset_dir, thresholds=thresholds or None))
+        result = asyncio.run(eval_gate.run_gate(
+            judge_fn if pipeline is None else None,
+            dataset_dir=dataset_dir, thresholds=thresholds or None,
+            split=split, pipeline=pipeline,
+        ))
     except eval_gate.FrozenDatasetError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
@@ -136,13 +209,42 @@ def cmd_run(args: argparse.Namespace) -> int:
             from core.engine.loop import judge as _judge_mod
         marker = Path.home() / ".aos" / "data" / "loop" / "judge-gate-pass.json"
         marker.parent.mkdir(parents=True, exist_ok=True)
+        ds = Path(dataset_dir or eval_gate.default_dataset_dir())
+        manifest = _json.loads((ds / "MANIFEST.json").read_text())
         marker.write_text(_json.dumps({
             "judge_version": _judge_mod.version_hash(),
             "passed_at": datetime.now(timezone.utc).isoformat(),
-            "dataset": str(dataset_dir or eval_gate.default_dataset_dir()),
+            "dataset": str(ds),
+            "manifest_version": str(manifest.get("manifest_version", "1.0")),
+            "split": split,
+            "split_sha256": manifest.get("sha256", {}).get("split.json"),
+            "pipeline": {
+                "batch_format": getattr(_judge_mod, "BATCH_FORMAT", None),
+                "prefilter_version": getattr(_judge_mod, "PREFILTER_VERSION", None),
+            },
             "metrics": result.metrics,
         }, indent=2, default=str))
         print(f"gate-pass marker written: {marker}")
+
+    if split == "test":
+        # Test-set burn guard: log every test run, warn past 3 per judge version.
+        try:
+            from engine.loop import judge as _jm
+        except ImportError:
+            from core.engine.loop import judge as _jm
+        from datetime import datetime as _dt
+        from datetime import timezone as _tz
+
+        log = Path.home() / ".aos" / "data" / "loop" / "test-runs.log"
+        log.parent.mkdir(parents=True, exist_ok=True)
+        jv = _jm.version_hash()
+        with log.open("a") as fh:
+            fh.write(json.dumps({"judge_version": jv, "at": _dt.now(_tz.utc).isoformat(),
+                                 "passed": result.passed}) + "\n")
+        runs = sum(1 for line in log.open() if json.loads(line)["judge_version"] == jv)
+        if runs > 3:
+            print(f"WARNING: {runs} test runs for judge {jv} — the test set is "
+                  f"becoming a dev set. Iterate on --split dev.", file=sys.stderr)
     return 0 if result.passed else 1
 
 
@@ -152,12 +254,20 @@ def main() -> int:
 
     fr = sub.add_parser("freeze", help="Build MANIFEST.json for a dataset directory")
     fr.add_argument("src_dir")
-    fr.add_argument("--version", default="1", help="Dataset version label (default: 1)")
+    fr.add_argument("--version", default=None, help="Dataset version label (default: keep existing)")
 
     ve = sub.add_parser("verify", help="Verify the frozen dataset hasn't drifted")
     ve.add_argument("--dir", default=None, help="Dataset dir (default: AOS_LOOP_EVAL_DIR or ~/vault/knowledge/references/loop-eval-v1)")
 
+    sp = sub.add_parser("split", help="Generate stratified dev/test split.json (then re-freeze)")
+    sp.add_argument("--dir", default=None)
+    sp.add_argument("--seed", type=int, default=42)
+    sp.add_argument("--test-size", type=int, default=200)
+    sp.add_argument("--force", action="store_true")
+
     ru = sub.add_parser("run", help="Run a judge over the frozen dataset and report")
+    ru.add_argument("--split", choices=["dev", "test", "all"], default="dev",
+                    help="split to evaluate (default dev — iterate here; test only for --record)")
     ru.add_argument("--judge-module", required=True, help="dotted.path.to.module:callable")
     ru.add_argument("--record", action="store_true", help="on PASS, write the judge gate-pass marker")
     ru.add_argument("--dir", default=None, help="Dataset dir (default: AOS_LOOP_EVAL_DIR or ~/vault/knowledge/references/loop-eval-v1)")
@@ -171,6 +281,8 @@ def main() -> int:
         return cmd_freeze(args)
     elif args.command == "verify":
         return cmd_verify(args)
+    elif args.command == "split":
+        return cmd_split(args)
     elif args.command == "run":
         return cmd_run(args)
     else:

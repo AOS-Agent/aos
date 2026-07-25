@@ -89,7 +89,10 @@ def verify_frozen(dataset_dir: Path) -> None:
     manifest = json.loads(manifest_path.read_text())
     expected = manifest.get("sha256", {})
 
-    for fname in ("messages.jsonl", "labels.jsonl"):
+    fnames = ["messages.jsonl", "labels.jsonl"]
+    if str(manifest.get("manifest_version", "1.0")) >= "1.2":
+        fnames.append("split.json")
+    for fname in fnames:
         fpath = dataset_dir / fname
         if not fpath.exists():
             raise FrozenDatasetError(f"Missing {fname} in {dataset_dir}")
@@ -102,6 +105,26 @@ def verify_frozen(dataset_dir: Path) -> None:
                 f"{fname} has been modified since freeze: "
                 f"expected sha256={want[:12]}… got={got[:12]}…"
             )
+
+
+def load_split(dataset_dir: Path, split: str) -> set | None:
+    """Return the set of (session, idx) keys for the requested split, or
+    None for 'all'. dev = complement of the enumerated test keys."""
+    if split == "all":
+        return None
+    split_path = Path(dataset_dir) / "split.json"
+    if not split_path.exists():
+        raise FrozenDatasetError(
+            f"No split.json in {dataset_dir} — run `loop-eval split` + re-freeze first."
+        )
+    data = json.loads(split_path.read_text())
+    test_keys = {(s_, i) for s_, i in data["test"]}
+    if split == "test":
+        return test_keys
+    if split == "dev":
+        labels = _load_jsonl(Path(dataset_dir) / "labels.jsonl")
+        return {(r["session"], r["idx"]) for r in labels} - test_keys
+    raise ValueError(f"unknown split: {split!r}")
 
 
 @dataclass
@@ -118,9 +141,11 @@ def _precision_recall(tp: int, fp: int, fn: int) -> tuple[float, float]:
 
 
 async def run_gate(
-    judge: Judge,
+    judge: Judge | None = None,
     dataset_dir: Path | None = None,
     thresholds: dict[str, float] | None = None,
+    split: str = "all",
+    pipeline: Callable | None = None,
 ) -> GateResult:
     """Run `judge` over every message in the frozen dataset and score it.
 
@@ -136,19 +161,40 @@ async def run_gate(
     labels = _load_jsonl(dataset_dir / "labels.jsonl")
     label_by_key = {(row["session"], row["idx"]): row for row in labels}
 
-    sem = asyncio.Semaphore(4)
+    keys = load_split(dataset_dir, split)
+    if keys is not None:
+        messages = [m for m in messages if (m["session"], m["idx"]) in keys]
 
-    async def _judge_one(msg: dict) -> tuple[dict, dict | None, dict]:
-        async with sem:
-            got = await judge(msg["text"], msg.get("prev_assistant_snippet"))
-        key = (msg["session"], msg["idx"])
-        return msg, label_by_key.get(key), got
+    if pipeline is not None:
+        # Deployed-pipeline path: prefilter + batched judge, sequential
+        # back-to-back chunks (prompt-cache friendly). Global ids map
+        # positionally back to rows.
+        items = [
+            {"id": i, "text": m["text"], "prev_snippet": m.get("prev_assistant_snippet")}
+            for i, m in enumerate(messages)
+        ]
+        results = await pipeline(items)
+        by_id = {r["id"]: r for r in results}
+        graded = [
+            (m, label_by_key.get((m["session"], m["idx"])), by_id[i])
+            for i, m in enumerate(messages)
+        ]
+    else:
+        sem = asyncio.Semaphore(4)
 
-    graded = await asyncio.gather(*[_judge_one(m) for m in messages])
+        async def _judge_one(msg: dict) -> tuple[dict, dict | None, dict]:
+            async with sem:
+                got = await judge(msg["text"], msg.get("prev_assistant_snippet"))
+            key = (msg["session"], msg["idx"])
+            return msg, label_by_key.get(key), got
+
+        graded = await asyncio.gather(*[_judge_one(m) for m in messages])
 
     per_class = {l: {"tp": 0, "fp": 0, "fn": 0, "support": 0} for l in LABELS}
     binary = {"tp": 0, "fp": 0, "fn": 0, "tn": 0}
     machine_fp = 0
+    judge_errors = 0
+    prefiltered = 0
     failures: list[dict[str, Any]] = []
     evaluated = 0
     skipped_unlabeled = 0
@@ -161,6 +207,10 @@ async def run_gate(
 
         expected = label_row["label"]
         predicted = got.get("label")
+        if got.get("judge_error"):
+            judge_errors += 1
+        if got.get("prefiltered"):
+            prefiltered += 1
 
         per_class.setdefault(expected, {"tp": 0, "fp": 0, "fn": 0, "support": 0})
         per_class.setdefault(predicted, {"tp": 0, "fp": 0, "fn": 0, "support": 0})
@@ -215,6 +265,10 @@ async def run_gate(
             "recall": binary_recall,
         },
         "machine_fp": machine_fp,
+        "judge_errors": judge_errors,
+        "judge_error_rate": (judge_errors / evaluated) if evaluated else 0.0,
+        "prefiltered": prefiltered,
+        "split": split,
         "thresholds": thresholds,
     }
 
@@ -222,9 +276,16 @@ async def run_gate(
         machine_fp <= thresholds["machine_fp_max"]
         and binary_precision >= thresholds["binary_precision_min"]
         and binary_recall >= thresholds["binary_recall_min"]
+        # A gate that "passed" because parsing silently degraded to none
+        # is not a pass — >1% judge errors hard-fails regardless of metrics.
+        and metrics_judge_error_ok(judge_errors, evaluated)
     )
 
     return GateResult(passed=passed, metrics=metrics, failures=failures)
+
+
+def metrics_judge_error_ok(judge_errors: int, evaluated: int) -> bool:
+    return evaluated == 0 or (judge_errors / evaluated) <= 0.01
 
 
 def format_report(result: GateResult) -> str:
@@ -238,7 +299,7 @@ def format_report(result: GateResult) -> str:
     lines = [
         f"## Loop eval gate — {verdict}",
         "",
-        f"Evaluated {m['evaluated']} messages"
+        f"Evaluated {m['evaluated']} messages [{m.get('split','all')} split]"
         + (f" ({m['skipped_unlabeled']} skipped, no label)" if m.get("skipped_unlabeled") else "")
         + ".",
         "",
@@ -247,6 +308,8 @@ def format_report(result: GateResult) -> str:
         f"| machine-text false positives | {m['machine_fp']} | <= {m['thresholds']['machine_fp_max']} |",
         f"| binary precision (friction vs none) | {binary['precision']:.2f} | >= {m['thresholds']['binary_precision_min']:.2f} |",
         f"| binary recall (friction vs none) | {binary['recall']:.2f} | >= {m['thresholds']['binary_recall_min']:.2f} |",
+        f"| judge errors | {m.get('judge_errors',0)} ({m.get('judge_error_rate',0):.1%}) | <= 1.0% |",
+        f"| prefiltered (info) | {m.get('prefiltered',0)} | — |",
         "",
         "| label | support | precision | recall |",
         "|---|---|---|---|",
