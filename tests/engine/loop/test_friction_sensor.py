@@ -38,7 +38,8 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(sig, "_db_path", lambda: db)
 
     marker = tmp_path / "judge-gate-pass.json"
-    marker.write_text(json.dumps({"judge_version": judge_mod.version_hash()}))
+    marker.write_text(json.dumps({"judge_version": judge_mod.version_hash(),
+                                  "split": "test", "manifest_version": "1.2"}))
     monkeypatch.setattr(friction, "PASS_MARKER", marker)
 
     projects = tmp_path / "projects"
@@ -76,18 +77,32 @@ def test_no_marker_raises(env, monkeypatch):
 
 
 def test_stale_marker_raises(env):
-    env["marker"].write_text(json.dumps({"judge_version": "000000000000"}))
+    env["marker"].write_text(json.dumps({"judge_version": "000000000000",
+                                         "split": "test", "manifest_version": "1.2"}))
+    with pytest.raises(friction.GateNotPassed):
+        asyncio.run(friction.run(projects_dir=env["projects"]))
+
+
+def test_dev_pass_marker_rejected(env):
+    env["marker"].write_text(json.dumps({"judge_version": judge_mod.version_hash(),
+                                         "split": "dev", "manifest_version": "1.2"}))
+    with pytest.raises(friction.GateNotPassed):
+        asyncio.run(friction.run(projects_dir=env["projects"]))
+
+
+def test_pre_split_marker_rejected(env):
+    env["marker"].write_text(json.dumps({"judge_version": judge_mod.version_hash()}))
     with pytest.raises(friction.GateNotPassed):
         asyncio.run(friction.run(projects_dir=env["projects"]))
 
 
 def test_friction_written_none_skipped(env, monkeypatch):
-    async def fake_judge(text, prev=None):
-        if "broken" in text:
-            return {"machine_text": False, "label": "frustration"}
-        return {"machine_text": False, "label": "none"}
+    async def fake_pipeline(items):
+        return [{"id": it["id"], "machine_text": False, "judge_error": False,
+                 "label": "frustration" if "broken" in it["text"] else "none"}
+                for it in items]
 
-    monkeypatch.setattr(friction.judge_mod, "judge", fake_judge)
+    monkeypatch.setattr(friction.judge_mod, "classify_pipeline", fake_pipeline)
     _write_session(env["projects"], "abc12345", ["its broken AGAIN", "looks good"])
     summary = _run(env["projects"])
     rows = _signals(env["db"])
@@ -101,11 +116,12 @@ def test_friction_written_none_skipped(env, monkeypatch):
 def test_noise_prefixes_never_judged(env, monkeypatch):
     calls = []
 
-    async def fake_judge(text, prev=None):
-        calls.append(text)
-        return {"machine_text": False, "label": "none"}
+    async def fake_pipeline(items):
+        calls.extend(it["text"] for it in items)
+        return [{"id": it["id"], "machine_text": False, "label": "none",
+                 "judge_error": False} for it in items]
 
-    monkeypatch.setattr(friction.judge_mod, "judge", fake_judge)
+    monkeypatch.setattr(friction.judge_mod, "classify_pipeline", fake_pipeline)
     _write_session(env["projects"], "abc12345", [
         "<task-notification>x</task-notification>",
         "<command-name>/gm</command-name>",
@@ -116,10 +132,10 @@ def test_noise_prefixes_never_judged(env, monkeypatch):
 
 
 def test_429_aborts_politely(env, monkeypatch):
-    async def limit_judge(text, prev=None):
+    async def limit_pipeline(items):
         raise llm.LLMError("claude CLI rc=1: api_error_status:429 session limit")
 
-    monkeypatch.setattr(friction.judge_mod, "judge", limit_judge)
+    monkeypatch.setattr(friction.judge_mod, "classify_pipeline", limit_pipeline)
     _write_session(env["projects"], "abc12345", ["msg one", "msg two"])
     summary = _run(env["projects"])
     assert summary["aborted_on_limit"] is True
@@ -127,11 +143,23 @@ def test_429_aborts_politely(env, monkeypatch):
 
 
 def test_budget_cap(env, monkeypatch):
-    async def fake_judge(text, prev=None):
-        return {"machine_text": False, "label": "none"}
+    async def fake_pipeline(items):
+        return [{"id": it["id"], "machine_text": False, "label": "none",
+                 "judge_error": False} for it in items]
 
-    monkeypatch.setattr(friction.judge_mod, "judge", fake_judge)
+    monkeypatch.setattr(friction.judge_mod, "classify_pipeline", fake_pipeline)
     monkeypatch.setattr(friction, "MAX_MESSAGES_PER_RUN", 3)
     _write_session(env["projects"], "abc12345", [f"m{i}" for i in range(10)])
     summary = _run(env["projects"])
     assert summary["judged"] == 3
+
+
+def test_judge_error_rows_never_write_signals(env, monkeypatch):
+    async def error_pipeline(items):
+        return [{"id": it["id"], "machine_text": False, "label": "frustration",
+                 "judge_error": True} for it in items]
+
+    monkeypatch.setattr(friction.judge_mod, "classify_pipeline", error_pipeline)
+    _write_session(env["projects"], "abc12345", ["its broken AGAIN"])
+    summary = _run(env["projects"])
+    assert summary["signals"] == 0

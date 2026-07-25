@@ -41,9 +41,15 @@ class GateNotPassed(RuntimeError):
 
 
 def gate_check() -> dict:
-    """Return the pass marker if valid for the current judge; raise otherwise."""
+    """Return the pass marker if valid for the current judge; raise otherwise.
+
+    Requirements (batch-designer spec, 2026-07-25): the marker's
+    judge_version must match version_hash() (covers prompt + model +
+    batch format + prefilter), AND it must certify a held-out TEST-split
+    pass under a v1.2 (split-aware) manifest — a dev pass or a pre-split
+    marker never unlocks the sensor."""
     if not PASS_MARKER.exists():
-        raise GateNotPassed("no gate-pass marker — run: loop-eval run --record")
+        raise GateNotPassed("no gate-pass marker — run: loop-eval run --split test --record")
     marker = json.loads(PASS_MARKER.read_text())
     current = judge_mod.version_hash()
     if marker.get("judge_version") != current:
@@ -51,6 +57,10 @@ def gate_check() -> dict:
             f"judge changed (marker {marker.get('judge_version')} != current "
             f"{current}) — re-run the eval gate before this sensor may write"
         )
+    if marker.get("split") != "test":
+        raise GateNotPassed("marker does not certify a TEST-split pass")
+    if str(marker.get("manifest_version")) != "1.2":
+        raise GateNotPassed("marker predates the split-aware dataset (need manifest 1.2)")
     return marker
 
 
@@ -112,42 +122,55 @@ async def run(window_hours: int = 24, projects_dir: Path | None = None) -> dict:
         key=lambda p: p.stat().st_mtime,
     )
 
-    judged = written = 0
-    aborted = False
+    # Collect up to the nightly budget across sessions, then classify via
+    # the deployed pipeline: deterministic prefilter + batched judge
+    # (30/call, back-to-back → prompt-cache hits).
+    items: list[dict] = []
+    meta: dict[int, tuple[str, str, int, str]] = {}  # id -> (stem, key, idx, text)
+    next_id = 0
     for sf in files:
-        if judged >= MAX_MESSAGES_PER_RUN or aborted:
+        if next_id >= MAX_MESSAGES_PER_RUN:
             break
         session_key = sf.stem[:8]
         for idx, text, prev in _extract_user_messages(sf):
-            if judged >= MAX_MESSAGES_PER_RUN:
+            if next_id >= MAX_MESSAGES_PER_RUN:
                 break
-            try:
-                verdict = await judge_mod.judge(text, prev)
-            except llm.LLMError as exc:
-                if "429" in str(exc) or "limit" in str(exc).lower():
-                    aborted = True  # quota exhausted — stop politely
-                    break
-                continue  # single-message failure: skip, keep going
-            judged += 1
-            if verdict["machine_text"] or verdict["label"] == "none":
-                continue
-            signals.append_signal(
-                sensor="friction_judge",
-                signal_type=f"friction_{verdict['label']}",
-                payload={
-                    "excerpt": text[:200],
-                    "label": verdict["label"],
-                    "session": session_key,
-                    "msg_idx": idx,
-                },
-                source_refs=[f"session:{sf.stem}:{idx}"],
-                tainted=False,  # operator's own words — first-party
-            )
-            written += 1
+            items.append({"id": next_id, "text": text, "prev_snippet": prev})
+            meta[next_id] = (sf.stem, session_key, idx, text)
+            next_id += 1
+
+    written = 0
+    aborted = False
+    results: list[dict] = []
+    try:
+        results = await judge_mod.classify_pipeline(items)
+    except llm.LLMError as exc:
+        if "429" in str(exc) or "limit" in str(exc).lower():
+            aborted = True  # quota exhausted — stop politely, resume tomorrow
+        else:
+            raise
+
+    for r in results:
+        if r["machine_text"] or r["label"] == "none" or r.get("judge_error"):
+            continue
+        stem, session_key, idx, text = meta[r["id"]]
+        signals.append_signal(
+            sensor="friction_judge",
+            signal_type=f"friction_{r['label']}",
+            payload={
+                "excerpt": text[:200],
+                "label": r["label"],
+                "session": session_key,
+                "msg_idx": idx,
+            },
+            source_refs=[f"session:{stem}:{idx}"],
+            tainted=False,  # operator's own words — first-party
+        )
+        written += 1
 
     return {
         "sessions": len(files),
-        "judged": judged,
+        "judged": len(results),
         "signals": written,
         "aborted_on_limit": aborted,
     }
