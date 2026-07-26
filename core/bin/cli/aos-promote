@@ -179,14 +179,8 @@ log "✓ Promoted $NEW_VERSION (${DEPLOYED_HASH:0:12}) to stable."
 
 # ── Telegram note (best-effort) ──────────────────────────────────────────────
 notify() {
-    local msg="$1" bot_token chat_id
-    bot_token=$("$AOS_DIR/core/bin/cli/agent-secret" get TELEGRAM_BOT_TOKEN 2>/dev/null) || return 0
-    chat_id=$("$AOS_DIR/core/bin/cli/agent-secret" get TELEGRAM_CHAT_ID 2>/dev/null) || return 0
-    [[ -z "$bot_token" || -z "$chat_id" ]] && return 0
-    curl -s --max-time 10 -X POST "https://api.telegram.org/bot${bot_token}/sendMessage" \
-        -H "Content-Type: application/json" \
-        -d "{\"chat_id\": ${chat_id}, \"text\": \"${msg}\", \"parse_mode\": \"HTML\"}" \
-        > /dev/null 2>&1 || true
+    local msg="$1"
+    "$AOS_DIR/core/bin/cli/aos-notify" "$msg" --topic system > /dev/null 2>&1 || true
 }
 notify "✅ Promoted <b>${NEW_VERSION}</b> to stable — friend machines update at their next 4am."
 

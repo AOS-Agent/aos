@@ -515,18 +515,6 @@ def send_telegram(task_data, sessions, daily, focus_items, date_range):
         return
 
     try:
-        token = subprocess.run(
-            [str(AGENT_SECRET), "get", "TELEGRAM_BOT_TOKEN"],
-            capture_output=True, text=True
-        ).stdout.strip()
-        chat_id = subprocess.run(
-            [str(AGENT_SECRET), "get", "TELEGRAM_CHAT_ID"],
-            capture_output=True, text=True
-        ).stdout.strip()
-
-        if not token or not chat_id:
-            return
-
         lines = [
             f"Weekly Review — {date_range}",
             "",
@@ -541,12 +529,16 @@ def send_telegram(task_data, sessions, daily, focus_items, date_range):
 
         msg = "\n".join(lines)
 
-        import urllib.request
-        import urllib.parse
-        url = f"https://api.telegram.org/bot{token}/sendMessage"
-        data = urllib.parse.urlencode({"chat_id": chat_id, "text": msg}).encode()
-        urllib.request.urlopen(url, data, timeout=5)
-        print("Telegram summary sent")
+        # Topic-routed delivery (daily topic; falls back General -> DM)
+        result = subprocess.run(
+            [str(Path.home() / "aos" / "core" / "bin" / "cli" / "aos-notify"),
+             msg, "--topic", "daily", "--plain"],
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode == 0:
+            print("Telegram summary sent")
+        else:
+            print(f"Telegram send skipped: {result.stderr.strip()[:200]}")
     except Exception as e:
         print(f"Telegram send failed: {e}")
 

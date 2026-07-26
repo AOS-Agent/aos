@@ -20,33 +20,16 @@ log() {
     echo "$LOG_PREFIX $*"
 }
 
-# ── Telegram: best-effort, never crash if credentials missing ──────────────
-
-BOT_TOKEN=""
-CHAT_ID=""
-
-# Try v2 secret path first, fall back to v1
-if TOKEN_RAW=$("$AOS_DIR/core/bin/agent-secret" get TELEGRAM_BOT_TOKEN 2>/dev/null); then
-    BOT_TOKEN="$TOKEN_RAW"
-elif TOKEN_RAW=$("$AOS_DIR/bin/agent-secret" get TELEGRAM_BOT_TOKEN 2>/dev/null); then
-    BOT_TOKEN="$TOKEN_RAW"
-fi
-if CHAT_RAW=$("$AOS_DIR/core/bin/agent-secret" get TELEGRAM_CHAT_ID 2>/dev/null); then
-    CHAT_ID="$CHAT_RAW"
-elif CHAT_RAW=$("$AOS_DIR/bin/agent-secret" get TELEGRAM_CHAT_ID 2>/dev/null); then
-    CHAT_ID="$CHAT_RAW"
-fi
+# ── Telegram: best-effort via topic-routed aos-notify, never crash ─────────
+# Service failures/recoveries go to the alerts forum topic; the router
+# falls back to group General, then operator DM (never drops a message).
 
 notify() {
     local msg="$1"
-    if [[ -z "$BOT_TOKEN" || -z "$CHAT_ID" ]]; then
-        log "NOTIFY (no token): $msg"
-        return 0
+    if ! "$AOS_DIR/core/bin/cli/aos-notify" "$msg" --topic alerts > /dev/null 2>&1; then
+        log "NOTIFY (not delivered): $msg"
     fi
-    curl -s --max-time 10 -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
-        -H "Content-Type: application/json" \
-        -d "{\"chat_id\": ${CHAT_ID}, \"text\": \"${msg}\", \"parse_mode\": \"HTML\"}" \
-        > /dev/null 2>&1 || true
+    return 0
 }
 
 # ── State helpers ──────────────────────────────────────────────────────────

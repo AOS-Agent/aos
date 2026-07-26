@@ -1,0 +1,69 @@
+#!/usr/bin/env python3
+"""aos-notify — Send a topic-routed Telegram notification to the operator.
+
+The single outbound path for crons and scripts. Routes to the forum group
+topic for the given category, falling back to group General, then the
+operator DM — a disabled-Topics toggle never drops a message.
+
+Usage:
+    aos-notify "Text to send" [--topic daily|alerts|work|knowledge|system]
+                              [--alert | --success | --info]
+                              [--silent] [--plain]
+
+Examples:
+    aos-notify "Weekly digest ready" --topic daily
+    aos-notify "Disk 90% full" --alert            # infers alerts topic
+    aos-notify "Task aos#3 done" --topic work --success
+
+Exit codes: 0 delivered (any tier), 1 not delivered.
+"""
+
+import argparse
+import importlib.util
+import logging
+import sys
+from pathlib import Path
+
+# Load the router from this CLI's own tree, by file path rather than by module
+# name: core/infra/lib/notify.py shares the name and would shadow the package
+# on any caller that has infra/lib on its path.
+_ROUTER = Path(__file__).resolve().parents[3] / "core" / "engine" / "notify" / "router.py"
+_spec = importlib.util.spec_from_file_location("aos_notify_router", _ROUTER)
+_router = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_router)
+send_notification = _router.send_notification
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Topic-routed operator notification")
+    parser.add_argument("text", help="Message text")
+    parser.add_argument("--topic", choices=["daily", "alerts", "work", "knowledge", "system"],
+                        help="Category (tier 1: sender declares)")
+    kind = parser.add_mutually_exclusive_group()
+    kind.add_argument("--alert", action="store_const", dest="kind", const="alert")
+    kind.add_argument("--success", action="store_const", dest="kind", const="success")
+    kind.add_argument("--info", action="store_const", dest="kind", const="info")
+    parser.set_defaults(kind="info")
+    parser.add_argument("--silent", action="store_true", help="No push notification sound")
+    parser.add_argument("--plain", action="store_true", help="Disable HTML parse mode")
+    parser.add_argument("--no-preview", action="store_true", help="Disable link previews")
+    args = parser.parse_args()
+
+    logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(message)s")
+
+    result = send_notification(
+        args.text,
+        topic=args.topic,
+        kind=args.kind,
+        parse_mode=None if args.plain else "HTML",
+        silent=args.silent,
+    )
+    if result["delivered"]:
+        print(f"delivered -> {result['target']}")
+        return 0
+    print(f"NOT delivered: {result['error']}", file=sys.stderr)
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
