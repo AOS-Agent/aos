@@ -45,6 +45,9 @@ CONFLICT_KINDS = (
 ARTIFACT_KINDS = (
     "initiative", "spec", "decision", "council",
     "session", "commit", "file", "deck",
+    # A git repository nested inside the project's linked path — often where
+    # the work actually happens. Carries its remote URL as the excerpt.
+    "repo",
 )
 
 EVENT_KINDS = (

@@ -588,12 +588,37 @@ def _vault_rel(path: Path) -> str:
 
 # ── Git ─────────────────────────────────────────────────────────────────
 
-def _git_log(repo_path: str | None, limit: int = 20) -> list[dict]:
+# Spawning git costs 50–120ms per repo, and a project with five nested repos
+# pays it five times on every task mutation. Results are cached for a few
+# seconds: the recompile-on-mutation path fires repeatedly within that window,
+# and a commit timestamp lagging by seconds is immaterial against a state
+# machine whose finest bucket is three days.
+GIT_CACHE_TTL = 10.0
+_GIT_CACHE: dict[tuple, tuple[float, list]] = {}
+
+
+def _git_log(repo_path: str | None, limit: int = 20, *,
+             label: str = "") -> list[dict]:
+    """Recent commits. ``label`` names the repo they came from ("" = the root).
+
+    A commit must never be presented as belonging to a repo it isn't in, so
+    the label travels with every row and the artifact path carries the repo
+    that actually holds the sha.
+    """
     if not repo_path:
         return []
     root = Path(repo_path).expanduser()
     if not (root / ".git").exists():
         return []
+
+    key = (str(root), limit, label)
+    cached = _GIT_CACHE.get(key)
+    if cached and (time.monotonic() - cached[0]) < GIT_CACHE_TTL:
+        # A copy, always: callers concatenate nested-repo commits onto this
+        # list, and handing out the cached object let that mutation accumulate
+        # into the cache itself — every recompile duplicated the nested rows.
+        return list(cached[1])
+
     try:
         result = subprocess.run(
             ["git", "-C", str(root), "log", f"-{limit}",
@@ -610,8 +635,103 @@ def _git_log(repo_path: str | None, limit: int = 20) -> list[dict]:
         if len(parts) != 4:
             continue
         commits.append({"sha": parts[0], "at": parts[1],
-                        "author": parts[2], "subject": parts[3]})
-    return commits
+                        "author": parts[2], "subject": parts[3],
+                        "repo": label, "repo_path": str(root)})
+    _GIT_CACHE[key] = (time.monotonic(), commits)
+    return list(commits)
+
+
+# A project's real history often lives in a repo *inside* the linked one: hre
+# is checked in at ~/project/hre, but the Next.js app that is actually being
+# shipped is a separate repo at hre/app with its own remote. Missing that is
+# how the work system reported HRE as "0/6, not started" while an application
+# was being built.
+NESTED_REPO_MAX_DEPTH = 3
+NESTED_REPO_MAX = 5             # report the nearest few, not every submodule
+NESTED_SCAN_MAX_DIRS = 800      # a 359M content tree must not cost seconds
+NESTED_COMMITS_EACH = 10
+
+_SKIP_DIRS = frozenset({
+    "node_modules", ".venv", "venv", "_archive", "archive", "__pycache__",
+    ".next", ".nuxt", "dist", "build", "out", "target", ".cache", "vendor",
+    "Pods", "DerivedData", ".build", ".tox", "site-packages", "coverage",
+    ".pytest_cache", ".mypy_cache", ".ruff_cache", ".terraform", ".gradle",
+})
+
+
+def _nested_repos(repo_path: str | None) -> list[tuple[str, Path]]:
+    """``(label, path)`` for git repos *beneath* ``repo_path``, nearest first.
+
+    Bounded on every axis — depth, directory count, and result count — because
+    this runs on every task mutation over trees that can be hundreds of
+    megabytes. A directory that cannot be read is skipped, not guessed at.
+    """
+    if not repo_path:
+        return []
+    root = Path(repo_path).expanduser()
+    if not root.is_dir():
+        return []
+
+    found: list[tuple[str, Path]] = []
+    frontier = [(root, 0)]
+    scanned = 0
+    while frontier and len(found) < NESTED_REPO_MAX:
+        current, depth = frontier.pop(0)
+        if depth >= NESTED_REPO_MAX_DEPTH or scanned >= NESTED_SCAN_MAX_DIRS:
+            continue
+        try:
+            entries = list(os.scandir(current))
+        except Exception:
+            continue                      # unreadable: drop it silently
+        scanned += 1
+        for entry in sorted(entries, key=lambda e: e.name):
+            if not entry.is_dir(follow_symlinks=False):
+                continue
+            name = entry.name
+            if name in _SKIP_DIRS or (name.startswith(".") and name != ".git"):
+                continue
+            child = Path(entry.path)
+            if (child / ".git").exists():
+                found.append((str(child.relative_to(root)), child))
+                continue                  # a repo's own contents are its business
+            frontier.append((child, depth + 1))
+    return found[:NESTED_REPO_MAX]
+
+
+_REMOTE_URL_RE = re.compile(r"^\s*url\s*=\s*(\S+)", re.M)
+
+
+def _git_remote(repo_path: Path) -> str | None:
+    """The origin URL, normalised to something a person can click.
+
+    Read straight out of ``.git/config`` rather than by spawning git — this
+    runs once per nested repo per compile, and a subprocess costs more than
+    the whole rest of the section.
+    """
+    config = Path(repo_path) / ".git" / "config"
+    try:
+        text = config.read_text(errors="ignore")
+    except Exception:
+        return None                       # unreadable: say nothing
+    section = None
+    url = ""
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("["):
+            section = stripped
+            continue
+        if section and section.startswith("[remote") and "url" in stripped:
+            match = _REMOTE_URL_RE.match(line)
+            if match:
+                url = match.group(1)
+                if '"origin"' in section:
+                    break                 # origin wins; anything else is a fallback
+    if not url:
+        return None
+    if url.startswith("git@") and ":" in url:            # git@host:owner/repo.git
+        host, _, path = url[4:].partition(":")
+        url = f"https://{host}/{path}"
+    return url[:-4] if url.endswith(".git") else url
 
 
 # ── Layer 2: title similarity (for duplicate_spine) ─────────────────────
@@ -757,6 +877,14 @@ def _derive_state(project_row, counts, last_activity, last_source,
 
     if status == "completed":
         return "done", "the project record is marked completed"
+
+    # A cancelled project is not "about to start". The state vocabulary the
+    # contract locks has no `cancelled` member, so the state stays in-vocabulary
+    # and the reason carries the fact — reporting a gap beats inventing a
+    # seventh state that the API and UI do not handle.
+    if status == "cancelled":
+        moved = " and its tasks were moved elsewhere" if total == 0 else ""
+        return "cold", f"the project record is marked cancelled{moved}"
     if total and counts["pct"] == 100:
         return "done", f"all {_plural(total, 'task')} are done"
 
@@ -1351,10 +1479,13 @@ def _detect_stale_docs(docs, tasks) -> list[Conflict]:
     return conflicts[:MAX_CONFLICTS_PER_KIND]
 
 
-def _detect_untracked_repo(project_id, short_id, repo_path) -> list[Conflict]:
+def _detect_untracked_repo(project_id, short_id, repo_path,
+                           project_status=None) -> list[Conflict]:
     """A directory that is obviously this project's, with no path on the record."""
     if repo_path:
         return []
+    if project_status in ("cancelled", "completed"):
+        return []                    # a finished project needs no repo linked
     names = {n for n in (project_id, short_id) if n}
     try:
         entries = [p for p in PROJECT_ROOT.iterdir() if p.is_dir()]
@@ -1399,8 +1530,9 @@ _DOC_KINDS = {"initiative": "initiative", "decision": "decision",
               "spec": "spec", "council": "council"}
 
 
-def _discover_artifacts(project_id, short_id, initiative, tasks,
-                        sessions, commits, repo_path, sources) -> tuple[list[Artifact], list[dict]]:
+def _discover_artifacts(project_id, short_id, initiative, tasks, sessions,
+                        commits, repo_path, sources,
+                        nested_repos=()) -> tuple[list[Artifact], list[dict]]:
     """Everything this project produced, deduped by path. Order = the contract's."""
     artifacts: list[Artifact] = []
     seen: set[str] = set()
@@ -1455,10 +1587,20 @@ def _discover_artifacts(project_id, short_id, initiative, tasks,
              _vault_rel(doc["path"]), fm.get("date"), doc.get("excerpt"))
         export_budget -= 1
 
-    # 4 — commits.
-    for commit in commits[:10]:
+    # 4 — commits. The path names the repo that actually holds the sha, so a
+    # nested repo's commit is never filed under the outer one.
+    for commit in commits[:20]:
         push("commit", commit["subject"],
-             f"{repo_path}@{commit['sha'][:8]}", commit["at"][:10])
+             f"{commit.get('repo_path') or repo_path}@{commit['sha'][:8]}",
+             commit["at"][:10],
+             f"in {commit['repo']}/" if commit.get("repo") else None)
+
+    # 4b — the nested repos themselves, with their remotes. The operator should
+    # be able to see github.com/…/ahhs-quran from the project page.
+    for label, path in nested_repos:
+        remote = _git_remote(path)
+        push("repo", f"{label}/ — {remote}" if remote else f"{label}/",
+             str(path), None, remote)
 
     # 5 — top-level docs in the repo.
     if repo_path:
@@ -1710,8 +1852,12 @@ def _build_timeline(tasks, handoffs, history, sessions,
         automated = any(tag in author.lower() for tag in ("claude", "[bot]", "-bot"))
         actor = Actor(kind="agent" if automated else "unknown",
                       name=author, at=commit["at"])
-        add(commit["at"], "commit", f"{commit['author']} committed "
-            f"\"{_short(commit['subject'], 60)}\"", commit["sha"][:8], actor)
+        # Name the repo when it isn't the linked one, so a nested repo's commit
+        # is never read as the outer repo's work.
+        where = f" in {commit['repo']}/" if commit.get("repo") else ""
+        add(commit["at"], "commit",
+            f'{author} committed "{_short(commit["subject"], 60)}"{where}',
+            commit["sha"][:8], actor)
 
     for artifact in artifacts:
         if artifact.kind in ("decision", "council") and artifact.date:
@@ -1925,9 +2071,26 @@ def compile_brief(project_id: str, *, store: bool = True) -> ProjectBrief:
     if commits:
         sources.append(f"{repo_path} (git log -20)")
 
+    # The linked repo is often not where the work is. Nested repos contribute
+    # their own commits, labelled, so a project shipping from a subdirectory
+    # does not read as dormant.
+    nested_repos = _nested_repos(repo_path)
+    for label, path in list(nested_repos):
+        # One unreadable nested repo must cost that repo's commits, not the
+        # whole brief. Dropped silently — the alternative is guessing.
+        try:
+            nested = _git_log(path, limit=NESTED_COMMITS_EACH, label=label)
+        except Exception:
+            nested_repos = [r for r in nested_repos if r[0] != label]
+            continue
+        if nested:
+            commits += nested
+            sources.append(f"{path} (git log -{NESTED_COMMITS_EACH}, nested)")
+    commits.sort(key=lambda c: _parse_dt(c["at"]) or datetime.min, reverse=True)
+
     artifacts, matched_docs = _discover_artifacts(
         canonical_id, short_id, initiative, tasks, sessions, commits,
-        repo_path, sources)
+        repo_path, sources, nested_repos=nested_repos)
     sources.extend(a.path for a in artifacts if a.path.startswith("vault/"))
 
     counts = _derive_counts(tasks)
@@ -1939,7 +2102,8 @@ def compile_brief(project_id: str, *, store: bool = True) -> ProjectBrief:
     conflicts += _detect_duplicate_spine(tasks)
     conflicts += _detect_orphan_tasks(tasks, all_task_ids)
     conflicts += _detect_stale_docs(matched_docs, tasks)
-    conflicts += _detect_untracked_repo(canonical_id, short_id, repo_path)
+    conflicts += _detect_untracked_repo(canonical_id, short_id, repo_path,
+                                        project_row.get("status"))
     conflicts += _enricher_conflicts(canonical_id, initiative, tasks,
                                      has_docs=bool(matched_docs))
 

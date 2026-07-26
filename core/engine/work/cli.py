@@ -855,6 +855,23 @@ def cmd_projects(args):
     if args and args[0] == "path":
         return _cmd_project_path(args[1:])
 
+    # Subcommands: reconcile / adopt / worktrees. Each lives in its own module
+    # so this registration stays a lookup; see project_reconcile.py.
+    _SUBCOMMANDS = {
+        "reconcile": ("project_reconcile", "account for every dir under ~/project/"),
+        "adopt": ("project_manifest", "plan .aos/project.yaml manifests"),
+        "worktrees": ("project_worktrees", "audit + normalise branch checkouts"),
+    }
+    if args and args[0] in _SUBCOMMANDS:
+        module, _desc = _SUBCOMMANDS[args[0]]
+        try:
+            mod = __import__(module)
+        except ImportError as e:
+            print(f"'{args[0]}' is not installed yet ({e}).")
+            print(f"  Expected: core/engine/work/{module}.py")
+            return
+        return mod.cli_entry(args[1:])
+
     projects = engine.get_all_projects()
     if not projects:
         print("No projects.")

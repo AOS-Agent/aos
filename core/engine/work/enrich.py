@@ -43,6 +43,7 @@ from __future__ import annotations
 import os
 import re
 import sys
+import threading
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -110,6 +111,9 @@ TASK_STATE = {
     "todo": "not_started",
     "inbox": "not_started",
 }
+
+# Abandoned work is not enriched and not reported as a gap.
+SKIP_STATUSES = {"cancelled"}
 
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.*?)\s*$")
 _FENCE_RE = re.compile(r"^\s*(```|~~~)")
@@ -497,6 +501,129 @@ def _initiative_key(project: dict) -> str | None:
     return m.group(1) if m else None
 
 
+# ── Caching ─────────────────────────────────────────────────────────────
+#
+# `compile_brief()` calls into this module on every task mutation, and the CLI
+# pays a cold start on every invocation, so the vault scan is cached
+# process-locally. Two levels, both keyed on file identity rather than a clock:
+#
+#   * the per-project scan, keyed by a digest of (path, mtime, size) for every
+#     markdown file under `knowledge/` — so any edit, addition, removal or
+#     rename anywhere in the vault invalidates it. The sweep costs ~5ms, which
+#     buys exact invalidation instead of a TTL's window of lying about the
+#     docs. Nothing here is ever written to disk: a stale cross-process cache
+#     over the operator's live knowledge base would make the brief lie, which
+#     is the one thing this system must not do.
+#   * the per-file parse, keyed by (path, mtime, size), so an unrelated vault
+#     edit re-runs the cheap scan without re-parsing docs that didn't change.
+
+_CACHE_LOCK = threading.RLock()
+_SCAN_CACHE: dict[tuple, tuple[tuple, list[Doc]]] = {}   # key -> (signature, docs)
+_PARSE_CACHE: dict[tuple, Doc] = {}                      # file identity -> Doc
+_CLAIM_CACHE: dict[tuple, bool] = {}                     # (identity, project) -> owns?
+MAX_PARSE_CACHE = 256
+MAX_CLAIM_CACHE = 4096
+HEAD_BYTES = 2048        # frontmatter lives well inside the first 2KB
+
+
+def clear_doc_cache() -> None:
+    """Drop every cached scan and parse. For tests and long-lived services."""
+    with _CACHE_LOCK:
+        _SCAN_CACHE.clear()
+        _PARSE_CACHE.clear()
+        _CLAIM_CACHE.clear()
+
+
+def _identity(path: Path, st) -> tuple:
+    return (str(path), st.st_mtime_ns, st.st_size)
+
+
+def _sweep(root: Path) -> tuple[tuple, list[tuple[Path, tuple]]] | None:
+    """One walk of the vault: its signature and every markdown file in it.
+
+    The signature is an order-independent digest of (path, mtime, size), so any
+    edit, addition, removal or rename invalidates the cache. Digests are
+    process-local only (string hashing is salted per process), which is
+    deliberate — see the note above about not caching across processes.
+    Returns None when the vault can't be read, so the caller skips the cache
+    rather than trusting a partial sweep.
+    """
+    try:
+        entries = []
+        digest = 0
+        for path in root.rglob("*.md"):
+            identity = _identity(path, path.stat())
+            digest ^= hash(identity)
+            entries.append((path, identity))
+    except OSError:
+        return None
+    entries.sort(key=lambda e: e[0])
+    return (len(entries), digest), entries
+
+
+def _parse_cached(path: Path, identity: tuple | None = None) -> Doc | None:
+    """parse_doc, memoised on the file's mtime and size."""
+    if identity is None:
+        try:
+            identity = _identity(path, path.stat())
+        except OSError:
+            return None
+    with _CACHE_LOCK:
+        doc = _PARSE_CACHE.get(identity)
+    if doc is not None:
+        return doc
+    try:
+        doc = parse_doc(path)
+    except OSError:
+        return None
+    with _CACHE_LOCK:
+        if len(_PARSE_CACHE) >= MAX_PARSE_CACHE:
+            _PARSE_CACHE.clear()
+        _PARSE_CACHE[identity] = doc
+    return doc
+
+
+def _frontmatter_names_project(
+    path: Path, project_id: str, identity: tuple | None = None
+) -> bool:
+    """Does this doc's frontmatter say `project: <project_id>`?
+
+    Reads 2KB and matches a line, instead of loading YAML for all ~620 vault
+    docs — the YAML was 158ms of the old 224ms scan. The match is confined to
+    the frontmatter block so a `project:` line in a code sample can't qualify.
+    The verdict is memoised per file identity, so a vault edit elsewhere
+    re-runs the scan without re-reading every doc.
+    """
+    if identity is not None:
+        cache_key = (identity, project_id)
+        with _CACHE_LOCK:
+            hit = _CLAIM_CACHE.get(cache_key)
+        if hit is not None:
+            return hit
+        verdict = _read_frontmatter_project(path, project_id)
+        with _CACHE_LOCK:
+            if len(_CLAIM_CACHE) >= MAX_CLAIM_CACHE:
+                _CLAIM_CACHE.clear()
+            _CLAIM_CACHE[cache_key] = verdict
+        return verdict
+    return _read_frontmatter_project(path, project_id)
+
+
+def _read_frontmatter_project(path: Path, project_id: str) -> bool:
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            head = fh.read(HEAD_BYTES)
+    except OSError:
+        return False
+    if not head.startswith("---"):
+        return False
+    end = head.find("\n---", 3)
+    block = head[3:end] if end != -1 else head[3:]
+    return re.search(
+        rf"^project:\s*[\"']?{re.escape(project_id)}[\"']?\s*$", block, re.MULTILINE
+    ) is not None
+
+
 def find_project_docs(project_id: str, initiative: str | None = None) -> list[Doc]:
     """Source docs for a project, most-authoritative first.
 
@@ -505,31 +632,58 @@ def find_project_docs(project_id: str, initiative: str | None = None) -> list[Do
     project. Ordering is derived, not hand-tuned: a doc that another doc
     declares it supersedes sinks below the one superseding it, then newest
     frontmatter `date` wins, then path order for stability.
+
+    Cached per project and invalidated by file mtimes — an edited initiative
+    doc is picked up on the next call, never served stale. A missing or
+    unreadable vault yields no docs rather than an exception.
     """
     root = _vault_root() / "knowledge"
     if not root.is_dir():
         return []
 
+    key = (str(root), project_id, initiative)
+    sweep = _sweep(root)
+    signature, entries = sweep if sweep is not None else (None, None)
+    if signature is not None:
+        with _CACHE_LOCK:
+            hit = _SCAN_CACHE.get(key)
+        if hit is not None and hit[0] == signature:
+            return list(hit[1])
+
+    docs = _scan_project_docs(root, project_id, initiative, entries)
+
+    if signature is not None:
+        with _CACHE_LOCK:
+            _SCAN_CACHE[key] = (signature, docs)
+    return list(docs)
+
+
+def _scan_project_docs(
+    root: Path,
+    project_id: str,
+    initiative: str | None,
+    entries: list[tuple[Path, tuple]] | None = None,
+) -> list[Doc]:
+    """The uncached scan. Walks the vault and ranks what belongs to a project."""
     docs: list[Doc] = []
-    for path in sorted(root.rglob("*.md")):
+    if entries is None:
+        sweep = _sweep(root)
+        if sweep is None:
+            return []
+        entries = sweep[1]
+
+    for path, identity in entries:
         stem = path.stem
         by_name = (
             stem == project_id
             or stem.startswith(f"{project_id}-")
             or (initiative is not None and stem == initiative)
         )
-        try:
-            doc = parse_doc(path) if by_name else None
-            if doc is None:
-                # Cheap frontmatter-only read for everything else.
-                head = path.read_text(encoding="utf-8", errors="replace").splitlines()[:30]
-                fm, _ = _parse_frontmatter(head)
-                if str(fm.get("project") or "") != project_id:
-                    continue
-                doc = parse_doc(path)
-        except OSError:
+        if not by_name and not _frontmatter_names_project(path, project_id, identity):
             continue
-        docs.append(doc)
+        doc = _parse_cached(path, identity)
+        if doc is not None:
+            docs.append(doc)
 
     superseded: set[str] = set()
     for doc in docs:
@@ -797,6 +951,11 @@ def enrich_project(project_id: str, *, dry_run: bool = False) -> EnrichReport:
     for task in tasks:
         task_id = task.get("id", "")
         title = task.get("title", "")
+
+        if str(task.get("status", "")).lower() in SKIP_STATUSES:
+            # A cancelled task (hre#5, merged into hre#1.1) needs no body and
+            # is not evidence of a gap in the docs.
+            continue
 
         report.disagreements.extend(detect_status_disagreements(task, docs))
 
