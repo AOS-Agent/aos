@@ -1,0 +1,93 @@
+# Codex Integration Manifest
+
+name: Codex CLI
+version: "1.0"
+category: development
+
+description: >
+  OpenAI Codex CLI as an external model worker — overflow capacity when
+  Claude usage limits are hit, plus a second-model opinion for review.
+  Authenticated via the operator's ChatGPT plan (OAuth); no API key and
+  no per-token billing. Reads AGENTS.md, bridged by symlink to the
+  existing CLAUDE.md instruction files. Dispatched non-interactively via
+  codex-dispatch, which sandboxes execution, logs the full JSONL event
+  stream, and writes every run to the trust ledger.
+
+# What this integration provides to the system
+provides:
+  external_model_worker:
+    type: execute
+    description: Non-interactive task execution (codex exec) with JSONL event stream
+  overflow_capacity:
+    type: execute
+    description: Fallback compute when Claude usage limits are hit
+  second_opinion:
+    type: query
+    description: Cross-model review of plans, diffs, and analysis
+
+# What this integration needs to function
+requires:
+  secrets: []   # OAuth tokens live in ~/.codex/auth.json (0600), managed by codex itself
+  services: []
+  config:
+    - key: auth_mode
+      file: ~/.codex/auth.json
+      description: MUST be "chatgpt" — apikey mode bills per-token
+    - key: bridges
+      file: ~/.codex/AGENTS.md, ~/AGENTS.md, <repo>/AGENTS.md
+      description: Symlinks to the corresponding CLAUDE.md files
+
+# How to verify this integration is working.
+# All checks are OFFLINE — none spends plan tokens.
+health:
+  checks:
+    - name: codex_installed
+      command: "command -v codex >/dev/null && echo ok || echo missing"
+      expect: ok
+    - name: codex_authenticated
+      command: "codex login status >/dev/null 2>&1 && echo ok || echo fail"
+      expect: ok
+    - name: billing_safe
+      command: "python3 -c \"import json,os; d=json.load(open(os.path.expanduser('~/.codex/auth.json'))); print('ok' if d.get('auth_mode')=='chatgpt' and not d.get('OPENAI_API_KEY') and not os.environ.get('OPENAI_API_KEY') else 'at_risk')\""
+      expect: ok
+    - name: global_bridge
+      command: "test -L ~/.codex/AGENTS.md -a -e ~/.codex/AGENTS.md && echo ok || echo missing"
+      expect: ok
+    - name: home_bridge
+      command: "test -L ~/AGENTS.md -a -e ~/AGENTS.md && echo ok || echo missing"
+      expect: ok
+
+# Capability chain entries this integration adds.
+capabilities:
+  Codex:
+    method: cli
+    command: "codex-dispatch \"<task>\" [--cd DIR] [--capability CAP] [--sandbox MODE]"
+    cost: zero   # plan-billed, no per-token charges
+    notes: >
+      External model worker. Default sandbox workspace-write, no
+      danger-full-access. Every run logged to
+      ~/.aos/logs/external-agents/ and recorded in the trust ledger.
+
+# Layers this integration touches
+layers:
+  - integrations
+
+# Setup steps (run by setup.sh or manually)
+setup:
+  steps:
+    - description: Install codex CLI
+      type: command
+      command: "npm install -g @openai/codex"
+    - description: Authenticate via ChatGPT OAuth (NOT API key)
+      type: interactive
+      instruction: >
+        Run 'codex login' and sign in with the ChatGPT account in the
+        browser. Never choose the API-key path — it bills per-token.
+    - description: Create AGENTS.md bridges
+      type: command
+      command: "ln -sf ~/.claude/CLAUDE.md ~/.codex/AGENTS.md && ln -sf ~/CLAUDE.md ~/AGENTS.md"
+    - description: Install cmux lifecycle hooks (if cmux present)
+      type: command
+      command: "command -v cmux >/dev/null && yes | cmux hooks setup codex || true"
+    - description: Verify
+      type: health_check
