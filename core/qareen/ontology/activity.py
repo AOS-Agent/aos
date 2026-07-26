@@ -93,13 +93,35 @@ def is_valid_kind(kind: str) -> bool:
     return kind in ACTIVITY_KINDS
 
 
+# Intake-source tokens that have historically been written into actor columns.
+# They name HOW a task arrived, not WHO acted, and must never become a person.
+_SOURCE_TOKENS = frozenset({
+    "manual", "subtask", "initiative", "import", "islah-import",
+    "session", "cron", "unknown", "",
+    # "cli" says the mutation came through the CLI, which both the operator and
+    # any agent use. It identifies a channel, not a person — so it is unknown.
+    "cli",
+})
+
+
 def actor_type_of(actor: str) -> str:
-    """Classify an actor string into operator | agent | system for the UI avatar."""
+    """Classify an actor string into operator | agent | system | unknown.
+
+    Returns "unknown" rather than guessing. An unrecognised actor is an absence
+    of evidence, and rendering it as either the operator or an agent turns that
+    absence into a false claim — the exact bug this module used to have.
+    """
+    actor = (actor or "").strip()
     if actor.startswith("agent:"):
         return "agent"
     if actor.startswith("system:"):
         return "system"
-    if actor in ("operator", "cli", "user"):
+    if actor.startswith("cron:"):
+        return "system"
+    if actor in ("operator", "user"):
         return "operator"
-    # A bare agent name (e.g. "advisor") passed by the runner counts as an agent.
-    return "operator" if actor == "operator" else "agent"
+    if actor.lower() in _SOURCE_TOKENS:
+        return "unknown"
+    # A bare name from the runner (e.g. "advisor") is an agent; anything else
+    # unrecognised stays unknown rather than being promoted to a role.
+    return "agent" if actor.replace("-", "").replace("_", "").isalpha() else "unknown"

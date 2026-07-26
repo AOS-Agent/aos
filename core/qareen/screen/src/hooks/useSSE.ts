@@ -10,8 +10,11 @@ export function useSSE() {
   const setConnected = useRealtimeStore((s) => s.setConnected);
   const retryCount = useRef(0);
   const eventSourceRef = useRef<EventSource | null>(null);
+  const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
+
     function connect() {
       let es: EventSource;
       try {
@@ -50,6 +53,10 @@ export function useSSE() {
         // Phase 2: the open card's narrative timeline + any single-task fetch.
         queryClient.invalidateQueries({ queryKey: ['activity'] });
         queryClient.invalidateQueries({ queryKey: ['task'] });
+        // The brief recompiles on every task mutation. Refreshing here as well
+        // as on project.brief.updated means the project page stays live even
+        // on a machine where the compiler's own event isn't wired yet.
+        queryClient.invalidateQueries({ queryKey: ['project-brief'] });
       };
 
       const WORK_EVENTS = [
@@ -73,6 +80,24 @@ export function useSSE() {
           } catch {}
         });
       }
+
+      // Project briefs — the compiler re-emits this on every recompile
+      // (task mutation, session close, explicit recompile). Invalidating the
+      // single project's cache entry is what makes the project page update
+      // itself while the operator watches. Payload: {project_id, state,
+      // compiled_at}. If the id is missing, refresh every brief rather than
+      // silently dropping the event.
+      es.addEventListener('project.brief.updated', (e) => {
+        let projectId: string | null = null;
+        try {
+          projectId = JSON.parse((e as MessageEvent).data)?.project_id ?? null;
+        } catch {
+          // Malformed payload — fall through to refreshing every brief.
+        }
+        queryClient.invalidateQueries({
+          queryKey: projectId ? ['project-brief', projectId] : ['project-brief'],
+        });
+      });
 
       // Shipments — Auto Tracker bus events keep the board, detail page,
       // approval queue, and eval queue live.
@@ -148,15 +173,24 @@ export function useSSE() {
         es.close();
         eventSourceRef.current = null;
 
+        if (cancelled) return;
         const delay = Math.min(1000 * Math.pow(2, retryCount.current), 30000);
         retryCount.current++;
-        setTimeout(connect, delay);
+        retryTimer.current = setTimeout(connect, delay);
       };
     }
 
     connect();
 
     return () => {
+      // Cancel a pending reconnect as well as the live stream. Without this,
+      // a retry scheduled before unmount still fires and opens an EventSource
+      // that nothing ever closes — each leak permanently occupies one of the
+      // browser's six HTTP/1.1 sockets for this origin, which is a budget the
+      // route chunks and every /api call have to share.
+      cancelled = true;
+      if (retryTimer.current) clearTimeout(retryTimer.current);
+      retryTimer.current = null;
       eventSourceRef.current?.close();
       eventSourceRef.current = null;
       setConnected(false);

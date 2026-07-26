@@ -2,10 +2,12 @@
 """
 AOS Session Close Hook
 
-Runs on SessionEnd. Three jobs:
+Runs on SessionEnd. Four jobs:
 1. Log session to ~/.aos/logs/sessions.jsonl
 2. Link session to work system tasks and threads
-3. Detect untracked work — scan transcript for tool calls (Write, Edit, Bash)
+3. Attribute the session to a PROJECT (see _resolve_session_project) and
+   nudge a brief recompile for that project.
+4. Detect untracked work — scan transcript for tool calls (Write, Edit, Bash)
    and if substantial work happened but no tasks were started/completed/created,
    log a "session_untracked" activity event so it shows up in the dashboard.
 
@@ -108,6 +110,68 @@ def _estimate_session_scope(transcript: str) -> dict:
         "work_tracked": work_tracked,
         "summary_hint": summary_hint,
     }
+
+
+def _resolve_session_project(engine, cwd: str, explicit_task_ids: list,
+                              transcript: str) -> tuple[str | None, str | None]:
+    """Determine which project this session's work belongs to.
+
+    Priority (first confident match wins):
+      (a) tasks touched during the session — explicit_task_ids, resolved to
+          their `project` field. Unambiguous only: if the touched tasks span
+          more than one project, that's a real signal of ambiguity, not
+          something to guess through.
+      (b) the session's cwd matched against project `path` fields
+          (engine.detect_project_from_cwd — path match, then id/dir-name
+          fallback).
+      (c) explicit project mention in the transcript — lowest confidence,
+          only acted on when exactly one known project is named.
+
+    Returns (project_id, source) or (None, None). Never guesses: if nothing
+    is unambiguous, the caller records nothing rather than attributing to
+    the wrong project.
+    """
+    # (a) tasks touched
+    if explicit_task_ids:
+        touched_projects = set()
+        for tid in explicit_task_ids:
+            try:
+                task = engine.get_task(tid)
+            except Exception:
+                task = None
+            if task and task.get("project"):
+                touched_projects.add(task["project"])
+        if len(touched_projects) == 1:
+            return next(iter(touched_projects)), "task"
+        # len == 0 → no signal here, fall through
+        # len > 1 → genuinely ambiguous, fall through to cwd rather than guess
+
+    # (b) cwd matched against project path
+    try:
+        project_id = engine.detect_project_from_cwd(cwd)
+    except Exception:
+        project_id = None
+    if project_id:
+        return project_id, "cwd"
+
+    # (c) explicit project mention in transcript
+    if transcript:
+        try:
+            projects = engine.get_all_projects()
+        except Exception:
+            projects = []
+        mentioned = set()
+        for p in projects:
+            pid = p.get("id") or ""
+            title = (p.get("title") or "").strip()
+            if pid and re.search(rf'\b{re.escape(pid)}#\d', transcript):
+                mentioned.add(pid)
+            elif title and len(title) > 4 and title in transcript:
+                mentioned.add(pid)
+        if len(mentioned) == 1:
+            return next(iter(mentioned)), "mention"
+
+    return None, None
 
 
 def main():
@@ -266,11 +330,33 @@ def main():
         except Exception:
             pass  # never crash
 
+    # --- Step 2c: Attribute session to a project, nudge a brief recompile ---
+    # Best-effort and silent — a missing brief module or a compile error must
+    # never break session close. See BRIEF-CONTRACT.md.
+    attributed_project, attribution_source = (None, None)
+    try:
+        attributed_project, attribution_source = _resolve_session_project(
+            engine, cwd, explicit_task_ids, transcript
+        )
+        if attributed_project:
+            engine._log_activity(
+                "session_project",
+                detail=f"session {session_id} attributed via {attribution_source}",
+                project=attributed_project,
+            )
+            try:
+                from brief import compile_brief  # lazy — module built in parallel
+                compile_brief(attributed_project)
+            except Exception:
+                pass
+    except Exception:
+        pass  # never crash session_close for project attribution
+
     # --- Step 3: Detect untracked work ---
     scope = _estimate_session_scope(transcript)
 
     # Log session activity regardless
-    project_id = engine.detect_project_from_cwd(cwd)
+    project_id = attributed_project or engine.detect_project_from_cwd(cwd)
     dir_name = Path(cwd).name
 
     if scope["files_modified"] > 0 or scope["tool_calls"] > 3:

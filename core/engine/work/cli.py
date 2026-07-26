@@ -24,13 +24,57 @@ import sys
 # Add parent dir to path so we can import backend/query
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import actor as actor_mod
 import backend as engine  # Drop-in replacement for old engine
 import query
+
+
+# ── Attribution helper ────────────────────────────────
+
+def _take_actor(args: list) -> tuple[list, str | None]:
+    """Strip ``--actor <spec>`` out of an arg list.
+
+    Returns (remaining_args, actor_spec). Every mutation command runs its args
+    through this first so the signature never leaks into a task title.
+    """
+    if "--actor" not in args:
+        return args, None
+    i = args.index("--actor")
+    spec = args[i + 1] if i + 1 < len(args) else None
+    return args[:i] + args[i + 2:], spec
+
+
+def _print_signature(sig: dict | None, label: str) -> None:
+    """One-line 'who did this' under a mutation's output. Silent if unsigned."""
+    a = actor_mod.actor_from_dict(sig)
+    if a is None:
+        return
+    who = actor_mod.display_name(a)
+    if a.kind == "operator":
+        who = "you"
+    print(f"  {label} {who}")
+
 
 # ── Resolution helpers ────────────────────────────────
 
 def _resolve(query_str: str, require: bool = True) -> dict | None:
     """Resolve a task from user input. Supports exact ID, fuzzy title, and scoped shorthand."""
+    # Fast path: an exact ID needs no search. TaskResolver's own priority list
+    # puts exact-ID first, but it loads every task before checking — and each
+    # loaded task drags in its session links (116k rows across the store), so
+    # `work done aos#3` was paying ~14s to look up a key it already had.
+    # Semantics are unchanged: this is the resolver's own tier 1.
+    # Guarded: on a miss the adapter's generic get() walks every entity table
+    # looking for the id and raises on a work.db that has no `sessions` table.
+    # A lookup miss must fall through to the search, not crash the command.
+    if query_str and ("#" in query_str or query_str.startswith("t")):
+        try:
+            exact = engine.get_task(query_str.strip())
+        except Exception:
+            exact = None
+        if exact:
+            return exact
+
     # Detect project from cwd for scoped resolution
     project_id = engine.detect_project_from_cwd()
     task = engine.resolve_task_in_project(query_str, project_id)
@@ -58,9 +102,10 @@ def _auto_project() -> str | None:
 
 def cmd_add(args):
     if not args:
-        print("Usage: add <title> [--priority N] [--project ID] [--tags t1,t2] [--due DATE] [--energy low|medium|high]")
+        print("Usage: add <title> [--priority N] [--project ID] [--tags t1,t2] [--due DATE] [--energy low|medium|high] [--actor WHO]")
         sys.exit(1)
 
+    args, actor_spec = _take_actor(args)
     title_parts = []
     priority = 3
     project = _auto_project()  # Auto-detect from cwd
@@ -126,20 +171,24 @@ def cmd_add(args):
 
     task = engine.add_task(title, priority=priority, project=project,
                            tags=tags, due=due, energy=energy, status=status,
-                           source_ref=source_ref, notes=notes)
+                           source_ref=source_ref, notes=notes,
+                           actor=actor_spec)
     proj_info = f" [{task.get('project', '')}]" if task.get("project") else ""
     print(f"Created {task['id']}: {task['title']}{proj_info}")
+    _print_signature(task.get("created_by"), "Created by")
 
 
 def cmd_done(args):
+    args, actor_spec = _take_actor(args)
     if not args:
-        print("Usage: done <task_id or search>")
+        print("Usage: done <task_id or search> [--actor WHO]")
         sys.exit(1)
     query_str = " ".join(args)
     task = _resolve(query_str)
-    result = engine.complete_task(task["id"])
+    result = engine.complete_task(task["id"], actor=actor_spec)
     if result:
         print(f"Completed {result['id']}: {result['title']}")
+        _print_signature(result.get("completed_by"), "Signed off by")
         if result.get("auto_completed"):
             print("  (auto-completed by subtask cascade)")
     else:
@@ -148,17 +197,23 @@ def cmd_done(args):
 
 
 def cmd_start(args):
+    args, actor_spec = _take_actor(args)
     if not args:
-        print("Usage: start <task_id or search>")
+        print("Usage: start <task_id or search> [--actor WHO]")
         sys.exit(1)
     query_str = " ".join(args)
     task = _resolve(query_str)
 
-    # Pass session_id if available (from CLAUDE_SESSION_ID env or hook context)
-    session_id = os.environ.get("CLAUDE_SESSION_ID")
-    result = engine.start_task(task["id"], session_id=session_id)
+    # Pass the session id if we're inside one. This read used to name
+    # CLAUDE_SESSION_ID, which Claude Code does not set — so session linking
+    # silently received None on every start. actor.session_id_from_env() knows
+    # the variable that actually exists.
+    session_id = actor_mod.session_id_from_env()
+    result = engine.start_task(task["id"], session_id=session_id,
+                               actor=actor_spec)
     if result:
         print(f"Started {result['id']}: {result['title']}")
+        _print_signature(result.get("started_by"), "Started by")
         print("  → Live context set. All work will be attributed to this task.")
     else:
         print(f"Task {task['id']} not found")
@@ -193,12 +248,13 @@ def cmd_active(args):
 
 
 def cmd_cancel(args):
+    args, actor_spec = _take_actor(args)
     if not args:
-        print("Usage: cancel <task_id or search>")
+        print("Usage: cancel <task_id or search> [--actor WHO]")
         sys.exit(1)
     query_str = " ".join(args)
     task = _resolve(query_str)
-    result = engine.cancel_task(task["id"])
+    result = engine.cancel_task(task["id"], actor=actor_spec)
     if result:
         print(f"Cancelled {result['id']}: {result['title']}")
     else:
@@ -214,17 +270,18 @@ def cmd_delegate(args):
     Emits task.delegated — the runner's future pickup hook. No runner yet (Phase
     4-5); this is the tagging vocabulary being born.
     """
+    args, actor_spec = _take_actor(args)
     if not args or "--to" not in args:
-        print("Usage: delegate <task_id or search> --to <agent>")
+        print("Usage: delegate <task_id or search> --to <agent> [--actor WHO]")
         sys.exit(1)
     to_idx = args.index("--to")
     query_str = " ".join(args[:to_idx])
     agent = args[to_idx + 1] if to_idx + 1 < len(args) else None
     if not query_str or not agent:
-        print("Usage: delegate <task_id or search> --to <agent>")
+        print("Usage: delegate <task_id or search> --to <agent> [--actor WHO]")
         sys.exit(1)
     task = _resolve(query_str)
-    result = engine.delegate_task(task["id"], agent)
+    result = engine.delegate_task(task["id"], agent, actor=actor_spec)
     if result:
         print(f"Delegated {result['id']}: {result['title']}")
         print(f"  → held by agent:{agent} (assigned_to unchanged; you stay accountable)")
@@ -237,12 +294,13 @@ def cmd_delegate(args):
 
 def cmd_hold(args):
     """Take a delegated task back: hold <task>. Operator becomes the holder."""
+    args, actor_spec = _take_actor(args)
     if not args:
-        print("Usage: hold <task_id or search>")
+        print("Usage: hold <task_id or search> [--actor WHO]")
         sys.exit(1)
     query_str = " ".join(args)
     task = _resolve(query_str)
-    result = engine.hold_task(task["id"])
+    result = engine.hold_task(task["id"], actor=actor_spec)
     if result:
         print(f"Held {result['id']}: {result['title']}")
         print("  → back with operator (delegate cleared)")
@@ -643,8 +701,9 @@ def _print_task_list(tasks: list, indent: int = 2):
 
 def cmd_subtask(args):
     """Add a subtask to an existing task."""
+    args, actor_spec = _take_actor(args)
     if len(args) < 2:
-        print("Usage: subtask <parent_id or search> <title> [--done] [--active]")
+        print("Usage: subtask <parent_id or search> <title> [--done] [--active] [--actor WHO]")
         sys.exit(1)
 
     parent_query = args[0]
@@ -673,9 +732,11 @@ def cmd_subtask(args):
         sys.exit(1)
 
     parent = _resolve(parent_query)
-    sub = engine.add_subtask(parent["id"], title, priority=priority, status=status)
+    sub = engine.add_subtask(parent["id"], title, priority=priority,
+                             status=status, actor=actor_spec)
     if sub:
         print(f"Created {sub['id']}: {sub['title']} (under {parent['id']})")
+        _print_signature(sub.get("created_by"), "Created by")
     else:
         print("Failed to create subtask")
         sys.exit(1)
@@ -683,8 +744,9 @@ def cmd_subtask(args):
 
 def cmd_handoff(args):
     """Write handoff context for a task."""
+    args, actor_spec = _take_actor(args)
     if not args:
-        print("Usage: handoff <task_id or search> --state '...' [--next '...'] [--files f1,f2] [--decisions d1,d2] [--blockers b1,b2]")
+        print("Usage: handoff <task_id or search> --state '...' [--next '...'] [--files f1,f2] [--decisions d1,d2] [--blockers b1,b2] [--actor WHO]")
         sys.exit(1)
 
     task_query = args[0]
@@ -721,7 +783,8 @@ def cmd_handoff(args):
     task = _resolve(task_query)
     result = engine.write_handoff(
         task["id"], state=state, next_step=next_step,
-        files_touched=files, decisions=decisions, blockers=blockers
+        files_touched=files, decisions=decisions, blockers=blockers,
+        actor=actor_spec,
     )
     if result:
         print(f"Handoff written for {result['id']}: {result['title']}")
@@ -1592,8 +1655,9 @@ def cmd_briefing(args):
 
 def cmd_move(args):
     """Move tasks to a different project, re-IDing them."""
+    args, actor_spec = _take_actor(args)
     if len(args) < 3 or "--to" not in args:
-        print("Usage: move <task_id> [task_id ...] --to <project_id>")
+        print("Usage: move <task_id> [task_id ...] --to <project_id> [--actor WHO]")
         print("  Moves tasks and their subtasks to the target project with new IDs.")
         print("  Example: move aos#36 aos#37 --to unified-comms")
         sys.exit(1)
@@ -1613,7 +1677,8 @@ def cmd_move(args):
         print(f"  Available: {', '.join(p['id'] for p in projects)}")
         sys.exit(1)
 
-    moved = engine.move_tasks_to_project(task_ids, target_project)
+    moved = engine.move_tasks_to_project(task_ids, target_project,
+                                         actor=actor_spec)
     if not moved:
         print("No tasks found to move.")
         return
@@ -1621,6 +1686,256 @@ def cmd_move(args):
     print(f"Moved {len(moved)} task(s) to project '{target_project}':")
     for m in moved:
         print(f"  {m['old_id']} -> {m['new_id']}")
+
+
+def _ago(iso: str | None) -> str:
+    """'2h ago' / 'yesterday' / 'Jul 25'. Empty string if the stamp is junk."""
+    from datetime import datetime
+    if not iso:
+        return ""
+    try:
+        then = datetime.fromisoformat(iso)
+    except (ValueError, TypeError):
+        return ""
+    delta = datetime.now() - then
+    secs = delta.total_seconds()
+    if secs < 0:
+        return then.strftime("%b %-d")
+    if secs < 90:
+        return "just now"
+    if secs < 3600:
+        return f"{int(secs // 60)}m ago"
+    if secs < 86400:
+        return f"{int(secs // 3600)}h ago"
+    if secs < 172800:
+        return "yesterday"
+    if secs < 86400 * 7:
+        return f"{int(secs // 86400)}d ago"
+    return then.strftime("%b %-d")
+
+
+# Which field best names a multi-field event. One delegation writes rows for
+# delegate, held_by AND status — all true, all the same act. entity_history is
+# right to keep them separate; a timeline is not the place to read them apart.
+_FIELD_RANK = (
+    "created", "attribution_corrected", "moved_from", "project_id",
+    "status", "held_by", "delegate", "handoff", "change",
+    "title", "priority", "description",
+)
+
+
+def _collapse_history(rows: list) -> list:
+    """Group field-level rows into logical events.
+
+    Returns (representative_row, n_other_fields) pairs. Rows are grouped by
+    (timestamp, actor) — one mutation, one instant, one actor — and the most
+    descriptive field in each group speaks for it.
+    """
+    groups: list[tuple[tuple, list]] = []
+    for row in rows:
+        key = (row.get("timestamp"), row.get("actor"))
+        if groups and groups[-1][0] == key:
+            groups[-1][1].append(row)
+        else:
+            groups.append((key, [row]))
+
+    def rank(row):
+        field = row.get("field_name") or ""
+        return _FIELD_RANK.index(field) if field in _FIELD_RANK else len(_FIELD_RANK)
+
+    out = []
+    for _key, members in groups:
+        best = min(members, key=rank)
+        out.append((best, len(members) - 1))
+    return out
+
+
+def _short(val, n: int = 42) -> str:
+    """A field value, trimmed to something a timeline row can carry."""
+    s = "" if val is None else str(val).replace("\n", " ").strip()
+    return s if len(s) <= n else s[: n - 1] + "…"
+
+
+def _history_phrase(row: dict) -> tuple[str, str]:
+    """Turn one entity_history row into (verb, trailing detail).
+
+    describe() renders '<who> <verb> "<title>"', so whatever the row says ABOUT
+    the task lands after the quoted title to read like English:
+    'You moved "Fix login" to project hre'.
+    """
+    field = (row.get("field_name") or "").strip()
+    old, new = row.get("old_value"), row.get("new_value")
+
+    if field == "created":
+        detail = f" (via {old})" if old else ""
+        return "created", detail
+    if field == "status":
+        return {
+            "done": "completed",
+            "active": "started",
+            "cancelled": "cancelled",
+            "todo": "reopened",
+        }.get(new, f"moved to {new}"), ""
+    if field == "project_id":
+        return "moved", f" to project {new}"
+    if field == "moved_from":
+        return "re-identified", f" {old} → {new}"
+    if field == "handoff":
+        return "wrote a handoff for", (f" — next: {_short(new)}" if new else "")
+    if field == "held_by":
+        return ("took back", "") if new == "operator" else ("delegated", f" to {new}")
+    if field == "delegate":
+        return "delegated", f" to {new}" if new else ""
+    if field == "title":
+        return "renamed", f" → {_short(new)}"
+    if field == "priority":
+        return "reprioritised", f" P{old} → P{new}"
+    if field == "attribution_corrected":
+        return "re-attributed", f" from {old} to {new}, by confirmation"
+    if field == "change":
+        # Free-text event with no column behind it.
+        return (new or "changed something"), ""
+    if field:
+        return f"changed {field}", (f" → {_short(new)}" if new else "")
+    return "changed something", ""
+
+
+# The cutoff before which an `operator` signature cannot be trusted — and the
+# predicate that applies it — live in actor.py, because brief.py keys off the
+# same moment. Two copies would eventually tell the operator two different
+# stories about which signatures are real.
+
+
+def cmd_who(args):
+    """Show who created / started / completed a task, plus its audit trail."""
+    if not args:
+        print("Usage: who <task_id or search>")
+        sys.exit(1)
+
+    task = _resolve(" ".join(args))
+    task_id = task["id"]
+    title = task.get("title", "")
+    att = actor_mod.attribution_for(task_id)
+
+    print(f"\n  {task_id}  {title}")
+    print(f"  {'=' * 50}")
+
+    signed = False
+    suspect = False
+    for key, label in (("created_by", "Created"),
+                       ("started_by", "Started"),
+                       ("completed_by", "Completed")):
+        a = actor_mod.actor_from_dict(att.get(key))
+        if a is None:
+            continue
+        signed = True
+        who = actor_mod.display_name(a)
+        # One definition of "can't be trusted", shared with brief.py.
+        stale = actor_mod.is_suspect_operator_row(
+            actor_mod.to_adapter_string(a), actor_mod.actor_type_for(a), a.at,
+        )
+        if stale:
+            suspect = True
+            who += " (?)"
+        when = _ago(a.at)
+        line = f"  {label + ':':<11} {who}"
+        if when:
+            line += f" — {when}"
+        print(line)
+        if a.session_id:
+            print(f"  {'':<11} session {a.session_id[:12]}")
+
+    if not signed:
+        print("  Unattributed — nothing in this task's history says who")
+        print("  changed it. Most tasks predate the attribution layer.")
+
+    trail = _collapse_history(att.get("audit") or [])
+    if trail:
+        shown = trail[-actor_mod.AUDIT_CAP:]
+        more = len(trail) - len(shown)
+        header = f"\n  History ({len(trail)} event{'s' if len(trail) != 1 else ''}"
+        header += f", showing last {len(shown)})" if more else ")"
+        print(header + ":")
+        for row, extra in shown:
+            a = actor_mod._actor_from_row(row)
+            verb, detail = _history_phrase(row)
+            line = actor_mod.describe(a, verb, title) + detail
+            if extra:
+                line += f" (+{extra} more field{'s' if extra != 1 else ''})"
+            when = _ago(row.get("timestamp"))
+            print(f"    {line}" + (f" — {when}" if when else ""))
+
+    if suspect:
+        print("\n  (?) Recorded as the operator before the attribution fix, when")
+        print("      an unset actor silently defaulted to 'operator'. It may")
+        print("      have been an agent. Not rewritten — we can't know which.")
+    print()
+
+
+def cmd_brief(args):
+    """Render a project's compiled brief (see BRIEF-CONTRACT.md)."""
+    try:
+        from brief import brief_to_dict, compile_all, compile_brief, render_markdown
+    except ImportError as e:
+        print(f"The brief compiler is not installed yet ({e}).")
+        print("  Expected: core/engine/work/brief.py")
+        sys.exit(1)
+
+    as_json = "--json" in args
+    show_all = "--all" in args
+    rest = [a for a in args if not a.startswith("--")]
+
+    if show_all:
+        briefs = compile_all()
+        if as_json:
+            print(json.dumps([brief_to_dict(b) for b in briefs], indent=2))
+            return
+        for b in briefs:
+            print(f"  {b.id:<18} {b.state:<12} {b.pct:>3}%  {b.state_reason}")
+        return
+
+    if not rest:
+        print("Usage: brief <project> [--json]   |   brief --all [--json]")
+        sys.exit(1)
+
+    brief = compile_brief(rest[0])
+    if brief is None:
+        print(f"No project '{rest[0]}'")
+        sys.exit(1)
+    print(json.dumps(brief_to_dict(brief), indent=2) if as_json
+          else render_markdown(brief))
+
+
+def cmd_enrich(args):
+    """Link-and-pull task bodies from a project's source docs."""
+    try:
+        from enrich import enrich_project
+    except ImportError as e:
+        print(f"The enricher is not installed yet ({e}).")
+        print("  Expected: core/engine/work/enrich.py")
+        sys.exit(1)
+
+    dry_run = "--dry-run" in args
+    rest = [a for a in args if not a.startswith("--")]
+    if not rest:
+        print("Usage: enrich <project> [--dry-run]")
+        sys.exit(1)
+
+    report = enrich_project(rest[0], dry_run=dry_run)
+    header = "Would enrich" if dry_run else "Enriched"
+    print(f"{header} {report.project_id}: {report.changed} task(s) changed")
+    if report.matched:
+        print(f"\n  Matched ({len(report.matched)}):")
+        for task_id, anchor in report.matched:
+            print(f"    {task_id:<14} {anchor}")
+    if report.unmatched:
+        print(f"\n  No source section ({len(report.unmatched)}):")
+        for task_id in report.unmatched:
+            print(f"    {task_id}")
+    if report.disagreements:
+        print(f"\n  Disagreements ({len(report.disagreements)}):")
+        for c in report.disagreements:
+            print(f"    [{c.severity}] {c.message}")
 
 
 COMMANDS = {
@@ -1657,6 +1972,9 @@ COMMANDS = {
     "initiatives": cmd_initiatives,
     "briefing": cmd_briefing,
     "move": cmd_move,
+    "who": cmd_who,
+    "brief": cmd_brief,
+    "enrich": cmd_enrich,
 }
 
 

@@ -216,7 +216,15 @@ class WorkAdapter(Adapter):
         self._conn.row_factory = sqlite3.Row
         # Who is credited for mutations in the audit trail (entity_history).
         # The CLI sets AOS_ACTOR; API/agent paths pass an explicit actor.
-        self._actor = os.environ.get("AOS_ACTOR", "operator")
+        #
+        # The default MUST be "unknown", never "operator". Defaulting to the
+        # operator does not merely omit attribution — it FORGES it. AOS_ACTOR is
+        # set on only one path (runner.py), so every agent working in an
+        # ordinary Claude Code session was silently credited to the human.
+        # Confirmed 2026-07-26: an agent completed hre#1.1/1.2/1.3 and all three
+        # landed as actor=operator. "unknown" is the honest answer; callers that
+        # know who they are pass an explicit actor.
+        self._actor = os.environ.get("AOS_ACTOR") or "unknown"
         self._ensure_aux_schema()
 
     def close(self):
@@ -372,7 +380,11 @@ class WorkAdapter(Adapter):
             return
         actor = actor or self._actor
         if actor_type is None:
-            actor_type = "operator" if actor in ("operator", "cli") else "agent"
+            # Delegate to the single classifier. Do NOT re-implement it here —
+            # an inline copy filed honest "unknown" actors under "agent", which
+            # launders an absence of evidence into a claim.
+            from qareen.ontology.activity import actor_type_of
+            actor_type = actor_type_of(actor)
         try:
             self._conn.execute(
                 "INSERT INTO entity_history "

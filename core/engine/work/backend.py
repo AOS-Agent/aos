@@ -12,6 +12,7 @@ Side effects (activity log, dashboard SSE, GitHub sync, initiative
 checkbox sync) are handled here in sync form — no async, no event bus.
 """
 
+import contextlib
 import dataclasses
 import fcntl
 import json
@@ -61,6 +62,15 @@ from core.qareen.ontology.work_utils import (
     ProjectContext,
     TaskResolver,
 )
+
+# Attribution layer (BRIEF-CONTRACT.md § "every change is signed"). actor.py
+# lives beside this file and is imported flat, the same way cli.py imports us.
+# It imports backend lazily, so there is no cycle at module load.
+_work_dir = str(Path(__file__).resolve().parent)
+if _work_dir not in sys.path:
+    sys.path.insert(0, _work_dir)
+
+import actor as _actor  # noqa: E402
 
 _gh_log = logging.getLogger("work.github")
 
@@ -235,6 +245,15 @@ def _task_to_dict(task: Task) -> dict:
     if task.recurrence:
         d["recurrence"] = task.recurrence
 
+    # Attribution. NOT stored on the task — derived from entity_history by
+    # actor.attribution_for(). Deliberately not resolved here: this function
+    # runs once per task in a 1,900-row list, and a per-task history query
+    # would make `work list` quadratic. Callers that need the signature
+    # (`work who`, the brief compiler) ask for it explicitly. What IS cheap is
+    # the denormalised head of the trail:
+    if getattr(task, "modified_by", None):
+        d["modified_by"] = task.modified_by
+
     # Extract energy/context/source_ref from description metadata comment
     if task.description:
         meta_match = re.search(r'<!-- meta: (.+?) -->', task.description)
@@ -384,7 +403,20 @@ def _log_activity(action: str, task_id: str = None, title: str = None,
 
 
 def _notify_dashboard(event: dict) -> None:
-    """POST work event to dashboard for instant SSE push. Best-effort."""
+    """POST work event to dashboard for instant SSE push. Best-effort.
+
+    Never fires under pytest. The suite has no dashboard to talk to, so every
+    POST just waits out its timeout — and each mutation sends two. With the
+    dashboard down or wedged that is ~2s per task, which turned a 51-task test
+    into 104 seconds of blocking on a socket. Same reasoning that already
+    hard-disables GitHub sync under pytest (see _gh_sync_enabled): a test must
+    not depend on, or be slowed by, a service that isn't part of the test.
+
+    Tests that assert on notifications monkeypatch this function and so never
+    reach this guard.
+    """
+    if _in_pytest():
+        return
     try:
         data = json.dumps(event).encode()
         req = urllib.request.Request(
@@ -571,6 +603,102 @@ def _now() -> str:
     return datetime.now().isoformat(timespec="seconds")
 
 
+@contextlib.contextmanager
+def _as_actor(who):
+    """Run an adapter mutation under a known actor.
+
+    The adapter writes entity_history and task_activity from inside its own
+    methods, crediting ``self._actor`` — which it reads ONCE at construction
+    from ``AOS_ACTOR``. Outside the runner dispatch path that env var is unset,
+    so every CLI and API mutation was landing on the constructor default. This
+    is how agent work came to be recorded as the operator's.
+
+    Setting the adapter's actor for the duration of the call fixes the actor on
+    every history and narration row the adapter writes, on every path, without
+    reaching into adapters/work.py. Restores the previous value on the way out
+    so a failure can't leave the adapter impersonating someone.
+    """
+    adapter = _get_adapter()
+    previous = getattr(adapter, "_actor", None)
+    high_water = _history_high_water(adapter)
+    try:
+        adapter._actor = _actor.to_adapter_string(who)
+    except Exception:
+        pass
+    try:
+        yield adapter
+    finally:
+        try:
+            adapter._actor = previous
+        except Exception:
+            pass
+        _finish_history(adapter, high_water, who)
+
+
+def _history_high_water(adapter) -> int:
+    """The newest entity_history id before a mutation, or -1 if unavailable."""
+    try:
+        row = adapter._conn.execute(
+            "SELECT COALESCE(MAX(id), 0) FROM entity_history"
+        ).fetchone()
+        return int(row[0])
+    except Exception:
+        return -1
+
+
+def _finish_history(adapter, high_water: int, who) -> None:
+    """Complete the history rows the adapter just wrote.
+
+    The adapter records the actor but has no way to carry two things we know
+    and it doesn't:
+
+    * ``session_id`` — its ``complete_task``/``start_task`` call
+      ``_record_history`` without one, so an agent's session was lost even
+      when the actor was right.
+    * ``actor_type`` for an unattributed change — its inline fallback is
+      ``"operator" if actor in ("operator","cli") else "agent"``, which files
+      an honest ``unknown`` actor under ``agent``. Neither is true.
+
+    Bounded exactly by the id high-water mark taken before the call, so this
+    only ever touches rows this mutation produced. Best-effort.
+    """
+    if high_water < 0:
+        return
+    try:
+        session_id = getattr(who, "session_id", None)
+        want_type = _actor.actor_type_for(who)
+        if session_id:
+            adapter._conn.execute(
+                "UPDATE entity_history SET session_id = ? "
+                "WHERE id > ? AND session_id IS NULL",
+                (session_id, high_water),
+            )
+        adapter._conn.execute(
+            "UPDATE entity_history SET actor_type = ? "
+            "WHERE id > ? AND actor = ? AND actor_type != ?",
+            (want_type, high_water, _actor.to_adapter_string(who), want_type),
+        )
+        adapter._conn.commit()
+    except Exception:
+        pass
+
+
+def _prior_status(task_id: str) -> str | None:
+    """The task's status before a mutation, for the audit line. None if unknown.
+
+    Deliberately a direct column read rather than get_task(): the adapter's
+    generic get() walks every entity table looking for the id, which is both
+    wasteful here and fatal on a DB that only has the task tables.
+    """
+    try:
+        row = _get_adapter()._conn.execute(
+            "SELECT status FROM tasks WHERE id = ?", (task_id,)
+        ).fetchone()
+        return row["status"] if row else None
+    except Exception:
+        return None
+
+
 def _today() -> str:
     return date.today().isoformat()
 
@@ -622,13 +750,17 @@ def add_task(title: str, priority: int = 3, project: str = None,
              due: str = None, energy: str = None, context: str = None,
              parent: str = None, source_ref: str = None,
              notes: str = None, pipeline: str = None, stage: str = None,
-             fields: dict = None, narrate: bool = True) -> dict:
+             fields: dict = None, narrate: bool = True,
+             actor: str | None = None) -> dict:
     """Add a new task with project-scoped ID.
 
     Bug-class intake: pass pipeline='bug' with a stage (e.g. 'new') and a fields
     dict carrying the richness (root_cause, code_refs, severity, app, …). When a
     bug stage is given and no explicit status, the coarse board status is derived
     from the stage via the pipeline definition so board queries stay cheap.
+
+    ``actor`` is an optional actor spec ("chief", "operator", "cron:nightly").
+    It is resolved through actor.resolve_actor and recorded as ``created_by``.
     """
     from core.engine.work.pipelines import bug_stage_to_status, is_bug_stage
 
@@ -682,8 +814,19 @@ def add_task(title: str, priority: int = 3, project: str = None,
         else:
             task.description = meta_comment
 
-    result = _get_adapter().create(task, narrate=narrate)
+    _who = _actor.resolve_actor(actor)
+    with _as_actor(_who) as adapter:
+        result = adapter.create(task, narrate=narrate)
     result_dict = _to_dict(result)
+
+    # Sign it. `source` (manual/subtask/islah-import) stays in tasks.created_by
+    # where every existing consumer reads it; the real actor goes to the audit
+    # trail, which is the only place that ever meant "who".
+    _tid = result_dict.get("id")
+    _actor.record_created(_tid, status, _who, source=source,
+                          conn=_get_adapter()._conn)
+    _actor.set_modified_by(_tid, _who, conn=_get_adapter()._conn)
+    result_dict["created_by"] = _actor.actor_to_dict(_who)
 
     # Fire side effects
     if parent:
@@ -696,24 +839,41 @@ def add_task(title: str, priority: int = 3, project: str = None,
 
 
 def add_subtask(parent_id: str, title: str, priority: int = None,
-                status: str = "todo") -> dict | None:
+                status: str = "todo", actor: str | None = None) -> dict | None:
     """Add a subtask to an existing task."""
-    result = _get_adapter().add_subtask(parent_id, title, priority=priority, status=status)
+    _who = _actor.resolve_actor(actor)
+    with _as_actor(_who) as adapter:
+        result = adapter.add_subtask(parent_id, title, priority=priority,
+                                     status=status)
     if result is None:
         return None
     result_dict = _to_dict(result)
+
+    _tid = result_dict.get("id")
+    _actor.record_created(_tid, status, _who, source="subtask",
+                          conn=_get_adapter()._conn)
+    _actor.set_modified_by(_tid, _who, conn=_get_adapter()._conn)
+    result_dict["created_by"] = _actor.actor_to_dict(_who)
+
     _log_activity("subtask_added", result_dict.get("id"), title,
                   result_dict.get("project"), detail=f"under {parent_id}")
     return result_dict
 
 
-def complete_task(task_id: str) -> dict | None:
+def complete_task(task_id: str, actor: str | None = None) -> dict | None:
     """Mark a task as done. Auto-cascades parent if all siblings done."""
-    result = _get_adapter().complete_task(task_id)
+    # Whoever closes this owns the claim that it is done, so resolve BEFORE
+    # the mutation — the adapter writes the entity_history row itself, and it
+    # credits whatever actor it is holding at that moment.
+    _who = _actor.resolve_actor(actor)
+    with _as_actor(_who) as adapter:
+        result = adapter.complete_task(task_id)
     if result is None:
         return None
 
     result_dict = _to_dict(result)
+    _actor.set_modified_by(task_id, _who, conn=_get_adapter()._conn)
+    result_dict["completed_by"] = _actor.actor_to_dict(_who)
 
     # Side effects
     _on_task_completed(result_dict)
@@ -727,6 +887,15 @@ def complete_task(task_id: str) -> dict | None:
         if parent_id:
             parent = get_task(parent_id)
             if parent and parent.get("status") == "done":
+                # The adapter records the cascade as system:work, which is
+                # correct — no human decided to close the parent. Record who
+                # triggered it so the trail leads back to a person or agent.
+                _actor.record_change(
+                    parent_id,
+                    f"auto-completed by cascade from {task_id}", _who,
+                    conn=_get_adapter()._conn,
+                )
+                _actor.set_modified_by(parent_id, _who, conn=_get_adapter()._conn)
                 notify_initiative_event(
                     "phase_completed",
                     parent.get("title", parent_id),
@@ -738,47 +907,72 @@ def complete_task(task_id: str) -> dict | None:
     return result_dict
 
 
-def start_task(task_id: str, session_id: str = None) -> dict | None:
+def start_task(task_id: str, session_id: str = None,
+               actor: str | None = None) -> dict | None:
     """Move a task to active status and set live context."""
-    result = _get_adapter().start_task(task_id)
+    _who = _actor.resolve_actor(actor)
+    with _as_actor(_who) as adapter:
+        result = adapter.start_task(task_id)
     if result is None:
         return None
 
     result_dict = _to_dict(result)
+    _actor.set_modified_by(task_id, _who, conn=_get_adapter()._conn)
+    result_dict["started_by"] = _actor.actor_to_dict(_who)
+
     _log_activity("task_started", result_dict.get("id"),
                   result_dict.get("title"), result_dict.get("project"))
     set_live_context(result_dict, session_id=session_id)
     return result_dict
 
 
-def cancel_task(task_id: str) -> dict | None:
+def cancel_task(task_id: str, actor: str | None = None) -> dict | None:
     """Cancel a task."""
-    result = _get_adapter().cancel_task(task_id)
+    _who = _actor.resolve_actor(actor)
+    with _as_actor(_who) as adapter:
+        result = adapter.cancel_task(task_id)
     if result is None:
         return None
     result_dict = _to_dict(result)
+    _actor.set_modified_by(task_id, _who, conn=_get_adapter()._conn)
+
     _log_activity("task_cancelled", result_dict.get("id"),
                   result_dict.get("title"), result_dict.get("project"))
     clear_live_context(task_id)
     return result_dict
 
 
-def update_task(task_id: str, **fields) -> dict | None:
+def update_task(task_id: str, actor: str | None = None, **fields) -> dict | None:
     """Update arbitrary fields on a task.
 
     Emits ``task.status_changed`` when the status actually changes, carrying
     ``updated_from`` (the prior status) — the signal the board needs to live-
     update and the audit seed the runner will consume later. Previously this
     path was silent (spec §2.4), so ``work update`` never reached the browser.
+
+    Every changed field is signed: the adapter writes one entity_history row
+    per changed column, and the resolved actor is threaded into it both by the
+    explicit ``_actor``/``_actor_type``/``_session_id`` keys the adapter reads
+    and by the ``_as_actor`` seam that covers everything else it writes.
     """
     before = get_task(task_id)
-    result = _get_adapter().update(task_id, fields)
+
+    _who = _actor.resolve_actor(actor)
+    fields.setdefault("_actor", _actor.to_adapter_string(_who))
+    fields.setdefault("_actor_type", _actor.actor_type_for(_who))
+    if _who.session_id:
+        fields.setdefault("_session_id", _who.session_id)
+
+    with _as_actor(_who) as adapter:
+        result = adapter.update(task_id, fields)
     if result is None:
         return None
     result_dict = _to_dict(result)
+    _actor.set_modified_by(task_id, _who, conn=_get_adapter()._conn)
 
     old_status = before.get("status") if before else None
     new_status = result_dict.get("status")
+
     if old_status is not None and new_status != old_status:
         _log_activity("task_status_changed", task_id,
                       result_dict.get("title"), result_dict.get("project"),
@@ -795,7 +989,8 @@ def update_task(task_id: str, **fields) -> dict | None:
     return result_dict
 
 
-def delegate_task(task_id: str, agent: str, by: str = "operator") -> dict | None:
+def delegate_task(task_id: str, agent: str, by: str = "operator",
+                  actor: str | None = None) -> dict | None:
     """Delegate a task to an agent (the state transition, spec §3.1/§4 P1).
 
     Emits ``task.delegated`` {task_id, holder, by, ts} — the exact hook the
@@ -803,11 +998,14 @@ def delegate_task(task_id: str, agent: str, by: str = "operator") -> dict | None
     for board liveness, and records entity_history in the adapter.
     """
     before = get_task(task_id)
-    result = _get_adapter().delegate(task_id, agent, by=by)
+    _who = _actor.resolve_actor(actor or by)
+    with _as_actor(_who) as adapter:
+        result = adapter.delegate(task_id, agent, by=by)
     if result is None:
         return None
     result_dict = _to_dict(result)
     holder = result_dict.get("held_by") or f"agent:{agent}"
+    _actor.set_modified_by(task_id, _who, conn=_get_adapter()._conn)
     _log_activity("task_delegated", task_id, result_dict.get("title"),
                   result_dict.get("project"), detail=f"→ {holder}")
     _notify_dashboard({
@@ -834,16 +1032,20 @@ def delegate_task(task_id: str, agent: str, by: str = "operator") -> dict | None
     return result_dict
 
 
-def hold_task(task_id: str, by: str = "operator") -> dict | None:
+def hold_task(task_id: str, by: str = "operator",
+              actor: str | None = None) -> dict | None:
     """Take a delegated task back (operator becomes the holder again).
 
     Emits ``task.delegated`` with holder='operator' so the runner drops it from
     its queue — one event type carries every holder change.
     """
-    result = _get_adapter().hold(task_id, by=by)
+    _who = _actor.resolve_actor(actor or by)
+    with _as_actor(_who) as adapter:
+        result = adapter.hold(task_id, by=by)
     if result is None:
         return None
     result_dict = _to_dict(result)
+    _actor.set_modified_by(task_id, _who, conn=_get_adapter()._conn)
     _log_activity("task_held", task_id, result_dict.get("title"),
                   result_dict.get("project"), detail="→ operator")
     _notify_dashboard({
@@ -915,18 +1117,26 @@ def get_task_tree(task_id: str) -> dict | None:
 
 def write_handoff(task_id: str, state: str, next_step: str = None,
                   files_touched: list = None, decisions: list = None,
-                  blockers: list = None) -> dict | None:
+                  blockers: list = None, actor: str | None = None) -> dict | None:
     """Write handoff context for a task."""
-    result = _get_adapter().write_handoff(
-        task_id, state,
-        next_step=next_step,
-        files_touched=files_touched,
-        decisions=decisions,
-        blockers=blockers,
-    )
+    _who = _actor.resolve_actor(actor)
+    with _as_actor(_who) as adapter:
+        result = adapter.write_handoff(
+            task_id, state,
+            next_step=next_step,
+            files_touched=files_touched,
+            decisions=decisions,
+            blockers=blockers,
+        )
     if result is None:
         return None
     result_dict = _to_dict(result)
+    # Not a column edit, so it lands under the `handoff` pseudo-field rather
+    # than pretending to be a field diff.
+    _actor.record_change(task_id, "wrote a handoff", _who,
+                         field="handoff", new=next_step or state,
+                         conn=_get_adapter()._conn)
+    _actor.set_modified_by(task_id, _who, conn=_get_adapter()._conn)
     _log_activity("handoff_written", result_dict.get("id"),
                   result_dict.get("title"), result_dict.get("project"),
                   detail=next_step[:80] if next_step else None)
@@ -1291,7 +1501,8 @@ def summary() -> dict:
 
 # ── Move / Migration ────────────────────────────────────
 
-def move_tasks_to_project(task_ids: list[str], target_project: str) -> list[dict]:
+def move_tasks_to_project(task_ids: list[str], target_project: str,
+                          actor: str | None = None) -> list[dict]:
     """Move tasks (and their subtasks) to a new project, re-IDing them.
 
     Returns list of dicts with old_id and new_id for each moved task.
@@ -1349,11 +1560,11 @@ def move_tasks_to_project(task_ids: list[str], target_project: str) -> list[dict
             "(id, title, status, priority, project_id, description, "
             " assigned_to, created_by, created_at, started_at, completed_at, "
             " due_at, parent_id, pipeline, pipeline_stage, recurrence, tags, "
-            " version, modified_at) "
+            " fields, version, modified_at) "
             "SELECT ?, title, status, priority, ?, description, "
             " assigned_to, created_by, created_at, started_at, completed_at, "
             " due_at, ?, pipeline, pipeline_stage, recurrence, ?, "
-            " version, ? "
+            " fields, version, ? "
             "FROM tasks WHERE id = ?",
             (
                 new_id, target_project,
@@ -1384,6 +1595,22 @@ def move_tasks_to_project(task_ids: list[str], target_project: str) -> list[dict
         moved.append({"old_id": old_id, "new_id": new_id})
 
     conn.commit()
+
+    # Sign the move as what it is: a project_id change, plus the re-ID so the
+    # trail can be followed across the rename. entity_history keys on entity_id,
+    # so the old id's rows stay under the old id — the `moved_from` row is the
+    # bridge between them.
+    if moved:
+        _who = _actor.resolve_actor(actor)
+        for m in moved:
+            _actor.record_change(m["new_id"], "moved project", _who,
+                                 field="project_id", new=target_project,
+                                 conn=conn)
+            _actor.record_change(m["new_id"], "re-identified", _who,
+                                 field="moved_from", old=m["old_id"],
+                                 new=m["new_id"], conn=conn)
+            _actor.set_modified_by(m["new_id"], _who, conn=conn)
+
     return moved
 
 

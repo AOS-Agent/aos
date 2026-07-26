@@ -1,23 +1,40 @@
 /**
- * ProjectDetail — full-canvas project view.
+ * ProjectDetail — the compiled project brief, live.
  *
- * Opened from any list surface (Today, Projects, Goals) by drilling into a
- * project card. Renders as a real page that replaces the list while the active
- * tab stays mounted behind it — Back returns to exactly where you came from.
+ * The operator's ask: "I want to be able to have that project in front of me so
+ * that I can see as things happen." So this page leads with prose, not a
+ * progress bar, and refreshes itself when the compiler recompiles the brief.
  *
- * Shows the project title, its GOAL by title (with area color), AUTHORITATIVE
- * progress (proj.task_count / done_count / active_count — never the capped
- * tasks[] array), and its tasks grouped by status, each toggleable.
+ * Reading order (BRIEF-CONTRACT.md):
+ *   header → where this stands → conflicts → next up / blockers → phases →
+ *   artifacts → recent activity
+ *
+ * Live: `useSSE` listens for `project.brief.updated` and invalidates
+ * `['project-brief', id]`. Nothing here polls; nothing here opens a second
+ * stream.
+ *
+ * Degradation: the brief endpoint may not be deployed on a given machine. When
+ * it can't answer, `unavailable` is true and the page falls back to the plain
+ * status-grouped task list it rendered before — quietly, with no error chrome
+ * for a surface the operator didn't come for.
  */
 
 import { useState, useEffect, useCallback } from 'react';
-import { ArrowLeft, ChevronDown, ChevronRight } from 'lucide-react';
+import { ArrowLeft } from 'lucide-react';
 import { useWork, type Task, type Goal } from '@/hooks/useWork';
 import { useUpdateTask, useProjectTasks } from '@/hooks/useTasks';
+import { useProjectBrief } from '@/hooks/useProjectBrief';
 import { useTaskOverlay } from '@/components/tasks/TaskOverlayContext';
 import { TaskStatus } from '@/lib/types';
 import { areaTone } from '@/lib/areaStyle';
 import GitView from '@/pages/project/GitView';
+import { BriefHeader } from '@/components/project/brief/BriefHeader';
+import { Narrative } from '@/components/project/brief/Narrative';
+import { Conflicts } from '@/components/project/brief/Conflicts';
+import { NextUp, Blockers } from '@/components/project/brief/NextUp';
+import { Phases, StatusGroups } from '@/components/project/brief/Phases';
+import { Artifacts } from '@/components/project/brief/Artifacts';
+import { Timeline } from '@/components/project/brief/Timeline';
 
 type BackLabel = 'today' | 'tasks' | 'projects' | 'goals';
 
@@ -28,70 +45,67 @@ const BACK_LABELS: Record<BackLabel, string> = {
   goals: 'Goals',
 };
 
-const STATUS_GROUPS: { status: Task['status']; label: string }[] = [
-  { status: 'active', label: 'Active' },
-  { status: 'todo', label: 'Todo' },
-  { status: 'waiting', label: 'Waiting' },
-  { status: 'done', label: 'Done' },
-];
+/**
+ * True for ~2.5s after the brief's `compiled_at` changes. Watching the compiled
+ * timestamp means the pulse fires on a real recompile — not merely on a
+ * refetch that returned identical bytes.
+ */
+function useRecompilePulse(compiledAt: string | undefined): boolean {
+  const [seen, setSeen] = useState<string | undefined>(undefined);
+  const [pulsing, setPulsing] = useState(false);
 
-function TaskRow({ task, dot, onToggle }: { task: Task; dot: string; onToggle: () => void }) {
-  const { openTask } = useTaskOverlay();
-  const done = task.status === 'done';
-  return (
-    <div
-      onClick={() => openTask(task.id)}
-      className="flex items-center gap-3 h-10 px-2 rounded-lg cursor-pointer hover:bg-bg-secondary transition-colors duration-75"
-    >
-      <button
-        onClick={e => { e.stopPropagation(); onToggle(); }}
-        aria-label={done ? 'Mark not done' : 'Mark done'}
-        className="w-[16px] h-[16px] rounded-full border-[1.5px] flex items-center justify-center shrink-0 cursor-pointer"
-        style={{ borderColor: done ? '#30D158' : 'rgba(255,245,235,0.15)', backgroundColor: done ? '#30D158' : 'transparent' }}
-      >
-        {done && <svg width="8" height="6" viewBox="0 0 10 8" fill="none"><path d="M1 4L3.5 6.5L9 1" stroke="#14130E" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>}
-      </button>
-      <span className={`w-[6px] h-[6px] rounded-full shrink-0 ${dot}`} />
-      <span className={`flex-1 min-w-0 text-[15px] truncate ${done ? 'text-text-quaternary line-through' : 'text-text-secondary'}`}>{task.title}</span>
-    </div>
-  );
+  // Adjust state during render rather than in an effect — this is a value
+  // derived from a changing prop, not a subscription to an external system.
+  if (compiledAt && seen !== compiledAt) {
+    setSeen(compiledAt);
+    if (seen !== undefined) setPulsing(true);   // the first load isn't news
+  }
+
+  useEffect(() => {
+    if (!pulsing) return;
+    const t = setTimeout(() => setPulsing(false), 2500);
+    return () => clearTimeout(t);
+  }, [pulsing]);
+
+  return pulsing;
 }
 
 export default function ProjectDetail({ projectId, backLabel, onBack }: { projectId: string; backLabel: BackLabel; onBack: () => void }) {
   const { data, isLoading } = useWork();
   const update = useUpdateTask();
+  const { openTask } = useTaskOverlay();
 
   const projects = data?.projects ?? [];
   const goals = (data?.goals ?? []) as Goal[];
-  // Full task list for THIS project (uncapped) — fixes the "481 count but 1 task shown" bug.
+
+  // Full task list for THIS project (uncapped) — the global /api/work caps at 200.
   const { data: projectTasks = [], isLoading: tasksLoading } = useProjectTasks(projectId);
+  const { brief, unavailable, isLoading: briefLoading } = useProjectBrief(projectId);
 
   const proj = projects.find(p => p.id === projectId);
   const goalIdx = goals.findIndex(g => g.id === proj?.goal);
-  const goal = goalIdx >= 0 ? goals[goalIdx] : undefined;          // fix#3: id -> goal.title
-  const tone = areaTone(proj?.goal, goalIdx < 0 ? 0 : goalIdx);    // area color via project's goal
+  const goal = goalIdx >= 0 ? goals[goalIdx] : undefined;          // resolve id -> goal.title
+  const tone = areaTone(proj?.goal, goalIdx < 0 ? 0 : goalIdx);
 
-  // AUTHORITATIVE counts — fix#2, NEVER derive from rows (capped at 200):
-  const total = proj?.task_count ?? 0;
-  const done = proj?.done_count ?? 0;
-  const active = proj?.active_count ?? 0;
-  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
-  const todoLeft = Math.max(0, total - done - active);
+  const justUpdated = useRecompilePulse(brief?.compiled_at);
 
-  // rows = the project's FULL task list (uncapped fetch); totals still come from proj.*_count
-  const rows = projectTasks;
-  const group = (s: Task['status']) => rows.filter(t => t.status === s);
-  const toggle = (t: Task) => update.mutate({ id: t.id, data: { status: t.status === 'done' ? TaskStatus.TODO : TaskStatus.DONE } });
+  // AUTHORITATIVE counts — prefer the brief, fall back to the project record.
+  // NEVER derive from rows (they are paged).
+  const total = brief?.task_count ?? proj?.task_count ?? 0;
+  const done = brief?.done_count ?? proj?.done_count ?? 0;
+  const active = brief?.active_count ?? proj?.active_count ?? 0;
 
-  const [showDone, setShowDone] = useState(false);
+  const toggle = useCallback(
+    (t: Task) => update.mutate({ id: t.id, data: { status: t.status === 'done' ? TaskStatus.TODO : TaskStatus.DONE } }),
+    [update],
+  );
 
-  // Sub-view toggle — Tasks (default) vs the Git/Ship cockpit. LOCAL state only:
-  // we never touch Work.tsx's ?tab/?project URL contract (URL persistence of the
-  // sub-view is deferred). The switcher mounts only when the project has a repo.
-  const [view, setView] = useState<'tasks' | 'git'>('tasks');
+  // Sub-view toggle — Brief (default) vs the Git/Ship cockpit. LOCAL state only:
+  // we never touch Work.tsx's ?tab/?project URL contract.
+  const [view, setView] = useState<'brief' | 'git'>('brief');
   const repoLinked = !!proj?.path;
 
-  // Close animation (rule 7) — owned internally so Work's onBack stays a one-liner.
+  // Close animation (DESIGN rule 7) — owned internally so Work's onBack stays a one-liner.
   const [closing, setClosing] = useState(false);
   const handleClose = useCallback(() => setClosing(true), []);
   useEffect(() => {
@@ -117,7 +131,11 @@ export default function ProjectDetail({ projectId, backLabel, onBack }: { projec
   if (isLoading) {
     return (
       <div className={`h-full overflow-y-auto ${animClass}`} onAnimationEnd={() => { if (closing) onBack(); }}>
-        <div className="flex items-center justify-center h-full"><p className="text-text-quaternary">Loading…</p></div>
+        <div className="max-w-[1320px] mx-auto px-6 py-8 space-y-4">
+          <div className="h-8 w-[280px] rounded bg-bg-secondary animate-pulse" />
+          <div className="h-4 w-[420px] rounded bg-bg-secondary animate-pulse" />
+          <div className="h-24 w-full max-w-[70ch] rounded-[7px] bg-bg-secondary animate-pulse" />
+        </div>
         {keyframes}
       </div>
     );
@@ -136,41 +154,37 @@ export default function ProjectDetail({ projectId, backLabel, onBack }: { projec
   }
 
   const gitActive = repoLinked && view === 'git';
+  const hasBrief = !!brief && !unavailable;
+  // The brief owns phase grouping. Without phases (or without a brief at all)
+  // the task list falls back to status groups — the pre-brief rendering.
+  const usePhases = hasBrief && brief!.phases.length > 0;
 
   return (
     <div className={`h-full overflow-y-auto ${animClass}`} onAnimationEnd={() => { if (closing) onBack(); }}>
-      <div className={`${gitActive ? 'max-w-[1200px]' : 'max-w-[880px]'} mx-auto px-6 py-8 transition-[max-width] duration-300`}>
-        {/* Back */}
+      <div className={`${gitActive ? 'max-w-[1200px]' : 'max-w-[1320px]'} mx-auto px-6 py-8 transition-[max-width] duration-300`}>
         {backLink}
 
-        {/* Header — goal chip + project title */}
-        <div className="mt-6 mb-6">
-          <div className="flex items-center gap-2 mb-2">
-            <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${tone.dot}`} />
-            <span className={`text-[14px] ${tone.text} truncate`}>{goal?.title ?? 'No area'}</span>
-          </div>
-          <h1 className="text-[22px] font-[600] text-text">{proj.title}</h1>
+        <div className="mt-6">
+          <BriefHeader
+            title={proj.title}
+            goalTitle={brief?.goal_title ?? goal?.title ?? null}
+            tone={tone}
+            brief={brief}
+            total={total}
+            done={done}
+            active={active}
+            justUpdated={justUpdated}
+          />
         </div>
 
-        {/* Progress */}
-        <div className="mb-1.5 flex items-center gap-2.5">
-          <div className="flex-1 h-1.5 bg-bg-tertiary rounded-full overflow-hidden">
-            <div className={`h-full rounded-full ${tone.dot}`} style={{ width: `${pct}%` }} />
-          </div>
-          <span className="text-[12px] font-mono text-text-quaternary tabular-nums shrink-0">{done}/{total}</span>
-          <span className={`text-[13px] font-mono font-[510] shrink-0 ${tone.text}`}>{pct}%</span>
-        </div>
-        <p className="text-[13px] text-text-quaternary mb-6">{active} active · {todoLeft} todo · {done} done</p>
-
-        {/* Sub-view switcher — glass pill, left-aligned, mounts only for repo-linked
-            projects. Reuses Work.tsx's tab-pill look inline (subtle, non-permanent). */}
+        {/* Sub-view switcher — glass pill, mounts only for repo-linked projects. */}
         {repoLinked && (
           <div className="mb-8 flex">
             <div
               className="flex items-center gap-1 h-9 px-1 rounded-full border"
               style={{ background: 'var(--glass-bg)', backdropFilter: 'blur(12px)', borderColor: 'var(--glass-border)' }}
             >
-              {(['tasks', 'git'] as const).map(v => (
+              {(['brief', 'git'] as const).map(v => (
                 <button
                   key={v}
                   onClick={() => setView(v)}
@@ -178,7 +192,7 @@ export default function ProjectDetail({ projectId, backLabel, onBack }: { projec
                     view === v ? 'bg-[rgba(255,245,235,0.10)] text-text' : 'text-text-tertiary hover:text-text-secondary'
                   }`}
                 >
-                  {v === 'tasks' ? 'Tasks' : 'Git'}
+                  {v === 'brief' ? 'Brief' : 'Git'}
                 </button>
               ))}
             </div>
@@ -188,42 +202,63 @@ export default function ProjectDetail({ projectId, backLabel, onBack }: { projec
         {/* ====================== GIT COCKPIT ====================== */}
         {gitActive && <GitView projectId={projectId} path={proj.path!} tone={tone} />}
 
-        {/* ====================== TASKS (default) ====================== */}
-        {/* Loading skeleton — the per-project task fetch can take ~2s on big projects,
-            so show placeholder rows instead of an empty page that reads as "nothing here". */}
-        {(!repoLinked || view === 'tasks') && tasksLoading && (
-          <div className="space-y-1.5">
-            {[0, 1, 2, 3, 4, 5].map(i => <div key={i} className="h-10 rounded-lg bg-bg-secondary animate-pulse" style={{ opacity: 0.6 }} />)}
-          </div>
-        )}
+        {/* ====================== BRIEF (default) ====================== */}
+        {!gitActive && (
+          <>
+            {/* The narrative is the page's centre of gravity. While it compiles,
+                hold its shape rather than collapsing the layout. */}
+            {briefLoading && !brief && (
+              <div className="mb-10 space-y-2.5 max-w-[70ch]">
+                <div className="h-5 w-full rounded bg-bg-secondary animate-pulse" />
+                <div className="h-5 w-[88%] rounded bg-bg-secondary animate-pulse" />
+                <div className="h-5 w-[64%] rounded bg-bg-secondary animate-pulse" />
+              </div>
+            )}
 
-        {/* Grouped tasks */}
-        {(!repoLinked || view === 'tasks') && !tasksLoading && STATUS_GROUPS.map(({ status, label }) => {
-          const items = group(status);
-          if (items.length === 0) return null;
-          const isDoneGroup = status === 'done';
-          const open = !isDoneGroup || showDone;
-          return (
-            <div key={status} className="mb-6">
-              {isDoneGroup ? (
-                <button onClick={() => setShowDone(!showDone)} className="flex items-center gap-2 px-1 mb-1.5 cursor-pointer">
-                  {showDone ? <ChevronDown className="w-3 h-3 text-text-quaternary" /> : <ChevronRight className="w-3 h-3 text-text-quaternary" />}
-                  <span className="text-[12px] font-[590] uppercase tracking-[0.06em] text-text-tertiary">{label}</span>
-                  <span className="text-[12px] font-mono text-text-quaternary">{items.length}</span>
-                </button>
-              ) : (
-                <div className="flex items-center gap-2 px-1 mb-1.5">
-                  <span className="text-[12px] font-[590] uppercase tracking-[0.06em] text-text-tertiary">{label}</span>
-                  <span className="text-[12px] font-mono text-text-quaternary">{items.length}</span>
-                </div>
-              )}
-              {open && items.map(t => <TaskRow key={t.id} task={t} dot={tone.dot} onToggle={() => toggle(t)} />)}
-            </div>
-          );
-        })}
+            {hasBrief && (
+              <>
+                <Narrative brief={brief!} />
+                <Conflicts conflicts={brief!.conflicts} onOpenTask={openTask} />
 
-        {(!repoLinked || view === 'tasks') && !tasksLoading && rows.length === 0 && (
-          <p className="text-[15px] text-text-quaternary py-8 text-center">No tasks in this project yet.</p>
+                {(brief!.next_up.length > 0 || brief!.blockers.length > 0) && (
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-x-6 gap-y-8 mb-10 items-start">
+                    <NextUp items={brief!.next_up} onOpenTask={openTask} />
+                    <Blockers blockers={brief!.blockers} onOpenTask={openTask} />
+                  </div>
+                )}
+              </>
+            )}
+
+            {/* Tasks — by phase when the brief supplies them, by status otherwise. */}
+            {tasksLoading && (
+              <div className="space-y-1.5 mb-10">
+                {[0, 1, 2, 3, 4, 5].map(i => (
+                  <div key={i} className="h-10 rounded-lg bg-bg-secondary animate-pulse" style={{ opacity: 0.6 }} />
+                ))}
+              </div>
+            )}
+
+            {!tasksLoading && usePhases && (
+              <Phases phases={brief!.phases} tasks={projectTasks} tone={tone} onToggleTask={toggle} />
+            )}
+
+            {!tasksLoading && !usePhases && projectTasks.length > 0 && (
+              <div className="mb-10">
+                <StatusGroups tasks={projectTasks} tone={tone} onToggleTask={toggle} />
+              </div>
+            )}
+
+            {!tasksLoading && projectTasks.length === 0 && (
+              <p className="text-[15px] text-text-quaternary py-8">No tasks in this project yet.</p>
+            )}
+
+            {hasBrief && (
+              <>
+                <Artifacts artifacts={brief!.artifacts} />
+                <Timeline events={brief!.recent_activity} />
+              </>
+            )}
+          </>
         )}
       </div>
       {keyframes}
