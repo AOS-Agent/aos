@@ -17,7 +17,6 @@ from pathlib import Path
 HOME = Path.home()
 COMMS_DB = HOME / ".aos" / "data" / "comms.db"
 LOG_DIR = HOME / ".aos" / "logs" / "envoy"
-AGENT_SECRET = str(HOME / "aos" / "core" / "bin" / "cli" / "agent-secret")
 CLAUDE_BIN = (shutil.which("claude")
               or next((p for p in ("/opt/homebrew/bin/claude",
                                    str(HOME / ".claude" / "local" / "claude"),
@@ -59,24 +58,18 @@ def send_imessage(recipient: str, text: str) -> bool:
     return r.returncode == 0
 
 
-def _secret(name: str) -> str:
-    try:
-        return subprocess.run([AGENT_SECRET, "get", name], capture_output=True,
-                              text=True, check=True).stdout.strip()
-    except Exception:
-        return ""
-
-
 def telegram(text: str) -> bool:
-    token, chat = _secret("TELEGRAM_BOT_TOKEN"), _secret("TELEGRAM_CHAT_ID")
-    if not (token and chat):
-        return False
+    """Push an envoy status note to the operator's work topic.
+
+    Routed through aos-notify (topic -> group -> DM). Stays plain text: these
+    messages quote a contact's own words, and an unescaped '<' or '&' from an
+    inbound message would break an HTML-parsed send.
+    """
     r = subprocess.run(
-        ["curl", "-s", "-m", "15", "-X", "POST",
-         f"https://api.telegram.org/bot{token}/sendMessage",
-         "-d", f"chat_id={chat}", "--data-urlencode", f"text={text}"],
+        [str(HOME / "aos" / "core" / "bin" / "cli" / "aos-notify"),
+         text, "--topic", "work", "--plain"],
         capture_output=True, text=True)
-    return '"ok":true' in r.stdout
+    return r.returncode == 0
 
 
 def operator_name() -> str:

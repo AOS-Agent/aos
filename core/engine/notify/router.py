@@ -103,6 +103,15 @@ def _parse_topics_minimal(text: str) -> dict:
     return data
 
 
+def get_routing() -> tuple[int | None, dict[str, int]]:
+    """(forum_group_id, {topic: thread_id}) as the router currently sees it.
+
+    Public read for health checks and setup tooling. Senders don't need this —
+    they just call ``send_notification``.
+    """
+    return _load_topics()
+
+
 def resolve_topic(topic: str | None, kind: str = "info") -> str:
     """Tier 1: sender-declared topic. Tier 2: infer from kind."""
     if topic in VALID_TOPICS:

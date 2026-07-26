@@ -22,8 +22,6 @@ import re
 from pathlib import Path
 
 
-
-
 def _extract_section(memo: str, header: str) -> str:
     """Pull text under a '## <header>' until the next '##' or end."""
     pattern = rf"##\s+{re.escape(header)}\s*\n+(.+?)(?=\n##\s|\Z)"

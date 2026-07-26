@@ -27,6 +27,31 @@ except Exception:  # pragma: no cover — registry always ships; degrade gracefu
     load_registry = None
     ManifestError = Exception
 
+# Alerts go through the notification router (topic -> General -> DM), so a
+# broken forum still gets the message out. Loaded by file path, not by name:
+# core/infra/lib/notify.py is already on this module's sys.path and would
+# shadow the notify package. Kept optional — the heartbeat is the one thing
+# that must still be able to speak when part of the system is broken.
+def _load_router():
+    import importlib.util
+
+    path = WORKSPACE / "core" / "engine" / "notify" / "router.py"
+    if not path.exists():
+        return None
+    spec = importlib.util.spec_from_file_location("aos_notify_router", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+try:
+    _router = _load_router()
+except Exception:  # pragma: no cover
+    _router = None
+
+get_routing = getattr(_router, "get_routing", None)
+send_notification = getattr(_router, "send_notification", None)
+
 
 def _check_services() -> dict[str, dict]:
     """Probe each ACTIVE service that declares an HTTP health endpoint.
@@ -47,6 +72,51 @@ def _check_services() -> dict[str, dict]:
             ok = False
         results[name] = {"ok": ok}
     return results
+
+def _check_forum(bot_token: str) -> dict:
+    """Is the notification group still a forum we can post into?
+
+    A group admin can turn Topics off with one toggle, and Telegram gives no
+    warning — from that moment every topic-routed notification silently lands
+    in the group's main chat instead of its topic. Bots cannot turn Topics back
+    on, so this is detection only: tell the operator, they flip it back.
+
+    Returns {configured, ok, reason, detail}. reason is "" when healthy,
+    "topics_off" when the toggle is off, "no_access" when the bot can no longer
+    read the chat (kicked, deleted, wrong id). An unreachable API is NOT a
+    problem — if we can't reach Telegram we couldn't deliver the alert anyway.
+    """
+    if get_routing is None:
+        return {"configured": False, "ok": True, "reason": "", "detail": ""}
+    try:
+        group_id, _ = get_routing()
+    except Exception:
+        return {"configured": False, "ok": True, "reason": "", "detail": ""}
+    if not group_id:
+        # No forum group configured — DM-only setup, nothing to watch.
+        return {"configured": False, "ok": True, "reason": "", "detail": ""}
+
+    try:
+        resp = httpx.get(
+            f"https://api.telegram.org/bot{bot_token}/getChat",
+            params={"chat_id": group_id},
+            timeout=10,
+        )
+        body = resp.json()
+    except Exception:
+        return {"configured": True, "ok": True, "reason": "", "detail": ""}
+
+    if not body.get("ok"):
+        return {
+            "configured": True,
+            "ok": False,
+            "reason": "no_access",
+            "detail": body.get("description", "unknown error"),
+        }
+    if not body.get("result", {}).get("is_forum"):
+        return {"configured": True, "ok": False, "reason": "topics_off", "detail": ""}
+    return {"configured": True, "ok": True, "reason": "", "detail": ""}
+
 
 # Startup delay to avoid race conditions with other LaunchAgents
 STARTUP_DELAY_SECS = 60
@@ -77,7 +147,7 @@ def _is_active_hours() -> bool:
     return start_minutes <= current_minutes < end_minutes
 
 
-def _check_health() -> dict:
+def _check_health(bot_token: str | None = None) -> dict:
     """Gather system health info. All checks are deterministic (no LLM)."""
     import shutil
 
@@ -155,6 +225,11 @@ def _check_health() -> dict:
         except Exception:
             pass
 
+    # Notification group — only checkable with a token in hand.
+    forum = _check_forum(bot_token) if bot_token else {
+        "configured": False, "ok": True, "reason": "", "detail": "",
+    }
+
     return {
         "disk_pct": disk_pct,
         "ram_pct": ram_pct,
@@ -162,6 +237,7 @@ def _check_health() -> dict:
         "services": services,
         "bridge_ok": bridge_ok,
         "pending_tasks": pending_tasks,
+        "forum": forum,
     }
 
 
@@ -186,10 +262,48 @@ def _find_problems(health: dict) -> list[str]:
     for name, state in health.get("services", {}).items():
         if not state.get("ok"):
             problems.append(f"🔴 {name} has stopped.")
+    forum = health.get("forum", {})
+    if not forum.get("ok", True):
+        if forum.get("reason") == "topics_off":
+            problems.append(
+                "🧵 Topics got switched off in the AOS group, so my messages are "
+                "landing in the main chat instead of their topics. Turn Topics "
+                "back on in the group settings and they'll sort themselves again."
+            )
+        else:
+            detail = forum.get("detail", "")
+            problems.append(
+                "🚫 I can't reach the AOS group any more"
+                f"{f' ({detail})' if detail else ''}. Messages are coming here "
+                "instead. Check I'm still in the group and still an admin."
+            )
     if health["pending_tasks"] > 0:
         n = health["pending_tasks"]
         problems.append(f"📋 You've got {n} task{'s' if n != 1 else ''} waiting.")
     return problems
+
+
+def _alert(bot_token: str, chat_id: int, msg: str) -> None:
+    """Deliver a heartbeat alert to the alerts topic, however it can.
+
+    The router already falls back topic -> General -> DM. The direct post below
+    is the last resort for the case the router itself is missing: an alert about
+    a broken system must not be lost because part of the system is broken.
+    """
+    if send_notification is not None:
+        try:
+            if send_notification(msg, topic="alerts", parse_mode=None)["delivered"]:
+                return
+        except Exception as e:
+            logger.warning(f"Router unavailable for heartbeat alert: {e}")
+    try:
+        httpx.post(
+            f"https://api.telegram.org/bot{bot_token}/sendMessage",
+            json={"chat_id": chat_id, "text": msg},
+            timeout=10,
+        )
+    except Exception as e:
+        logger.error(f"Heartbeat alert undeliverable: {e}")
 
 
 def start_heartbeat(bot_token: str, chat_id: int, interval_minutes: int = 30):
@@ -211,7 +325,7 @@ def start_heartbeat(bot_token: str, chat_id: int, interval_minutes: int = 30):
         while True:
             try:
                 if _is_active_hours():
-                    health = _check_health()
+                    health = _check_health(bot_token)
                     problems = _find_problems(health)
                     svc_summary = " ".join(
                         f"{n}:{'ok' if s.get('ok') else 'DOWN'}"
@@ -233,11 +347,7 @@ def start_heartbeat(bot_token: str, chat_id: int, interval_minutes: int = 30):
                                 msg = "A couple of things worth knowing:\n\n" + "\n".join(new_problems)
                             else:
                                 msg = new_problems[0]
-                            httpx.post(
-                                f"https://api.telegram.org/bot{bot_token}/sendMessage",
-                                json={"chat_id": chat_id, "text": msg},
-                                timeout=10,
-                            )
+                            _alert(bot_token, chat_id, msg)
                             log_dashboard_activity("ops", "heartbeat_alert", summary=msg[:200])
                             logger.info(f"Heartbeat alert (new): {new_problems}")
 

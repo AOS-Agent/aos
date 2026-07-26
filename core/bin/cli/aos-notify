@@ -19,13 +19,19 @@ Exit codes: 0 delivered (any tier), 1 not delivered.
 """
 
 import argparse
+import importlib.util
 import logging
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path.home() / "aos" / "core" / "engine"))
-
-from notify import send_notification  # noqa: E402
+# Load the router from this CLI's own tree, by file path rather than by module
+# name: core/infra/lib/notify.py shares the name and would shadow the package
+# on any caller that has infra/lib on its path.
+_ROUTER = Path(__file__).resolve().parents[3] / "core" / "engine" / "notify" / "router.py"
+_spec = importlib.util.spec_from_file_location("aos_notify_router", _ROUTER)
+_router = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_router)
+send_notification = _router.send_notification
 
 
 def main() -> int:
