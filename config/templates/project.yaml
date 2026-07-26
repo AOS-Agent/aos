@@ -1,0 +1,93 @@
+# AOS project manifest — FRAMEWORK TEMPLATE (example values only).
+#
+# A real copy lives at  <project>/.aos/project.yaml  and is committed to git
+# WITH the project it describes. This template is never read as live data;
+# `project_manifest.py` only ever loads manifests from project directories.
+#
+# Generate a real one from what the system already knows — do not copy this by
+# hand:
+#
+#     work projects adopt <project> --yaml     # show the plan, write nothing
+#     work projects adopt --all                # plan every linked project
+#
+# ── What belongs here, and what does not ────────────────────────────
+#
+# This file holds DECLARATIONS: things only a human can state. work.db holds
+# TASKS and DERIVATIONS. The test: could you delete the database and rebuild
+# this file's contents from scratch? Declarations yes; tasks no.
+#
+# There is deliberately NO status, state, progress, pct, last_activity or
+# last_updated field, and `validate()` REJECTS them. State is derived by
+# brief.py from tasks, git and sessions. A hand-maintained status field is the
+# specific bug this design exists to prevent: it is always accurate on the day
+# it is written and wrong a week later.
+#
+# ── Why the schema is strict ─────────────────────────────────────────
+#
+# Manifests are pushed to GitHub, and some of these repos are public-facing.
+# So the schema is built so there is nowhere for sensitive data to go, rather
+# than relying on anyone remembering to be careful:
+#
+#   * the key set is CLOSED — an unknown key is an error, not ignored, so
+#     nobody can quietly add `students:` or `notes:`
+#   * NO absolute paths — `/Users/...` leaks the username and breaks on the
+#     operator's other machines. Project paths are relative to the project
+#     root; vault paths are relative to the vault root
+#   * `description` is ONE line and length-capped. Detail lives in the vault,
+#     which is private; this file carries only vault PATHS
+#
+# ── Projects with no directory ───────────────────────────────────────
+#
+# A project with no directory has nowhere to put a manifest, and that is
+# correct, not a gap: its declarations stay in work.db and the reconciler never
+# reports `missing_manifest` for it. Do not create a directory just to hold a
+# manifest.
+
+schema: 1
+
+id: example-project              # must match the work project id
+kind: mixed                      # ios | web | python | content | mixed
+title: Example Project
+
+# ONE line. Anything longer belongs in a vault doc listed under `docs:`.
+description: A short, non-sensitive summary of what this project is.
+
+# The declaration of done. Prose, written once, by a human.
+done_when: The example ships and the first real user completes the core flow.
+
+appetite: 2-weeks                # e.g. 2-weeks | 6-weeks | ongoing | no-deadline
+initiative: example-initiative   # vault initiative KEY (not a path, not a title)
+goal: example-goal               # goal key, or null
+
+# Vault documents, RELATIVE to the vault root. Paths only — the vault is
+# private and stays that way; this file is not.
+docs:
+  - knowledge/initiatives/example-initiative.md
+  - knowledge/decisions/example-decision.md
+
+# Repo layout. EVERY path is relative to this project directory.
+repos:
+  root: .                        # the primary repo; "." means this directory
+
+  # Supporting repos that belong to this project. This is how a project with
+  # more than one repo stops looking like several unrelated directories.
+  components:
+    - path: app
+      role: sub-app              # sub-app | data | sources | vendored | docs | tooling
+      remote: https://github.com/example/example-app.git
+      note: separate repo with its own remote; parent gitignores this path
+
+    - path: shared/data
+      role: data
+      remote: https://github.com/example/example-data.git
+
+# Where branch checkouts live — ALWAYS inside the project.
+#
+# `.claude/worktrees` is the Claude Code harness's own convention; AOS adopts it
+# rather than competing with it. Never point this at /private/tmp or any other
+# tmp path: macOS deletes files there on a timer while leaving the directories
+# standing, which has already destroyed 19 worktrees on this machine — they
+# rotted into empty skeletons that git still listed as registered.
+worktrees:
+  location: .claude/worktrees
+  naming: branch-slug            # branch-slug — hashes are the harness's business

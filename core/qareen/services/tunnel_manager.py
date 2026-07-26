@@ -15,9 +15,11 @@ gated by Cloudflare Access email-OTP. Responsibilities:
   * Switch Qareen's bind host by rewriting the DEPLOYED qareen plist
     (``--host`` arg + ``AOS_QAREEN_HOST`` env) and kickstarting it. Rebind to
     ``127.0.0.1`` happens LAST in :meth:`connect` (only after the connector is
-    health-verified, so we never lock the operator out) and rebind to
-    ``0.0.0.0`` happens in a ``finally`` in :meth:`disconnect` so a partial
-    teardown still restores LAN/Tailscale reachability.
+    health-verified, so we never lock the operator out). :meth:`disconnect`
+    RE-ASSERTS ``127.0.0.1`` in a ``finally`` — tearing down the tunnel must
+    never widen the bind. Qareen has no auth of its own, so LAN exposure is
+    never the resting state; remote access is via ``tailscale serve`` or the
+    tunnel, both of which connect to 127.0.0.1.
 
 Live per-step progress streams over the EXISTING SSE bus as
 ``remote_access.progress`` events. Stored in ``app.state.tunnel_manager``.
@@ -282,12 +284,16 @@ class TunnelManager:
             raise
 
     async def disconnect(self) -> None:
-        """Tear down everything and ALWAYS restore the 0.0.0.0 bind.
+        """Tear down everything and ALWAYS re-assert the loopback bind.
 
         The connector LaunchAgent is booted out BEFORE deleting the tunnel
         (DELETE fails while it holds live connections). Keychain entries are
-        removed. The rebind to 0.0.0.0 lives in ``finally`` so a partial
-        teardown still restores LAN/Tailscale reachability.
+        removed. The rebind lives in ``finally`` so a partial teardown still
+        leaves the bind in the known-safe state.
+
+        It re-asserts 127.0.0.1 rather than widening to 0.0.0.0: dropping the
+        tunnel must not silently expose people.db/comms.db to the LAN. An
+        operator who wants LAN reach sets AOS_QAREEN_HOST deliberately.
         """
         async with self._lock:
             await self._disconnect_locked()
@@ -345,10 +351,10 @@ class TunnelManager:
             except Exception:  # noqa: BLE001
                 logger.exception("Failed to delete %s during disconnect", CF_TOKEN_KEY)
             try:
-                self._rebind_qareen("0.0.0.0")
-                await self._emit("rebind", "done", "Bound to 0.0.0.0")
+                self._rebind_qareen("127.0.0.1")
+                await self._emit("rebind", "done", "Bound to 127.0.0.1")
             except Exception:  # noqa: BLE001
-                logger.exception("Failed to rebind Qareen to 0.0.0.0 during disconnect")
+                logger.exception("Failed to rebind Qareen to 127.0.0.1 during disconnect")
 
     async def status(self) -> dict:
         """Return a FLAT status dict for the status endpoint.
