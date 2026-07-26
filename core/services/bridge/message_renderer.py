@@ -1,5 +1,6 @@
 """Render Claude stream events to Telegram messages."""
 
+import html
 import logging
 import re
 import time
@@ -29,6 +30,26 @@ MAX_MESSAGE_LENGTH = 4096
 EDIT_THROTTLE_SECONDS = 1.5  # min time between editMessageText calls
 
 MIN_CHARS_TO_SHOW = 30  # wait for this much text before first send
+
+
+def esc(value) -> str:
+    """Escape untrusted text for Telegram's HTML parse mode.
+
+    The canonical form of this escape. Applied at each **interpolation** of a
+    value into an HTML template — never to an assembled message, which would
+    also escape the intentional ``<b>``/``<i>`` markup and flatten it.
+
+    Telegram HTML requires exactly ``<``, ``>`` and ``&`` replaced, which is
+    what ``html.escape(quote=False)`` does. Distinct from ``_safe_html`` below:
+    that CONVERTS markdown into Telegram HTML; this one NEUTRALISES text that
+    must never be markup.
+
+    ``daily_briefing``, ``evening_checkin`` and the bus notify consumer keep
+    their own copies rather than importing this one — importing this module
+    pulls in ``telegram``, and a security primitive must not be the thing that
+    makes a module fail to import.
+    """
+    return html.escape("" if value is None else str(value), quote=False)
 
 
 def _split_message(text: str, max_len: int = MAX_MESSAGE_LENGTH) -> list[str]:
@@ -190,11 +211,11 @@ async def render_stream(
         elif isinstance(event, ToolStart):
             # Edit the thinking message with what Claude is actually doing
             if not accumulated_text:
-                await _ensure_msg(f"<i>{event.input_preview}</i>", keep_stop=True)
+                await _ensure_msg(f"<i>{esc(event.input_preview)}</i>", keep_stop=True)
 
         elif isinstance(event, ToolResult):
             if event.is_error and not accumulated_text:
-                await _ensure_msg(f"<i>⚠️ {event.preview[:200]}</i>", keep_stop=True)
+                await _ensure_msg(f"<i>⚠️ {esc(event.preview[:200])}</i>", keep_stop=True)
 
         elif isinstance(event, TextComplete):
             accumulated_text = event.text

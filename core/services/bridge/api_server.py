@@ -11,6 +11,7 @@ Endpoints:
 """
 
 import asyncio
+import html
 import json
 import logging
 import time
@@ -162,7 +163,11 @@ async def _forward_to_telegram(user_text: str, response_text: str):
         import re
         # Clean HTML tags for Telegram
         clean = re.sub(r"<[^>]+>", "", response_text)
-        msg = f"<i>[from Mission Control]</i>\n<b>You:</b> {user_text}\n\n{clean}"
+        # user_text is escaped: it is operator input, but an unescaped "<" or
+        # "&" breaks Telegram's HTML parse and drops the message. `clean` has
+        # already had its tags stripped by the regex above.
+        msg = (f"<i>[from Mission Control]</i>\n"
+               f"<b>You:</b> {html.escape(str(user_text), quote=False)}\n\n{clean}")
         if len(msg) > 4096:
             msg = msg[:4090] + "..."
         await _telegram_bot.send_message(

@@ -22,6 +22,7 @@ back topic -> group General -> operator DM (see notify/router.py).
 
 from __future__ import annotations
 
+import html
 import logging
 import sys
 from pathlib import Path
@@ -46,6 +47,14 @@ class NotificationConsumer(EventConsumer):
         text = event.data.get("text", "")
         if not text:
             return
+
+        # Escape BEFORE framing or sending. This text is plain by contract —
+        # its only producer (bus/consumers/triage.py) builds it from a contact
+        # name plus data["text"], the RAW inbound message body — and
+        # send_notification sends with parse_mode="HTML" without escaping.
+        # Unescaped, an inbound message carrying markup injects it into an
+        # operator alert. Telegram HTML needs exactly < > & replaced.
+        text = html.escape(str(text), quote=False)
 
         # Pass the action through as kind: alert/success/info gain their
         # emoji prefix and routing; "send" (and anything else) stays

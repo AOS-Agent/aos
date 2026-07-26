@@ -2,6 +2,7 @@
 
 import asyncio
 import fcntl
+import html
 import json
 import logging
 import os
@@ -46,6 +47,24 @@ from telegram.ext import (
 from voice_transcriber import get_mode, set_mode, transcribe_voice
 
 logger = logging.getLogger(__name__)
+
+
+def _esc(value) -> str:
+    """Escape a value for interpolation into a parse_mode="HTML" message.
+
+    Escape at the INTERPOLATION boundary, never at the send boundary — escaping
+    an assembled message would flatten the intentional <b>/<i> markup into
+    visible tag soup.
+
+    ``quote=False`` is deliberate: escaping quotes would mangle every apostrophe
+    in a task title. Telegram's HTML mode only requires < > &.
+
+    Stdlib-only and defined locally on purpose. The canonical copy lives in
+    message_renderer, but that module imports ``telegram``, which is absent
+    outside the bridge venv — a security primitive must never be the reason a
+    module fails to import.
+    """
+    return html.escape("" if value is None else str(value), quote=False)
 
 # ── Task dispatch ──────────────────────────────────────
 # Tasks that should run in tmux (non-blocking) instead of streaming.
@@ -134,9 +153,10 @@ async def _dispatch_steer_and_report(chat, message, text: str, thread_id=None):
                 apps = job_status.get("apps_opened", [])
                 updates = job_status.get("updates", [])
 
-                response_text = f"✅ <b>Done</b>\n\n{summary}"
+                response_text = f"✅ <b>Done</b>\n\n{_esc(summary)}"
                 if apps:
-                    response_text += f"\n\n<i>Apps used: {', '.join(apps)}</i>"
+                    response_text += ("\n\n<i>Apps used: "
+                                      + ", ".join(_esc(a) for a in apps) + "</i>")
 
                 try:
                     await status_msg.edit_text(response_text, parse_mode="HTML")
@@ -154,7 +174,12 @@ async def _dispatch_steer_and_report(chat, message, text: str, thread_id=None):
             elif status == "failed":
                 error = job_status.get("error", "Unknown error")
                 try:
-                    await status_msg.edit_text(f"❌ <b>Failed</b>\n\n{error}", parse_mode="HTML")
+                    # esc() the error: exception strings routinely embed task titles,
+                    # and titles arrive from email/WhatsApp intake. Unescaped, an
+                    # injected <a href> renders as a real link in a message the
+                    # operator trusts because their own system sent it.
+                    await status_msg.edit_text(
+                        f"❌ <b>Failed</b>\n\n{_esc(error)}", parse_mode="HTML")
                 except Exception:
                     await chat.send_message(f"❌ Failed: {error}", **send_kwargs)
 
@@ -328,14 +353,14 @@ def _format_tasks_telegram(tasks: list[dict]) -> str:
 
     lines: list[str] = []
     for proj, proj_tasks in sorted(by_project.items()):
-        lines.append(f"\n<b>{proj.upper()}</b>")
+        lines.append(f"\n<b>{_esc(proj.upper())}</b>")
         for t in sorted(proj_tasks, key=lambda x: x.get("priority", 9)):
             icon = icons.get(t.get("status", "todo"), "⬜")
             title = t.get("title", "Untitled")
             p = t.get("priority", 3)
             p_str = f" P{p}" if p and int(p) <= 2 else ""
             tid = t.get("id", "")
-            lines.append(f"  {icon} {title}{p_str}  <i>{tid}</i>")
+            lines.append(f"  {icon} {_esc(title)}{p_str}  <i>{tid}</i>")
 
     if unassigned:
         lines.append("\n<b>UNASSIGNED</b>")
@@ -343,7 +368,7 @@ def _format_tasks_telegram(tasks: list[dict]) -> str:
             icon = icons.get(t.get("status", "todo"), "⬜")
             title = t.get("title", "Untitled")
             tid = t.get("id", "")
-            lines.append(f"  {icon} {title}  <i>{tid}</i>")
+            lines.append(f"  {icon} {_esc(title)}  <i>{tid}</i>")
 
     return "\n".join(lines) if lines else "<i>No tasks.</i>"
 
@@ -948,7 +973,7 @@ class TelegramChannel:
         await self._react(update.message, "✅")
         try:
             await update.message.reply_text(
-                f"<i>{text}</i>",
+                f"<i>{_esc(text)}</i>",
                 parse_mode="HTML",
                 **reply_kwargs,
             )
@@ -956,7 +981,7 @@ class TelegramChannel:
             logger.warning(f"Transcript reply failed: {e}")
             # Fallback: send as regular message
             await update.message.chat.send_message(
-                f"<i>{text}</i>", parse_mode="HTML", **reply_kwargs,
+                f"<i>{_esc(text)}</i>", parse_mode="HTML", **reply_kwargs,
             )
 
         # Prepend transcript as context for Claude (it sees what you said).
@@ -1303,7 +1328,7 @@ class TelegramChannel:
         self._qmd_reindex_async()
         log_activity("telegram", "note_saved", summary=text[:100])
         await update.message.reply_text(
-            f"Saved to <code>ideas/{filename}</code>",
+            f"Saved to <code>ideas/{_esc(filename)}</code>",
             parse_mode="HTML",
         )
 
@@ -1339,7 +1364,7 @@ class TelegramChannel:
             if len(output) > 3000:
                 output = output[:3000] + "\n..."
             await update.message.reply_text(
-                f"<b>Search:</b> <i>{query}</i>\n\n<pre>{output}</pre>",
+                f"<b>Search:</b> <i>{_esc(query)}</i>\n\n<pre>{_esc(output)}</pre>",
                 parse_mode="HTML",
             )
         except subprocess.TimeoutExpired:
@@ -1452,7 +1477,7 @@ class TelegramChannel:
         self._qmd_reindex_async()
         log_activity("telegram", "capture_saved", summary=f"{note_type}: {text[:100]}")
         await update.message.reply_text(
-            f"Captured [{note_type}] → <code>{folder}/{filename}</code>{related_msg}",
+            f"Captured [{note_type}] → <code>{_esc(folder)}/{_esc(filename)}</code>{related_msg}",
             parse_mode="HTML",
         )
 
@@ -1498,7 +1523,7 @@ class TelegramChannel:
                     if thread_id:
                         kwargs["message_thread_id"] = thread_id
                     await chat.send_message(
-                        f"Transcript ready ({len(transcript)} chars) → <code>{note_path.name}</code>",
+                        f"Transcript ready ({len(transcript)} chars) → <code>{_esc(note_path.name)}</code>",
                         parse_mode="HTML", **kwargs,
                     )
                     return
@@ -1557,7 +1582,7 @@ class TelegramChannel:
                     break
 
         if not p.exists() or not p.is_file():
-            await update.message.reply_text(f"File not found: <code>{filepath}</code>", parse_mode="HTML")
+            await update.message.reply_text(f"File not found: <code>{_esc(filepath)}</code>", parse_mode="HTML")
             return
 
         try:

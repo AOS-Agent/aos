@@ -10,6 +10,7 @@ Message style: plain human English, no internal codes (priority "P1",
 status "[executing]", "3d") — see MESSAGE_STYLE.md in this directory.
 """
 
+import html
 import json
 import logging
 import threading
@@ -29,6 +30,34 @@ OPERATOR_CONFIG = Path.home() / ".aos" / "config" / "operator.yaml"
 
 # Max items per BLUF section (Cowan 2001 cognitive load)
 MAX_ITEMS = 4
+
+
+def esc(value) -> str:
+    """Escape untrusted text for Telegram's HTML parse mode.
+
+    This briefing is assembled as HTML and sent with ``parse_mode="HTML"``, and
+    much of what it interpolates is **attacker-influenced**: task titles and
+    inbox text originate in inbound email/WhatsApp (comms.db → ambient proposer
+    → inbox → task title), contact names come from whoever wrote in, and
+    ``text_preview`` is the raw inbound message. Unescaped, a message containing
+    ``<a href="...">Wire $5,000 — approved</a>`` renders as a real clickable
+    link inside a briefing the operator trusts as coming from their own system.
+
+    Telegram HTML requires exactly ``<``, ``>`` and ``&`` replaced, which is what
+    ``html.escape(quote=False)`` does. Applied at every **interpolation** —
+    never to the assembled message, because that would also escape the
+    intentional ``<b>``/``<i>`` markup in these templates and flatten the whole
+    briefing into visible tag soup.
+
+    Nothing is sanitised on the way in: the stored task title stays faithful to
+    what actually arrived. Escaping belongs at the render boundary.
+
+    Defined locally rather than imported from message_renderer so this module
+    stays importable without the bridge's third-party dependencies — a security
+    primitive must never be the thing that fails to import.
+    """
+    return html.escape("" if value is None else str(value), quote=False)
+
 
 # Internal initiative statuses → plain words for the reader. The briefing goes
 # to a phone, not a dashboard — no one should have to decode "[executing]".
@@ -314,7 +343,7 @@ def _build_briefing() -> str:
                 due_str = str(due).split("T")[0]
                 if due_str < today_str:
                     days_late = (now.date() - datetime.strptime(due_str, "%Y-%m-%d").date()).days
-                    urgent.append(f"<b>{t['title']}</b> — overdue by {_days_ago(days_late)}")
+                    urgent.append(f"<b>{esc(t['title'])}</b> — overdue by {_days_ago(days_late)}")
             except (ValueError, TypeError):
                 pass
 
@@ -326,8 +355,9 @@ def _build_briefing() -> str:
         if init["stale"]:
             phase_info = ""
             if init.get("phase") and init.get("total_phases"):
-                phase_info = f" (phase {init['phase']} of {init['total_phases']})"
-            urgent.append(f"<b>{init['title']}</b> — stalled, last touched {init['updated']}{phase_info}")
+                phase_info = f" (phase {esc(init['phase'])} of {esc(init['total_phases'])})"
+            urgent.append(f"<b>{esc(init['title'])}</b> — stalled, "
+                          f"last touched {esc(init['updated'])}{phase_info}")
 
     # Top-priority active tasks
     for t in work_tasks:
@@ -335,7 +365,7 @@ def _build_briefing() -> str:
             if not t.get("parent"):  # Skip subtasks
                 title = t.get("title", "Untitled")
                 if not any(title in u for u in urgent):
-                    urgent.append(f"<b>{title}</b> — top priority")
+                    urgent.append(f"<b>{esc(title)}</b> — top priority")
 
     # ── IMPORTANT: active initiatives, high-pri tasks, due this week ─
     # Active initiatives with phase info
@@ -343,14 +373,15 @@ def _build_briefing() -> str:
         if not init["stale"] and init["status"] in ("executing", "planning"):
             phase_info = ""
             if init.get("phase") and init.get("total_phases"):
-                phase_info = f", phase {init['phase']} of {init['total_phases']}"
-            important.append(f"<b>{init['title']}</b> — {_status_words(init['status'])}{phase_info}")
+                phase_info = f", phase {esc(init['phase'])} of {esc(init['total_phases'])}"
+            important.append(f"<b>{esc(init['title'])}</b> — "
+                             f"{_status_words(init['status'])}{phase_info}")
 
     # High-priority to-do tasks
     for t in work_tasks:
         if t.get("status") in ("active", "todo", "focus", "in-progress") and not t.get("parent"):
             if t.get("priority") == 2:
-                important.append(f"{t['title']} — worth doing this week")
+                important.append(f"{esc(t['title'])} — worth doing this week")
 
     # Tasks due this week
     week_end = now + timedelta(days=(6 - now.weekday()))  # End of this week (Sunday)
@@ -365,7 +396,7 @@ def _build_briefing() -> str:
                 if due_date >= now.date() and due_date <= week_end.date():
                     title = t.get("title", "Untitled")
                     if not any(title in item for item in important) and not any(title in item for item in urgent):
-                        important.append(f"{title} — due {due_str}")
+                        important.append(f"{esc(title)} — due {due_str}")
             except (ValueError, TypeError):
                 pass
 
@@ -373,7 +404,8 @@ def _build_briefing() -> str:
     # Initiatives in research/shaping
     for init in initiatives:
         if not init["stale"] and init["status"] in ("research", "shaping"):
-            think.append(f"<b>{init['title']}</b> — {_status_words(init['status'])}, needs your input")
+            think.append(f"<b>{esc(init['title'])}</b> — "
+                         f"{_status_words(init['status'])}, needs your input")
 
     # Inbox items awaiting triage
     try:
@@ -386,7 +418,7 @@ def _build_briefing() -> str:
             elif inbox_items:
                 for item in inbox_items[:MAX_ITEMS]:
                     text = item.get("text", item) if isinstance(item, dict) else str(item)
-                    think.append(f"Inbox: {str(text)[:60]}")
+                    think.append(f"Inbox: {esc(str(text)[:60])}")
     except Exception:
         pass
 
@@ -398,7 +430,7 @@ def _build_briefing() -> str:
             for th in threads:
                 if th.get("status", "open") == "open":
                     title = th.get("title", "Unnamed thread")
-                    think.append(f"Open thread: {title}")
+                    think.append(f"Open thread: {esc(title)}")
     except Exception:
         pass
 
@@ -407,7 +439,7 @@ def _build_briefing() -> str:
     for t in work_tasks:
         if t.get("status") == "waiting":
             who = t.get("waiting_on", "someone")
-            people.append(f"Waiting on <b>{who}</b>: {t.get('title', 'Untitled')}")
+            people.append(f"Waiting on <b>{esc(who)}</b>: {esc(t.get('title', 'Untitled'))}")
 
     # vault_tasks waiting check removed — work engine handles all tasks
 
@@ -422,7 +454,7 @@ def _build_briefing() -> str:
             name = block.get("name", "Block")
             start = block.get("start", "")
             end = block.get("end", "")
-            people.append(f"<b>{name}</b> today {start}–{end}")
+            people.append(f"<b>{esc(name)}</b> today {esc(start)}–{esc(end)}")
 
     # ── OVERNIGHT: tasks completed late night / early morning ────────
     yesterday = now - timedelta(days=1)
@@ -444,7 +476,7 @@ def _build_briefing() -> str:
                     else:
                         continue
                     if cutoff_evening <= comp_dt <= cutoff_morning:
-                        overnight.append(f"Completed: <b>{t.get('title', 'Untitled')}</b>")
+                        overnight.append(f"Completed: <b>{esc(t.get('title', 'Untitled'))}</b>")
                 except (ValueError, TypeError):
                     pass
 
@@ -499,9 +531,9 @@ def _build_briefing() -> str:
             channel = entry.get("channel", "?")
             ago = _time_ago(entry.get("received_at", ""))
             preview = entry.get("text_preview", "")
-            lines.append(f"  \U0001f4ac {name} ({channel}) — {ago}")
+            lines.append(f"  \U0001f4ac {esc(name)} ({esc(channel)}) — {ago}")
             if preview:
-                lines.append(f"    {preview[:80]}")
+                lines.append(f"    {esc(preview[:80])}")
         lines.append("")
 
     # SHIPMENTS (only if something is arriving or needs attention)

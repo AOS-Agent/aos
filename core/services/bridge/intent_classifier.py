@@ -12,6 +12,7 @@ Bridge v2 quick commands spec:
 - Everything else → Claude. If ambiguous, goes to Claude.
 """
 
+import html
 import logging
 import re
 import subprocess
@@ -21,6 +22,30 @@ from pathlib import Path
 import httpx
 
 logger = logging.getLogger(__name__)
+
+
+def esc(value) -> str:
+    """Escape untrusted text for Telegram's HTML parse mode.
+
+    Everything ``dispatch()`` returns is sent by ``telegram_channel`` with
+    ``parse_mode="HTML"``, and several values here are attacker-controlled:
+
+    * ``person_name`` is an unknown sender's **display name** — anyone can set
+      their WhatsApp name to an anchor tag
+    * ``text_preview`` is the **raw inbound message body**
+    * task titles reach the work DB from inbound email/WhatsApp via the ambient
+      proposer and ``promote_inbox``
+    * subprocess stderr and exception text can quote any of the above
+
+    Applied at each **interpolation**, never to an assembled message — that
+    would also escape the intentional ``<b>``/``<i>``/``<code>`` markup here.
+    Nothing is sanitised on intake; the stored data stays faithful.
+
+    Defined locally rather than imported from message_renderer, which pulls in
+    ``telegram``: a security primitive must never be the thing that makes a
+    module fail to import.
+    """
+    return html.escape("" if value is None else str(value), quote=False)
 
 AOS_DIR = Path.home() / "aos"
 QMD_BIN = Path.home() / ".bun" / "bin" / "qmd"
@@ -296,11 +321,11 @@ def handle_health_check(text: str) -> str:
         try:
             r = httpx.get(url, timeout=5)
             if r.status_code == 200:
-                results.append(f"🟢 <b>{name}</b> — running")
+                results.append(f"🟢 <b>{esc(name)}</b> — running")
             else:
-                results.append(f"🔴 <b>{name}</b> — responded {r.status_code}")
+                results.append(f"🔴 <b>{esc(name)}</b> — responded {r.status_code}")
         except Exception:
-            results.append(f"🔴 <b>{name}</b> — unreachable")
+            results.append(f"🔴 <b>{esc(name)}</b> — unreachable")
 
     # Check if user asked about a specific service
     text_lower = text.lower()
@@ -325,7 +350,7 @@ def handle_list_tasks(text: str) -> str:
             capture_output=True, text=True, timeout=10,
         )
         if result.returncode != 0:
-            return f"<b>Tasks</b>\nCould not load tasks: {result.stderr[:200]}"
+            return f"<b>Tasks</b>\nCould not load tasks: {esc(result.stderr[:200])}"
 
         import json as _json
         data = _json.loads(result.stdout)
@@ -345,28 +370,30 @@ def handle_list_tasks(text: str) -> str:
             lines.append("\n<b>In Progress</b>")
             for t in active_tasks:
                 marker = priority_marker.get(t.get("priority", 3), "")
-                proj = f" <i>[{t['project']}]</i>" if t.get("project") else ""
+                proj = f" <i>[{esc(t['project'])}]</i>" if t.get("project") else ""
                 sessions = len(t.get("sessions", []))
                 sess = f" <code>{sessions}s</code>" if sessions > 0 else ""
                 prefix = f" {marker}" if marker else ""
-                lines.append(f"<code>{t['id']}</code>{prefix} {t['title']}{proj}{sess}")
+                lines.append(f"<code>{esc(t['id'])}</code>{prefix} "
+                             f"{esc(t['title'])}{proj}{sess}")
 
         if todo_tasks:
             lines.append("\n<b>Todo</b>")
             for t in todo_tasks:
                 marker = priority_marker.get(t.get("priority", 3), "")
-                proj = f" <i>[{t['project']}]</i>" if t.get("project") else ""
+                proj = f" <i>[{esc(t['project'])}]</i>" if t.get("project") else ""
                 sessions = len(t.get("sessions", []))
                 sess = f" <code>{sessions}s</code>" if sessions > 0 else ""
                 prefix = f" {marker}" if marker else ""
-                lines.append(f"<code>{t['id']}</code>{prefix} {t['title']}{proj}{sess}")
+                lines.append(f"<code>{esc(t['id'])}</code>{prefix} "
+                             f"{esc(t['title'])}{proj}{sess}")
 
         total = len(active_tasks) + len(todo_tasks)
         lines.append(f"\n{total} open task(s)")
         return "\n".join(lines)
 
     except Exception as e:
-        return f"<b>Tasks</b>\nError loading tasks: {e}"
+        return f"<b>Tasks</b>\nError loading tasks: {esc(e)}"
 
 
 def handle_add_task(text: str) -> str:
@@ -523,7 +550,7 @@ def handle_vault_search(text: str) -> str:
 
         # Parse QMD output into a clean Telegram-friendly format
         lines = ["<b>🔍 Vault Search</b>"]
-        lines.append(f"Query: <i>{query}</i>\n")
+        lines.append(f"Query: <i>{esc(query)}</i>\n")
 
         # QMD outputs results with paths and scores — format them
         for line in output.split("\n"):
@@ -565,7 +592,7 @@ def handle_goals(text: str) -> str:
             continue
         avg = sum(kr.get("progress", 0) for kr in krs) / len(krs)
         bar = _progress_bar(avg)
-        lines.append(f"{bar} <b>{name}</b> ({weight}%) — {avg:.0f}%")
+        lines.append(f"{bar} <b>{esc(name)}</b> ({weight}%) — {avg:.0f}%")
         for kr in krs:
             p = kr.get("progress", 0)
             icon = "✅" if p >= 80 else "⚠️" if p < 30 else "▫️"
@@ -732,9 +759,9 @@ def handle_messages(text: str) -> str:
         channel = entry.get("channel", "?")
         ago = _time_ago(entry.get("received_at", ""))
         preview = entry.get("text_preview", "")
-        lines.append(f"💬 {name} ({channel}) — {ago}")
+        lines.append(f"💬 {esc(name)} ({esc(channel)}) — {ago}")
         if preview:
-            lines.append(f"  {preview[:80]}")
+            lines.append(f"  {esc(preview[:80])}")
         lines.append("")
 
     lines.append("Reply in app or from here: /reply {name} {message}")
@@ -934,7 +961,7 @@ def handle_trust(text: str) -> str:
 
         conn.close()
 
-        lines = [f"<b>{name}</b>"]
+        lines = [f"<b>{esc(name)}</b>"]
         lines.append(f"Trust: Level {level} ({level_names.get(level, '?')})")
         lines.append(f"Importance: {row['importance']}")
         if rs:
