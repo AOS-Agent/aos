@@ -1897,9 +1897,58 @@ def delete_inbox(inbox_id: str) -> bool:
 
 # ── Session Linking ───────────────────────────────────
 
+# A task genuinely worked on across more sessions than this is not a task, it is
+# a bucket. Past the cap the relation stops carrying information, so we stop
+# writing rather than let one row absorb the machine's whole history.
+_MAX_SESSION_LINKS = 100
+
+# `reconcile.py` attributes a session to whatever task is `active`. A task left
+# active for months therefore absorbs EVERY session that touches a file. That is
+# how session_tasks reached 116,872 rows over 60 tasks, with aos#72 (active since
+# 2026-03-28) holding 12,209 of 12,221 sessions. Statuses are the operator's to
+# manage — so the guard lives here, and stale active tasks simply stop accruing.
+_STALE_ACTIVE_DAYS = 14
+
+
+def _link_is_meaningful(conn, sc, row, task_id: str) -> tuple[bool, str]:
+    """Should this session→task link be written? Returns (ok, reason_if_not).
+
+    Bounded on purpose: a link that cannot distinguish this task from any other
+    is noise, and noise in this relation is expensive — every task load drags its
+    session list, which is what made the dashboard take 8s and `work who` 14.5s.
+    """
+    started = row["started_at"] if "started_at" in row.keys() else None
+    if row["status"] == "active" and started:
+        try:
+            age = (datetime.now() - datetime.fromisoformat(
+                str(started).replace("Z", "").split("+")[0])).days
+            if age > _STALE_ACTIVE_DAYS:
+                return False, (f"{task_id} has been active for {age} days; "
+                               f"attributing unrelated sessions to it would be a "
+                               f"guess, not a record")
+        except (ValueError, TypeError):
+            pass
+
+    try:
+        n = sc.execute("SELECT count(*) FROM session_tasks WHERE task_id = ?",
+                       (task_id,)).fetchone()[0]
+        if n >= _MAX_SESSION_LINKS:
+            return False, (f"{task_id} already has {n} session links "
+                           f"(cap {_MAX_SESSION_LINKS}) — the relation is "
+                           f"saturated and no longer identifies anything")
+    except sqlite3.Error:
+        pass
+
+    return True, ""
+
+
 def link_session_to_task(task_id: str, session_id: str, outcome: str = None,
                          date_str: str = None) -> dict | None:
-    """Link a session to a task."""
+    """Link a session to a task.
+
+    Refuses links that carry no information — see ``_link_is_meaningful``. A
+    refusal is not an error: it returns None and the caller carries on.
+    """
     conn = _db()
 
     row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
@@ -1910,6 +1959,11 @@ def link_session_to_task(task_id: str, session_id: str, outcome: str = None,
     _sc = _session_conn(conn)
     if _sc is None:
         return None  # no session store available (injected env) — skip link
+
+    ok, why = _link_is_meaningful(conn, _sc, row, task_id)
+    if not ok:
+        logging.getLogger(__name__).info("session-link refused: %s", why)
+        return None
     existing = _sc.execute(
         "SELECT 1 FROM session_tasks WHERE session_id = ? AND task_id = ?",
         (session_id, task_id),
