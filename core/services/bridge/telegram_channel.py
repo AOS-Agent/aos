@@ -360,7 +360,7 @@ def _format_tasks_telegram(tasks: list[dict]) -> str:
             p = t.get("priority", 3)
             p_str = f" P{p}" if p and int(p) <= 2 else ""
             tid = t.get("id", "")
-            lines.append(f"  {icon} {_esc(title)}{p_str}  <i>{tid}</i>")
+            lines.append(f"  {icon} {_esc(title)}{p_str}  <i>{_esc(tid)}</i>")
 
     if unassigned:
         lines.append("\n<b>UNASSIGNED</b>")
@@ -368,7 +368,7 @@ def _format_tasks_telegram(tasks: list[dict]) -> str:
             icon = icons.get(t.get("status", "todo"), "⬜")
             title = t.get("title", "Untitled")
             tid = t.get("id", "")
-            lines.append(f"  {icon} {_esc(title)}  <i>{tid}</i>")
+            lines.append(f"  {icon} {_esc(title)}  <i>{_esc(tid)}</i>")
 
     return "\n".join(lines) if lines else "<i>No tasks.</i>"
 
@@ -1477,7 +1477,7 @@ class TelegramChannel:
         self._qmd_reindex_async()
         log_activity("telegram", "capture_saved", summary=f"{note_type}: {text[:100]}")
         await update.message.reply_text(
-            f"Captured [{note_type}] → <code>{_esc(folder)}/{_esc(filename)}</code>{related_msg}",
+            f"Captured [{_esc(note_type)}] → <code>{_esc(folder)}/{_esc(filename)}</code>{related_msg}",
             parse_mode="HTML",
         )
 
@@ -1591,7 +1591,10 @@ class TelegramChannel:
             title = p.stem.replace("-", " ").replace("_", " ").title()
             url = publish_md(title, content)
             await update.message.reply_text(
-                f'<a href="{url}">{title}</a>',
+                # url sits in an ATTRIBUTE: html.escape's default quote=True is
+                # required here — a bare " would close href= and let the value
+                # inject further attributes. _esc (quote=False) is text-only.
+                f'<a href="{html.escape(url)}">{_esc(title)}</a>',
                 parse_mode="HTML",
                 disable_web_page_preview=False,
             )
