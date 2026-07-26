@@ -2,7 +2,7 @@ import { lazy, useEffect } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import Layout from '@/components/layout/Layout';
 import { migrateLegacyChatIfNeeded } from '@/lib/migrateLegacyChat';
-import { PAGE_LOADERS } from '@/lib/routeLoaders';
+import { routeComponent } from '@/lib/routeLoaders';
 
 // Route chunks come from PAGE_LOADERS so that TransitionLink prefetches the
 // exact same module a route will render. Declaring the import inline here as
@@ -10,32 +10,32 @@ import { PAGE_LOADERS } from '@/lib/routeLoaders';
 // indistinguishable from no prefetch at all.
 
 // ── Primary surfaces ──
-const Home = lazy(PAGE_LOADERS['/']);
-const CompanionSession = lazy(PAGE_LOADERS['/companion/session']);
-const Work = lazy(PAGE_LOADERS['/work']);
-const People = lazy(PAGE_LOADERS['/people']);
-const Chat = lazy(PAGE_LOADERS['/chat']);
-const System = lazy(PAGE_LOADERS['/system']);
-const Settings = lazy(PAGE_LOADERS['/settings']);
-const Days = lazy(PAGE_LOADERS['/timeline']);
-const Agents = lazy(PAGE_LOADERS['/agents']);
-const Org = lazy(PAGE_LOADERS['/org']);
-const Skills = lazy(PAGE_LOADERS['/skills']);
+const Home = routeComponent('/');
+const CompanionSession = routeComponent('/companion/session');
+const Work = routeComponent('/work');
+const People = routeComponent('/people');
+const Chat = routeComponent('/chat');
+const System = routeComponent('/system');
+const Settings = routeComponent('/settings');
+const Days = routeComponent('/timeline');
+const Agents = routeComponent('/agents');
+const Org = routeComponent('/org');
+const Skills = routeComponent('/skills');
 
 // ── Sub-views ──
-const Sessions = lazy(PAGE_LOADERS['/sessions']);
-const SessionDetail = lazy(PAGE_LOADERS['/sessions/:id']);
-const AgentConfig = lazy(PAGE_LOADERS['/agents/:id']);
+const Sessions = routeComponent('/sessions');
+const SessionDetail = routeComponent('/sessions/:id');
+const AgentConfig = routeComponent('/agents/:id');
 const IntelligenceFeed = lazy(() => import('@/pages/IntelligenceFeed'));
-const IntelligenceDetail = lazy(PAGE_LOADERS['/intelligence/:id']);
-const IntelligenceSources = lazy(PAGE_LOADERS['/intelligence/sources']);
-const Knowledge = lazy(PAGE_LOADERS['/knowledge']);
-const Shipments = lazy(PAGE_LOADERS['/shipments']);
-const ShipmentDetail = lazy(PAGE_LOADERS['/shipments/:id']);
-const ShipmentsEval = lazy(PAGE_LOADERS['/shipments/eval']);
+const IntelligenceDetail = routeComponent('/intelligence/:id');
+const IntelligenceSources = routeComponent('/intelligence/sources');
+const Knowledge = routeComponent('/knowledge');
+const Shipments = routeComponent('/shipments');
+const ShipmentDetail = routeComponent('/shipments/:id');
+const ShipmentsEval = routeComponent('/shipments/eval');
 
 // ── Review: pages with real UI, kept for evaluation ──
-const Calendar = lazy(PAGE_LOADERS['/calendar']);
+const Calendar = routeComponent('/calendar');
 
 export default function App() {
   // One-time migration: move legacy chat localStorage → SQLite conversations

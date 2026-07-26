@@ -121,6 +121,31 @@ def test_state_done_when_every_task_is_done():
     assert "4 tasks" in reason
 
 
+def test_cancelled_project_does_not_read_as_about_to_start():
+    """`deenoverdunya` is cancelled with zero tasks.
+
+    It read "not started — no tasks have been filed yet", which implies work
+    is pending on an abandoned project. The locked state vocabulary has no
+    `cancelled` member, so the reason has to carry it.
+    """
+    state, reason = briefmod._derive_state(
+        {"status": "cancelled"}, _counts(0), None, "unknown", [], [])
+    assert state in briefmod.STATES if hasattr(briefmod, "STATES") else True
+    assert state == "cold"
+    assert "cancelled" in reason
+    assert "moved elsewhere" in reason
+    assert not reason.endswith(".")        # the summary supplies the period
+
+
+def test_cancelled_project_is_not_told_to_link_a_repo(tmp_path, monkeypatch):
+    root = tmp_path / "project"
+    (root / "gone").mkdir(parents=True)
+    monkeypatch.setattr(briefmod, "PROJECT_ROOT", root)
+    assert briefmod._detect_untracked_repo("gone", None, None, "cancelled") == []
+    assert briefmod._detect_untracked_repo("gone", None, None, "completed") == []
+    assert briefmod._detect_untracked_repo("gone", None, None, "active")
+
+
 def test_state_blocked_outranks_moving():
     """A blocked project is blocked even if it moved five minutes ago."""
     from brief_types import Blocker
@@ -1046,6 +1071,173 @@ def test_live_session_counts_are_plausible_not_thousands():
         matched = session.get("matched_task")
         assert matched is None or matched in ids, (
             f"session {session['id']} claims task {matched}, not ours")
+
+
+# ── Nested repositories ─────────────────────────────────────────────────
+#
+# A project's real history often lives in a repo *inside* the linked one. hre
+# is checked in at ~/project/hre, but the Next.js app actually being shipped is
+# a separate repo at hre/app with its own remote — and missing it is how the
+# work system reported HRE as "0/6, not started" while an app was being built.
+
+def _git_repo(path: Path, *, subject="feat: a thing", remote=None, when=None):
+    """A real one-commit git repo at `path`."""
+    import subprocess
+    path.mkdir(parents=True, exist_ok=True)
+    env = dict(os.environ, GIT_AUTHOR_NAME="Test Person",
+               GIT_AUTHOR_EMAIL="t@example.invalid",
+               GIT_COMMITTER_NAME="Test Person",
+               GIT_COMMITTER_EMAIL="t@example.invalid")
+    if when:
+        env["GIT_AUTHOR_DATE"] = when
+        env["GIT_COMMITTER_DATE"] = when
+
+    def git(*args):
+        subprocess.run(["git", "-C", str(path), *args], check=True, env=env,
+                       capture_output=True, timeout=60)
+
+    subprocess.run(["git", "init", "-q", str(path)], check=True,
+                   capture_output=True, timeout=60)
+    (path / "README.md").write_text("hi\n")
+    git("add", "-A")
+    git("-c", "commit.gpgsign=false", "commit", "-q", "-m", subject)
+    if remote:
+        git("remote", "add", "origin", remote)
+    return path
+
+
+def test_nested_repos_finds_a_repo_inside_the_linked_one(tmp_path):
+    root = _git_repo(tmp_path / "proj")
+    _git_repo(root / "app", subject="feat: the real work")
+
+    found = briefmod._nested_repos(str(root))
+    assert [label for label, _ in found] == ["app"]
+    assert found[0][1] == root / "app"
+
+
+def test_nested_repo_scan_skips_the_expensive_directories(tmp_path):
+    root = _git_repo(tmp_path / "proj")
+    for junk in ("node_modules", ".venv", "_archive", "dist", ".mypy_cache"):
+        _git_repo(root / junk / "pkg")
+    _git_repo(root / "app")
+
+    assert [label for label, _ in briefmod._nested_repos(str(root))] == ["app"]
+
+
+def test_nested_repo_scan_respects_the_depth_bound(tmp_path):
+    root = _git_repo(tmp_path / "proj")
+    deep = root / "a" / "b" / "c" / "d" / "e"
+    _git_repo(deep)
+    (root / "a" / "b").mkdir(parents=True, exist_ok=True)
+
+    found = [label for label, _ in briefmod._nested_repos(str(root))]
+    assert "a/b/c/d/e" not in found
+
+
+def test_nested_repos_degrades_on_missing_input():
+    assert briefmod._nested_repos(None) == []
+    assert briefmod._nested_repos("/no/such/directory") == []
+
+
+def test_commits_carry_the_repo_that_holds_them(tmp_path):
+    root = _git_repo(tmp_path / "proj", subject="chore: outer")
+    nested = _git_repo(root / "app", subject="feat: inner")
+
+    outer = briefmod._git_log(str(root))
+    inner = briefmod._git_log(str(nested), label="app")
+
+    assert outer[0]["repo"] == "" and outer[0]["repo_path"] == str(root)
+    assert inner[0]["repo"] == "app" and inner[0]["repo_path"] == str(nested)
+
+
+def test_git_log_cache_cannot_be_mutated_by_a_caller(tmp_path):
+    """compile_brief concatenates onto this list.
+
+    Handing out the cached object let that mutation accumulate into the cache,
+    so every recompile duplicated the nested-repo rows.
+    """
+    root = _git_repo(tmp_path / "proj")
+    first = briefmod._git_log(str(root))
+    first.append({"sha": "deadbeef", "at": "2026-01-01T00:00:00",
+                  "author": "x", "subject": "injected", "repo": "", "repo_path": ""})
+    second = briefmod._git_log(str(root))
+    assert len(second) == 1
+    assert all(c["subject"] != "injected" for c in second)
+
+
+def test_remote_url_is_read_and_normalised(tmp_path):
+    ssh = _git_repo(tmp_path / "ssh", remote="git@github.com:owner/repo.git")
+    assert briefmod._git_remote(ssh) == "https://github.com/owner/repo"
+
+    https = _git_repo(tmp_path / "https",
+                      remote="https://github.com/hishamalhadi/ahhs-quran.git")
+    assert briefmod._git_remote(https) == "https://github.com/hishamalhadi/ahhs-quran"
+
+    bare = _git_repo(tmp_path / "bare")
+    assert briefmod._git_remote(bare) is None
+    assert briefmod._git_remote(tmp_path / "not-a-repo") is None
+
+
+def test_last_activity_counts_a_nested_repos_commits():
+    """A project whose only recent movement is nested is moving, not cold."""
+    old = "2026-01-01T00:00:00"
+    recent = briefmod._now_iso()
+    tasks = [_task("p#1", "Thing", created_at=old)]
+    commits = [{"sha": "a" * 40, "at": recent, "author": "x",
+                "subject": "feat: shipped", "repo": "app", "repo_path": "/x/app"}]
+
+    at, source = briefmod._derive_last_activity(tasks, {}, [], commits)
+    assert at == recent and source == "git"
+    state, _ = briefmod._derive_state(
+        {"status": "active"}, _counts(2, done=1), at, source, [], tasks)
+    assert state == "moving"
+
+
+def test_nested_repo_reaches_artifacts_timeline_and_remote(brief_env):
+    eng = brief_env["engine"]
+    root = _git_repo(brief_env["projects"] / "demo", subject="chore: scaffold")
+    _git_repo(root / "app", subject="feat: the real application",
+              remote="https://github.com/owner/the-app.git")
+    eng.add_project("Demo", project_id="demo")
+    eng.update_project("demo", path=str(root))
+    eng.add_task("Thing", project="demo")
+
+    brief = briefmod.compile_brief("demo", store=False)
+
+    commits = [a for a in brief.artifacts if a.kind == "commit"]
+    subjects = {a.title for a in commits}
+    assert "feat: the real application" in subjects
+    assert "chore: scaffold" in subjects
+
+    # The nested commit's path must name the repo that holds it.
+    nested_commit = next(a for a in commits
+                         if a.title == "feat: the real application")
+    assert str(root / "app") in nested_commit.path
+    assert nested_commit.excerpt == "in app/"
+
+    # And the timeline must say where it happened.
+    lines = [e.text for e in brief.recent_activity if e.kind == "commit"]
+    assert any("in app/" in line for line in lines)
+    assert any(line.endswith('"chore: scaffold"') for line in lines)
+
+    repos = [a for a in brief.artifacts if a.kind == "repo"]
+    assert [a.excerpt for a in repos] == ["https://github.com/owner/the-app"]
+
+
+def test_a_nested_repo_that_cannot_be_read_is_dropped_not_guessed(brief_env,
+                                                                  monkeypatch):
+    eng = brief_env["engine"]
+    root = _git_repo(brief_env["projects"] / "demo")
+    _git_repo(root / "app", subject="feat: unreachable")
+    eng.add_project("Demo", project_id="demo")
+    eng.update_project("demo", path=str(root))
+
+    monkeypatch.setattr(briefmod, "_git_log",
+                        lambda *a, **k: (_ for _ in ()).throw(OSError("nope"))
+                        if k.get("label") else [])
+    brief = briefmod.compile_brief("demo", store=False)   # must not raise
+    assert brief.state
+    assert not [a for a in brief.artifacts if a.kind == "commit"]
 
 
 # ── Graceful degradation ────────────────────────────────────────────────

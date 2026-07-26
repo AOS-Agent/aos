@@ -29,12 +29,21 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "core"))
 
 import enrich  # noqa: E402  (work dir is on sys.path via tests/conftest.py)
 from enrich import (  # noqa: E402
+    clear_doc_cache,
     enrich_project,
     find_project_docs,
     match_section,
     parse_doc,
     task_body,
 )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_doc_cache():
+    """The vault scan cache is process-local; no test may inherit another's."""
+    clear_doc_cache()
+    yield
+    clear_doc_cache()
 
 
 # ── Fixtures ────────────────────────────────────────────────────────────
@@ -252,6 +261,18 @@ def test_missing_section_gets_no_body_conflict_not_filler(demo):
     conflicts = [c for c in _conflicts(report, "no_body") if tid in c.refs]
     assert len(conflicts) == 1
     assert "generated text" in conflicts[0].message
+
+
+def test_cancelled_tasks_are_left_out_entirely(demo):
+    """hre#5 was cancelled as a duplicate; it is not a gap in the docs."""
+    eng = demo["engine"]
+    tid = demo["tasks"]["Part 3: Content to drill pipeline"]
+    eng.cancel_task(tid)
+
+    report = enrich_project("demo", dry_run=True)
+
+    assert tid not in report.unmatched
+    assert tid not in [r for c in report.conflicts for r in c.refs]
 
 
 def test_title_fallback_matches_when_no_part_token(demo):
@@ -519,6 +540,105 @@ def test_frontmatter_project_match_finds_docs_without_the_slug_prefix(vault, tmp
     )
     rels = [d.rel for d in find_project_docs("demo")]
     assert any(r.endswith("stack-notes.md") for r in rels)
+
+
+# ── Caching ─────────────────────────────────────────────────────────────
+#
+# `compile_brief` calls into this module on every task mutation, so the vault
+# scan is cached. A cache that never invalidated would freeze the
+# `status_disagreement` findings — worse than the cost it saves. These tests
+# exist for that failure mode.
+
+def test_scan_is_cached_and_does_not_reparse(vault, monkeypatch):
+    calls = []
+    real = enrich.parse_doc
+    monkeypatch.setattr(enrich, "parse_doc", lambda p: calls.append(p) or real(p))
+
+    first = find_project_docs("demo")
+    parsed = len(calls)
+    second = find_project_docs("demo")
+
+    assert parsed > 0
+    assert len(calls) == parsed                 # nothing re-parsed
+    assert [d.rel for d in first] == [d.rel for d in second]
+    assert all(a is b for a, b in zip(first, second))   # the same parsed objects
+
+
+def test_cache_invalidates_when_a_source_doc_changes(vault):
+    """An edited doc is picked up, never served from a stale cache."""
+    before = match_section("Part 2: The claim spine", find_project_docs("demo"))
+    assert "view over claims" in enrich._first_body(before)
+
+    doc = vault / "demo-mvp-scope.md"
+    doc.write_text(
+        doc.read_text(encoding="utf-8").replace(
+            "Everything in this product is a view over claims",
+            "Everything in this product is a rendering of signed statements",
+        ),
+        encoding="utf-8",
+    )
+
+    after = match_section("Part 2: The claim spine", find_project_docs("demo"))
+    assert "rendering of signed statements" in enrich._first_body(after)
+
+
+def test_cache_invalidates_when_a_doc_is_added(vault):
+    assert not any("late" in d.rel for d in find_project_docs("demo"))
+
+    (vault / "demo-late.md").write_text(
+        "---\nproject: demo\ndate: 2026-07-02\n---\n\n# Late\n\nArrived after the "
+        "first scan, and must still be found on the next one.\n",
+        encoding="utf-8",
+    )
+
+    assert any(d.rel.endswith("demo-late.md") for d in find_project_docs("demo"))
+
+
+def test_cache_invalidates_when_a_doc_is_removed(vault):
+    assert any(d.rel.endswith("demo-build.md") for d in find_project_docs("demo"))
+
+    (vault / "demo-build.md").unlink()
+
+    assert not any(d.rel.endswith("demo-build.md") for d in find_project_docs("demo"))
+
+
+def test_cache_is_keyed_by_vault_root(vault, tmp_path, monkeypatch):
+    """A different vault is a different cache entry, not a stale hit."""
+    assert find_project_docs("demo")
+
+    other = tmp_path / "other-vault" / "knowledge" / "initiatives"
+    other.mkdir(parents=True)
+    monkeypatch.setenv("AOS_VAULT_DIR", str(tmp_path / "other-vault"))
+
+    assert find_project_docs("demo") == []
+
+
+def test_missing_vault_degrades_to_no_docs(tmp_path, monkeypatch):
+    monkeypatch.setenv("AOS_VAULT_DIR", str(tmp_path / "not-there"))
+    assert find_project_docs("demo") == []
+
+
+def test_concurrent_scans_are_safe(vault):
+    """The API recompiles concurrently for different projects."""
+    import threading
+
+    results, errors = [], []
+
+    def scan(project):
+        try:
+            results.append(len(find_project_docs(project)))
+        except Exception as exc:      # pragma: no cover - the thing being ruled out
+            errors.append(exc)
+
+    threads = [threading.Thread(target=scan, args=(p,))
+               for p in ("demo", "demo", "other", "demo", "other", "demo")]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert errors == []
+    assert sorted(results) == [0, 0, 2, 2, 2, 2]
 
 
 # ── The document that motivated all of this ─────────────────────────────

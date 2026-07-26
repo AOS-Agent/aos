@@ -72,6 +72,10 @@ Claude Code session closes
 | transcriber | 7602  | Local voice-to-text (mlx-whisper)    |
 | memory      | stdio | ChromaDB semantic memory (MCP)       |
 
+All services bind `127.0.0.1`. Remote access goes through `tailscale serve`
+or the Cloudflare tunnel — never a wildcard bind. See [networking.md](networking.md)
+before adding a service or touching a bind address.
+
 ## Key Commands
 
 ```bash
