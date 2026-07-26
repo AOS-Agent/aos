@@ -6,12 +6,18 @@ Ported from the legacy dashboard into typed FastAPI routes.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import sys
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path as FilePath
 from typing import Any
 
 from fastapi import APIRouter, Path, Request, status
 from fastapi.responses import JSONResponse
 
+from ..events.types import Event
 from ..ontology.types import ObjectType, TaskPriority, TaskStatus
 from .schemas import (
     CreateGoalRequest,
@@ -159,6 +165,223 @@ def _goal_to_response(goal) -> GoalResponse:
 
 
 # ---------------------------------------------------------------------------
+# Project briefs — compile, cache, and push
+#
+# The brief compiler lives in the work engine (core/engine/work/brief.py) and
+# is imported lazily: this API must boot and serve every other route even when
+# the compiler is absent, in which case the brief routes answer 503 rather than
+# blowing up with a 500.
+#
+# Recompiles are debounced per project (BRIEF_DEBOUNCE_SECONDS) and always run
+# off the request path — a task mutation never waits on, or fails because of,
+# a brief compile.
+# ---------------------------------------------------------------------------
+
+
+BRIEF_DEBOUNCE_SECONDS = 2.0
+
+_WORK_ENGINE_DIR = FilePath(__file__).resolve().parents[2] / "engine" / "work"
+
+# project_id -> the sleeping task that will compile it when its window closes.
+_brief_pending: dict[str, asyncio.Task] = {}
+# Strong refs so the loop never garbage-collects an in-flight recompile.
+_brief_tasks: set[asyncio.Task] = set()
+
+_brief_module: Any = None
+
+
+@dataclass(frozen=True)
+class ProjectBriefUpdated(Event):
+    """Emitted on /api/stream whenever a project brief is recompiled.
+
+    Wire shape (sse._serialize_event flattens dataclass fields):
+
+        event: project.brief.updated
+        data: {"project_id": "hre", "state": "moving", "compiled_at": "..."}
+    """
+
+    event_type: str = "project.brief.updated"
+    project_id: str = ""
+    state: str = ""
+    compiled_at: str | None = None
+
+
+def _brief_engine() -> Any:
+    """Import core/engine/work/brief.py, or return None if it isn't there yet.
+
+    Only success is cached — the compiler is a parallel workstream, so a failed
+    import must not poison the route for the life of the process.
+    """
+    global _brief_module
+    if _brief_module is not None:
+        return _brief_module
+
+    if str(_WORK_ENGINE_DIR) not in sys.path:
+        sys.path.insert(0, str(_WORK_ENGINE_DIR))
+    try:
+        import brief as brief_mod  # type: ignore[import-not-found]
+    except Exception as e:
+        logger.debug("brief compiler unavailable: %s", e)
+        return None
+    _brief_module = brief_mod
+    return brief_mod
+
+
+def _brief_unavailable() -> JSONResponse:
+    """The one response shape for "the compiler isn't installed yet"."""
+    return JSONResponse(
+        {
+            "error": "brief_compiler_unavailable",
+            "detail": (
+                "The project brief compiler (core/engine/work/brief.py) could "
+                "not be imported. Briefs are unavailable until it is installed."
+            ),
+        },
+        status_code=503,
+    )
+
+
+def _resolve_actor(explicit: str | None = None) -> Any:
+    """Actor for a narrative write, via the attribution workstream's resolver.
+
+    Falls back to a plain operator Actor when actor.py is absent but the
+    dataclasses are, and to None when neither is importable.
+    """
+    if str(_WORK_ENGINE_DIR) not in sys.path:
+        sys.path.insert(0, str(_WORK_ENGINE_DIR))
+    try:
+        from actor import resolve_actor  # type: ignore[import-not-found]
+
+        return resolve_actor(explicit)
+    except Exception:
+        pass
+    try:
+        from brief_types import Actor  # type: ignore[import-not-found]
+
+        return Actor(
+            kind="operator",
+            name=explicit or "operator",
+            session_id=None,
+            at=datetime.now().isoformat(),
+        )
+    except Exception:
+        return None
+
+
+def _project_of_task(ontology, task_id: str) -> str | None:
+    """Which project a task belongs to — record first, id prefix as fallback."""
+    try:
+        task = ontology.get(ObjectType.TASK, task_id)
+        if task is not None and getattr(task, "project", None):
+            return task.project
+    except Exception:
+        pass
+    # Project-scoped ids look like "aos#42" / "aos#42.1"; "t#1" is unassigned.
+    if "#" in task_id:
+        prefix = task_id.split("#", 1)[0].strip()
+        if prefix and prefix != "t":
+            return prefix
+    return None
+
+
+def _compile_brief_sync(project_id: str) -> dict[str, Any] | None:
+    """Compile one brief (blocking — call via to_thread) as a dict. Never raises."""
+    engine = _brief_engine()
+    if engine is None:
+        return None
+    try:
+        brief = engine.compile_brief(project_id)
+        return engine.brief_to_dict(brief)
+    except Exception:
+        logger.exception("brief compile failed for %s", project_id)
+        return None
+
+
+async def _emit_brief_updated(bus, data: dict[str, Any]) -> None:
+    """Push project.brief.updated onto the EventBus; SSE clients are already on it."""
+    if bus is None or not data:
+        return
+    project_id = str(data.get("id") or data.get("project_id") or "")
+    state = str(data.get("state") or "")
+    compiled_at = data.get("compiled_at")
+    try:
+        await bus.emit(
+            ProjectBriefUpdated(
+                source="work-api",
+                project_id=project_id,
+                state=state,
+                compiled_at=compiled_at,
+                payload={
+                    "project_id": project_id,
+                    "state": state,
+                    "compiled_at": compiled_at,
+                },
+            )
+        )
+    except Exception:
+        logger.debug("bus emit failed for project.brief.updated (%s)", project_id)
+
+
+async def _recompile_after(project_id: str, bus, delay: float) -> None:
+    """Wait out the debounce window, then compile and push. Never raises."""
+    try:
+        if delay > 0:
+            await asyncio.sleep(delay)
+        # The window closes the moment compilation starts: a mutation arriving
+        # from here on opens a fresh window instead of being swallowed.
+        _brief_pending.pop(project_id, None)
+        data = await asyncio.to_thread(_compile_brief_sync, project_id)
+        if data:
+            await _emit_brief_updated(bus, data)
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        logger.exception("brief recompile task failed for %s", project_id)
+    finally:
+        _brief_pending.pop(project_id, None)
+
+
+def schedule_brief_recompile(
+    request: Request,
+    project_id: str | None,
+    *,
+    delay: float = BRIEF_DEBOUNCE_SECONDS,
+) -> None:
+    """Queue a debounced recompile of one project's brief. Fire-and-forget.
+
+    Coalescing is fixed-window, not sliding: the first mutation opens a
+    ``delay``-second window and every mutation landing inside it is absorbed by
+    the same pending compile. A busy project therefore still recompiles every
+    ``delay`` seconds instead of being starved by a perpetually reset timer.
+
+    Safe to call from any mutation handler — it never raises and never blocks.
+    """
+    if not project_id:
+        return
+    try:
+        bus = getattr(request.app.state, "bus", None)
+        if bus is None:
+            return
+        pending = _brief_pending.get(project_id)
+        if pending is not None and not pending.done():
+            return  # already inside an open window
+        task = asyncio.create_task(_recompile_after(project_id, bus, delay))
+        _brief_pending[project_id] = task
+        _brief_tasks.add(task)
+        task.add_done_callback(_brief_tasks.discard)
+    except Exception:
+        logger.debug("could not schedule brief recompile for %s", project_id)
+
+
+def schedule_brief_recompile_for_task(request: Request, ontology, task_id: str) -> None:
+    """Same, resolving the project from the task the mutation touched."""
+    try:
+        schedule_brief_recompile(request, _project_of_task(ontology, task_id))
+    except Exception:
+        logger.debug("could not schedule brief recompile for task %s", task_id)
+
+
+# ---------------------------------------------------------------------------
 # Full work state
 # ---------------------------------------------------------------------------
 
@@ -301,6 +524,9 @@ async def create_task(body: CreateTaskRequest, request: Request) -> TaskResponse
     # Fetch the created task
     task_id = result["result"]["task_id"]
     task = ontology.get(ObjectType.TASK, task_id)
+    schedule_brief_recompile(
+        request, body.project or (getattr(task, "project", None) if task else None)
+    )
     if task:
         return _task_to_response(task)
     # Fallback
@@ -339,6 +565,7 @@ async def update_task(
         return JSONResponse({"error": result.get("error", "Unknown error")}, status_code=400)
 
     task = ontology.get(ObjectType.TASK, task_id)
+    schedule_brief_recompile_for_task(request, ontology, task_id)
     if task:
         return _task_to_response(task)
     return JSONResponse({"error": "Task not found after update"}, status_code=404)
@@ -368,6 +595,7 @@ async def delegate_task(
     if not result.get("success"):
         return JSONResponse({"error": result.get("error", "Unknown error")}, status_code=400)
     task = ontology.get(ObjectType.TASK, task_id)
+    schedule_brief_recompile_for_task(request, ontology, task_id)
     if task:
         return _task_to_response(task)
     return JSONResponse({"error": "Task not found after delegate"}, status_code=404)
@@ -392,6 +620,7 @@ async def hold_task(
     if not result.get("success"):
         return JSONResponse({"error": result.get("error", "Unknown error")}, status_code=400)
     task = ontology.get(ObjectType.TASK, task_id)
+    schedule_brief_recompile_for_task(request, ontology, task_id)
     if task:
         return _task_to_response(task)
     return JSONResponse({"error": "Task not found after hold"}, status_code=404)
@@ -408,12 +637,17 @@ async def delete_task(
     if not registry or not ontology:
         return JSONResponse({"error": "System starting up"}, status_code=503)
 
+    # Resolve the owning project while the task still exists.
+    project_id = _project_of_task(ontology, task_id)
+
     result = await registry.execute("delete_task", {
         "ontology": ontology,
         "task_id": task_id,
     }, actor="operator")
     if not result.get("success"):
         return JSONResponse({"error": result.get("error", "Unknown error")}, status_code=400)
+
+    schedule_brief_recompile(request, project_id)
 
 
 @router.post(
@@ -449,6 +683,12 @@ async def create_subtask(
 
     new_task_id = result["result"]["task_id"]
     task = ontology.get(ObjectType.TASK, new_task_id)
+    schedule_brief_recompile(
+        request,
+        body.project
+        or (getattr(task, "project", None) if task else None)
+        or _project_of_task(ontology, task_id),
+    )
     if task:
         return _task_to_response(task)
     return TaskResponse(id=new_task_id, title=body.title)
@@ -479,6 +719,8 @@ async def write_handoff(
 
     if not result.get("success"):
         return JSONResponse({"error": result.get("error", "Unknown error")}, status_code=400)
+
+    schedule_brief_recompile_for_task(request, ontology, task_id)
 
     return TaskHandoffSchema(
         state=body.state,
@@ -546,6 +788,7 @@ async def create_project(body: CreateProjectRequest, request: Request) -> Projec
 
     project_id = result["result"]["project_id"]
     project = ontology.get(ObjectType.PROJECT, project_id)
+    schedule_brief_recompile(request, project_id)
     if project:
         return _project_to_response(project)
     return ProjectResponse(id=project_id, title=body.title)
@@ -711,6 +954,7 @@ async def promote_inbox_item(
 
     conn.execute("DELETE FROM inbox WHERE id = ?", (inbox_id,))
     conn.commit()
+    schedule_brief_recompile(request, body.get("project"))
     return JSONResponse({"task_id": result["result"]["task_id"], "promoted": inbox_id}, status_code=201)
 
 
@@ -974,6 +1218,7 @@ async def append_activity_endpoint(
     }, actor=body.get("actor") or "operator")
     if not result.get("success"):
         return JSONResponse({"error": result.get("error", "Unknown error")}, status_code=400)
+    schedule_brief_recompile_for_task(request, ontology, task_id)
     return JSONResponse(result["result"], status_code=201)
 
 
@@ -1075,3 +1320,132 @@ async def list_statuses(request: Request) -> JSONResponse:
     except Exception as e:
         logger.error(f"Failed to list statuses: {e}")
         return JSONResponse({"statuses": []})
+
+
+# ---------------------------------------------------------------------------
+# Project brief routes
+# ---------------------------------------------------------------------------
+
+
+@router.get("/work/projects/{project_id}/brief")
+async def get_project_brief(
+    request: Request,
+    project_id: str = Path(..., description="Project ID, e.g. hre"),
+    refresh: bool = False,
+) -> JSONResponse:
+    """The compiled ProjectBrief.
+
+    Serves the cached brief when there is one; compiles on a cache miss (or
+    ``?refresh=true``) so the first ever request still returns a real brief.
+    """
+    ontology = getattr(request.app.state, "ontology", None)
+    if not ontology:
+        return JSONResponse({"error": "System starting up"}, status_code=503)
+
+    engine = _brief_engine()
+    if engine is None:
+        return _brief_unavailable()
+
+    project = ontology.get(ObjectType.PROJECT, project_id)
+    if not project:
+        return JSONResponse({"error": f"Project not found: {project_id}"}, status_code=404)
+
+    def _load() -> dict[str, Any] | None:
+        brief = None
+        if not refresh:
+            brief = engine.load_brief(project_id)
+        if brief is None:
+            brief = engine.compile_brief(project_id)
+        return engine.brief_to_dict(brief) if brief is not None else None
+
+    try:
+        data = await asyncio.to_thread(_load)
+    except Exception as e:
+        logger.exception("brief compile failed for %s", project_id)
+        return JSONResponse(
+            {"error": "brief_compile_failed", "detail": str(e)}, status_code=500
+        )
+
+    if data is None:
+        return JSONResponse({"error": f"No brief for project: {project_id}"}, status_code=404)
+    return JSONResponse(data)
+
+
+@router.post("/work/projects/{project_id}/brief/narrative")
+async def write_project_narrative(
+    request: Request,
+    project_id: str = Path(..., description="Project ID, e.g. hre"),
+) -> JSONResponse:
+    """Write the agent-authored narrative paragraph onto a project's brief.
+
+    Body: ``{"text": "...", "actor": "chief"}`` — ``actor`` optional, resolved
+    by the work engine when omitted. Pushes project.brief.updated so any open
+    brief page picks the narrative up immediately.
+    """
+    engine = _brief_engine()
+    if engine is None:
+        return _brief_unavailable()
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    text = (body.get("text") or "").strip()
+    if not text:
+        return JSONResponse({"error": "text is required"}, status_code=400)
+
+    actor = _resolve_actor(body.get("actor"))
+    if actor is None:
+        # No actor.py and no brief_types.Actor — writing an unsigned narrative
+        # would violate the contract's "every change is signed" rule.
+        return JSONResponse(
+            {
+                "error": "actor_unavailable",
+                "detail": (
+                    "Could not resolve an Actor (core/engine/work/actor.py). "
+                    "A narrative is never written unattributed."
+                ),
+            },
+            status_code=503,
+        )
+
+    try:
+        await asyncio.to_thread(engine.set_narrative, project_id, text, actor)
+    except Exception as e:
+        logger.exception("set_narrative failed for %s", project_id)
+        return JSONResponse(
+            {"error": "narrative_write_failed", "detail": str(e)}, status_code=500
+        )
+
+    # Recompile now (no debounce) so the brief's narrative_* stamps go live.
+    schedule_brief_recompile(request, project_id, delay=0)
+
+    return JSONResponse({
+        "ok": True,
+        "project_id": project_id,
+        "narrative": text,
+        "actor": getattr(actor, "name", None),
+    })
+
+
+@router.post("/work/projects/{project_id}/brief/recompile")
+async def recompile_project_brief(
+    request: Request,
+    project_id: str = Path(..., description="Project ID, e.g. hre"),
+) -> JSONResponse:
+    """Force a recompile, bypassing the debounce, and return the fresh brief."""
+    engine = _brief_engine()
+    if engine is None:
+        return _brief_unavailable()
+
+    try:
+        brief = await asyncio.to_thread(engine.compile_brief, project_id)
+        data = await asyncio.to_thread(engine.brief_to_dict, brief)
+    except Exception as e:
+        logger.exception("forced recompile failed for %s", project_id)
+        return JSONResponse(
+            {"error": "brief_compile_failed", "detail": str(e)}, status_code=500
+        )
+
+    await _emit_brief_updated(getattr(request.app.state, "bus", None), data)
+    return JSONResponse(data)

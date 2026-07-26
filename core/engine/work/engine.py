@@ -28,6 +28,14 @@ import yaml
 
 _gh_log = logging.getLogger("work.github")
 
+# Attribution (BRIEF-CONTRACT.md § "every change is signed"). actor.py sits
+# beside this file; import it flat, the same way backend.py and cli.py do.
+_HERE = str(Path(__file__).resolve().parent)
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
+
+import actor as _actor  # noqa: E402
+
 DASHBOARD_URL = "http://127.0.0.1:4096"
 AOS_REPO = "hishamalhadi/aos"  # GitHub repo for issue sync
 
@@ -259,6 +267,12 @@ def _row_to_task(row: sqlite3.Row) -> dict:
         task["pipeline"] = row["pipeline"]
     if row["recurrence"]:
         task["recurrence"] = row["recurrence"]
+
+    # Attribution is derived from entity_history, not stored on the task — see
+    # actor.attribution_for(). Not resolved here: this runs once per row in a
+    # 1,900-task list. The denormalised head of the trail is cheap, though.
+    if "modified_by" in row.keys() and row["modified_by"]:
+        task["modified_by"] = row["modified_by"]
 
     # Load handoff from task_handoffs table
     conn = _db()
@@ -838,8 +852,12 @@ def add_task(title: str, priority: int = 3, project: str = None,
              status: str = "todo", tags: list = None, source: str = "manual",
              due: str = None, energy: str = None, context: str = None,
              parent: str = None, source_ref: str = None,
-             notes: str = None) -> dict:
-    """Add a new task with project-scoped ID."""
+             notes: str = None, actor: str | None = None) -> dict:
+    """Add a new task with project-scoped ID.
+
+    ``actor`` is an optional actor spec ("chief", "operator", "cron:nightly");
+    it is resolved via actor.resolve_actor and recorded as ``created_by``.
+    """
     conn = _db()
 
     # If parent specified, this is a subtask
@@ -918,6 +936,13 @@ def add_task(title: str, priority: int = 3, project: str = None,
     if notes:
         task["notes"] = notes
 
+    # Sign it. `source` stays in tasks.created_by where its consumers read it;
+    # the real actor goes to entity_history, the only place that means "who".
+    _who = _actor.resolve_actor(actor)
+    _actor.record_created(task_id, status, _who, source=source, conn=conn)
+    _actor.set_modified_by(task_id, _who, conn=conn)
+    task["created_by"] = _actor.actor_to_dict(_who)
+
     if parent:
         _log_activity("subtask_added", task["id"], title, project, detail=f"under {parent}")
     else:
@@ -957,7 +982,7 @@ def _sync_fts(task_id: str, title: str, description: str | None) -> None:
 
 
 def add_subtask(parent_id: str, title: str, priority: int = None,
-                status: str = "todo") -> dict | None:
+                status: str = "todo", actor: str | None = None) -> dict | None:
     """Add a subtask to an existing task. Inherits project and priority from parent."""
     conn = _db()
     parent = conn.execute(
@@ -976,10 +1001,11 @@ def add_subtask(parent_id: str, title: str, priority: int = None,
         status=status,
         parent=parent_id,
         source="subtask",
+        actor=actor,
     )
 
 
-def complete_task(task_id: str) -> dict | None:
+def complete_task(task_id: str, actor: str | None = None) -> dict | None:
     """Mark a task as done. Auto-cascades parent if all siblings done.
     If task has source_ref pointing to an initiative, updates the checkbox."""
     conn = _db()
@@ -995,12 +1021,20 @@ def complete_task(task_id: str) -> dict | None:
     )
     conn.commit()
 
+    # Sign it — whoever closed this owns the claim that it is done. This module
+    # writes its own SQL rather than going through the adapter, so it records
+    # the entity_history row itself.
+    _who = _actor.resolve_actor(actor)
+    _actor.record_change(task_id, "completed", _who, field="status",
+                         old=row["status"] or "todo", new="done", conn=conn)
+    _actor.set_modified_by(task_id, _who, conn=conn)
+
     task = _row_to_task(conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone())
 
     # Cascade: check if parent should auto-complete
     parent_id = row["parent_id"]
     if parent_id:
-        _cascade_parent(parent_id)
+        _cascade_parent(parent_id, actor=_who, origin=task_id)
 
     _log_activity("task_completed", task["id"], task.get("title"), task.get("project"))
 
@@ -1031,8 +1065,13 @@ def complete_task(task_id: str) -> dict | None:
     return task
 
 
-def _cascade_parent(parent_id: str) -> None:
-    """If all subtasks of parent are done, mark parent as done too."""
+def _cascade_parent(parent_id: str, actor=None, origin: str | None = None) -> None:
+    """If all subtasks of parent are done, mark parent as done too.
+
+    ``actor``/``origin`` carry the signature down the cascade so an
+    auto-completed parent is credited to whoever completed the last subtask,
+    and the audit line says it was a cascade rather than a direct close.
+    """
     conn = _db()
 
     subtasks = conn.execute(
@@ -1053,18 +1092,36 @@ def _cascade_parent(parent_id: str) -> None:
                 (now, now, parent_id),
             )
             conn.commit()
+            if actor is not None:
+                # The cascade itself is the system's act, but it is traceable
+                # to whoever closed the last subtask — record both.
+                _actor.record_change(
+                    parent_id, "completed by cascade", actor,
+                    field="status", old=parent_row["status"], new="done",
+                    conn=conn,
+                )
+                _actor.record_change(
+                    parent_id,
+                    "auto-completed by cascade"
+                    + (f" from {origin}" if origin else ""),
+                    actor, conn=conn,
+                )
+                _actor.set_modified_by(parent_id, actor, conn=conn)
             # Cascade up further if this parent also has a parent
             if parent_row["parent_id"]:
-                _cascade_parent(parent_row["parent_id"])
+                _cascade_parent(parent_row["parent_id"], actor=actor,
+                                origin=parent_id)
 
 
-def update_task(task_id: str, **fields) -> dict | None:
-    """Update arbitrary fields on a task."""
+def update_task(task_id: str, actor: str | None = None, **fields) -> dict | None:
+    """Update arbitrary fields on a task. Every change is signed."""
     conn = _db()
 
-    row = conn.execute("SELECT id FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    # Full row: the audit trail needs the old value of every column that moves.
+    row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
     if not row:
         return None
+    _old_status = row["status"]
 
     # Map YAML-style field names to DB column names
     field_map = {
@@ -1097,6 +1154,12 @@ def update_task(task_id: str, **fields) -> dict | None:
     for key, val in fields.items():
         col = field_map.get(key)
         if col:
+            # created_by is a scalar source string on this table. The
+            # attribution layer surfaces a dict under the same key on the task
+            # dict, so refuse a non-string here rather than writing JSON into
+            # a column that means something else.
+            if col == "created_by" and not isinstance(val, (str, type(None))):
+                continue
             if col == "tags":
                 sets.append(f"{col} = ?")
                 params.append(_json_dumps(val) if val else None)
@@ -1114,11 +1177,27 @@ def update_task(task_id: str, **fields) -> dict | None:
     conn.execute(f"UPDATE tasks SET {', '.join(sets)} WHERE id = ?", params)
     conn.commit()
 
+    # Sign the change — one entity_history row per column that actually moved,
+    # matching what the adapter writes on the other path.
+    _who = _actor.resolve_actor(actor)
+    _before = dict(row) if row is not None else {}
+    for key, val in fields.items():
+        col = field_map.get(key)
+        if not col or (col == "created_by" and not isinstance(val, (str, type(None)))):
+            continue
+        old = _before.get(col)
+        if old == val:
+            continue
+        _actor.record_change(task_id, f"changed {col}", _who,
+                             field=col, old=old, new=val, conn=conn)
+    _actor.set_modified_by(task_id, _who, conn=conn)
+
     updated_row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
     return _row_to_task(updated_row) if updated_row else None
 
 
-def start_task(task_id: str, session_id: str = None) -> dict | None:
+def start_task(task_id: str, session_id: str = None,
+               actor: str | None = None) -> dict | None:
     """Move a task to active status and set it as the live work context."""
     conn = _db()
     now = _now()
@@ -1132,6 +1211,11 @@ def start_task(task_id: str, session_id: str = None) -> dict | None:
         (now, now, task_id),
     )
     conn.commit()
+
+    _who = _actor.resolve_actor(actor)
+    _actor.record_change(task_id, "started", _who, field="status",
+                         old=row["status"] or "todo", new="active", conn=conn)
+    _actor.set_modified_by(task_id, _who, conn=conn)
 
     task = _row_to_task(conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone())
     _log_activity("task_started", task["id"], task.get("title"), task.get("project"))
@@ -1184,9 +1268,9 @@ def get_live_context() -> dict | None:
         return None
 
 
-def cancel_task(task_id: str) -> dict | None:
+def cancel_task(task_id: str, actor: str | None = None) -> dict | None:
     """Cancel a task."""
-    result = update_task(task_id, status="cancelled")
+    result = update_task(task_id, actor=actor, status="cancelled")
     if result:
         _log_activity("task_cancelled", result["id"], result.get("title"), result.get("project"))
         clear_live_context(task_id)  # Clear if this was the active task
@@ -1265,7 +1349,7 @@ def get_task_tree(task_id: str) -> dict | None:
 
 def write_handoff(task_id: str, state: str, next_step: str = None,
                   files_touched: list = None, decisions: list = None,
-                  blockers: list = None) -> dict | None:
+                  blockers: list = None, actor: str | None = None) -> dict | None:
     """Write handoff context for a task. Called by agents before session end."""
     conn = _db()
     now = _now()
@@ -1287,6 +1371,11 @@ def write_handoff(task_id: str, state: str, next_step: str = None,
         ),
     )
     conn.commit()
+
+    _who = _actor.resolve_actor(actor)
+    _actor.record_change(task_id, "wrote a handoff", _who,
+                         field="handoff", new=next_step or state, conn=conn)
+    _actor.set_modified_by(task_id, _who, conn=conn)
 
     task = _row_to_task(conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone())
     _log_activity("handoff_written", task["id"], task.get("title"), task.get("project"),
@@ -1482,7 +1571,8 @@ def delete_project(project_id: str) -> bool:
     return cur.rowcount > 0
 
 
-def move_tasks_to_project(task_ids: list[str], target_project: str) -> list[dict]:
+def move_tasks_to_project(task_ids: list[str], target_project: str,
+                          actor: str | None = None) -> list[dict]:
     """Move tasks (and their subtasks) to a new project, re-IDing them.
 
     Returns list of dicts with old_id and new_id for each moved task.
@@ -1536,11 +1626,11 @@ def move_tasks_to_project(task_ids: list[str], target_project: str) -> list[dict
             "(id, title, status, priority, project_id, description, "
             " assigned_to, created_by, created_at, started_at, completed_at, "
             " due_at, parent_id, pipeline, pipeline_stage, recurrence, tags, "
-            " version, modified_at) "
+            " fields, version, modified_at) "
             "SELECT ?, title, status, priority, ?, description, "
             " assigned_to, created_by, created_at, started_at, completed_at, "
             " due_at, ?, pipeline, pipeline_stage, recurrence, ?, "
-            " version, ? "
+            " fields, version, ? "
             "FROM tasks WHERE id = ?",
             (
                 new_id, target_project,
@@ -1568,6 +1658,20 @@ def move_tasks_to_project(task_ids: list[str], target_project: str) -> list[dict
         moved.append({"old_id": old_id, "new_id": new_id})
 
     conn.commit()
+
+    # Sign the move as what it is: a project change plus a re-ID. The
+    # `moved_from` row bridges the old entity_id's history to the new one.
+    if moved:
+        _who = _actor.resolve_actor(actor)
+        for m in moved:
+            _actor.record_change(m["new_id"], "moved project", _who,
+                                 field="project_id", new=target_project,
+                                 conn=conn)
+            _actor.record_change(m["new_id"], "re-identified", _who,
+                                 field="moved_from", old=m["old_id"],
+                                 new=m["new_id"], conn=conn)
+            _actor.set_modified_by(m["new_id"], _who, conn=conn)
+
     return moved
 
 
