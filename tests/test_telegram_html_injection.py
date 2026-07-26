@@ -20,6 +20,14 @@ whole job is to message its operator.
 
 The fix is escaping at each interpolation. These tests assert the property
 that matters — hostile markup arrives inert — rather than the mechanism.
+
+**The guard is a floor, not a proof.** A green run means no sink matched the
+patterns below; it does not mean the system is free of injection. This guard has
+already been wrong twice — it missed ``<pre>{output}</pre>`` until the untrusted
+vocabulary was widened, and it missed ``f'<a href="{url}">'`` entirely until it
+learned that f-strings come in two quote styles. Treat a pass as "nothing known
+regressed", never as a security guarantee, and widen it whenever a new sink is
+found by hand.
 """
 
 import html
@@ -167,6 +175,20 @@ _UNTRUSTED = re.compile(
 _NOT_A_TEMPLATE = {"telegram_formatter.py"}
 
 
+# An f-string opening in EITHER quote style, followed by an HTML tag. The first
+# version of this guard matched only f"..." and therefore missed
+# `f'<a href="{url}">{title}</a>'` — a value going into an href, which is a
+# worse sink than body text. Hence both styles, and hence the docstring below.
+_HTML_FSTRING = re.compile(r"""f['"][^'"]*<(?:b|i|code|pre|u|s|a\s|tg-spoiler)""")
+
+# A placeholder sitting inside a quoted HTML attribute, e.g. href="{url}".
+# Text-context escaping (quote=False) is NOT sufficient here: an unescaped "
+# closes the attribute and lets the value inject further attributes. Attribute
+# context needs html.escape's default quote=True — which is what
+# telegram_formatter.link() already does correctly.
+_ATTR_CONTEXT = re.compile(r'=\s*"[^"]*\{([^{}]*)\}')
+
+
 def _html_template_offenders(path: Path) -> list[str]:
     """Unescaped untrusted placeholders in HTML-bearing f-strings in one file."""
     offenders = []
@@ -174,17 +196,62 @@ def _html_template_offenders(path: Path) -> list[str]:
         line = raw.strip()
         if line.startswith("#"):
             continue
-        # Only lines that build HTML — a tag plus a placeholder in one f-string.
-        if not re.search(r'f"[^"]*<(?:b|i|code|pre|u|s|a\s|tg-spoiler)', line):
+        if not _HTML_FSTRING.search(line):
             continue
+
+        attr_exprs = {m.group(1) for m in _ATTR_CONTEXT.finditer(line)}
         for m in re.finditer(r"\{([^{}]*)\}", line):
             expr = m.group(1)
             # A numeric reduction of untrusted data is not itself injectable.
             if re.match(r"^\s*(?:len|int|float|round|sum|abs)\s*\(", expr):
                 continue
-            if _UNTRUSTED.search(expr) and "esc(" not in expr and "escape(" not in expr:
+            escaped = "esc(" in expr or "escape(" in expr
+            if expr in attr_exprs:
+                # Attribute context: quote=False escaping does not close the hole,
+                # so require html.escape (quote=True by default).
+                if "html.escape(" not in expr:
+                    offenders.append(
+                        f"{path.name}:{i}: {{{expr}}} in an HTML attribute "
+                        f"(needs html.escape with quote=True, not _esc)")
+                continue
+            if _UNTRUSTED.search(expr) and not escaped:
                 offenders.append(f"{path.name}:{i}: {{{expr}}}")
     return offenders
+
+
+def test_the_guard_actually_catches_what_it_claims_to(tmp_path):
+    """Prove the guard detects offences, rather than passing because it is blind.
+
+    The first version of this guard matched only ``f"..."`` and silently missed
+    ``f'<a href="{url}">{title}</a>'``. It went green while a live sink sat two
+    lines away. A guard that passes because it cannot see is worse than no
+    guard, so each pattern it is supposed to catch is asserted here against a
+    synthetic file — and each thing it must NOT flag, so it stays usable.
+    """
+    bad = tmp_path / "offender.py"
+    bad.write_text(
+        'a = f"<b>{title}</b>"\n'                      # double-quoted, text
+        "b = f'<i>{person_name}</i>'\n"                # single-quoted, text
+        'c = f\'<a href="{url}">link</a>\'\n'          # attribute context
+        'd = f"<pre>{output}</pre>"\n'                 # subprocess output
+    )
+    found = _html_template_offenders(bad)
+    flagged = " ".join(found)
+    assert "{title}" in flagged, "missed a double-quoted f-string"
+    assert "{person_name}" in flagged, "missed a single-quoted f-string"
+    assert "{url}" in flagged and "attribute" in flagged, "missed attribute context"
+    assert "{output}" in flagged, "missed subprocess output"
+    assert len(found) == 4, f"expected 4 findings, got {len(found)}: {found}"
+
+    ok = tmp_path / "clean.py"
+    ok.write_text(
+        'a = f"<b>{esc(title)}</b>"\n'                       # text, escaped
+        'b = f\'<a href="{html.escape(url)}">x</a>\'\n'      # attribute, quote=True
+        'c = f"<i>{len(transcript)} chars</i>"\n'            # numeric reduction
+        'd = f"<b>{count}</b>"\n'                            # not untrusted
+    )
+    assert _html_template_offenders(ok) == [], \
+        "guard flags correctly-escaped code — it would train people to ignore it"
 
 
 def test_no_bridge_module_interpolates_untrusted_text_into_html():

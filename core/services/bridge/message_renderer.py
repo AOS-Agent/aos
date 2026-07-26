@@ -268,12 +268,14 @@ async def render_stream(
 
             if result_info["telegraph_url"]:
                 parts.append(
-                    f'\n\n📖 <a href="{result_info["telegraph_url"]}">Read full response</a>'
+                    # ATTRIBUTE context — quote=True, so a " cannot escape href=.
+                    f'\n\n📖 <a href="{html.escape(result_info["telegraph_url"])}">'
+                    f'Read full response</a>'
                 )
 
             vault_rel = str(result_info["vault_path"]).replace(
                 str(result_info["vault_path"].home()) + "/", "~/")
-            parts.append(f'\n💾 <i>Saved to {vault_rel}</i>')
+            parts.append(f'\n💾 <i>Saved to {esc(vault_rel)}</i>')
 
             final_html = "".join(parts)
 
