@@ -10,6 +10,6 @@ Public API:
 See router.py for the delivery tiers and fallback chain.
 """
 
-from .router import send_notification, resolve_topic
+from .router import get_routing, resolve_topic, send_notification
 
-__all__ = ["send_notification", "resolve_topic"]
+__all__ = ["send_notification", "resolve_topic", "get_routing"]
