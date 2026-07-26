@@ -15,6 +15,7 @@ from .launchagents import LaunchAgentPythonCheck
 from .log_location import LogLocationCheck
 from .mcp_location import McpLocationCheck
 from .n8n import N8nServiceCheck
+from .network_binding import NetworkBindingCheck
 from .power_autorestart import PowerAutorestartCheck
 from .push_guard import PushGuardCheck
 from .runtime_protection import RuntimeProtectionCheck
@@ -85,6 +86,13 @@ ALL_CHECKS = [
     # Initiative pipeline + Bridge v2 infrastructure
     InitiativeDirectoriesCheck,
     BridgeTopicsCheck,
+
+    # Network — no AOS service listens on 0.0.0.0/::/*. Qareen shipped on
+    # 0.0.0.0:4096 serving people.db + comms.db unauthenticated to the whole
+    # LAN; this is the net that catches the next one. Report-only (NOTIFY) —
+    # rebinding restarts a service and could sever remote access, so migration
+    # 095 owns the supervised flip.
+    NetworkBindingCheck,
 
     # Hardware — disk SMART health monitoring
     DiskSmartCheck,

@@ -986,7 +986,13 @@ if __name__ == "__main__":
 
     uvicorn.run(
         "qareen.main:app",
-        host=os.environ.get("AOS_QAREEN_HOST", "0.0.0.0"),
+        # Loopback by default. Qareen fronts people.db, comms.db, the work
+        # store and the vault API with no authentication of its own, so it must
+        # never be reachable from the LAN. Remote access goes through a
+        # deliberate front door (tailscale serve, or the Cloudflare tunnel
+        # behind Access) — both of which connect to 127.0.0.1. Set
+        # AOS_QAREEN_HOST explicitly to override.
+        host=os.environ.get("AOS_QAREEN_HOST", "127.0.0.1"),
         port=4096,
         reload=True,
         log_level="info",
