@@ -1,0 +1,90 @@
+# Project dispositions — FRAMEWORK TEMPLATE (example entries only).
+#
+# Answers, for every directory under ~/project/, the question "why is this here
+# and what work does it belong to?" — so the reconciler
+# (core/engine/work/project_reconcile.py) can prove that no directory is
+# unaccounted for, and that the reason is always explicit.
+#
+# This file ships in the framework tree and is git-tracked, so it MUST NOT
+# contain real directory names, paths, or project ids. Put this machine's real
+# decisions in the INSTANCE override, which replaces both maps wholesale when
+# present:
+#
+#     ~/.aos/config/project-dispositions.yaml
+#
+# No instance file → nothing is declared, and every directory falls through to
+# git/filesystem evidence or an honest `unclassified`. Missing config is never
+# a crash, and never a silent guess.
+#
+# Generate a first draft of the instance file from live evidence with:
+#
+#     python3 ~/aos/core/engine/work/project_reconcile.py --propose-instance
+#
+# It emits derived findings as declarations and leaves anything genuinely
+# unknown COMMENTED OUT — deciding those is the operator's call.
+
+version: 1
+
+# ── directories ─────────────────────────────────────────────────────
+#
+# One entry per directory name under ~/project/. A declared entry wins over all
+# detection and is never re-litigated, so a directory marked `not_a_project`
+# stays marked across runs.
+#
+#   disposition   required, one of:
+#                   linked          — the primary repo of a work project
+#                   worktree_of     — a git worktree / branch checkout
+#                   component_of    — a supporting repo of a project
+#                   not_a_project   — deliberately excluded
+#                   unclassified    — explicitly still undecided
+#   target        project id, for worktree_of / component_of / linked
+#   reason        required in practice — the stated reason, in plain English.
+#                 This is what makes the exclusion auditable instead of a
+#                 silent filter. Cite evidence (a remote, a submodule, a file).
+#
+# Note: `linked`, `worktree_of` and the submodule/nested forms of
+# `component_of` are all detected mechanically from git and the project record.
+# You normally only need to declare `not_a_project`, and the odd
+# `component_of` that no git relationship expresses.
+
+directories:
+  example-linked-repo:
+    disposition: linked
+    target: example-project
+    reason: "primary repo of the example project"
+
+  example-branch-checkout:
+    disposition: worktree_of
+    target: example-project
+    reason: "git worktree of the example project (branch example/feature)"
+
+  example-data-repo:
+    disposition: component_of
+    target: example-project
+    reason: "content repo consumed by the example project as a submodule"
+
+  example-vendor-clone:
+    disposition: not_a_project
+    reason: "third-party clone kept for reference (remote example/upstream) — not the operator's work"
+
+  example-scratch:
+    disposition: not_a_project
+    reason: "scratch directory for one-off experiments; nothing here is tracked work"
+
+# ── projects ────────────────────────────────────────────────────────
+#
+# The reverse gap: work projects that legitimately have NO directory. Recording
+# the reason here is what turns "9 projects have no repo" from an alarming
+# unknown into a set of understood cases. A project with no recorded reason is
+# reported as unexplained rather than quietly passed over.
+#
+# Do NOT paper over a gap by pointing a sub-scope at its parent monorepo's
+# path — two projects claiming one directory creates ambiguous ownership, which
+# is worse than a stated gap.
+
+projects:
+  example-subscope:
+    no_directory_reason: "a scope inside the example monorepo, not its own checkout — deliberately unlinked to avoid two projects owning one directory"
+
+  example-not-started:
+    no_directory_reason: "no code written yet; directory will appear when work starts"

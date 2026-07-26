@@ -27,6 +27,11 @@
         <string>/opt/homebrew/bin:__HOME__/.local/bin:/usr/local/bin:/usr/bin:/bin</string>
         <key>N8N_PORT</key>
         <string>5678</string>
+        <!-- Bind address. N8N_HOST below is only the public hostname used
+             to build editor/webhook URLs; it does NOT affect binding.
+             Without this, n8n defaults to '::' (all interfaces). -->
+        <key>N8N_LISTEN_ADDRESS</key>
+        <string>127.0.0.1</string>
         <key>N8N_HOST</key>
         <string>127.0.0.1</string>
         <key>N8N_PROTOCOL</key>

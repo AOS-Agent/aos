@@ -24,7 +24,7 @@
     <array>
         <string>__VENV_PYTHON__</string>
         <string>-c</string>
-        <string>import uvicorn; uvicorn.run('qareen.main:app', host='0.0.0.0', port=4097, reload=True, reload_dirs=['__DEV_CORE_DIR__'], reload_excludes=['**/__pycache__/**', '**/*.pyc', 'engine/util/**', 'engine/people/**', 'engine/comms/**', 'engine/bus/**', 'services/**', 'bin/**', '**/.git/**', '**/vault/**', '**/logs/**'], log_level='info')</string>
+        <string>import uvicorn; uvicorn.run('qareen.main:app', host='127.0.0.1', port=4097, reload=True, reload_dirs=['__DEV_CORE_DIR__'], reload_excludes=['**/__pycache__/**', '**/*.pyc', 'engine/util/**', 'engine/people/**', 'engine/comms/**', 'engine/bus/**', 'services/**', 'bin/**', '**/.git/**', '**/vault/**', '**/logs/**'], log_level='info')</string>
     </array>
 
     <key>WorkingDirectory</key>

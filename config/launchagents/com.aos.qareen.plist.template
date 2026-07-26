@@ -13,7 +13,7 @@
         <string>uvicorn</string>
         <string>qareen.main:app</string>
         <string>--host</string>
-        <string>0.0.0.0</string>
+        <string>127.0.0.1</string>
         <string>--port</string>
         <string>4096</string>
     </array>
@@ -32,7 +32,7 @@
         <key>PATH</key>
         <string>/opt/homebrew/bin:__HOME__/.bun/bin:__HOME__/.local/bin:/usr/local/bin:/usr/bin:/bin</string>
         <key>AOS_QAREEN_HOST</key>
-        <string>0.0.0.0</string>
+        <string>127.0.0.1</string>
     </dict>
 </dict>
 </plist>

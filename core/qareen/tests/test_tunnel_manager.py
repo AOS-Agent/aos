@@ -7,7 +7,8 @@ the Keychain actually running:
   * ``_rebind_qareen`` rewrites BOTH the ``--host`` ProgramArguments value AND
     the ``AOS_QAREEN_HOST`` env string in a fixture plist,
   * ``disconnect`` stops the connector BEFORE deleting CF resources, deletes the
-    Keychain keys, and ALWAYS rebinds to 0.0.0.0 (even on partial failure),
+    Keychain keys, and ALWAYS re-asserts the 127.0.0.1 bind (even on partial
+    failure) — teardown must never widen the bind back to the LAN,
   * ``_emit`` pushes a ``RemoteAccessProgress`` event to the bus,
   * the agent-secret helpers shell out via a (mocked) subprocess.
 
@@ -157,7 +158,7 @@ class _FakeCF:
 
 
 def test_disconnect_stops_connector_before_cf_teardown_and_rebinds(tmp_path):
-    """Connector booted out BEFORE CF delete; secrets deleted; rebind 0.0.0.0 last."""
+    """Connector booted out BEFORE CF delete; secrets deleted; rebind loopback last."""
     order: list = []
 
     state = FakeState({
@@ -208,14 +209,16 @@ def test_disconnect_stops_connector_before_cf_teardown_and_rebinds(tmp_path):
     teardown_kwargs = next(o[1] for o in order if o[0] == "cf_teardown")
     assert teardown_kwargs["tunnel_id"] == "tun123"
     assert teardown_kwargs["policy_id"] == "pol123"
-    # State cleared and bind restored to 0.0.0.0 as the final action.
+    # State cleared and bind re-asserted to loopback as the final action.
+    # NEVER 0.0.0.0 — dropping the tunnel must not re-expose Qareen to the LAN.
     assert state.cleared
-    assert ("rebind", "0.0.0.0") in order
+    assert ("rebind", "127.0.0.1") in order
+    assert ("rebind", "0.0.0.0") not in order
     assert kinds[-1] == "rebind"
 
 
 def test_disconnect_rebinds_even_on_cf_failure(tmp_path):
-    """A CF teardown blow-up must still restore the 0.0.0.0 bind (finally)."""
+    """A CF teardown blow-up must still re-assert the 127.0.0.1 bind (finally)."""
     order: list = []
     state = FakeState({"status": "connected", "account_id": "a", "hostname": "h"})
     tm = TunnelManager(FakeBus(), state)
@@ -235,7 +238,8 @@ def test_disconnect_rebinds_even_on_cf_failure(tmp_path):
         except RuntimeError:
             pass
 
-    assert ("rebind", "0.0.0.0") in order
+    assert ("rebind", "127.0.0.1") in order
+    assert ("rebind", "0.0.0.0") not in order
 
 
 # ---------------------------------------------------------------------------
