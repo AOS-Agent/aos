@@ -10,6 +10,7 @@ MESSAGE_STYLE.md in this directory.
 """
 
 import datetime
+import html
 import importlib.util
 import json
 import logging
@@ -20,6 +21,28 @@ from pathlib import Path
 import yaml
 
 logger = logging.getLogger(__name__)
+
+
+def esc(value) -> str:
+    """Escape untrusted text for Telegram's HTML parse mode.
+
+    This check-in is assembled as HTML and sent with ``parse_mode="HTML"``.
+    Task titles are attacker-influenced — inbound email/WhatsApp reaches the
+    inbox via the ambient proposer and becomes a task title verbatim on
+    promotion — so an unescaped title can inject real markup, including a
+    clickable ``<a href>``, into a message the operator trusts as their own
+    system's.
+
+    Telegram HTML needs exactly ``<``, ``>`` and ``&`` replaced, which is what
+    ``html.escape(quote=False)`` does. Applied at each **interpolation**, never
+    to the assembled message — escaping the whole thing would also escape the
+    intentional ``<b>``/``<i>`` markup below and flatten the check-in.
+
+    Nothing is sanitised on intake; the stored title stays faithful to what
+    arrived. Defined locally so this module stays importable without the
+    bridge's third-party dependencies.
+    """
+    return html.escape("" if value is None else str(value), quote=False)
 
 VAULT_ROOT = Path.home() / "vault"
 AOS_ROOT = Path.home() / "aos"
@@ -260,7 +283,9 @@ def _build_evening_wrap() -> str:
 
     # ── Format the message ────────────────────────────────────────────────
     lines = []
-    lines.append(f"\U0001f319 <b>Wrapping up {day_name}</b>\n")
+    # day_name is strftime("%A") and therefore trusted; escaped anyway so the
+    # regression guard needs no allowlist. A tripwire with exceptions rots.
+    lines.append(f"\U0001f319 <b>Wrapping up {esc(day_name)}</b>\n")
 
     # Done today (celebratory first)
     if completed_tasks:
@@ -270,11 +295,11 @@ def _build_evening_wrap() -> str:
             project = t.get("project", "")
             parent_title = t.get("_parent_title")
             if parent_title:
-                lines.append(f"  \u2022 {title} <i>(under {parent_title})</i>")
+                lines.append(f"  \u2022 {esc(title)} <i>(under {esc(parent_title)})</i>")
             elif project:
-                lines.append(f"  \u2022 {title} <i>({project})</i>")
+                lines.append(f"  \u2022 {esc(title)} <i>({esc(project)})</i>")
             else:
-                lines.append(f"  \u2022 {title}")
+                lines.append(f"  \u2022 {esc(title)}")
     else:
         lines.append("\u2705 <b>Done today:</b>")
         lines.append("  \u2022 <i>No tasks completed today.</i>")
@@ -282,7 +307,8 @@ def _build_evening_wrap() -> str:
     # Initiative progress
     if initiative_hits:
         lines.append("")
-        lines.append("  \U0001f4c8 <i>Progress on: " + ", ".join(initiative_hits) + "</i>")
+        lines.append("  \U0001f4c8 <i>Progress on: "
+                         + ", ".join(esc(h) for h in initiative_hits) + "</i>")
 
     lines.append("")
 
@@ -297,9 +323,9 @@ def _build_evening_wrap() -> str:
             if status == "active" or status == "in-progress":
                 status_indicator = " \u2014 <i>in progress</i>"
             if project:
-                lines.append(f"  \u2022 {title} <i>({project})</i>{status_indicator}")
+                lines.append(f"  \u2022 {esc(title)} <i>({esc(project)})</i>{status_indicator}")
             else:
-                lines.append(f"  \u2022 {title}{status_indicator}")
+                lines.append(f"  \u2022 {esc(title)}{status_indicator}")
         if len(open_tasks) > 8:
             lines.append(f"  \u2022 <i>...and {len(open_tasks) - 8} more</i>")
     else:
