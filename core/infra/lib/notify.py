@@ -1,26 +1,39 @@
 """Shared Telegram notification helper for AOS.
 
-Single source of truth for sending Telegram messages across the system.
-Handles credential lookup, message splitting, and retry with backoff.
+Thin compatibility layer over ``engine.notify.router`` — the single source
+of truth for outbound delivery. Calls route to the operator's forum topic,
+falling back to group General and then the operator DM, so installs with no
+forum configured behave exactly as before.
+
+New code should call ``engine.notify.router.send_notification`` directly.
+This wrapper exists so existing ``send_telegram`` callers keep working.
 
 Usage:
     from lib.notify import send_telegram
     send_telegram("Hello from AOS")
-    send_telegram("<b>HTML</b> message", parse_mode="HTML")
-    send_telegram("Into a topic", thread_id=12345)
+    send_telegram("Deploy finished", topic="system")
+    send_telegram("Disk almost full", kind="alert")
+    send_telegram("To a specific chat", chat_id="123")  # bypasses routing
 """
 
+import importlib
+import importlib.util
 import json
 import logging
 import os
 import subprocess
+import sys
 import time
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 from lib.rate_limit import RateLimiter
 
 logger = logging.getLogger(__name__)
+
+# Lazily-loaded notify router module (see _load_router).
+_ROUTER = None
 
 # Enforce Telegram's recommended max of 1 message/second per bot.
 _RATE_LIMITER = RateLimiter(max_per_second=1.0)
@@ -76,25 +89,89 @@ def _split_message(text: str, limit: int = TELEGRAM_MSG_LIMIT) -> list[str]:
     return chunks
 
 
+def _load_router():
+    """Load the notify router (cached), preferring a real package import.
+
+    A package import matters: it puts the module in sys.modules, so every
+    sender in the process shares ONE router object — and therefore one rate
+    limiter. Loading by file path creates a private copy, which would let
+    two senders each send at the 1 msg/sec cap and blow through Telegram's
+    limit. The path fallback stays for callers whose sys.path cannot reach
+    core/engine.
+    """
+    global _ROUTER
+    if _ROUTER is not None:
+        return _ROUTER
+
+    for engine in (Path(__file__).resolve().parents[2] / "engine",
+                   Path.home() / "aos" / "core" / "engine"):
+        router_py = engine / "notify" / "router.py"
+        if not router_py.exists():
+            continue
+
+        if str(engine) not in sys.path:
+            sys.path.insert(0, str(engine))
+        try:
+            _ROUTER = importlib.import_module("notify.router")
+            return _ROUTER
+        except Exception as e:
+            logger.debug("notify.router package import failed (%s) — using file path", e)
+
+        try:
+            spec = importlib.util.spec_from_file_location("notify.router", router_py)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            # Publish it so a later `import notify.router` reuses this object
+            # instead of building a second one.
+            sys.modules.setdefault("notify.router", module)
+            _ROUTER = module
+            return _ROUTER
+        except Exception as e:  # pragma: no cover - defensive
+            logger.warning("Could not load notify router from %s: %s", router_py, e)
+    return None
+
+
 def send_telegram(
     text: str,
     parse_mode: str = "HTML",
     thread_id: int | None = None,
     bot_token: str | None = None,
     chat_id: str | None = None,
+    topic: str | None = None,
+    kind: str = "info",
 ) -> bool:
-    """Send a Telegram message with automatic splitting and retry.
+    """Send a Telegram message, topic-routed by default.
+
+    Routes through the notify router so messages land in the operator's
+    forum topic. The router's own fallback chain (topic -> group General ->
+    operator DM) covers installs with no forum configured, so this is safe
+    for DM-only setups.
 
     Args:
         text: Message text to send
         parse_mode: "HTML" or "Markdown" (default: HTML)
-        thread_id: Forum topic thread ID (optional)
-        bot_token: Override bot token (default: reads from keychain)
-        chat_id: Override chat ID (default: reads from keychain)
+        thread_id: Explicit forum thread — bypasses routing (legacy override)
+        bot_token: Override bot token — bypasses routing (legacy override)
+        chat_id: Override chat ID — bypasses routing (legacy override)
+        topic: Router topic (daily/alerts/work/knowledge/system)
+        kind: "info", "alert", or "success" — infers topic when none given
 
     Returns:
-        True if all chunks sent successfully, False otherwise.
+        True if the message was delivered, False otherwise.
     """
+    # Explicit destination overrides keep the old direct-send path: a caller
+    # that names a chat means it.
+    if not (bot_token or chat_id or thread_id):
+        router = _load_router()
+        if router is not None:
+            result = router.send_notification(
+                text, topic=topic, kind=kind, parse_mode=parse_mode,
+            )
+            if result.get("error") and not result.get("delivered"):
+                logger.warning("Telegram delivery failed: %s", result["error"])
+            return bool(result.get("delivered"))
+        logger.warning("Notify router unavailable — falling back to direct send")
+
     if not bot_token:
         bot_token = _get_secret("TELEGRAM_BOT_TOKEN")
     if not chat_id:

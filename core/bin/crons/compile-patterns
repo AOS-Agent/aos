@@ -434,19 +434,6 @@ def notify_telegram(new_patterns: list[dict]):
         return
 
     try:
-        import subprocess
-        token = subprocess.run(
-            [str(AGENT_SECRET), "get", "TELEGRAM_BOT_TOKEN"],
-            capture_output=True, text=True
-        ).stdout.strip()
-        chat_id = subprocess.run(
-            [str(AGENT_SECRET), "get", "TELEGRAM_CHAT_ID"],
-            capture_output=True, text=True
-        ).stdout.strip()
-
-        if not token or not chat_id:
-            return
-
         lines = [f"Compiled {len(new_patterns)} new pattern(s):"]
         for p in new_patterns[:5]:
             pid = pattern_hash(p)
@@ -458,11 +445,11 @@ def notify_telegram(new_patterns: list[dict]):
                 lines.append(f"  task: {p['task'][:50]} ({p['count']}x)")
 
         msg = "\n".join(lines)
-        import urllib.request
-        import urllib.parse
-        url = f"https://api.telegram.org/bot{token}/sendMessage"
-        data = urllib.parse.urlencode({"chat_id": chat_id, "text": msg}).encode()
-        urllib.request.urlopen(url, data, timeout=5)
+        # Compiled patterns are distilled knowledge. parse_mode stays off:
+        # pattern text is raw tool/file names, not HTML.
+        sys.path.insert(0, str(Path.home() / "aos" / "core" / "engine"))
+        from notify.router import send_notification
+        send_notification(msg, topic="knowledge", parse_mode=None)
     except Exception:
         pass  # Telegram notification is best-effort
 
