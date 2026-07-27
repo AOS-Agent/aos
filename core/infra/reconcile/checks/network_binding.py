@@ -57,8 +57,10 @@ everything", never to "allow everything".
 
 from __future__ import annotations
 
+import json
 import logging
 import plistlib
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -209,6 +211,126 @@ def _allowed_labels() -> set[str]:
     return allowed
 
 
+# ---------------------------------------------------------------------------
+# Tailscale exposure — read the config, never probe
+# ---------------------------------------------------------------------------
+#
+# The obvious check is "request the route and see if it answers from outside".
+# Do not build that. On 2026-07-26 exactly that approach produced a confident,
+# wrong conclusion that services were public: the probe resolved the .ts.net
+# name to the node's own 100.x tailnet address, so it reached every route and
+# could not have failed. A check that cannot fail manufactures alarms and trains
+# people to ignore it.
+#
+# The config is authoritative and cheap:
+#   AllowFunnel          — what is actually published to the internet
+#   Self.Capabilities    — which ports Funnel is permitted on at all
+#
+# A service on a port outside the permitted list cannot be published even by
+# mistake, which is the property worth steering toward.
+
+_TS_CANDIDATES = (
+    "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
+    "/usr/local/bin/tailscale",
+    "/opt/homebrew/bin/tailscale",
+    "tailscale",
+)
+
+
+def _run(cmd: list[str], timeout: int = 8) -> subprocess.CompletedProcess:
+    """Best-effort subprocess. A missing binary is a normal outcome here."""
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    except (OSError, subprocess.SubprocessError):
+        return subprocess.CompletedProcess(cmd, 1, "", "")
+
+
+def _ts_cli() -> str | None:
+    """A tailscale CLI whose version matches the running daemon, if any.
+
+    Version skew matters: a mismatched CLI may misreport serve/funnel state, and
+    on a Mac with both Tailscale.app and a Homebrew formula the older Homebrew
+    binary typically sits first on PATH while the app owns the daemon.
+    """
+    daemon = None
+    for cand in _TS_CANDIDATES:
+        out = _run([cand, "status", "--json"])
+        if out.returncode == 0 and out.stdout:
+            try:
+                daemon = json.loads(out.stdout).get("Version", "")
+                break
+            except ValueError:
+                continue
+    if not daemon:
+        return None
+    base = daemon.split("-")[0]
+    for cand in _TS_CANDIDATES:
+        out = _run([cand, "version"])
+        if out.returncode == 0 and out.stdout.strip().splitlines():
+            if out.stdout.strip().splitlines()[0].strip() == base:
+                return cand
+    return None
+
+
+def _funnel_findings() -> tuple[list[str], str | None]:
+    """(findings, skip_reason). Findings are plain-English exposure warnings."""
+    cli = _ts_cli()
+    if cli is None:
+        return [], "no tailscale CLI matching the running daemon"
+
+    serve = _run([cli, "serve", "status", "--json"])
+    if serve.returncode != 0 or not serve.stdout:
+        return [], "tailscale serve status unavailable"
+    try:
+        cfg = json.loads(serve.stdout)
+    except ValueError:
+        return [], "tailscale serve status was not valid JSON"
+
+    findings: list[str] = []
+
+    # 1. Anything actually published to the open internet.
+    for target, on in (cfg.get("AllowFunnel") or {}).items():
+        if on:
+            handlers = ((cfg.get("Web") or {}).get(target) or {}).get("Handlers") or {}
+            dest = ", ".join(
+                f"{p} -> {h.get('Proxy') or h.get('Path') or '?'}"
+                for p, h in handlers.items()
+            ) or "no handler configured"
+            findings.append(
+                f"PUBLIC: Funnel is ON for {target} ({dest}). This is reachable "
+                f"from the open internet by anyone. Turn it off with "
+                f"`tailscale funnel --https=<port> off` unless it is deliberate "
+                f"AND the service behind it authenticates."
+            )
+
+    # 2. Routes sitting on a port that COULD be funnelled. Not an exposure —
+    #    a smaller blast radius is available for free by moving them.
+    status = _run([cli, "status", "--json"])
+    ports: set[str] = set()
+    if status.returncode == 0 and status.stdout:
+        try:
+            caps = (json.loads(status.stdout).get("Self") or {}).get("Capabilities") or []
+            for cap in caps:
+                m = re.search(r"funnel-ports\?ports=([\d,]+)", str(cap))
+                if m:
+                    ports = {p.strip() for p in m.group(1).split(",") if p.strip()}
+        except ValueError:
+            pass
+
+    if ports:
+        for target in (cfg.get("Web") or {}):
+            port = target.rsplit(":", 1)[-1] if ":" in target else "443"
+            if port in ports and not (cfg.get("AllowFunnel") or {}).get(target):
+                findings.append(
+                    f"Serve route on port {port}, which Funnel is permitted on "
+                    f"(permitted: {', '.join(sorted(ports))}). Not exposed today "
+                    f"— AllowFunnel is off — but one command would publish it. "
+                    f"If the service has no login of its own, move it to a port "
+                    f"outside that list, where it cannot be published at all."
+                )
+    return findings, None
+
+
 class NetworkBindingCheck(ReconcileCheck):
     name = "network_binding"
     description = (
@@ -220,11 +342,13 @@ class NetworkBindingCheck(ReconcileCheck):
     def __init__(self) -> None:
         self._runtime: list[str] = []
         self._declared: list[str] = []
+        self._funnel: list[str] = []
         self._skip_reason: str | None = None
 
     def check(self) -> bool:
         self._runtime = []
         self._declared = []
+        self._funnel = []
         self._skip_reason = None
 
         plists = _aos_managed_plists()
@@ -273,7 +397,16 @@ class NetworkBindingCheck(ReconcileCheck):
             if WILDCARD_LITERAL in text:
                 self._declared.append(f"{label} declares {WILDCARD_LITERAL} in {path.name}")
 
-        return not (self._runtime or self._declared)
+        # Signal 3 — Tailscale exposure, read from config rather than probed.
+        # Only a live Funnel counts as a failure; a route merely sitting on a
+        # funnel-capable port is advisory, so it cannot turn a healthy machine
+        # red for something that is not actually exposed.
+        self._funnel, _ = _funnel_findings()
+
+        return not (self._runtime or self._declared or self._public_funnels())
+
+    def _public_funnels(self) -> list[str]:
+        return [f for f in getattr(self, "_funnel", []) if f.startswith("PUBLIC:")]
 
     def fix(self) -> CheckResult:
         """Never repairs — reports with evidence.
@@ -293,6 +426,15 @@ class NetworkBindingCheck(ReconcileCheck):
         if self._declared:
             lines.append("Declared 0.0.0.0 in a deployed plist (exposes on next start):")
             lines.extend(f"  • {item}" for item in self._declared)
+
+        public = self._public_funnels()
+        if public:
+            lines.append("PUBLISHED TO THE INTERNET via Tailscale Funnel:")
+            lines.extend(f"  • {item[len('PUBLIC: '):]}" for item in public)
+        advisory = [f for f in self._funnel if not f.startswith("PUBLIC:")]
+        if advisory:
+            lines.append("Advisory — not exposed, but one command away:")
+            lines.extend(f"  • {item}" for item in advisory)
 
         lines.append("")
         lines.append(
