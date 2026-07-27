@@ -1,0 +1,37 @@
+# AOS project manifest — declarations for 'aos'.
+#
+# This file is COMMITTED TO GIT with the project, so it holds no secrets,
+# no absolute paths, and no personal detail — only a one-line description
+# and PATHS into the (private) vault.
+#
+# It declares; it never reports. There is deliberately no status, state,
+# progress or last-updated field: those are derived by brief.py from tasks,
+# git and sessions, and a hand-written copy would start rotting today.
+schema: 1
+id: aos
+kind: python                 # ios | web | python | content | mixed
+title: AOS — System Development
+description: "Agentic operating system — the framework, services, agents and skills that run this machine."   # ONE line; detail goes in the vault docs below
+done_when: "Clone onto fresh Mac Mini, run installer, system works end-to-end"
+appetite: null
+initiative: null       # vault initiative key, not a path
+goal: aos-infrastructure
+
+# Vault documents, RELATIVE to the vault root. Paths only — the vault
+# stays private, this file does not.
+docs:
+  - knowledge/initiatives/aos-deep-audit-refactor.md
+  - knowledge/initiatives/aos-mesh.md
+  - knowledge/initiatives/aos-v3-architecture-review.md
+  - knowledge/initiatives/aos-v3-architecture.md
+
+# Repo layout. Every path is RELATIVE to this project directory.
+repos:
+  root: .
+  components: []
+
+# Where branch checkouts live. Relative to this project, always —
+# /private/tmp is wiped by the OS and has already destroyed 19 of them.
+worktrees:
+  location: .claude/worktrees
+  naming: branch-slug
