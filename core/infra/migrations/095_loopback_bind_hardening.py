@@ -233,13 +233,42 @@ def _restart(label: str, plist: Path, port: int, wait: int = 60) -> bool:
 # ---------------------------------------------------------------------------
 # tailscale serve — the continuity bridge, established BEFORE the flip
 # ---------------------------------------------------------------------------
+# Opt-in only. See _ensure_serve.
+SERVE_OPT_IN_ENV = "AOS_MIGRATION_MAY_CREATE_TAILSCALE_SERVE"
+
+
 def _ensure_serve() -> tuple[bool, str]:
     """Ensure + verify a tailnet route to Qareen. Returns (ok, description).
 
-    Tailnet-only. Funnel is never enabled: it would publish an unauthenticated
-    dashboard to the public internet, which is strictly worse than the LAN
-    exposure this migration closes.
+    DISABLED BY DEFAULT as of 2026-07-26. It used to say "tailnet-only; Funnel is
+    never enabled" — and that turned out to be false on the machine this was
+    written for. A serve route reported as tailnet-only, with AllowFunnel empty,
+    served the full unauthenticated dashboard to an off-tailnet client. Proof: a
+    route whose upstream was dead answered 502 Bad Gateway to an off-tailnet
+    request, which is only reachable if the request arrived.
+
+    So this function's "continuity bridge" could publish the very service the
+    migration is hardening — turning a LAN exposure into an internet-wide one, on
+    every node that runs the migration. That is strictly worse than the bug being
+    fixed, so it must not happen automatically.
+
+    We cannot verify privacy from here: this host is on the tailnet, so it reaches
+    the route either way and a "successful" check proves nothing.
+
+    Default behaviour is therefore to create NOTHING and tell the operator how to
+    restore reach themselves, which this migration already treats as the
+    acceptable outcome ("losing remote access without being told is worse than
+    the exposure; losing it *with* clear instructions is fine"). Set
+    AOS_MIGRATION_MAY_CREATE_TAILSCALE_SERVE=1 to opt back in, having verified
+    from genuinely off-tailnet that serve is private on your tailnet.
     """
+    if os.environ.get(SERVE_OPT_IN_ENV) != "1":
+        return False, (
+            "not attempted — `tailscale serve` was observed serving publicly "
+            "while reporting tailnet-only (see this function's docstring). Set "
+            f"{SERVE_OPT_IN_ENV}=1 to opt in after verifying off-tailnet."
+        )
+
     ts = _tailscale_bin()
     if not ts:
         return False, "Tailscale not installed"
@@ -349,12 +378,22 @@ def up() -> bool:
             "\n"
             f"  A Tailscale route could NOT be set up here: {serve_info}\n"
             "\n"
-            "  If you used the dashboard from another machine, restore it with:\n"
-            f"    tailscale serve --bg --https={SERVE_PORT} {LOOPBACK}:{QAREEN_PORT}\n"
+            "  If you used the dashboard from another machine, prefer an\n"
+            "  AUTHENTICATED path (e.g. a Cloudflare Access hostname fronting\n"
+            f"  {LOOPBACK}:{QAREEN_PORT}). Qareen has no login of its own, so\n"
+            "  whatever fronts it IS the security boundary.\n"
             "\n"
-            "  Or set AOS_QAREEN_HOST back to 0.0.0.0 in\n"
-            f"    {QAREEN_PLIST}\n"
-            "  if you accept LAN exposure on a network you trust.\n"
+            "  A Tailscale route is NOT recommended blind:\n"
+            f"    tailscale serve --bg --https={SERVE_PORT} {LOOPBACK}:{QAREEN_PORT}\n"
+            "  On 2026-07-26 a route reported as 'tailnet only', with AllowFunnel\n"
+            "  empty, served this dashboard to the PUBLIC INTERNET. If you run it,\n"
+            "  verify from a machine that is NOT on your tailnet before trusting\n"
+            "  it — a tailnet-joined host reaches the route either way, so testing\n"
+            "  from one proves nothing about privacy.\n"
+            "\n"
+            "  Do NOT set AOS_QAREEN_HOST back to 0.0.0.0 unless you accept that\n"
+            "  every device on the local network can read your contacts and\n"
+            f"  message history without a password ({QAREEN_PLIST}).\n"
             "  ================================================================\n"
         )
         print(banner)
@@ -363,9 +402,10 @@ def up() -> bool:
             "Your dashboard and n8n were open to every device on your home WiFi "
             "with no password. Anyone on that network could read your contacts "
             "and messages. They now only accept connections from the Mini itself.\n\n"
-            "One catch: I could not set up a Tailscale route automatically "
-            f"({serve_info}). If you used the dashboard from your laptop or phone, "
-            "tell me and I will set that up. 👍"
+            "One catch: I did not set up a remote route automatically. Doing that "
+            "the usual way once made the dashboard public by mistake, so I would "
+            "rather you and I choose the path together. If you used the dashboard "
+            "from your laptop or phone, tell me and I will sort it out. 👍"
         )
     else:
         print(f"  ✓ Remote access preserved via {serve_info}")
