@@ -28,25 +28,23 @@ instance assumption ships the bridge. So this migration:
      it responds before touching the bind. Funnel (public internet) is never
      enabled — that would trade this bug for a worse one.
 
-     !! CORRECTION 2026-07-26 — READ BEFORE TRUSTING THIS STEP.
-     "Serve is tailnet-only" is what the CLI claims and it was NOT true on the
-     machine this migration was written for. A route reported as tailnet-only,
-     with AllowFunnel empty, served the full dashboard to an off-tailnet client.
-     Proof: an off-tailnet request to a serve route whose upstream was dead
-     returned 502 Bad Gateway — reachable only if the request arrived. Suspected
-     cause is CLI/daemon version skew (CLI 1.96.3, daemon 1.98.9) causing the CLI
-     to misreport funnel state.
+     NOTE 2026-07-26 — a retracted claim, kept because the reasoning matters.
+     This docstring briefly asserted that serve was NOT tailnet-only here, based
+     on a probe that appeared to come from outside and reached the route. The
+     assertion was wrong: the probe resolved the .ts.net name to the node's own
+     100.x tailnet address, so it was never external. A test that cannot fail is
+     not evidence, and this one could not fail.
 
-     Consequence: establishing a serve route as the "continuity bridge" may
-     itself publish the service. That is the opposite of this migration's intent
-     and is how this instance was briefly exposed while hardening it.
+     What is actually true: AllowFunnel was empty, Funnel is permitted only on a
+     short list of ports (Self.Capabilities in `tailscale status --json`), and
+     serve was behaving exactly as documented.
 
-     Therefore: treat a serve route as UNVERIFIED until checked from genuinely
-     off-tailnet. A tailnet-joined host cannot perform that check — it reaches the
-     route either way, so a "successful" verification proves nothing about
-     privacy. Where an authenticated path already exists (this instance fronts
-     :4096 with Cloudflare Access), prefer it and leave the service on loopback
-     with no serve route at all.
+     The durable lesson is about verification, not Tailscale. Do not try to prove
+     a route is private by requesting it from a tailnet-joined machine — read the
+     config (AllowFunnel, and the permitted-ports capability) instead. Prefer a
+     serve port OUTSIDE the funnel-capable list, so the service cannot be
+     published even by accident; this instance uses one for :4096, which has no
+     authentication of its own.
   2. Only then rewrites the deployed plists and restarts the services.
   3. If it cannot establish that route, it does NOT flip silently. It flips and
      tells the operator loudly — printed output plus a Telegram message — with
@@ -240,33 +238,31 @@ SERVE_OPT_IN_ENV = "AOS_MIGRATION_MAY_CREATE_TAILSCALE_SERVE"
 def _ensure_serve() -> tuple[bool, str]:
     """Ensure + verify a tailnet route to Qareen. Returns (ok, description).
 
-    DISABLED BY DEFAULT as of 2026-07-26. It used to say "tailnet-only; Funnel is
-    never enabled" — and that turned out to be false on the machine this was
-    written for. A serve route reported as tailnet-only, with AllowFunnel empty,
-    served the full unauthenticated dashboard to an off-tailnet client. Proof: a
-    route whose upstream was dead answered 502 Bad Gateway to an off-tailnet
-    request, which is only reachable if the request arrived.
+    DISABLED BY DEFAULT as of 2026-07-26 — but NOT for the reason first recorded
+    here. That earlier note claimed serve was secretly public, based on a probe
+    that turned out to resolve the .ts.net name to the node's own 100.x tailnet
+    address. It was never external, so it could not have failed, and the
+    conclusion drawn from it was wrong. Serve was behaving as documented.
 
-    So this function's "continuity bridge" could publish the very service the
-    migration is hardening — turning a LAN exposure into an internet-wide one, on
-    every node that runs the migration. That is strictly worse than the bug being
-    fixed, so it must not happen automatically.
+    The remaining reason to stay opt-in is smaller but real: this creates network
+    reachability on someone else's machine, unattended, during a migration whose
+    actual job is to REMOVE reachability. The operator should choose their remote
+    path deliberately — especially since Qareen has no authentication of its own,
+    so whatever fronts it is the entire security boundary.
 
-    We cannot verify privacy from here: this host is on the tailnet, so it reaches
-    the route either way and a "successful" check proves nothing.
+    Note also that a tailnet-joined host cannot verify privacy by fetching the
+    route. Read the config instead: AllowFunnel in `tailscale serve status
+    --json`, and the funnel-capable port list in `tailscale status --json` ->
+    Self.Capabilities. A port outside that list cannot be published at all, which
+    makes it the safer choice for an unauthenticated service.
 
-    Default behaviour is therefore to create NOTHING and tell the operator how to
-    restore reach themselves, which this migration already treats as the
-    acceptable outcome ("losing remote access without being told is worse than
-    the exposure; losing it *with* clear instructions is fine"). Set
-    AOS_MIGRATION_MAY_CREATE_TAILSCALE_SERVE=1 to opt back in, having verified
-    from genuinely off-tailnet that serve is private on your tailnet.
+    Set AOS_MIGRATION_MAY_CREATE_TAILSCALE_SERVE=1 to opt in.
     """
     if os.environ.get(SERVE_OPT_IN_ENV) != "1":
         return False, (
-            "not attempted — `tailscale serve` was observed serving publicly "
-            "while reporting tailnet-only (see this function's docstring). Set "
-            f"{SERVE_OPT_IN_ENV}=1 to opt in after verifying off-tailnet."
+            "not attempted — this migration does not create network routes on "
+            "your behalf; choose your remote path deliberately. Set "
+            f"{SERVE_OPT_IN_ENV}=1 to opt in."
         )
 
     ts = _tailscale_bin()
@@ -385,11 +381,13 @@ def up() -> bool:
             "\n"
             "  A Tailscale route is NOT recommended blind:\n"
             f"    tailscale serve --bg --https={SERVE_PORT} {LOOPBACK}:{QAREEN_PORT}\n"
-            "  On 2026-07-26 a route reported as 'tailnet only', with AllowFunnel\n"
-            "  empty, served this dashboard to the PUBLIC INTERNET. If you run it,\n"
-            "  verify from a machine that is NOT on your tailnet before trusting\n"
-            "  it — a tailnet-joined host reaches the route either way, so testing\n"
-            "  from one proves nothing about privacy.\n"
+            "  Qareen has no login of its own, so whatever fronts it IS the\n"
+            "  security boundary. Do not confirm a route is private by fetching\n"
+            "  it from a machine on your tailnet — that reaches it either way.\n"
+            "  Read the config: AllowFunnel must be empty in `tailscale serve\n"
+            "  status --json`, and `tailscale status --json` lists the only ports\n"
+            "  Funnel is permitted on. A port outside that list cannot be made\n"
+            "  public even by mistake, so prefer one.\n"
             "\n"
             "  Do NOT set AOS_QAREEN_HOST back to 0.0.0.0 unless you accept that\n"
             "  every device on the local network can read your contacts and\n"

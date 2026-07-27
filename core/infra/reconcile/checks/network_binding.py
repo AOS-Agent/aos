@@ -302,20 +302,24 @@ class NetworkBindingCheck(ReconcileCheck):
         lines.append("  tailscale serve --bg --https=<port> 127.0.0.1:<port>")
         lines.append("")
         lines.append(
-            "!! DO NOT TRUST 'tailnet only' IN `tailscale serve status`. "
-            "Verified 2026-07-26 on this machine: routes reported as tailnet-only, "
-            "with AllowFunnel empty, were reachable from the public internet. An "
-            "off-tailnet request to a route proxying a dead upstream returned 502 "
-            "Bad Gateway -- a status only reachable if the request arrived. The "
-            "likely cause is a CLI/daemon version skew (CLI 1.96.3 vs daemon "
-            "1.98.9) making the CLI misreport funnel state."
+            "Verifying a serve route is private is harder than it looks. A "
+            "tailnet-joined host resolves the .ts.net name to the node's 100.x "
+            "tailnet address, so it reaches the route whether or not Funnel is "
+            "on -- testing from one proves nothing. (Learned the hard way on "
+            "2026-07-26: a probe believed to be external was resolving to "
+            "100.x, and the resulting 'this is public' conclusion was wrong.)"
         )
         lines.append(
-            "So after adding ANY serve route, verify from genuinely off-tailnet "
-            "before believing it is private. A tailnet-joined host cannot test "
-            "this -- it reaches the route either way. If you cannot verify, prefer "
-            "an authenticated path (this instance uses Cloudflare Access) and "
-            "leave the service on loopback only."
+            "Check the config instead of guessing from a request: "
+            "`tailscale serve status --json` -> AllowFunnel must be empty, and "
+            "`tailscale status --json` -> Self.Capabilities lists the only ports "
+            "Funnel is permitted on at all. A route on a port outside that list "
+            "cannot be published even by mistake -- prefer one."
+        )
+        lines.append(
+            "Use a CLI matching the daemon; a mismatched one may misreport. If "
+            "both a Homebrew tailscale and Tailscale.app are installed, the app "
+            "usually owns the daemon while Homebrew's binary sits on PATH."
         )
         lines.append(
             f"If a wildcard bind is genuinely intended, declare it in {ALLOW_CONFIG} "

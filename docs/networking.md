@@ -76,6 +76,24 @@ Three sanctioned front doors, all of which connect to `127.0.0.1`:
 unauthenticated dashboard behind Funnel is strictly worse than the LAN exposure
 it would replace.
 
+**Pick a serve port that cannot be funnelled.** Funnel is only permitted on a
+short list of ports, which the node reports in `tailscale status --json` under
+`Self.Capabilities` (typically 443, 8443, 10000). A service on any *other* port
+cannot be published to the internet even by accident — worth choosing for
+anything without a login of its own.
+
+**Do not try to prove a route is private by fetching it.** A tailnet-joined
+machine resolves the `.ts.net` name to the node's own `100.x` address, so it
+reaches the route whether or not Funnel is on. A test that cannot fail is not
+evidence — this cost us a wrong conclusion on 2026-07-26. Read the config
+instead: `AllowFunnel` in `tailscale serve status --json` must be empty.
+
+**Use a CLI that matches the daemon.** If both a Homebrew `tailscale` and
+`Tailscale.app` are installed, the app usually owns the running daemon while
+Homebrew's older binary sits first on `PATH`. Compare `tailscale version`
+against the daemon's `Version` in `tailscale status --json` before trusting any
+serve/funnel output.
+
 Prefer a dedicated serve port over a path prefix under `:443`. Single-page apps
 request assets from absolute paths and break when mounted under a subpath.
 
