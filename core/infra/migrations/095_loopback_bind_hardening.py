@@ -70,6 +70,7 @@ DESCRIPTION = "Bind Qareen (4096/4097) and n8n (5678) to loopback; preserve tail
 import os
 import plistlib
 import socket
+import shutil
 import subprocess
 import sys
 import time
@@ -229,6 +230,45 @@ def _restart(label: str, plist: Path, port: int, wait: int = 60) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# plist backup / restore — the way back if a service will not come up
+# ---------------------------------------------------------------------------
+#
+# This migration rewrites LaunchAgent plists and restarts services on machines
+# nobody is watching. Without a copy of the original, a service that fails to
+# restart leaves the operator with a rewritten config, a dead dashboard, and
+# nothing to roll back to. Take the copy first; put it back on failure.
+
+BACKUP_SUFFIX = ".pre-095.bak"
+
+
+def _backup_plist(plist: Path) -> Path | None:
+    """Copy a plist aside before rewriting. Returns the backup path, or None."""
+    if not plist.exists():
+        return None
+    backup = plist.with_suffix(plist.suffix + BACKUP_SUFFIX)
+    try:
+        shutil.copy2(plist, backup)
+        return backup
+    except OSError as exc:
+        print(f"  ⚠ could not back up {plist.name}: {exc}")
+        return None
+
+
+def _restore_plist(plist: Path, backup: Path | None, label: str, port: int) -> bool:
+    """Put the original back and restart. Returns True if the service recovered."""
+    if backup is None or not backup.exists():
+        print(f"  ✗ no backup of {plist.name} to restore from")
+        return False
+    try:
+        shutil.copy2(backup, plist)
+    except OSError as exc:
+        print(f"  ✗ could not restore {plist.name}: {exc}")
+        return False
+    print(f"  ↩ restored {plist.name} from backup — retrying restart")
+    return _restart(label, plist, port, wait=60)
+
+
+# ---------------------------------------------------------------------------
 # tailscale serve — the continuity bridge, established BEFORE the flip
 # ---------------------------------------------------------------------------
 # Opt-in only. See _ensure_serve.
@@ -344,7 +384,15 @@ def up() -> bool:
     else:
         print(f"  ⚠ Could not establish a tailnet route: {serve_info}")
 
-    # 2. Rewrite the deployed plists.
+    # 2. Rewrite the deployed plists — taking a copy of each one FIRST, so a
+    #    service that will not come back can be put back the way it was. This
+    #    runs unattended on machines nobody is watching; "rewritten config,
+    #    dead service, no way back" is not an acceptable outcome to hand
+    #    someone in exchange for closing an exposure.
+    qareen_backup = _backup_plist(QAREEN_PLIST)
+    dev_backup = _backup_plist(QAREEN_DEV_PLIST)
+    n8n_backup = _backup_plist(N8N_PLIST)
+
     _rebind_qareen_plist()
     _rebind_qareen_dev_plist()
     _rebind_n8n_plist()
@@ -354,11 +402,36 @@ def up() -> bool:
     ok = _restart(QAREEN_LABEL, QAREEN_PLIST, QAREEN_PORT)
     if not _restart(QAREEN_DEV_LABEL, QAREEN_DEV_PLIST, QAREEN_DEV_PORT, wait=30):
         print("  ⚠ dev backend (4097) did not come back — non-fatal")
+        _restore_plist(QAREEN_DEV_PLIST, dev_backup, QAREEN_DEV_LABEL, QAREEN_DEV_PORT)
     if not _restart(N8N_LABEL, N8N_PLIST, N8N_PORT, wait=90):
         print("  ⚠ n8n (5678) did not come back — non-fatal, check its log")
+        _restore_plist(N8N_PLIST, n8n_backup, N8N_LABEL, N8N_PORT)
 
     if not ok:
-        print("  ✗ Qareen failed to restart on loopback — investigate before shipping")
+        # Qareen is the operator's dashboard. Leaving it down to close an
+        # exposure is the wrong trade: roll back, tell them plainly, and let
+        # them retry deliberately rather than discover a dead service later.
+        print("  ✗ Qareen failed to restart on loopback — rolling back")
+        recovered = _restore_plist(QAREEN_PLIST, qareen_backup,
+                                   QAREEN_LABEL, QAREEN_PORT)
+        if recovered:
+            print("  ↩ Qareen is back on its previous binding. NOTE: that "
+                  "binding is the exposed one — rerun this migration or set "
+                  f"--host {LOOPBACK} by hand once the restart problem is fixed.")
+            _notify(
+                "⚠️ I tried to close a security hole on your machine and the "
+                "dashboard would not restart, so I put it back exactly as it "
+                "was. Nothing is broken — but the hole is still open. Tell me "
+                "and I will sort it out properly."
+            )
+        else:
+            print(f"  ✗✗ ROLLBACK ALSO FAILED. Original plist saved at "
+                  f"{QAREEN_PLIST}{BACKUP_SUFFIX} — restore it by hand.")
+            _notify(
+                "🚨 Your dashboard did not restart and I could not put the old "
+                f"settings back automatically. A copy is saved next to the "
+                f"original with the suffix {BACKUP_SUFFIX}. This one needs you."
+            )
         return False
 
     # 4. Tell the operator, loudly, if their remote path is not guaranteed.
