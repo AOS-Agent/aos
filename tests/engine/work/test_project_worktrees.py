@@ -314,7 +314,7 @@ def test_default_branch_falls_back_to_master(tmp_path):
     r = tmp_path / "m"
     r.mkdir()
     _git(r, "init", "-q", "-b", "master")
-    _git(r, "config", "user.email", "t@e.com")
+    _git(r, "config", "user.email", "t@example.com")
     _git(r, "config", "user.name", "T")
     (r / "f").write_text("x")
     _git(r, "add", "-A")
