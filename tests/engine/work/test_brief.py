@@ -1166,12 +1166,12 @@ def test_git_log_cache_cannot_be_mutated_by_a_caller(tmp_path):
 
 
 def test_remote_url_is_read_and_normalised(tmp_path):
-    ssh = _git_repo(tmp_path / "ssh", remote="git@github.com:owner/repo.git")
-    assert briefmod._git_remote(ssh) == "https://github.com/owner/repo"
+    ssh = _git_repo(tmp_path / "ssh", remote="git@example.com:owner/repo.git")
+    assert briefmod._git_remote(ssh) == "https://example.com/owner/repo"
 
     https = _git_repo(tmp_path / "https",
-                      remote="https://github.com/hishamalhadi/ahhs-quran.git")
-    assert briefmod._git_remote(https) == "https://github.com/hishamalhadi/ahhs-quran"
+                      remote="https://github.com/owner/sub-app.git")
+    assert briefmod._git_remote(https) == "https://github.com/owner/sub-app"
 
     bare = _git_repo(tmp_path / "bare")
     assert briefmod._git_remote(bare) is None
