@@ -1353,7 +1353,13 @@ async def get_project_brief(
     def _load() -> dict[str, Any] | None:
         brief = None
         if not refresh:
-            brief = engine.load_brief(project_id)
+            # load_or_refresh, not load_brief: recompile-on-mutation only fires
+            # for changes made THROUGH this API. Work done from the CLI, by an
+            # agent, or by a hook writes straight to the DB, so a cached brief
+            # could be hours stale while the page claimed "last activity just
+            # now". Pulling on read makes freshness independent of who wrote.
+            loader = getattr(engine, "load_or_refresh", None)
+            brief = loader(project_id) if loader else engine.load_brief(project_id)
         if brief is None:
             brief = engine.compile_brief(project_id)
         return engine.brief_to_dict(brief) if brief is not None else None

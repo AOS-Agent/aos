@@ -519,6 +519,44 @@ def _parse_frontmatter(text: str) -> dict:
     return out
 
 
+# Any leading tag means HTML. Listing specific tags was too narrow: the HRE
+# decks open with <title>, and their megabyte of base64 font pushes </html> far
+# past any sane lookahead — so both the tag-list and the closing-tag check
+# missed, and the file fell through to the markdown path.
+_HTMLISH = re.compile(r"^\s*<[a-z!/]", re.I)
+# A line of CSS rarely starts with '<', so the markdown skip-list waves it
+# through: the HRE decks were being previewed as
+# "@font-face{font-family:'Kitab';...base64,d09GMg...". Recognise the shapes.
+_CSS_NOISE = re.compile(
+    r"^\s*(@(font-face|media|import|charset|keyframes)\b"      # at-rules
+    r"|--[a-z0-9-]+\s*:"                                        # custom props
+    r"|[.#]?[a-z0-9_\-\[\]='\"., >:()]+\s*\{"                   # selectors
+    r"|[a-z-]+\s*:\s*[^;]+;\s*\}?$"                             # declarations
+    r"|\}|\*/|/\*)", re.I,
+)
+
+
+def _html_excerpt(text: str) -> str | None:
+    """Readable text from an HTML document — never its stylesheet.
+
+    Order: <title>, then the first heading, then the first real paragraph.
+    <style> and <script> bodies are removed before anything is considered.
+    """
+    cleaned = re.sub(r"<(style|script)\b.*?</\1>", " ", text,
+                     flags=re.S | re.I)
+    m = re.search(r"<title[^>]*>(.*?)</title>", cleaned, re.S | re.I)
+    if m:
+        title = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", m.group(1))).strip()
+        if len(title) > 3:
+            return _short(title, 160)
+    for pattern in (r"<h[1-3][^>]*>(.*?)</h[1-3]>", r"<p[^>]*>(.*?)</p>"):
+        for hit in re.finditer(pattern, cleaned, re.S | re.I):
+            plain = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", hit.group(1))).strip()
+            if len(plain) > 12:
+                return _short(plain, 160)
+    return None
+
+
 def _first_prose_line(text: str) -> str | None:
     """The first line that is neither frontmatter, heading, nor decoration."""
     body = text
@@ -526,9 +564,15 @@ def _first_prose_line(text: str) -> str | None:
         end = body.find("\n---", 3)
         if end != -1:
             body = body[end + 4:]
+
+    if _HTMLISH.match(body) or "</html>" in body[:4000].lower():
+        return _html_excerpt(body)
+
     for line in body.splitlines():
         line = line.strip()
         if not line or line.startswith(("#", "---", "|", "```", ">", "!", "<")):
+            continue
+        if _CSS_NOISE.match(line) or "base64," in line:
             continue
         line = re.sub(r"\*\*|__|\*|`", "", line)
         if len(line) > 12:
@@ -2177,6 +2221,69 @@ def load_brief(project_id: str) -> ProjectBrief | None:
         return brief_from_dict(stored)
     except Exception:
         return None
+
+
+def _newest_change(project_id: str) -> str | None:
+    """Newest mutation timestamp for a project, from the DB. None if unknown.
+
+    Cheap: two indexed max() lookups, no row materialisation.
+    """
+    conn = _connect_ro(_work_db_path())
+    if conn is None:
+        return None
+    try:
+        stamps = []
+        row = conn.execute(
+            "SELECT max(max(coalesce(modified_at,'')), max(coalesce(completed_at,'')), "
+            "       max(coalesce(started_at,'')), max(coalesce(created_at,''))) "
+            "FROM tasks WHERE project_id = ?", (project_id,)
+        ).fetchone()
+        if row and row[0]:
+            stamps.append(row[0])
+        try:
+            row = conn.execute(
+                "SELECT max(h.timestamp) FROM entity_history h "
+                "JOIN tasks t ON t.id = h.entity_id "
+                "WHERE h.entity_type = 'task' AND t.project_id = ?", (project_id,)
+            ).fetchone()
+            if row and row[0]:
+                stamps.append(row[0])
+        except sqlite3.Error:
+            pass
+        return max(stamps) if stamps else None
+    except sqlite3.Error:
+        return None
+    finally:
+        conn.close()
+
+
+def load_or_refresh(project_id: str) -> ProjectBrief:
+    """The brief, recompiled if anything changed since it was last compiled.
+
+    Why this exists: recompiles used to be pushed only by mutations that went
+    THROUGH the API. Work done from the CLI, by an agent, or by a hook writes
+    straight to the DB, so the API happily served a brief compiled hours
+    earlier — the page showed stale state while claiming "last activity just
+    now". Most of this operator's work arrives exactly that way, so pushing was
+    the wrong model.
+
+    Pulling is authoritative instead: compare the stored ``compiled_at`` against
+    the newest mutation in the DB and recompile when it is behind, whoever made
+    the change. Warm compiles are 11-90ms, and the comparison is two indexed
+    max() lookups, so the common case (nothing changed) stays cheap.
+
+    Push-on-mutation is still worth keeping for the SSE nudge — it is what makes
+    an open page update without interaction. This just means correctness no
+    longer depends on it.
+    """
+    stored = load_brief(project_id)
+    if stored is None:
+        return compile_brief(project_id)
+
+    newest = _newest_change(project_id)
+    if newest and (not stored.compiled_at or newest > stored.compiled_at):
+        return compile_brief(project_id)
+    return stored
 
 
 def set_narrative(project_id: str, text: str, actor: Actor) -> None:

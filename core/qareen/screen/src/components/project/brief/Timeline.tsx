@@ -51,7 +51,12 @@ export function Timeline({ events }: { events: BriefEvent[] }) {
               {day.items.map((e, i) => {
                 const tone = eventTone(e.kind);
                 const who = actorLabel(e.actor);
-                const showWho = !textNamesActor(e.text, who);
+                // Commit text always opens with the git author's name, and the
+                // compiler deliberately leaves that actor unresolved (an author
+                // name is a name, not a verified role). Showing the chip too
+                // produced "Someone Hisham committed ..." — a contradiction in
+                // one line. The sentence already says who; drop the chip.
+                const showWho = e.kind !== 'commit' && !textNamesActor(e.text, who);
                 return (
                   <div key={`${e.at}-${i}`} className="relative flex items-baseline gap-3 py-1.5 pl-4">
                     <span className={`absolute left-[-3px] top-[10px] w-[7px] h-[7px] rounded-full ring-2 ring-bg ${tone.dot}`} />
