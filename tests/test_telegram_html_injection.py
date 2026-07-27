@@ -316,13 +316,30 @@ def test_unanswered_messages_escapes_sender_display_name():
 
 
 def test_bus_notify_consumer_escapes_before_framing():
-    """notify.py sends with parse_mode=HTML; triage.py feeds it raw inbound text."""
+    """notify.py's text reaches Telegram as HTML; triage.py feeds it raw inbound text.
+
+    Originally this pinned the escape as happening before an inline
+    ``f"⚠️ {text}"``. That framing has since moved into
+    ``core/engine/notify/router.send_notification`` (topic routing), so the
+    literal vanished from this file and the assertion broke — while the code
+    stayed correct. Pin the PROPERTY, not the old shape: the text must be
+    escaped before it leaves this module, because everything downstream sends
+    it with parse_mode="HTML" and none of it escapes.
+    """
     src = (ROOT / "core" / "engine" / "bus" / "consumers" / "notify.py").read_text()
     assert "html.escape" in src, "bus notify consumer must escape its event text"
+
     esc_at = src.index("html.escape")
-    framing_at = src.index('f"⚠️ {text}"')
-    assert esc_at < framing_at, \
-        "escape must happen BEFORE the emoji/HTML framing, or it escapes the framing too"
+    handoff_at = src.index("send_notification(")
+    assert esc_at < handoff_at, (
+        "escape must happen BEFORE handing the text to send_notification — that "
+        "path sends parse_mode=HTML and does not escape"
+    )
+
+    # And the receiving end must still be the unescaping-free path we assume.
+    router = (ROOT / "core" / "engine" / "notify" / "router.py").read_text()
+    assert "parse_mode" in router, "router no longer sets parse_mode — re-check this contract"
+    assert "unescape" not in router, "router now unescapes; the escape above would be undone"
 
 
 # ===========================================================================
