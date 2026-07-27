@@ -1743,9 +1743,20 @@ class TelegramChannel:
         if hasattr(self, '_api_start'):
             try:
                 await self._api_start()
-                # Register bot so MC messages forward to Telegram
+                # Register bot so MC messages forward to Telegram. Prefer the
+                # forum's daily topic; fall back to the DM when no forum.
                 from api_server import set_telegram_bot
-                set_telegram_bot(app.bot, self.allowed_chat_id)
+                mc_chat, mc_thread = self.allowed_chat_id, None
+                if self.forum_group_id:
+                    try:
+                        from daily_briefing import _get_daily_thread_id
+                        mc_thread = _get_daily_thread_id(
+                            self.bot_token, self.forum_group_id)
+                        if mc_thread:
+                            mc_chat = self.forum_group_id
+                    except Exception:
+                        mc_chat, mc_thread = self.allowed_chat_id, None
+                set_telegram_bot(app.bot, mc_chat, mc_thread)
                 logger.info("Bridge API server started on :4098")
             except Exception as e:
                 logger.warning(f"Bridge API failed to start: {e}", exc_info=True)

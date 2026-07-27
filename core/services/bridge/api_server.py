@@ -145,13 +145,19 @@ async def handle_stream(request):
 
 _telegram_bot = None
 _telegram_chat_id = None
+_telegram_thread_id = None
 
 
-def set_telegram_bot(bot, chat_id: int):
-    """Called by telegram_channel to register the bot for MC→Telegram forwarding."""
-    global _telegram_bot, _telegram_chat_id
+def set_telegram_bot(bot, chat_id: int, thread_id: int | None = None):
+    """Called by telegram_channel to register the bot for MC→Telegram forwarding.
+
+    chat_id is the forum group when one is configured (with thread_id for the
+    daily topic), otherwise the operator DM.
+    """
+    global _telegram_bot, _telegram_chat_id, _telegram_thread_id
     _telegram_bot = bot
     _telegram_chat_id = chat_id
+    _telegram_thread_id = thread_id
 
 
 async def _forward_to_telegram(user_text: str, response_text: str):
@@ -170,11 +176,10 @@ async def _forward_to_telegram(user_text: str, response_text: str):
                f"<b>You:</b> {html.escape(str(user_text), quote=False)}\n\n{clean}")
         if len(msg) > 4096:
             msg = msg[:4090] + "..."
-        await _telegram_bot.send_message(
-            chat_id=_telegram_chat_id,
-            text=msg,
-            parse_mode="HTML",
-        )
+        kwargs = {"chat_id": _telegram_chat_id, "text": msg, "parse_mode": "HTML"}
+        if _telegram_thread_id:
+            kwargs["message_thread_id"] = _telegram_thread_id
+        await _telegram_bot.send_message(**kwargs)
     except Exception as e:
         logger.warning(f"Failed to forward to Telegram: {e}")
 
