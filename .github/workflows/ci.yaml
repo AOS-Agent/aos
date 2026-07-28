@@ -35,14 +35,62 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Install uv
+        # Exact version, not a major tag: setup-uv dropped its moving-major-tag
+        # workflow at v8, so `@v8`/`@v9` do not exist. The neighbouring actions
+        # here still use major tags because they still publish them.
+        uses: astral-sh/setup-uv@v9.0.0
         with:
-          python-version: "3.12"
+          enable-cache: true
+      # No python-version pinned here on purpose: uv reads .python-version, so
+      # the interpreter under test is the same one AOS provisions on a Mac Mini.
+      # A hardcoded version here is exactly how CI drifted to 3.12 while every
+      # machine in the fleet ran 3.13.
       - name: Install dependencies
-        run: pip install -r tests/requirements.txt
+        run: uv sync --frozen --group dev
       - name: Run tests
         # Full suite. tests/test_initiative_bridge.py is a standalone dev-machine
         # verification script — it skips itself under pytest (no ~/project/aos on
-        # the runner), so no --ignore is needed. All tests are DB/stdlib-based and
-        # platform-agnostic, so ubuntu is sufficient (no macOS runner required).
-        run: pytest tests/ -v
+        # the runner), so no --ignore is needed. The tests themselves are
+        # DB/stdlib-based and platform-agnostic, so ubuntu is fine here; macOS
+        # installability is covered by the runtime-deps job below.
+        run: uv run --frozen pytest tests/ -v
+
+  runtime-deps:
+    name: Runtime deps install (macOS/arm64)
+    # The fleet is Apple Silicon Mac Minis. Ubuntu cannot validate that the
+    # runtime dependency set actually installs there, and a missing wheel fails
+    # at INSTALL time, not test time — so this job deliberately runs no tests.
+    # It answers one question: does `uv sync` succeed on the pinned interpreter,
+    # on the platform we actually ship to?
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+      - name: Sync locked runtime environment
+        run: uv sync --frozen
+      - name: Import every runtime dependency
+        # Resolving is not the same as importing: native builds and shim
+        # packages can resolve cleanly and still fail on import.
+        run: |
+          uv run --frozen python -c "
+          import yaml, rapidfuzz, phonenumbers, metaphone, networkx
+          import jwt, requests, httpx, feedparser, hijri_converter
+          print('all runtime dependencies import OK')
+          "
+
+  lockfile-current:
+    name: Lockfile matches pyproject
+    # Guards the failure mode this PR exists to prevent: someone adds an import
+    # plus a pyproject entry but forgets to re-lock, so production installs an
+    # environment that no longer matches the declaration.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v9.0.0
+      - name: Verify uv.lock is up to date
+        run: uv lock --check

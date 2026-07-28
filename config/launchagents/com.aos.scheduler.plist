@@ -39,8 +39,15 @@
 
     <key>EnvironmentVariables</key>
     <dict>
+        <!-- __HOME__/.aos/python/bin must come first. 17 cron scripts start with
+             `#!/usr/bin/env python3`, and a shebang cannot call the aos-python
+             resolver, so PATH order is the only thing that decides which
+             interpreter they get. Without this they resolve to Homebrew's
+             python, which has none of the AOS runtime dependencies installed —
+             that is how ascbuild-sync and morning-context ended up failing on
+             ModuleNotFoundError while CI stayed green. -->
         <key>PATH</key>
-        <string>__HOME__/.local/bin:/opt/homebrew/bin:__HOME__/.bun/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <string>__HOME__/.aos/python/bin:__HOME__/.local/bin:/opt/homebrew/bin:__HOME__/.bun/bin:/usr/local/bin:/usr/bin:/bin</string>
     </dict>
 </dict>
 </plist>

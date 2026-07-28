@@ -429,90 +429,63 @@ prereq_homebrew() {
 }
 
 prereq_python3() {
-    # Always prefer Homebrew python over macOS system python
-    # Put brew paths first so python3 resolves correctly for this session
-    if [[ -d /opt/homebrew/bin ]]; then
-        export PATH="/opt/homebrew/bin:$PATH"
-    fi
-    export PATH="$HOME/.local/bin:$PATH"
-
-    if command -v python3 &>/dev/null; then
-        local ver
-        ver=$(python3 --version 2>&1 | awk '{print $2}')
-        local major minor
-        major=$(echo "$ver" | cut -d. -f1)
-        minor=$(echo "$ver" | cut -d. -f2)
-
-        if [[ "$major" -ge 3 ]] && [[ "$minor" -ge 11 ]]; then
-            _skip "Python $ver"
-            # Write resolved path for aos-python wrapper
-            mkdir -p "$HOME/.aos/config"
-            which python3 > "$HOME/.aos/config/python"
-            return 0
-        fi
-        _warn "Python $ver found but 3.11+ required"
+    # AOS owns its interpreter.
+    #
+    # uv provisions the exact CPython pinned in .python-version — not Homebrew's,
+    # not pyenv's, not macOS's 3.9. This is deliberate:
+    #   - `brew upgrade` used to move the interpreter out from under a running
+    #     install, silently changing the version every cron ran on.
+    #   - Homebrew's python is "externally managed", so installing AOS runtime
+    #     deps into it required --break-system-packages.
+    #   - macOS grants Full Disk Access per binary path, so AOS needs to control
+    #     when that path changes rather than having brew change it incidentally.
+    #
+    # Requires uv, so run_prereqs calls prereq_uv before this.
+    local pinned
+    pinned=$(tr -d "[:space:]" < "$AOS_DIR/.python-version" 2>/dev/null)
+    if [[ -z "$pinned" ]]; then
+        _die "No .python-version in $AOS_DIR — cannot determine the pinned Python"
     fi
 
-    _step "Installing Python 3..."
-    brew install python@3.13 2>&1 | tail -1
+    command -v uv &>/dev/null || _die "uv required before Python setup"
 
-    # brew install python@3.13 creates python3.13 but may not create python3
-    # Force the link so python3 points to brew's version, not macOS 3.9
-    brew link --overwrite python@3.13 2>/dev/null || true
+    _step "Provisioning Python $pinned via uv..."
+    uv python install "$pinned" 2>&1 | tail -1
 
-    # Find brew's python and make it the default for this session + future shells
-    local brew_python=""
-    for p in /opt/homebrew/bin/python3.13 /opt/homebrew/bin/python3 /usr/local/bin/python3.13 /usr/local/bin/python3; do
-        if [[ -f "$p" ]]; then
-            local pver
-            pver=$("$p" --version 2>&1 | awk '{print $2}')
-            local pminor
-            pminor=$(echo "$pver" | cut -d. -f2)
-            if [[ "$pminor" -ge 11 ]]; then
-                brew_python="$p"
-                break
-            fi
-        fi
-    done
+    local aos_python
+    aos_python=$(uv python find "$pinned" 2>/dev/null)
+    [[ -x "$aos_python" ]] || _die "uv could not provide Python $pinned"
 
-    if [[ -n "$brew_python" ]]; then
-        _ok "Python $("$brew_python" --version 2>&1 | awk '{print $2}') ($brew_python)"
-        # Symlink so python3 resolves to brew python everywhere
-        mkdir -p "$HOME/.local/bin"
-        ln -sf "$brew_python" "$HOME/.local/bin/python3"
-        # Write resolved path for aos-python wrapper
-        mkdir -p "$HOME/.aos/config"
-        echo "$brew_python" > "$HOME/.aos/config/python"
-        # Rehash so this session sees the new python3
-        hash -r 2>/dev/null || true
-    else
-        # Still write whatever python3 we have, even if < 3.11
-        local fallback_python
-        fallback_python=$(which python3 2>/dev/null || echo "")
-        if [[ -n "$fallback_python" ]]; then
-            mkdir -p "$HOME/.aos/config"
-            echo "$fallback_python" > "$HOME/.aos/config/python"
-        fi
-        _warn "Python 3.11+ not found — some features won't work"
-    fi
+    # aos-python (core/bin/internal/aos-python) reads this file. Everything in
+    # AOS resolves its interpreter through there rather than through PATH.
+    mkdir -p "$HOME/.aos/config"
+    echo "$aos_python" > "$HOME/.aos/config/python"
+
+    _ok "Python $pinned ($aos_python)"
 }
 
-prereq_pyyaml() {
-    if python3 -c "import yaml" 2>/dev/null; then
-        _skip "PyYAML"
-        return 0
+prereq_aos_env() {
+    # Install the locked runtime dependency set into the AOS environment.
+    #
+    # These are the packages core/engine/** and core/bin/** import. They used to
+    # be declared only in tests/requirements.txt, so CI installed them and no
+    # machine ever did — the nightly crons died on ModuleNotFoundError while CI
+    # stayed green. pyproject.toml + uv.lock is now the single source of truth.
+    command -v uv &>/dev/null || _die "uv required before AOS env setup"
+
+    _step "Installing AOS runtime dependencies..."
+    if ! UV_PROJECT_ENVIRONMENT="$HOME/.aos/python" \
+         uv sync --frozen --project "$AOS_DIR" 2>&1 | tail -2; then
+        _die "uv sync failed — AOS runtime dependencies not installed"
     fi
 
-    _step "Installing PyYAML..."
-    # Use uv if available, fall back to pip. Target the active python3 explicitly.
-    if command -v uv &>/dev/null; then
-        uv pip install --python "$(which python3)" --quiet pyyaml 2>&1 || \
-        python3 -m pip install --quiet --disable-pip-version-check --break-system-packages pyyaml 2>&1
-    else
-        python3 -m pip install --quiet --disable-pip-version-check --break-system-packages pyyaml 2>&1
-    fi
-    python3 -c "import yaml" 2>/dev/null || _die "PyYAML install failed"
-    _ok "PyYAML"
+    # Point aos-python at the synced environment so engine imports resolve.
+    mkdir -p "$HOME/.aos/config"
+    echo "$HOME/.aos/python/bin/python" > "$HOME/.aos/config/python"
+
+    "$HOME/.aos/python/bin/python" -c "import yaml" 2>/dev/null \
+        || _die "AOS runtime environment is not importable"
+    _ok "AOS runtime dependencies"
 }
 
 prereq_uv() {
@@ -1075,9 +1048,11 @@ run_prereqs() {
     prereq_xcode_clt
     prereq_git
     prereq_homebrew
-    prereq_python3
+    # uv first: it provisions the pinned interpreter that prereq_python3 selects
+    # and that prereq_aos_env syncs dependencies into.
     prereq_uv
-    prereq_pyyaml
+    prereq_python3
+    prereq_aos_env
     prereq_bun
     prereq_qmd
     prereq_jq

@@ -11,7 +11,10 @@ set -u
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 AOS_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
-PYTHON="${PYTHON:-python3}"
+# Resolve through aos-python so this uses the interpreter AOS pinned in
+# .python-version, not whatever python3 the cron environment happens to
+# expose. Bare python3 here is why this job died on ModuleNotFoundError.
+PYTHON="${PYTHON:-$AOS_ROOT/core/bin/internal/aos-python}"
 ENGINE="$AOS_ROOT/core/engine/comms/enrich/engine.py"
 
 cd "$AOS_ROOT" || { echo "[backup-comms] cannot cd to $AOS_ROOT" >&2; exit 1; }
