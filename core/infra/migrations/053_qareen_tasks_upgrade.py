@@ -128,7 +128,7 @@ def up() -> bool:
                 old_value   TEXT,
                 new_value   TEXT,
                 actor       TEXT NOT NULL,
-                actor_type  TEXT NOT NULL CHECK(actor_type IN ('operator','agent','system','automation')),
+                actor_type  TEXT NOT NULL CHECK(actor_type IN ('operator','agent','system','automation','unknown')),
                 timestamp   TEXT NOT NULL,
                 session_id  TEXT
             );

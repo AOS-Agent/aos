@@ -29,7 +29,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "core" / "engine" /
 import brief as briefmod  # noqa: E402
 from brief_types import Actor, Conflict, ProjectBrief  # noqa: E402
 
-
 # ── Fixtures ────────────────────────────────────────────────────────────
 
 @pytest.fixture()

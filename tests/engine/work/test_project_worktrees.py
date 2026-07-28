@@ -27,10 +27,31 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "core" / "engine" /
 
 import project_worktrees as pw  # noqa: E402
 
+# Captured before any fixture swaps them out, for the one test that asserts
+# on the real prefixes.
+REAL_EPHEMERAL_PREFIXES = pw.EPHEMERAL_PREFIXES
+
 
 def _git(cwd: Path, *args: str) -> None:
     subprocess.run(("git", "-C", str(cwd), *args), check=True,
                    capture_output=True, text=True)
+
+
+@pytest.fixture(autouse=True)
+def _sandbox_is_not_ephemeral(monkeypatch):
+    """Keep the sandbox's own location out of the classification.
+
+    pytest puts tmp_path under /tmp on Linux, which is itself an
+    EPHEMERAL_PREFIXES entry. That made every worktree in these tests
+    classify as "ephemeral" on CI, so the canonical/sibling cases were never
+    actually exercised there — while passing on macOS, where tmp_path lives
+    under /private/var/folders and matches nothing.
+
+    Point the prefixes at a path that cannot occur, so each test sees only
+    the layout it built. Tests that are *about* ephemeral handling set their
+    own prefixes in the test body, which takes precedence over this.
+    """
+    monkeypatch.setattr(pw, "EPHEMERAL_PREFIXES", ("/nonexistent-ephemeral-root/",))
 
 
 @pytest.fixture
@@ -141,16 +162,20 @@ def test_prune_is_described_as_non_destructive_to_directories(repo, tmp_path):
 
 # ── locations ───────────────────────────────────────────────────────
 
-@pytest.mark.parametrize("prefix", pw.EPHEMERAL_PREFIXES)
-def test_every_tmp_prefix_is_classified_ephemeral(repo, prefix):
+@pytest.mark.parametrize("prefix", REAL_EPHEMERAL_PREFIXES)
+def test_every_tmp_prefix_is_classified_ephemeral(repo, prefix, monkeypatch):
     """The rule against /private/tmp, enforced by classification not by memory."""
+    monkeypatch.setattr(pw, "EPHEMERAL_PREFIXES", REAL_EPHEMERAL_PREFIXES)
     assert pw._classify_location(Path(prefix + "some-wt"), repo) == "ephemeral"
 
 
-def test_pytest_tmp_dirs_are_not_mistaken_for_ephemeral(repo, tmp_path):
-    """Guards the tests themselves: macOS puts tmp_path under /private/var/folders,
-    which must NOT match the /private/var/tmp/ prefix."""
-    assert pw._classify_location(tmp_path / "wt", repo) != "ephemeral"
+def test_ephemeral_prefixes_are_matched_precisely(repo, monkeypatch):
+    """/private/var/tmp/ must not swallow /private/var/folders/ — that is where
+    macOS puts pytest's tmp_path. Asserted against the real prefixes rather
+    than whichever directory this run's sandbox happens to sit in."""
+    monkeypatch.setattr(pw, "EPHEMERAL_PREFIXES", REAL_EPHEMERAL_PREFIXES)
+    assert pw._classify_location(
+        Path("/private/var/folders/ab/cd/T/wt"), repo) != "ephemeral"
 
 
 def test_live_worktree_in_a_wiped_location_is_planned_into_the_project(
