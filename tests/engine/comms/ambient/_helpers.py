@@ -12,6 +12,7 @@ import importlib.util
 import json
 import sqlite3
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 _REPO = Path(__file__).resolve().parents[4]
@@ -83,6 +84,23 @@ def make_comms_db(path: Path, messages=None, entities=None) -> Path:
     conn.commit()
     conn.close()
     return path
+
+
+def ago(days: float) -> str:
+    """A timestamp `days` before now.
+
+    Fixture timestamps for anything the ambient code time-gates MUST be
+    relative. Every digest and proposer window is measured against the wall
+    clock (TX_WINDOW_DAYS=7, STALE_UNDATED_DAYS=14, QUESTION_WINDOW_DAYS=21),
+    so an absolute date silently ages out of range and turns the suite red on
+    a calendar date rather than on a code change.
+
+    This is not hypothetical: test_proposer.py pinned its fixtures to
+    2026-07-1x, and on 2026-07-28 they crossed STALE_UNDATED_DAYS and
+    test_per_run_cap began failing with no code change behind it.
+    """
+    return (datetime.now(timezone.utc) - timedelta(days=days)).strftime(
+        "%Y-%m-%dT%H:%M:%S")
 
 
 def msg(mid, content, *, ts, direction="inbound", person_id=None, channel="whatsapp"):
