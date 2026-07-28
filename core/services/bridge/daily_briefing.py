@@ -805,11 +805,13 @@ def _send_morning_prompt(bot_token: str, chat_id: int, thread_id: int | None = N
 # ── Learning drip (KEPT AS-IS) ────────────────────────────────────────
 
 
-def _send_learning_drip(bot_token: str, chat_id: int, time_slot: str):
+def _send_learning_drip(bot_token: str, chat_id: int, time_slot: str,
+                        thread_id: int | None = None):
     """Send the day's learning drip message if one is due.
 
     Reads onboarding completion date to determine which day they're on,
-    then sends the appropriate tip for this time slot.
+    then sends the appropriate tip for this time slot. Takes an optional
+    thread_id for the daily forum topic, like its sibling senders.
     """
     try:
         onboarding_file = Path.home() / ".aos" / "config" / "onboarding.yaml"
@@ -845,9 +847,12 @@ def _send_learning_drip(bot_token: str, chat_id: int, time_slot: str):
         for drip in today_drips:
             msg = drip.get("message", "").strip()
             if msg:
+                payload = {"chat_id": chat_id, "text": msg}
+                if thread_id:
+                    payload["message_thread_id"] = thread_id
                 httpx.post(
                     f"https://api.telegram.org/bot{bot_token}/sendMessage",
-                    json={"chat_id": chat_id, "text": msg},
+                    json=payload,
                     timeout=10,
                 )
                 logger.info(f"Learning drip sent: day {day_number}, {time_slot}")
@@ -924,7 +929,7 @@ def start_daily_briefing(bot_token: str, chat_id: int, hour: int = 8,
                 if (now.hour == hour and now.minute >= minute and
                         last_sent_date != now.date() and not prompt_sent):
                     _send_morning_prompt(bot_token, target_chat, thread_id)
-                    _send_learning_drip(bot_token, chat_id, "morning")
+                    _send_learning_drip(bot_token, target_chat, "morning", thread_id)
                     state_file.with_suffix(".prompt").write_text(str(now.date()))
 
                 # Send briefing 15 min after prompt
@@ -940,11 +945,11 @@ def start_daily_briefing(bot_token: str, chat_id: int, hour: int = 8,
 
                 # Midday learning drip (12:00-12:30)
                 if now.hour == 12 and now.minute < 30:
-                    _send_learning_drip(bot_token, chat_id, "midday")
+                    _send_learning_drip(bot_token, target_chat, "midday", thread_id)
 
                 # Evening learning drip (20:00-20:30)
                 if now.hour == 20 and now.minute < 30:
-                    _send_learning_drip(bot_token, chat_id, "evening")
+                    _send_learning_drip(bot_token, target_chat, "evening", thread_id)
 
             except Exception as e:
                 logger.error(f"Daily briefing loop error: {e}")

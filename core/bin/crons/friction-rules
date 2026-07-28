@@ -35,20 +35,18 @@ def get_secret(name: str) -> str:
 
 
 def send_telegram(text: str):
-    """Send a message via Telegram."""
-    import urllib.request
+    """Send a message via the topic-routed notifier.
 
-    bot_token = get_secret("TELEGRAM_BOT_TOKEN")
-    chat_id = get_secret("TELEGRAM_CHAT_ID")
-    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-    data = json.dumps({
-        "chat_id": int(chat_id),
-        "text": text,
-        "parse_mode": "HTML",
-    }).encode()
-    req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+    Proposed rule changes are system self-improvement, so they go to the
+    system topic. The router falls back to group General and then the
+    operator DM, so a DM-only install is unaffected.
+    """
+    sys.path.insert(0, str(AOS_DIR / "core" / "engine"))
     try:
-        urllib.request.urlopen(req, timeout=10)
+        from notify.router import send_notification
+        result = send_notification(text, topic="system", parse_mode="HTML")
+        if not result["delivered"]:
+            print(f"Failed to send Telegram message: {result['error']}", file=sys.stderr)
     except Exception as e:
         print(f"Failed to send Telegram message: {e}", file=sys.stderr)
 

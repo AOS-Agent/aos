@@ -124,28 +124,17 @@ def _load_checks_individually(
 
 
 def _notify_telegram(message: str):
-    """Best-effort Telegram notification."""
-    import subprocess
-    aos_dir = Path.home() / "aos"
+    """Best-effort Telegram notification, routed to the alerts topic.
+
+    kind stays "info" so the router does not prepend a warning emoji — the
+    copy arrives already humanized by alert_copy.render_report (aos#170).
+    parse_mode stays off, matching the previous plain-text send.
+    """
+    import sys
+    sys.path.insert(0, str(Path.home() / "aos" / "core" / "engine"))
     try:
-        token = subprocess.run(
-            [str(aos_dir / "core/bin/cli/agent-secret"), "get", "TELEGRAM_BOT_TOKEN"],
-            capture_output=True, text=True, timeout=5
-        ).stdout.strip()
-        chat_id = subprocess.run(
-            [str(aos_dir / "core/bin/cli/agent-secret"), "get", "TELEGRAM_CHAT_ID"],
-            capture_output=True, text=True, timeout=5
-        ).stdout.strip()
-        if not token or not chat_id:
-            return
-        import urllib.request
-        data = json.dumps({"chat_id": chat_id, "text": message}).encode()
-        req = urllib.request.Request(
-            f"https://api.telegram.org/bot{token}/sendMessage",
-            data=data,
-            headers={"Content-Type": "application/json"},
-        )
-        urllib.request.urlopen(req, timeout=10)
+        from notify.router import send_notification
+        send_notification(message, topic="alerts", parse_mode=None)
     except Exception:
         pass  # Best effort
 
