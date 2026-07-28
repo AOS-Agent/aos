@@ -108,10 +108,12 @@ class Notifier:
         bus: Optional[Any] = None,
         store: Optional[Any] = None,
         clock: Optional[Callable[[], datetime]] = None,
+        routing_getter: Optional[Callable[[], tuple]] = None,
     ) -> None:
         self._db_path = Path(db_path) if db_path else DB_PATH
         self._secret_getter = secret_getter or agent_secret_get
         self._transport = telegram_transport or urllib_transport
+        self._routing_getter = routing_getter or _default_routing
         self._bus = bus
         self._store = store
         self._clock = clock or datetime.utcnow
@@ -342,9 +344,14 @@ class Notifier:
     # ── channel (b): Telegram ─────────────────────────────────────────
 
     def _send_telegram(self, text: str) -> Optional[bool]:
-        """Direct Telegram bot send. Tri-state, mirroring the pattern in
+        """Telegram bot send, routed to the operator's forum topic when one
+        is configured. Tri-state, mirroring the pattern in
         core/bin/internal/scheduler: True = sent, False = Telegram not
-        configured (graceful skip), None = send attempted but failed."""
+        configured (graceful skip), None = send attempted but failed.
+
+        The transport stays injectable, so this keeps its own send rather
+        than delegating to the notify router; only the destination is
+        shared with the router (via ``routing_getter``)."""
         try:
             token = self._secret_getter("TELEGRAM_BOT_TOKEN")
             chat_id = self._secret_getter("TELEGRAM_CHAT_ID")
@@ -352,8 +359,17 @@ class Notifier:
             return None
         if not token or not chat_id:
             return False
+        # Shipment milestones are day-to-day updates -> the "daily" topic.
+        # No forum configured leaves chat_id as the operator DM, unchanged.
+        thread_id = None
+        group_id, topics = self._routing_getter()
+        if group_id:
+            chat_id, thread_id = str(group_id), topics.get("daily")
         try:
-            data = json.dumps({"chat_id": chat_id, "text": text}).encode()
+            payload = {"chat_id": chat_id, "text": text}
+            if thread_id:
+                payload["message_thread_id"] = thread_id
+            data = json.dumps(payload).encode()
             resp: TransportResponse = self._transport(
                 "POST",
                 "https://api.telegram.org/bot%s/sendMessage" % token,
@@ -367,6 +383,21 @@ class Notifier:
         except Exception:
             logger.exception("telegram send failed")
             return None
+
+
+def _default_routing() -> tuple:
+    """(forum_group_id, {topic: thread_id}) from the notify router.
+
+    Returns (None, {}) when the router is unreachable or no forum is
+    configured, which leaves sends on the operator DM.
+    """
+    try:
+        import sys
+        sys.path.insert(0, str(Path.home() / "aos" / "core" / "engine"))
+        from notify.router import get_routing
+        return get_routing()
+    except Exception:
+        return None, {}
 
 
 def _field(obj: Any, name: str) -> Optional[Any]:
