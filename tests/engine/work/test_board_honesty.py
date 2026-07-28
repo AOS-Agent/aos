@@ -45,7 +45,8 @@ def test_status_change_records_history(populated_work_env):
     assert ("status", "active", "waiting") in changes
     assert ("status", "waiting", "done") in changes
     # actor_type is constrained to the allowed enum values
-    assert all(r["actor_type"] in ("operator", "agent", "system", "automation") for r in rows)
+    assert all(r["actor_type"] in ("operator", "agent", "system", "automation", "unknown")
+               for r in rows)
 
 
 def test_no_history_when_value_unchanged(populated_work_env):

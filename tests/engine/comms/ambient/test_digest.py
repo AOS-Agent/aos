@@ -2,28 +2,43 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime, timedelta, timezone
 
 from core.engine.comms.ambient import digest as D
 
 from ._helpers import entity, make_comms_db, make_people_db, msg
 
 
+def _ago(days: float) -> str:
+    """A timestamp `days` before now.
+
+    Fixture timestamps must be relative. Every digest window is measured
+    against the wall clock (TX_WINDOW_DAYS=7, STALE_UNDATED_DAYS=14,
+    QUESTION_WINDOW_DAYS=21), so absolute dates silently age out of range and
+    turn the suite red on a calendar date rather than on a code change.
+    """
+    return (datetime.now(timezone.utc) - timedelta(days=days)).strftime(
+        "%Y-%m-%dT%H:%M:%S")
+
+
 def _db(tmp_path):
+    # m3 must remain the newest message for p1: an "unanswered" question
+    # requires that no outbound to that person follows it.
     messages = [
         # operator promised something (outbound)
-        msg("m1", "I'll send the docs", ts="2026-07-18T10:00:00",
+        msg("m1", "I'll send the docs", ts=_ago(4),
             direction="outbound", person_id="p1"),
         # other promised operator (inbound)
-        msg("m2", "I'll process your order", ts="2026-07-18T11:00:00",
+        msg("m2", "I'll process your order", ts=_ago(3),
             direction="inbound", person_id="p1"),
         # inbound question, never answered (latest inbound, no later outbound reply)
-        msg("m3", "what time works?", ts="2026-07-20T12:00:00",
+        msg("m3", "what time works?", ts=_ago(1),
             direction="inbound", person_id="p1"),
         # transaction msg, recent
-        msg("m4", "paid Acme $50", ts="2026-07-19T09:00:00",
+        msg("m4", "paid Acme $50", ts=_ago(2),
             direction="outbound", person_id="p1"),
         # a private contact's outbound commitment — must be excluded
-        msg("m5", "I'll call the bank", ts="2026-07-18T13:00:00",
+        msg("m5", "I'll call the bank", ts=_ago(3),
             direction="outbound", person_id="p2"),
     ]
     entities = [

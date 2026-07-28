@@ -28,7 +28,6 @@ import actor as actor_mod
 import backend as engine  # Drop-in replacement for old engine
 import query
 
-
 # ── Attribution helper ────────────────────────────────
 
 def _take_actor(args: list) -> tuple[list, str | None]:
