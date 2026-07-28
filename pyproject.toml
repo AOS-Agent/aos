@@ -1,0 +1,77 @@
+
+# AOS core runtime environment.
+#
+# This declares the Python dependencies that `core/engine/**` and the cron
+# scripts in `core/bin/**` import at runtime. Before this file existed, those
+# dependencies were declared ONLY in tests/requirements.txt — so CI installed
+# them and production never did. CI stayed green for months while the nightly
+# crons died on ModuleNotFoundError.
+#
+# Rules of the road:
+#   - Adding a third-party import to core/engine or core/bin means adding it
+#     here, in the same commit. tests/ci.yaml installs from this file, so a
+#     missing entry fails CI instead of silently failing a cron at 02:00.
+#   - The interpreter is pinned in .python-version and provisioned by uv.
+#     Nothing here should depend on Homebrew, pyenv, or the system Python.
+#
+# Services under core/services/** keep their own pyproject.toml + venv; they
+# are separately deployed and intentionally not covered by this environment.
+
+[project]
+name = "aos-core"
+version = "0.0.0"
+description = "AOS core runtime — engine and cron dependencies"
+requires-python = ">=3.13,<3.14"
+
+dependencies = [
+    # Config + data interchange. Used in ~47 files across engine and crons.
+    "pyyaml>=6.0",
+
+    # People engine: contact resolution.
+    #   rapidfuzz     — tiers 2/4 fuzzy + substring matching (resolver.py)
+    #   phonenumbers  — E.164 normalisation of handles (normalize.py)
+    #   metaphone     — tier 3 phonetic match, incl. Arabic transliteration
+    #                   variants (normalize.py). NOTE: exercised only at
+    #                   runtime, so a missing wheel here is invisible to tests.
+    #   networkx      — social graph + Louvain communities (graph.py)
+    "rapidfuzz>=3.14",
+    "phonenumbers>=9.0",
+    "metaphone>=0.6",
+    "networkx>=3.6",
+
+    # App Store Connect intake (core/engine/work/intake/ascbuild.py) — imports
+    # both at module scope, so the ascbuild-sync cron fails collection without
+    # them.
+    "pyjwt>=2.10",
+    "requests>=2.32",
+
+    # HTTP client used by channel-update and several engine callers.
+    "httpx>=0.28",
+
+    # Feed ingest (core/engine/intelligence/ingest/fetcher.py). Top-level
+    # import — currently only survives because no feed sources are active.
+    "feedparser>=6.0",
+
+    # Hijri calendar dates in the daily note compiler (compile-daily).
+    # Upstream renamed this to `hijridate`; hijri-converter is now a shim that
+    # emits a DeprecationWarning on import. Kept as-is so this PR stays a no-op
+    # on behaviour — the callers still `import hijri_converter`, and switching
+    # them is a separate, code-touching change.
+    "hijri-converter>=2.3",
+]
+
+# Deliberately NOT declared:
+#   pysqlcipher3 — Signal Desktop ingest (people/intel/sources/signal_desktop.py)
+#   only. It is import-guarded, needs a system libsqlcipher to build, and the
+#   Signal source is opt-in. Install it by hand on machines that use it.
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]
+
+# This is an environment definition, not a distributable package — there is no
+# module named `aos_core` to build. Without this, `uv sync` would try to build
+# a wheel and fail for want of a build backend.
+[tool.uv]
+package = false
