@@ -1011,7 +1011,7 @@ def propose_instance_yaml(r: ReconcileReport) -> str:
               "  # Left commented on purpose: the reconciler will not decide these."]
         for e in r.unclassified:
             L.append(f"  # {e.name}:")
-            L.append(f"  #   disposition: not_a_project   # or component_of / linked")
+            L.append("  #   disposition: not_a_project   # or component_of / linked")
             L.append(f"  #   reason: \"\"   # evidence: {e.evidence}")
     L += ["", "projects:"]
     for g in r.gaps:

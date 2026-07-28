@@ -69,8 +69,8 @@ DESCRIPTION = "Bind Qareen (4096/4097) and n8n (5678) to loopback; preserve tail
 
 import os
 import plistlib
-import socket
 import shutil
+import socket
 import subprocess
 import sys
 import time
