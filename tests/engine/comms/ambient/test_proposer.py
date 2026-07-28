@@ -5,14 +5,17 @@ import sqlite3
 
 from core.engine.comms.ambient import proposer as P
 
-from ._helpers import entity, make_comms_db, msg
+from ._helpers import ago, entity, make_comms_db, msg
 
 
 def _db(tmp_path):
+    # Relative, not absolute: the proposer drops anything past
+    # STALE_UNDATED_DAYS, so pinned dates expire and fail the suite on a
+    # calendar date. These three only need to be recent and durable.
     messages = [
-        msg("m1", "I'll send it", ts="2026-07-18T10:00:00", direction="outbound", person_id="p1"),
-        msg("m2", "I'll pay you back", ts="2026-07-18T11:00:00", direction="inbound", person_id="p1"),
-        msg("m3", "low conf promise", ts="2026-07-18T12:00:00", direction="outbound", person_id="p1"),
+        msg("m1", "I'll send it", ts=ago(3), direction="outbound", person_id="p1"),
+        msg("m2", "I'll pay you back", ts=ago(2.9), direction="inbound", person_id="p1"),
+        msg("m3", "low conf promise", ts=ago(2.8), direction="outbound", person_id="p1"),
     ]
     entities = [
         entity("e1", "commitment", fields={"what": "send it"}, source_ids=["m1"],
@@ -66,7 +69,10 @@ def test_no_reproposal_after_stamp(tmp_path):
 
 
 def test_per_run_cap(tmp_path):
-    messages = [msg(f"m{i}", f"promise {i}", ts=f"2026-07-1{i}T10:00:00",
+    # ago(5 - i) keeps the original ordering (m0 oldest → m4 newest) while
+    # holding all five inside STALE_UNDATED_DAYS, so max_per_run is what caps
+    # the result rather than fixtures quietly expiring.
+    messages = [msg(f"m{i}", f"promise {i}", ts=ago(5 - i),
                     direction="outbound", person_id="p1") for i in range(5)]
     entities = [entity(f"e{i}", "commitment", fields={"what": f"do {i}"},
                        source_ids=[f"m{i}"], person_id="p1", conf=0.9) for i in range(5)]

@@ -2,23 +2,11 @@
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime, timedelta, timezone
 
 from core.engine.comms.ambient import digest as D
 
+from ._helpers import ago as _ago
 from ._helpers import entity, make_comms_db, make_people_db, msg
-
-
-def _ago(days: float) -> str:
-    """A timestamp `days` before now.
-
-    Fixture timestamps must be relative. Every digest window is measured
-    against the wall clock (TX_WINDOW_DAYS=7, STALE_UNDATED_DAYS=14,
-    QUESTION_WINDOW_DAYS=21), so absolute dates silently age out of range and
-    turn the suite red on a calendar date rather than on a code change.
-    """
-    return (datetime.now(timezone.utc) - timedelta(days=days)).strftime(
-        "%Y-%m-%dT%H:%M:%S")
 
 
 def _db(tmp_path):
