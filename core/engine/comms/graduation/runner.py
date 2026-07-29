@@ -22,10 +22,24 @@ import sys
 import time
 from pathlib import Path
 
-# People DB
-_PEOPLE_SERVICE = next((p / "people" for p in Path(__file__).resolve().parents if p.name == "engine"), Path.home() / "aos" / "core" / "engine" / "people")
-sys.path.insert(0, str(_PEOPLE_SERVICE))
-import db as people_db
+# People DB. runner.py lives at core/engine/comms/graduation/ — the people
+# package is under engine, i.e. parents[2]/"people". Fixed depth rather than a
+# name-walk, for the same reason as patterns/compute.py: .resolve() rewrites the
+# ~/aos → aos-releases/<version> symlink but preserves the directory structure.
+#
+# Guarded, because an unguarded ModuleNotFoundError in a cron log is far harder
+# to triage than a named path — this import failed silently for three months
+# after the people package moved, and the raw traceback said only
+# "No module named 'db'".
+_PEOPLE_SERVICE = Path(__file__).resolve().parents[2] / "people"
+if str(_PEOPLE_SERVICE) not in sys.path:
+    sys.path.insert(0, str(_PEOPLE_SERVICE))
+
+try:
+    import db as people_db
+except ImportError:
+    print(f"People DB not available at {_PEOPLE_SERVICE}", file=sys.stderr)
+    sys.exit(1)
 
 log = logging.getLogger(__name__)
 

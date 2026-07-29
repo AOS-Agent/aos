@@ -23,9 +23,20 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-# People DB access
-_PEOPLE_SERVICE = next((p / "people" for p in Path(__file__).resolve().parents if p.name == "engine"), Path.home() / "aos" / "core" / "engine" / "people")
-sys.path.insert(0, str(_PEOPLE_SERVICE))
+# People DB access. sync_contacts.py lives at core/engine/comms/ — the people
+# package is a sibling under engine, i.e. parents[1]/"people". Resolved by fixed
+# depth rather than by walking for a parent literally named "engine": .resolve()
+# rewrites the ~/aos → aos-releases/<version> symlink but preserves the
+# core/engine/comms structure, so the relative depth is stable while a name-walk
+# can be defeated by the layout. (Same reasoning as patterns/compute.py.)
+#
+# This import broke for three months when the people package moved from
+# ~/.aos/services/people to core/engine/people and three separate hand-rolled
+# bootstraps — here, in patterns/compute.py, and in graduation/runner.py — were
+# not updated together. Keep the three in the same shape.
+_PEOPLE_SERVICE = Path(__file__).resolve().parents[1] / "people"
+if str(_PEOPLE_SERVICE) not in sys.path:
+    sys.path.insert(0, str(_PEOPLE_SERVICE))
 
 try:
     import db as people_db

@@ -2,6 +2,7 @@ from .bridge_poll_liveness import BridgePollLivenessCheck
 from .claude_defaults import ClaudeDefaultsCheck
 from .claude_md import GlobalClaudeMdCheck, RootClaudeMdCheck
 from .context_freshness import ContextFreshnessCheck
+from .cron_health import CronHealthCheck
 from .dead_code import DeadCodeCheck
 from .deployment_health import DeploymentHealthCheck
 from .dev_backend_plist import DevBackendPlistCheck
@@ -138,6 +139,7 @@ ALL_CHECKS = [
     # exist, scheduler singleton lock not stale, carrier Keychain keys not
     # half-configured. Report-only (NOTIFY); never repairs.
     TrackerHealthCheck,
+    CronHealthCheck,
 
     # Instance hygiene — diff framework declarations against instance state,
     # clean orphaned service venvs, stale LaunchAgents, broken symlinks,
