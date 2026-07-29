@@ -8,7 +8,20 @@ reconcile checks run on every update cycle.
 
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 from typing import Optional
+
+
+def aos_installed() -> bool:
+    """
+    True when there is an AOS installation to make statements about.
+
+    The floor under every check: the framework tree and the instance dir. With
+    neither present there is no invariant to verify, so a check that answers
+    "fine" is not reporting health — it is reporting that it looked at nothing.
+    """
+    home = Path.home()
+    return (home / "aos").exists() and (home / ".aos").exists()
 
 
 class Status(Enum):
@@ -41,10 +54,49 @@ class ReconcileCheck:
     check that sets periodic_fix = True is ALSO allowed to fix() on the
     lightweight periodic reconcile (every ~30 min), so a failure it owns doesn't
     have to wait for the next release. Everything else stays report-only there.
+
+    precondition(): what must exist for this check to MEAN anything.
+
+    A check has three possible answers, not two: the invariant holds, the
+    invariant is broken, or it could not be evaluated. Collapsing the third into
+    the first is how a monitor goes blind — it keeps reporting OK while
+    verifying nothing, and the thing it was supposed to watch rots unobserved.
+
+    This is not theoretical. Run the full suite against a completely empty
+    machine — no AOS, no vault, no config, no services — and 25 of 34 checks
+    reported "invariant holds". They were not checking an empty machine; they
+    were failing to notice there was nothing to check. The same shape produced:
+
+      * two ship-check guards that grepped a file moved months earlier —
+        `grep -q` on a missing file returns non-zero, so both fell to their else
+        branch and printed a green ✓ while reading nothing;
+      * `tracker_health` shipping green across 23/23 cron failures because it
+        "only checked packs, schema, lock, and credentials, never whether a
+        cron had ever succeeded";
+      * the `people` package moving out from under three crons, unnoticed for
+        three months, because nothing asserted the import still resolved.
+
+    So: return False when the inputs this check reads are absent. The runner
+    records SKIP — visible as unverified — instead of a green tick nobody
+    earned. Default True, because a check with no external prerequisite is
+    always meaningful.
     """
     name: str = "unnamed"
     description: str = ""
     periodic_fix: bool = False
+
+    def precondition(self) -> bool:
+        """
+        True when this check's inputs exist and it can give a real answer.
+
+        Defaults to "an AOS installation exists", which is the floor for every
+        check. Override to add a narrower prerequisite — but only for inputs the
+        check READS, never for the condition it TESTS. `volume_access` must not
+        skip when the AOS-X volume is missing: an unmounted volume is its
+        finding, not a missing prerequisite. Skipping there would reintroduce
+        exactly the blindness this exists to remove.
+        """
+        return aos_installed()
 
     def check(self) -> bool:
         raise NotImplementedError

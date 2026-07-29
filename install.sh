@@ -1573,7 +1573,7 @@ deploy_services() {
     # building venvs for them wastes install time and leaves dead runtimes on
     # disk that later health checks then "verify".
     local retired_services
-    retired_services=$(python3 - "$AOS_DIR" <<'PY' 2>/dev/null
+    retired_services=$("$AOS_DIR/core/bin/internal/aos-python" - "$AOS_DIR" <<'PY' 2>/dev/null
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(sys.argv[1]) / "core" / "infra" / "lib"))
@@ -1695,7 +1695,7 @@ INFRA_PLISTS=(
 # tunnel nobody opted into. Deploy `active`; leave `optional` to its own opt-in
 # path; never touch `retired`.
 _deployable_plists() {
-    python3 - "$AOS_DIR" <<'PY' 2>/dev/null
+    "$AOS_DIR/core/bin/internal/aos-python" - "$AOS_DIR" <<'PY' 2>/dev/null
 import sys
 from pathlib import Path
 
@@ -2343,16 +2343,21 @@ run_health_gate() {
     _check "Machine ID"         "[[ -f '$USER_DIR/.machine-id' ]]"     critical
     _check "Migrations applied" "[[ -f '$USER_DIR/.version' ]]"        critical
     _check "Event bus"          "[[ -f '$USER_DIR/events.jsonl' ]]"    critical
-    # The work store is ~/.aos/data/work.db. ~/.aos/work/work.yaml is the legacy
-    # read-only backup (see core/engine/work/backend.py) — a fresh install can
-    # have it while work.db is unseeded, so checking it proved nothing. Assert
-    # the DB is present AND seeded, which is what backend.py actually resolves.
-    _check "Work system"        "python3 -c \"
-import sqlite3, sys
-db = '$USER_DIR/data/work.db'
-con = sqlite3.connect(f'file:{db}?mode=ro', uri=True)
-names = {r[0] for r in con.execute(\\\"SELECT name FROM sqlite_master WHERE type='table'\\\")}
-sys.exit(0 if 'tasks' in names else 1)
+    # Assert the work store the backend will actually open — never a hardcoded
+    # path. ~/.aos/work/work.yaml (the old check) is a legacy read-only backup,
+    # so its presence proved nothing.
+    #
+    # It must be resolved via backend.py rather than reimplemented here.
+    # ~/.aos/data/work.db is only authoritative once migration 050 has SEEDED
+    # it, and 050 seeds by copying from qareen.db — which does not exist yet
+    # when it runs on a fresh install, so it skips and the backend falls back
+    # to qareen.db. Asserting work.db directly therefore fails every fresh
+    # install, which is exactly what an earlier version of this check did.
+    _check "Work system"        "'$AOS_DIR/core/bin/internal/aos-python' -c \"
+import sys
+sys.path.insert(0, '$AOS_DIR/core/engine/work')
+import backend
+sys.exit(0 if backend.DB_PATH.exists() and backend.DB_PATH.stat().st_size > 0 else 1)
 \"" critical
 
     # ── Context files ──────────────────────────────────────────
@@ -2436,7 +2441,7 @@ assert s.get('hooks', {}).get('$hook_name')
         [[ -f "$svc_dir/pyproject.toml" ]] || continue
         local svc_name
         svc_name=$(basename "$svc_dir")
-        svc_status=$(python3 - "$AOS_DIR" "$svc_name" <<'PY' 2>/dev/null
+        svc_status=$("$AOS_DIR/core/bin/internal/aos-python" - "$AOS_DIR" "$svc_name" <<'PY' 2>/dev/null
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(sys.argv[1]) / "core" / "infra" / "lib"))

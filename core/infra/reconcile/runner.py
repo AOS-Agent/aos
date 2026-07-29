@@ -198,6 +198,16 @@ def run_all(dry_run: bool = False, periodic: bool = False) -> list[CheckResult]:
     for cls in check_classes:
         c = cls()
         try:
+            # "I could not evaluate this" must never render as "this is fine".
+            # See ReconcileCheck.precondition — on an empty machine most checks
+            # used to report OK, which is what let several real regressions run
+            # unobserved for months.
+            if not c.precondition():
+                results.append(CheckResult(
+                    c.name, Status.SKIP,
+                    "not verified — prerequisites absent",
+                ))
+                continue
             if c.check():
                 results.append(CheckResult(c.name, Status.OK, "ok"))
             elif periodic and getattr(c, "periodic_fix", False):

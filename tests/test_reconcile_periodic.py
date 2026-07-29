@@ -36,6 +36,13 @@ def runner(tmp_path, monkeypatch):
     monkeypatch.setattr(mod, "LOG_FILE", tmp_path / "reconcile.jsonl")
     monkeypatch.setattr(mod, "STATE_FILE", tmp_path / "reconcile-state.json")
     monkeypatch.setenv("HOME", str(tmp_path))  # isolates the dedup seen file
+    # These tests exercise runner DISPATCH (which checks get fixed on which
+    # run), so the fake HOME has to look like a machine with AOS installed.
+    # Without it the runner's precondition gate correctly SKIPs everything —
+    # it refuses to "repair" a machine that has no AOS on it — and no fix()
+    # would ever be called. See ReconcileCheck.precondition.
+    (tmp_path / "aos").mkdir(exist_ok=True)
+    (tmp_path / ".aos").mkdir(exist_ok=True)
     sent = []
     monkeypatch.setattr(mod, "_notify_telegram", lambda msg: sent.append(msg))
     yield {"mod": mod, "sent": sent, "tmp": tmp_path}
