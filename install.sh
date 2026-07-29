@@ -686,45 +686,33 @@ prereq_gh() {
     _ok "GitHub CLI"
 }
 
+CMUX_BIN="/Applications/cmux.app/Contents/Resources/bin/cmux"
+
 prereq_editor() {
-    # VS Code is the default editor for AOS
-    if command -v code &>/dev/null; then
-        _save_editor "code"
-        _skip "VS Code"
+    # cmux is THE AOS terminal — the only supported surface. Ghostty-based, with
+    # vertical tabs and per-agent notifications, so a session and its subagents
+    # stay legible. There is deliberately no editor choice here: `aos start`
+    # drives cmux via `cmux new-workspace`, and a second option would only mean
+    # a second, less-tested launch path.
+    if command -v cmux &>/dev/null || [[ -x "$CMUX_BIN" ]]; then
+        _save_editor "cmux"
+        _skip "cmux"
         return 0
     fi
 
-    # Check if VS Code app exists but CLI isn't on PATH yet
-    if [[ -d "/Applications/Visual Studio Code.app" ]]; then
-        # Install the 'code' CLI command
-        local code_bin="/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code"
-        if [[ -x "$code_bin" ]]; then
-            ln -sf "$code_bin" /usr/local/bin/code 2>/dev/null || true
-        fi
-        if command -v code &>/dev/null; then
-            _save_editor "code"
-            _skip "VS Code"
-            return 0
-        fi
-    fi
-
-    _info "Installing VS Code..."
-    brew install --cask visual-studio-code 2>&1 | tail -3
-    if [[ -d "/Applications/Visual Studio Code.app" ]]; then
-        # Ensure 'code' CLI is on PATH
-        local code_bin="/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code"
-        if [[ -x "$code_bin" ]] && ! command -v code &>/dev/null; then
-            ln -sf "$code_bin" /usr/local/bin/code 2>/dev/null || true
-        fi
-        _ok "VS Code"
-        _save_editor "code"
+    _info "Installing cmux..."
+    brew install --cask cmux 2>&1 | tail -3
+    if [[ -x "$CMUX_BIN" ]]; then
+        _ok "cmux"
+        _save_editor "cmux"
     else
-        _warn "VS Code install failed — install it manually later"
+        # Non-fatal: the system is fully usable from any terminal via `cld`.
+        _warn "cmux install failed — run 'brew install --cask cmux' later, then 'aos start'"
     fi
 }
 
 _save_editor() {
-    # Persist editor choice so 'aos start' knows what to open
+    # Persist the terminal surface so 'aos start' knows what to drive.
     local cmd="$1"
     mkdir -p "$USER_DIR/config"
     echo "$cmd" > "$USER_DIR/config/editor"
@@ -1580,10 +1568,32 @@ deploy_services() {
         fi
     done
 
+    # Services the registry marks `retired` must not be deployed — their
+    # directories are kept as an archive (see core/services/README.md), and
+    # building venvs for them wastes install time and leaves dead runtimes on
+    # disk that later health checks then "verify".
+    local retired_services
+    retired_services=$(python3 - "$AOS_DIR" <<'PY' 2>/dev/null
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(sys.argv[1]) / "core" / "infra" / "lib"))
+try:
+    from service_registry import load_registry
+    print(" ".join(m.name for m in load_registry() if m.is_retired))
+except Exception:
+    pass
+PY
+)
+
     for src_dir in "$services_src"/*/; do
         local name
         name=$(basename "$src_dir")
         [[ -f "$src_dir/pyproject.toml" ]] || continue
+
+        if [[ " $retired_services " == *" $name "* ]]; then
+            _log "SERVICE SKIP (retired): $name"
+            continue
+        fi
 
         local dst="$services_dst/$name"
 
@@ -1659,9 +1669,60 @@ print('\n'.join(deps))
 
     # NLTK removed — memory service doesn't use it
 
-    # Install LaunchAgents from templates
+    # Install LaunchAgents from templates. Propagate failure — an unreadable
+    # service registry means we cannot tell which services are safe to deploy,
+    # and the stage must surface that rather than hand off a half-built system.
     install_launchagents
-    return 0
+}
+
+# Framework infrastructure with a launchd presence but no service manifest.
+# These are the harness itself (the scheduler that runs crons, the Sentinel
+# spawner, the Claude remote listener) rather than AOS services, so they are
+# named explicitly here instead of being inferred from a glob.
+INFRA_PLISTS=(
+    com.aos.scheduler.plist
+    com.aos.sentinel.plist
+    com.aos.claude-remote.plist
+)
+
+# Which plists may the installer deploy? Answered by the service registry
+# (core/services/*/service.yaml + core/qareen/service.yaml + config/services.d/),
+# never by listing config/launchagents/.
+#
+# This distinction matters: a glob can see filenames but not `status`. Globbing
+# is what caused the installer to force-load `listen` (retired — the registry
+# says it must NOT be loaded), three optional services, and the Cloudflare
+# tunnel nobody opted into. Deploy `active`; leave `optional` to its own opt-in
+# path; never touch `retired`.
+_deployable_plists() {
+    python3 - "$AOS_DIR" <<'PY' 2>/dev/null
+import sys
+from pathlib import Path
+
+aos_root = Path(sys.argv[1])
+sys.path.insert(0, str(aos_root / "core" / "infra" / "lib"))
+try:
+    from service_registry import load_registry
+except Exception:
+    sys.exit(1)
+
+try:
+    registry = load_registry()
+except Exception:
+    sys.exit(1)
+
+for manifest in registry:
+    # `optional` is opt-in (mesh, companion, work-runner, the MCP stdio
+    # servers) and `retired` must never load. Only `active` ships by default.
+    if not manifest.is_active:
+        continue
+    template = getattr(manifest, "plist_template", None)
+    # `generated` means the service renders its own plist elsewhere (e.g. the
+    # work-runner enable path); null means it has no launchd presence at all.
+    if not template or template == "generated":
+        continue
+    print(template)
+PY
 }
 
 install_launchagents() {
@@ -1673,50 +1734,78 @@ install_launchagents() {
 
     local templates_dir="$AOS_DIR/config/launchagents"
 
-    # Handle static plists (e.g., com.aos.scheduler.plist)
-    for plist_file in "$templates_dir"/*.plist; do
-        [[ -f "$plist_file" ]] || continue
-        local name
-        name=$(basename "$plist_file")
-        local target="$la_dir/$name"
+    # Build the allowlist: active services from the registry + framework infra.
+    local -a allowed=()
+    local reg_out
+    if reg_out=$(_deployable_plists) && [[ -n "$reg_out" ]]; then
+        while IFS= read -r t; do
+            [[ -n "$t" ]] && allowed+=("$t")
+        done <<< "$reg_out"
+    else
+        # The registry is strict — it raises on an invalid manifest rather than
+        # degrading. If it can't be read we must not fall back to "load
+        # everything"; that is the exact bug this function replaces.
+        _fail "Service registry unreadable — cannot determine which services to deploy"
+        _info "Run: python3 $AOS_DIR/core/infra/lib/service_registry.py validate"
+        return 1
+    fi
+    allowed+=("${INFRA_PLISTS[@]}")
 
+    local deployed=0 skipped_inactive=0
+    local f
+    for f in "$templates_dir"/*.plist "$templates_dir"/*.plist.template; do
+        [[ -f "$f" ]] || continue
+
+        local base name
+        base=$(basename "$f")
+        name="${base%.template}"          # com.aos.bridge.plist
+
+        # Deploy only what the registry (or the infra list) sanctions.
+        local ok=false a
+        for a in "${allowed[@]}"; do
+            if [[ "$a" == "$base" || "$a" == "$name" ]]; then ok=true; break; fi
+        done
+        if [[ "$ok" != true ]]; then
+            ((skipped_inactive++))
+            _log "LAUNCHAGENT SKIP (not an active service): $base"
+            continue
+        fi
+
+        local target="$la_dir/$name"
         local temp_plist
         temp_plist=$(mktemp)
-        sed "s|__HOME__|$HOME|g" "$plist_file" > "$temp_plist"
+        sed "s|__HOME__|$HOME|g" "$f" > "$temp_plist"
+
+        # Never load a plist with an unsubstituted __PLACEHOLDER__. Templates
+        # owned by another renderer (the Cloudflare tunnel carries
+        # __CLOUDFLARED__ and __TUNNEL_TOKEN__, filled in by
+        # core/qareen/services/tunnel_manager.py) would otherwise be written
+        # out with a literal placeholder as the program path and then loaded
+        # with KeepAlive — a permanent crash loop for a feature nobody enabled.
+        if grep -q '__[A-Z_]\{2,\}__' "$temp_plist"; then
+            _warn "LaunchAgent $name has unresolved placeholders — not loading"
+            _log "LAUNCHAGENT SKIP (unsubstituted placeholder): $base"
+            rm -f "$temp_plist"
+            continue
+        fi
 
         if [[ -f "$target" ]] && diff -q "$temp_plist" "$target" &>/dev/null; then
             _skip "LaunchAgent $name"
-            rm "$temp_plist"
+            rm -f "$temp_plist"
         else
             launchctl unload "$target" 2>/dev/null || true
             mv "$temp_plist" "$target"
             launchctl load "$target" 2>/dev/null || true
             _ok "LaunchAgent $name"
+            ((deployed++))
         fi
     done
 
-    # Handle template plists (e.g., com.aos.bridge.plist.template)
-    for template in "$templates_dir"/*.plist.template; do
-        [[ -f "$template" ]] || continue
-        local name
-        name=$(basename "$template" .template)  # com.aos.bridge.plist
-        local target="$la_dir/$name"
-
-        # Generate from template — substitute __HOME__ placeholder
-        local temp_plist
-        temp_plist=$(mktemp)
-        sed "s|__HOME__|$HOME|g" "$template" > "$temp_plist"
-
-        if [[ -f "$target" ]] && diff -q "$temp_plist" "$target" &>/dev/null; then
-            _skip "LaunchAgent $name"
-            rm "$temp_plist"
-        else
-            launchctl unload "$target" 2>/dev/null || true
-            mv "$temp_plist" "$target"
-            launchctl load "$target" 2>/dev/null || true
-            _ok "LaunchAgent $name"
-        fi
-    done
+    _log "LAUNCHAGENTS: deployed=$deployed skipped=$skipped_inactive"
+    if [[ "$skipped_inactive" -gt 0 ]]; then
+        _info "$skipped_inactive optional/retired service plist(s) left alone"
+    fi
+    return 0
 }
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1763,16 +1852,16 @@ configure_dock() {
     fi
 
     # Clear dock — keep only essential apps
-    # Essential: Finder (always there), Terminal, VS Code, System Settings
+    # Essential: Finder (always there), cmux, System Settings
     local app_count
     app_count=$(defaults read com.apple.dock persistent-apps 2>/dev/null | grep -c "tile-data" || echo "0")
     if [[ "$app_count" -gt 5 ]]; then
         # Clear all persistent apps
         defaults write com.apple.dock persistent-apps -array
 
-        # Add back essentials
-        for app in "/System/Applications/Utilities/Terminal.app" \
-                   "/Applications/Visual Studio Code.app" \
+        # Add back essentials. cmux is the terminal surface — Terminal.app is
+        # deliberately not pinned, so the Dock points at one way in.
+        for app in "/Applications/cmux.app" \
                    "/System/Applications/System Settings.app"; do
             if [[ -d "$app" ]]; then
                 defaults write com.apple.dock persistent-apps -array-add \
@@ -1780,7 +1869,7 @@ configure_dock() {
             fi
         done
         ((changed++))
-        _ok "Dock cleared — kept Terminal, VS Code, System Settings"
+        _ok "Dock cleared — kept cmux, System Settings"
     else
         _skip "Dock apps (already minimal)"
     fi
@@ -2254,7 +2343,17 @@ run_health_gate() {
     _check "Machine ID"         "[[ -f '$USER_DIR/.machine-id' ]]"     critical
     _check "Migrations applied" "[[ -f '$USER_DIR/.version' ]]"        critical
     _check "Event bus"          "[[ -f '$USER_DIR/events.jsonl' ]]"    critical
-    _check "Work system"        "[[ -f '$USER_DIR/work/work.yaml' ]]"  critical
+    # The work store is ~/.aos/data/work.db. ~/.aos/work/work.yaml is the legacy
+    # read-only backup (see core/engine/work/backend.py) — a fresh install can
+    # have it while work.db is unseeded, so checking it proved nothing. Assert
+    # the DB is present AND seeded, which is what backend.py actually resolves.
+    _check "Work system"        "python3 -c \"
+import sqlite3, sys
+db = '$USER_DIR/data/work.db'
+con = sqlite3.connect(f'file:{db}?mode=ro', uri=True)
+names = {r[0] for r in con.execute(\\\"SELECT name FROM sqlite_master WHERE type='table'\\\")}
+sys.exit(0 if 'tasks' in names else 1)
+\"" critical
 
     # ── Context files ──────────────────────────────────────────
     _step "Context files"
@@ -2329,17 +2428,41 @@ assert s.get('hooks', {}).get('$hook_name')
 
     # ── Services ───────────────────────────────────────────────
     _step "Services"
-    # Check all services that have pyproject.toml (auto-discovered)
+    # Registry-driven: only assert venvs for services we actually deploy. A
+    # retired service has no venv by design, and an optional one is opt-in —
+    # demanding either would fail a correct install.
+    local svc_status
     for svc_dir in "$AOS_DIR"/core/services/*/; do
         [[ -f "$svc_dir/pyproject.toml" ]] || continue
         local svc_name
         svc_name=$(basename "$svc_dir")
-        _check "Service $svc_name venv" "[[ -f '$USER_DIR/services/$svc_name/.venv/bin/python' ]]" critical
+        svc_status=$(python3 - "$AOS_DIR" "$svc_name" <<'PY' 2>/dev/null
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(sys.argv[1]) / "core" / "infra" / "lib"))
+try:
+    from service_registry import load_registry
+    m = load_registry().by_name(sys.argv[2])
+    print(m.status if m else "unknown")
+except Exception:
+    print("unknown")
+PY
+)
+        case "$svc_status" in
+            active)
+                _check "Service $svc_name venv" "[[ -f '$USER_DIR/services/$svc_name/.venv/bin/python' ]]" critical ;;
+            retired)
+                : ;;  # archived on purpose — nothing to verify
+            *)
+                _check "Service $svc_name venv" "[[ -f '$USER_DIR/services/$svc_name/.venv/bin/python' ]]" ;;
+        esac
     done
-    # Verify critical imports in service venvs
+    # Verify critical imports in the venvs we require. (The old Dashboard and
+    # Listen checks were removed: dashboard was replaced by Qareen in migration
+    # 054 and its service directory is gone; listen is retired.)
     _check "Bridge: yaml+httpx" "'$USER_DIR/services/bridge/.venv/bin/python' -c 'import yaml, httpx'"
-    _check "Dashboard: yaml+httpx" "'$USER_DIR/services/dashboard/.venv/bin/python' -c 'import yaml, httpx, fastapi'"
-    _check "Listen: yaml+fastapi" "'$USER_DIR/services/listen/.venv/bin/python' -c 'import yaml, fastapi'"
+    _check "Qareen: fastapi" "'$USER_DIR/services/qareen/.venv/bin/python' -c 'import yaml, fastapi'"
+    _check "Qareen responding" "curl -sfm 5 http://127.0.0.1:4096/api/health"
 
     # Secrets accessible (login keychain)
     _check "Secrets (login keychain)" "security find-generic-password -a aos -s aos.test 2>/dev/null || true"
@@ -2439,6 +2562,7 @@ for name, job in (data.get('jobs') or {}).items():
 
     # ── Apps ───────────────────────────────────────────────────
     _step "Applications"
+    _check "cmux"           "[[ -d '/Applications/cmux.app' ]]"
     _check "Google Chrome"  "[[ -d '/Applications/Google Chrome.app' ]]"
     _check "SuperWhisper"   "[[ -d '/Applications/superwhisper.app' ]]"
     _check "Obsidian"       "[[ -d '/Applications/Obsidian.app' ]]"
@@ -2585,24 +2709,35 @@ except: print('Operator')
     echo "  ${MUTED}────────────────────────────────────────────────────${RESET}"
     echo ""
 
-    if [[ "$ROLE" == "developer" ]]; then
-        # Developer machine: the terminal is the surface. Point at Qareen and
-        # the dev handoff, but don't auto-open a browser.
-        echo "  ${BOLD}AOS is running at${RESET} ${BRAND}${QAREEN_URL}${RESET}"
-        echo ""
-        if command -v cld &>/dev/null || command -v claude &>/dev/null; then
-            echo "  ${BOLD}Start a session:${RESET}  ${BRAND}${BOLD}aos start${RESET}  ${MUTED}(or ${BOLD}cld${RESET}${MUTED})${RESET}"
+    # Onboarding runs in cmux, for BOTH roles. It used to be gated on
+    # ROLE == developer, which meant an operator — the person who needs it most —
+    # was handed a browser tab and the line "Sahib will take it from here",
+    # while nothing in Qareen ever started onboarding. Qareen is the dashboard;
+    # Sahib lives in the session.
+    local onboarded=true
+    [[ -f "$HOME/.aos/config/onboarding.yaml" ]] || onboarded=false
+
+    echo "  ${BOLD}AOS is running at${RESET} ${BRAND}${QAREEN_URL}${RESET}"
+    echo ""
+
+    if command -v cld &>/dev/null || command -v claude &>/dev/null; then
+        if [[ "$onboarded" == false ]]; then
+            echo "  ${BOLD}Next:${RESET}  ${BRAND}${BOLD}aos start${RESET}  ${MUTED}— Sahib will walk you through setup in cmux.${RESET}"
         else
-            echo "  ${BOLD}Next:${RESET} install Claude Code, then run ${BRAND}aos start${RESET}"
-            echo "  ${MUTED}https://docs.anthropic.com/en/docs/claude-code${RESET}"
+            echo "  ${BOLD}Start a session:${RESET}  ${BRAND}${BOLD}aos start${RESET}"
         fi
+    else
+        echo "  ${BOLD}Next:${RESET} install Claude Code, then run ${BRAND}aos start${RESET}"
+        echo "  ${MUTED}https://docs.anthropic.com/en/docs/claude-code${RESET}"
+    fi
+    echo ""
+
+    if [[ "$ROLE" == "developer" ]]; then
         echo "  ${MUTED}Dev workspace: ~/project/aos — framework changes go there, never ~/aos.${RESET}"
         echo ""
     else
-        # Operator machine: Qareen is the whole takeover. Sahib greets them
-        # inside the UI; the terminal is never surfaced again.
-        echo "  ${MUTED}Claude is waiting for you inside — Sahib will take it from here.${RESET}"
-        echo ""
+        # Operators get the dashboard opened for them — but as the dashboard,
+        # not as the place onboarding happens.
         _open_qareen
     fi
 
@@ -2683,10 +2818,11 @@ main() {
     rm -f "$CHECKPOINT_FILE" 2>/dev/null
     _log "Install complete"
 
-    # Handoff launch. Operators land in Qareen (opened in print_handoff); the
-    # terminal is never surfaced for them. Developers keep the terminal handoff —
-    # aos start drops them into a Claude Code session with onboarding.
-    if [[ "$ROLE" == "developer" ]] && command -v claude &>/dev/null; then
+    # Handoff launch — for BOTH roles. `aos start` opens cmux and runs Claude
+    # Code, passing the onboarding prompt when ~/.aos/config/onboarding.yaml is
+    # absent. Gating this on the developer role is what left fresh operator
+    # installs with onboarding that never ran.
+    if command -v claude &>/dev/null; then
         echo ""
         echo "  ${BOLD}Launching AOS...${RESET}"
         echo ""
