@@ -1,25 +1,53 @@
 # AOS Onboarding
 
-Conversational first-time setup, triggered by Chief when it detects a fresh install
-(no `~/.aos/config/operator.yaml`).
+Conversational first-time setup. The flow lives in the **`onboard` skill**
+(`core/skills/onboard/SKILL.md`), not here — this file is a map to the moving
+parts.
 
-## Stages
+## Trigger
 
-1. **Identity** — Who are you? What's your role? What do you do?
-2. **Essentials** — Telegram bot token, vault location
-3. **Communication** — WhatsApp, email, calendar
-4. **Your Work** — Initial goals, projects, what's on your plate
-5. **Agents** — Which catalog agents to activate
-6. **Activate** — Start services, verify health, first message
+Chief loads the skill when `~/.aos/config/onboarding.yaml` is **missing**.
 
-## How it works
+The installer also drives it directly: `aos start` passes an explicit onboarding
+prompt to Claude Code when that file is absent, and `install.sh` ends by
+`exec aos start` for both roles.
 
-Each stage reads integration manifests from `core/infra/integrations/*/manifest.yaml`
-and walks the user through the setup steps defined there.
+> Both roles. Onboarding used to be gated on `ROLE == developer`, which meant a
+> non-developer install finished by opening a browser tab and promising "Sahib
+> will take it from here" — while nothing in Qareen ever started onboarding.
 
-Progress is saved to `~/.aos/config/onboarding-state.yaml` so it can resume
-if interrupted.
+## Where things live
 
-## Status
+| Piece | Path |
+|---|---|
+| The flow | `core/skills/onboard/SKILL.md` |
+| Persona / agent def | `templates/agents/onboard.md` |
+| Live system inventory | `core/bin/cli/aos-snapshot` (`aos snapshot`) |
+| Integration registry | `core/infra/integrations/registry.yaml` |
+| Per-integration setup | `core/infra/integrations/*/setup.sh` (`--check` = health, no prompts) |
+| Install report | `~/.aos/config/install-report.yaml` (written by the health gate) |
+| Completion marker | `~/.aos/config/onboarding.yaml` |
+| Developer-facing log | `~/.aos/logs/onboarding.md` |
 
-Framework designed. Conversational flow not yet built.
+## The rule that keeps it correct
+
+**The skill never states a fact about the system. It reads `aos snapshot`.**
+
+Counts, service names, integration lists, vault folders, which subsystems exist
+— all of it comes from whatever declares it (the service registry,
+`config/crons.yaml`, the integration manifests, the vault on disk, the instance
+databases).
+
+This is not stylistic. The skill previously hardcoded "12+ automated jobs" (a
+large undercount), named seven available integrations out of 22 — telling
+operators that Linear, Notion, and Slack weren't available when all three
+shipped — and gave a vault tour listing four folders that no longer existed.
+Every claim was true when written. Prose cannot track a filesystem, so it
+stopped trying to.
+
+`ship-check` enforces this — see its Onboarding Drift section.
+
+## Resume
+
+`onboarding.yaml` is written at the end. If a session dies mid-flow, the
+onboarding tasks in the work system show how far it got.

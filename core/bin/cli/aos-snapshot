@@ -1,0 +1,535 @@
+#!/usr/bin/env python3
+"""
+aos snapshot — what this system actually consists of, right now.
+
+Every fact here is read from the thing that declares it: the service registry,
+config/crons.yaml, the integration registry and its manifests, the skills and
+agents directories, the vault on disk, the instance databases. Nothing is
+asserted inline.
+
+That is the entire point. The onboarding skill used to describe the system in
+prose — "12+ automated jobs", "Available integrations: Telegram, GitHub, Email,
+WhatsApp, Obsidian, Google Workspace, Apple Native", a vault tour naming
+folders that no longer existed. Every one of those was true when written and
+false within a release, because prose cannot track a filesystem. Onboarding now
+reads this instead, so the introduction is correct by construction.
+
+Consumers:
+  - the `onboard` skill    — introduces the system that is actually installed
+  - the `whats-new` skill  — diffs two snapshots across an update
+  - Chief                  — answering "what can you do"
+  - the operator           — `aos snapshot`
+
+Usage:
+    aos snapshot              human-readable
+    aos snapshot --json       machine-readable
+    aos snapshot --section services,integrations
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sqlite3
+import subprocess
+import sys
+from pathlib import Path
+
+HOME = Path.home()
+AOS_ROOT = Path(__file__).resolve().parents[3]
+USER_DIR = HOME / ".aos"
+VAULT = HOME / "vault"
+CLAUDE_DIR = HOME / ".claude"
+
+
+# ── helpers ──────────────────────────────────────────────────────────────────
+
+def _yaml():
+    import yaml
+    return yaml
+
+
+def _safe(fn, default):
+    """Never let one unreadable source take down the whole snapshot."""
+    try:
+        return fn()
+    except Exception:
+        return default
+
+
+def _launchctl_labels() -> set[str]:
+    try:
+        out = subprocess.run(
+            ["launchctl", "list"], capture_output=True, text=True, timeout=15
+        ).stdout
+    except Exception:
+        return set()
+    labels = set()
+    for line in out.splitlines()[1:]:
+        parts = line.split("\t")
+        if parts:
+            labels.add(parts[-1].strip())
+    return labels
+
+
+def _table_count(db: Path, table: str) -> int | None:
+    if not db.exists() or db.stat().st_size == 0:
+        return None
+    try:
+        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+        try:
+            row = con.execute(f"SELECT COUNT(*) FROM {table}").fetchone()
+            return int(row[0]) if row else None
+        finally:
+            con.close()
+    except Exception:
+        return None
+
+
+def _has_secret(key: str) -> bool:
+    """A Keychain secret exists. The declared store for integration credentials."""
+    try:
+        return subprocess.run(
+            ["security", "find-generic-password", "-a", os.environ.get("USER", ""), "-s", key],
+            capture_output=True, timeout=10,
+        ).returncode == 0 or subprocess.run(
+            [str(AOS_ROOT / "core" / "bin" / "cli" / "agent-secret"), "get", key],
+            capture_output=True, timeout=10,
+        ).returncode == 0
+    except Exception:
+        return False
+
+
+# ── sections ─────────────────────────────────────────────────────────────────
+
+def machine() -> dict:
+    version = _safe(lambda: (AOS_ROOT / "VERSION").read_text().strip(), "unknown")
+    if not version:
+        version = _safe(lambda: (HOME / "aos" / "VERSION").read_text().strip(), "unknown")
+    hostname = _safe(
+        lambda: subprocess.run(
+            ["scutil", "--get", "ComputerName"], capture_output=True, text=True, timeout=5
+        ).stdout.strip(),
+        "",
+    ) or os.uname().nodename
+    operator = _safe(
+        lambda: (_yaml().safe_load((USER_DIR / "config" / "operator.yaml").read_text()) or {}),
+        {},
+    )
+    return {
+        "hostname": hostname,
+        "version": version,
+        "arch": os.uname().machine,
+        # `role` decides the install handoff and the developer-skills split.
+        "role": operator.get("role", "operator"),
+        "operator": operator.get("name"),
+        "agent_name": operator.get("agent_name", "chief"),
+        "onboarded": (USER_DIR / "config" / "onboarding.yaml").exists(),
+    }
+
+
+def services() -> dict:
+    """From the service registry — the single source of service identity."""
+    sys.path.insert(0, str(AOS_ROOT / "core" / "infra" / "lib"))
+    try:
+        from service_registry import load_registry
+        registry = list(load_registry())
+    except Exception as e:
+        return {"error": f"registry unreadable: {e}", "items": []}
+
+    loaded = _launchctl_labels()
+    items = []
+    for m in registry:
+        items.append({
+            "name": m.name,
+            "status": m.status,
+            "purpose": m.purpose,
+            "port": m.port,
+            "running": m.label in loaded,
+        })
+    return {
+        "items": items,
+        "active": sum(1 for i in items if i["status"] == "active"),
+        "running": sum(1 for i in items if i["running"]),
+    }
+
+
+def automation() -> dict:
+    """From config/crons.yaml — the scheduler's own source of truth."""
+    path = AOS_ROOT / "config" / "crons.yaml"
+
+    def load():
+        data = _yaml().safe_load(path.read_text()) or {}
+        jobs = data.get("jobs") or {}
+        enabled = {
+            name: job for name, job in jobs.items()
+            if job.get("enabled", True) is not False
+        }
+        return jobs, enabled
+
+    jobs, enabled = _safe(load, ({}, {}))
+    return {
+        "total": len(jobs),
+        "enabled": len(enabled),
+        "jobs": [
+            {"name": n, "schedule": j.get("schedule"), "description": j.get("description")}
+            for n, j in sorted(enabled.items())
+        ],
+    }
+
+
+def skills() -> dict:
+    """Installed skills — what the agent can actually load."""
+    def load():
+        found = {}
+        for base in (CLAUDE_DIR / "skills", AOS_ROOT / "core" / "skills"):
+            if not base.is_dir():
+                continue
+            for d in base.iterdir():
+                if (d / "SKILL.md").exists() and d.name not in found:
+                    found[d.name] = str(base)
+        return found
+
+    found = _safe(load, {})
+    return {"count": len(found), "names": sorted(found)}
+
+
+def agents() -> dict:
+    """Core agents plus whichever catalog agents are actually activated."""
+    def load():
+        core = sorted(
+            p.stem for p in (AOS_ROOT / "core" / "agents").glob("*.md")
+        ) if (AOS_ROOT / "core" / "agents").is_dir() else []
+        installed = sorted(
+            p.stem for p in (CLAUDE_DIR / "agents").glob("*.md")
+        ) if (CLAUDE_DIR / "agents").is_dir() else []
+        catalog = sorted(
+            p.stem for p in (AOS_ROOT / "templates" / "agents").glob("*.md")
+        ) if (AOS_ROOT / "templates" / "agents").is_dir() else []
+        return core, installed, catalog
+
+    core, installed, catalog = _safe(load, ([], [], []))
+    return {
+        "core": core,
+        "installed": installed,
+        "catalog_available": [c for c in catalog if c not in installed],
+    }
+
+
+def integrations(probe: bool = True) -> dict:
+    """
+    From the integration registry + each integration's own declared checks.
+
+    `available` is what the framework ships. Connectedness is instance truth,
+    established two ways, both declared by the integration itself:
+
+      1. the manifest's `requires.secrets` — are those Keychain keys present?
+      2. `setup.sh --check` — the registry's documented contract, "health check
+         only (no prompts, exit 0/1)".
+
+    Most integrations are permission-based and declare no secrets at all
+    (calendar, obsidian, whatsapp, …), so secrets alone would wrongly report
+    a configured machine as unconfigured. Anything we genuinely cannot
+    determine is reported as `unknown`, never as "not connected" — an
+    introduction that guesses is worse than one that admits the gap.
+    """
+    reg_path = AOS_ROOT / "core" / "infra" / "integrations" / "registry.yaml"
+
+    def load():
+        data = _yaml().safe_load(reg_path.read_text()) or {}
+        out = []
+        for tier_name, tier in data.items():
+            if not isinstance(tier, dict):
+                continue
+            for key, spec in tier.items():
+                if not isinstance(spec, dict) or "status" not in spec:
+                    continue
+                out.append({
+                    "key": key,
+                    "name": spec.get("name", key),
+                    "tier": tier_name,
+                    "category": spec.get("category"),
+                    "status": spec.get("status"),
+                    "description": spec.get("description"),
+                })
+        return out
+
+    items = _safe(load, [])
+
+    # Required secrets, straight from each integration's manifest.
+    def required_secrets(key: str) -> list[str]:
+        mf = AOS_ROOT / "core" / "infra" / "integrations" / key.replace("_", "-") / "manifest.yaml"
+        if not mf.exists():
+            mf = AOS_ROOT / "core" / "infra" / "integrations" / key / "manifest.yaml"
+        if not mf.exists():
+            return []
+        try:
+            data = _yaml().safe_load(mf.read_text()) or {}
+            return [
+                s["key"]
+                for s in ((data.get("requires") or {}).get("secrets") or [])
+                if isinstance(s, dict) and s.get("key")
+            ]
+        except Exception:
+            return []
+
+    def integration_dir(key: str) -> Path | None:
+        base = AOS_ROOT / "core" / "infra" / "integrations"
+        for candidate in (base / key.replace("_", "-"), base / key):
+            if candidate.is_dir():
+                return candidate
+        return None
+
+    def setup_check(key: str) -> bool | None:
+        """Run the declared `setup.sh --check` contract. None = no check exists."""
+        d = integration_dir(key)
+        if not d or not (d / "setup.sh").exists():
+            return None
+        try:
+            return subprocess.run(
+                ["bash", str(d / "setup.sh"), "--check"],
+                capture_output=True, timeout=8,
+                stdin=subprocess.DEVNULL,  # the contract says no prompts; enforce it
+            ).returncode == 0
+        except Exception:
+            return None
+
+    # Secrets first — instant, and authoritative where declared.
+    to_probe = []
+    for item in items:
+        secrets = required_secrets(item["key"])
+        item["requires_secrets"] = secrets
+        if secrets:
+            item["state"] = (
+                "connected" if all(_has_secret(s) for s in secrets) else "needs_setup"
+            )
+        else:
+            item["state"] = "unknown"
+            if probe:
+                to_probe.append(item)
+
+    # The remaining probes are independent subprocesses, so run them
+    # concurrently — serially they cost ~12s, which is far too slow for
+    # something onboarding calls to open a conversation.
+    if to_probe:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            for item, checked in zip(
+                to_probe, pool.map(lambda i: setup_check(i["key"]), to_probe)
+            ):
+                if checked is True:
+                    item["state"] = "connected"
+                elif checked is False:
+                    item["state"] = "needs_setup"
+
+    for item in items:
+        item["connected"] = item["state"] == "connected"
+
+    by = lambda s: sorted(i["name"] for i in items if i["state"] == s)  # noqa: E731
+    return {
+        "count": len(items),
+        "connected": by("connected"),
+        "needs_setup": by("needs_setup"),
+        "unknown": by("unknown"),
+        "probed": probe,
+        "items": items,
+    }
+
+
+def vault() -> dict:
+    """The vault as it exists on disk — not as any doc remembers it."""
+    def load():
+        if not VAULT.is_dir():
+            return {"exists": False}
+        top = sorted(
+            d.name for d in VAULT.iterdir()
+            if d.is_dir() and not d.name.startswith(".")
+        )
+        structure = {}
+        for name in top:
+            structure[name] = sorted(
+                s.name for s in (VAULT / name).iterdir()
+                if s.is_dir() and not s.name.startswith(".")
+            )
+        notes = sum(1 for _ in VAULT.rglob("*.md"))
+        return {"exists": True, "path": str(VAULT), "structure": structure, "notes": notes}
+
+    return _safe(load, {"exists": False})
+
+
+def subsystems() -> dict:
+    """
+    Optional capability layers — present only if their data actually exists.
+
+    This is what onboarding kept missing: comms, people, tracking, initiatives
+    and councils all arrived after the skill was written, so a new operator was
+    never told about them. Detected, never listed.
+    """
+    operator = _safe(
+        lambda: (_yaml().safe_load((USER_DIR / "config" / "operator.yaml").read_text()) or {}),
+        {},
+    )
+    data = USER_DIR / "data"
+
+    out = {}
+
+    messages = _table_count(data / "comms.db", "messages")
+    out["comms"] = {"present": messages is not None, "messages": messages}
+
+    people = _table_count(data / "people.db", "people")
+    out["people"] = {"present": people is not None, "contacts": people}
+
+    shipments = _table_count(data / "qareen.db", "shipments")
+    out["tracking"] = {"present": shipments is not None, "shipments": shipments}
+
+    tasks = _table_count(data / "work.db", "tasks")
+    out["work"] = {"present": tasks is not None, "tasks": tasks}
+
+    inits = VAULT / "knowledge" / "initiatives"
+    out["initiatives"] = {
+        "present": bool((operator.get("initiatives") or {}).get("enabled")),
+        "docs": _safe(lambda: len(list(inits.glob("*.md"))), 0),
+    }
+
+    councils = data / "councils"
+    out["councils"] = {
+        "present": councils.is_dir(),
+        "count": _safe(lambda: len([d for d in councils.iterdir() if d.is_dir()]), 0),
+    }
+
+    return out
+
+
+SECTIONS = {
+    "machine": machine,
+    "services": services,
+    "automation": automation,
+    "skills": skills,
+    "agents": agents,
+    "integrations": integrations,
+    "vault": vault,
+    "subsystems": subsystems,
+}
+
+
+# ── rendering ────────────────────────────────────────────────────────────────
+
+def _plural(n, one, many=None):
+    return f"{n} {one if n == 1 else (many or one + 's')}"
+
+
+def render(snap: dict) -> str:
+    L: list[str] = []
+    add = L.append
+
+    if m := snap.get("machine"):
+        add(f"AOS {m['version']} on {m['hostname']} ({m['arch']}, role: {m['role']})")
+        if m.get("operator"):
+            add(f"Operator: {m['operator']} · main agent: {m['agent_name']}")
+        if not m["onboarded"]:
+            add("Onboarding: not yet completed")
+        add("")
+
+    if s := snap.get("services"):
+        if s.get("error"):
+            add(f"SERVICES  {s['error']}")
+        else:
+            add(f"SERVICES  {s['running']} running / {s['active']} active")
+            for i in s["items"]:
+                if i["status"] == "retired":
+                    continue
+                mark = "●" if i["running"] else "○"
+                port = f":{i['port']}" if i["port"] else ""
+                tag = "" if i["status"] == "active" else f"  ({i['status']})"
+                add(f"  {mark} {i['name']}{port}{tag} — {i['purpose']}")
+        add("")
+
+    if a := snap.get("agents"):
+        add(f"AGENTS  {', '.join(a['installed']) or 'none installed'}")
+        if a["catalog_available"]:
+            add(f"  available to activate: {', '.join(a['catalog_available'])}")
+        add("")
+
+    if sk := snap.get("skills"):
+        add(f"SKILLS  {sk['count']} installed")
+        add("")
+
+    if au := snap.get("automation"):
+        add(f"AUTOMATION  {_plural(au['enabled'], 'scheduled job')} running on a timer")
+        add("")
+
+    if it := snap.get("integrations"):
+        add(f"INTEGRATIONS  {len(it['connected'])} connected "
+            f"of {it['count']} available")
+        if it["connected"]:
+            add(f"  connected:   {', '.join(it['connected'])}")
+        if it["needs_setup"]:
+            add(f"  needs setup: {', '.join(it['needs_setup'])}")
+        if it["unknown"]:
+            # Not "unconfigured" — genuinely undetermined (no declared check).
+            add(f"  not probed:  {', '.join(it['unknown'])}")
+        add("")
+
+    if v := snap.get("vault"):
+        if v.get("exists"):
+            add(f"VAULT  {v['path']} — {_plural(v['notes'], 'note')}")
+            for top, subs in v["structure"].items():
+                add(f"  {top}/  {', '.join(subs) if subs else ''}".rstrip())
+        else:
+            add("VAULT  not found")
+        add("")
+
+    if sub := snap.get("subsystems"):
+        live = []
+        if sub["work"]["present"]:
+            live.append(f"work ({_plural(sub['work']['tasks'] or 0, 'task')})")
+        if sub["comms"]["present"]:
+            live.append(f"comms ({sub['comms']['messages'] or 0:,} messages)")
+        if sub["people"]["present"]:
+            live.append(f"people ({sub['people']['contacts'] or 0:,} contacts)")
+        if sub["tracking"]["present"]:
+            live.append(f"tracking ({_plural(sub['tracking']['shipments'] or 0, 'shipment')})")
+        if sub["initiatives"]["present"]:
+            live.append(f"initiatives ({_plural(sub['initiatives']['docs'], 'doc')})")
+        if sub["councils"]["present"] and sub["councils"]["count"]:
+            live.append(f"councils ({sub['councils']['count']})")
+        add(f"SUBSYSTEMS  {', '.join(live) if live else 'none active'}")
+
+    return "\n".join(L).rstrip() + "\n"
+
+
+def main(argv: list[str]) -> int:
+    ap = argparse.ArgumentParser(
+        prog="aos snapshot",
+        description="What this AOS system actually consists of, read live.",
+    )
+    ap.add_argument("--json", action="store_true", help="machine-readable output")
+    ap.add_argument("--section", help="comma-separated subset, e.g. services,integrations")
+    ap.add_argument(
+        "--no-probe", action="store_true",
+        help="skip integration setup.sh --check probes (faster, less certain)",
+    )
+    args = ap.parse_args(argv)
+
+    wanted = list(SECTIONS)
+    if args.section:
+        wanted = [s.strip() for s in args.section.split(",") if s.strip() in SECTIONS]
+        if not wanted:
+            print(f"Unknown section. Choose from: {', '.join(SECTIONS)}", file=sys.stderr)
+            return 2
+
+    snap = {}
+    for name in wanted:
+        fn = SECTIONS[name]
+        snap[name] = fn(probe=not args.no_probe) if name == "integrations" else fn()
+
+    if args.json:
+        print(json.dumps(snap, indent=2, default=str))
+    else:
+        print(render(snap), end="")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

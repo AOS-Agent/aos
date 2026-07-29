@@ -1024,6 +1024,7 @@ sys.exit(0 if errors == 0 else 1)
         echo "  telemetry        Anonymous usage telemetry (opt-in/out/report)"
         echo "  sessions         View recorded onboarding/setup sessions"
         echo "  track            Auto Tracker: shipments + carrier onboarding (aos track help)"
+        echo "  snapshot        What this system consists of, read live (--json)"
         echo "  discover        Scan machine for existing setup"
         echo "  hygiene         Find orphaned instance artifacts (services, plists, caches)"
         echo "  version         Show current version"
@@ -1115,6 +1116,14 @@ if dismiss_list:
         # Auto Tracker — shipments + new-carrier onboarding pipeline
         shift
         "$AOS_DIR/core/bin/internal/aos-python" "$AOS_DIR/core/bin/cli/aos-track" "$@"
+        ;;
+
+    snapshot)
+        # Live system inventory — every fact read from what declares it.
+        # Consumed by the onboard and whats-new skills so their descriptions
+        # of the system cannot drift out of date.
+        shift
+        "$AOS_DIR/core/bin/internal/aos-python" "$AOS_DIR/core/bin/cli/aos-snapshot" "$@"
         ;;
 
     *)

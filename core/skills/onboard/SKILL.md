@@ -81,6 +81,30 @@ Read `~/.aos/config/install-report.yaml` for any install issues.
 
 If install issues exist, note them — you'll address them in the relevant phase.
 
+### Take the snapshot — do this before you introduce anything
+
+```bash
+aos snapshot
+```
+
+This prints what this machine **actually** has: services and whether they're
+running, installed agents, skill count, how many scheduled jobs exist, which
+integrations are connected vs. need setup, the real vault folder structure, and
+which subsystems are live (work, comms, people, tracking, initiatives, councils)
+with their real sizes.
+
+**Every number and list you say out loud comes from here.** Do not describe the
+system from this document — this document does not know what version it's
+running on, what got installed, or what the operator already had.
+
+This rule exists because the alternative was tried. This skill used to say "12+
+automated jobs" (there are far more), list seven available integrations (there
+are 22 — including Notion, Linear, and Slack, which it told operators to put on
+a wishlist), and give a vault tour naming four folders that no longer existed.
+Each was accurate the day it was written. Prose cannot track a filesystem.
+
+`aos snapshot --json` if you want to compute against it.
+
 Create the onboarding project:
 ```bash
 python3 ~/aos/core/engine/work/cli.py add "First conversation" --project onboarding --priority 2
@@ -286,19 +310,21 @@ if needed to see what they're seeing. The vault folder is at `~/vault/`.
 
 Once connected:
 
-"Take a minute and browse around. Click through the folders — daily/, sessions/,
-ideas/, materials/. This is your second brain. Everything ends up here.
+Name the folders from the snapshot's `vault.structure` — the ones actually on
+this machine — not from memory. Then:
+
+"Take a minute and browse around. Click through those folders. This is your
+second brain. Everything ends up here.
 
 See your daily note from today? That's what you just recorded. Every morning,
-a new one gets created automatically. Sessions get exported here every 2 hours.
+a new one gets created automatically. Sessions get exported here too.
 Ideas, research, transcripts — it all flows in.
 
 It's plain markdown files. Obsidian just makes it beautiful and navigable.
 You can search, link notes together, see connections between ideas.
 
-The vault is indexed every 30 minutes for agent search — so when you ask
-Chief to recall something, it searches here. The more you put in, the
-smarter everything gets."
+The vault is indexed for agent search — so when you ask Chief to recall
+something, it searches here. The more you put in, the smarter everything gets."
 
 AskUserQuestion:
 - question: "Had a look around?"
@@ -376,11 +402,18 @@ AskUserQuestion:
 
 If yes: run the setup script. Store credentials via `agent-secret set`.
 
-**Other tools** — only offer integrations that actually exist:
+**Other tools** — offer what the snapshot says exists.
 
-Available integrations: Telegram, GitHub, Email, WhatsApp, Obsidian, Google Workspace, Apple Native.
-If they mention tools not in this list (Linear, Notion, Slack, etc.), note the interest:
-"That's not connected yet — I'll note it as something to add later." Save to `~/.aos/config/integration-wishlist.yaml`.
+The `integrations` section lists every integration this build ships, already
+split into `connected`, `needs_setup`, and `not probed`. Offer from that list.
+
+Never recite a list from memory here. This section used to name seven
+integrations and tell operators that Linear, Notion, and Slack "aren't connected
+yet" — while all three shipped with working manifests. The operator was talked
+out of a feature they already had.
+
+Only if a tool genuinely isn't in the snapshot: "That's not connected yet — I'll
+note it as something to add later." Save to `~/.aos/config/integration-wishlist.yaml`.
 
 **Apple Native:**
 Run silently: `bash ~/aos/core/infra/integrations/apple_native/setup.sh --check`
@@ -411,21 +444,40 @@ cron jobs. You'll rarely talk to Steward directly. It just keeps things running.
 "**Advisor** is the analyst — knowledge curation, reviews, pattern detection. When you
 want a weekly summary or want to spot trends in your work, Advisor handles that."
 
-"There are also specialist agents you can activate later — Engineer, Developer, Marketing.
-But these three are enough to start."
+Then, from the snapshot's `agents.catalog_available`: "There are also specialist
+agents you can activate later — {list them}. But these are enough to start."
 
 ### The Machine That Runs While You Sleep
 
-"Behind the scenes, 12+ automated jobs run on a schedule. You don't need to
-think about them — but you should know they exist."
+Use the snapshot's `automation.enabled` count and pick 2-3 real jobs from
+`automation.jobs` to make it concrete:
 
-"A few examples: the watchdog checks services every 5 minutes. Your sessions
-get synced every 30 minutes. The vault gets indexed for search. And at 4 AM,
-the system pulls updates automatically."
+"Behind the scenes, {N} automated jobs run on a schedule. You don't need to
+think about them — but you should know they exist. A few: {2-3 real ones,
+described in plain language}."
 
 "If anything fails, Steward catches it. If the machine reboots, the scheduler
 detects it and restarts everything. You can see all of this on your dashboard
 under 'Automations'."
+
+### What Else Is Running
+
+Check the snapshot's `subsystems`. These are capability layers that only exist
+if their data does — and they are the single biggest thing onboarding has
+historically failed to mention, because each one shipped after this document
+was written. For each one present, introduce it in one sentence with its real
+number. Skip any that aren't there.
+
+- **work** — the task and project system, {N} tasks tracked
+- **comms** — unified message history across every channel, {N} messages searchable
+- **people** — who you know, {N} contacts, resolved across phone/email/handles
+- **tracking** — package tracking pulled from your own messages, {N} shipments
+- **initiatives** — multi-week efforts tracked through research → shaping →
+  planning → executing → review
+- **councils** — multi-agent deliberation for high-stakes decisions
+
+Don't dump all of them. Lead with the two most relevant to what they said in
+Phase 1, and mention the rest exist.
 
 ### The Daily Loop
 
@@ -476,8 +528,8 @@ for common actions. Quick commands run in under half a second."
 'search vault for bridge design' finds it. No AI inference needed — it's
 pattern matching, so it's fast."
 
-"14 commands built in. The bridge handles them directly. When it's not a quick
-command, it routes to the right agent."
+"They're built into the bridge, which handles them directly. When it's not a
+quick command, it routes to the right agent."
 
 ### The Morning Practice
 
@@ -1215,6 +1267,11 @@ Format:
 
 ## Important
 
+- **Every fact about the system comes from `aos snapshot`, never from this file.**
+  Counts, service names, integration lists, vault folders, which subsystems
+  exist — read them. If you catch yourself about to state a number that isn't in
+  the snapshot output, you are about to say something that was true in a past
+  release. That is how this skill drifted before.
 - Always use `cld` when referencing CLI commands
 - Always use `~/aos/core/bin/cli/agent-secret` for secrets — never in files
 - The operator may not be technical — plain language always

@@ -42,6 +42,24 @@ Read `~/aos/CHANGELOG.md`. Extract all entries between the new version and the o
 cat ~/aos/CHANGELOG.md
 ```
 
+Then ground the changelog against what the machine actually has:
+
+```bash
+aos snapshot
+```
+
+The CHANGELOG says what shipped. The snapshot says what landed **here**. Use it to:
+
+- **Skip what isn't installed.** A release note about the mesh service is noise
+  if the snapshot shows mesh isn't running.
+- **Catch what silently arrived.** A new subsystem shows up in `subsystems` with
+  real numbers — "tracking is live, 71 shipments already found in your messages"
+  lands harder than a bullet point.
+- **Spot what needs attention.** Anything in `integrations.needs_setup` or an
+  active service that isn't running is worth raising here.
+
+Never describe a capability the snapshot says isn't present.
+
 Parse the entries. Categorize them:
 
 - **Headline changes** — New capabilities the operator will notice or use
