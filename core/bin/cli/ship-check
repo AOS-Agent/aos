@@ -397,6 +397,58 @@ else
     pass "LaunchAgent checks use auto-discovery ($la_count templates)"
 fi
 
+# LaunchAgent deployment must consult the service registry, not glob the
+# templates directory. "Auto-discover" is not enough here: a glob sees
+# filenames but not `status`, which is how the installer came to force-load a
+# retired service (listen), three optional ones, and an unopted-in Cloudflare
+# tunnel. The registry is the source of truth for what may be deployed.
+if grep -q '_deployable_plists' "$DEV/install.sh" 2>/dev/null; then
+    pass "LaunchAgent deployment is registry-driven"
+else
+    fail "install.sh deploys LaunchAgents without consulting the service registry"
+    echo "    → gate on service_registry status (active only); see _deployable_plists"
+fi
+
+# A plist must never be loaded with an unsubstituted __PLACEHOLDER__. Templates
+# owned by another renderer (qareen-tunnel carries __CLOUDFLARED__ and
+# __TUNNEL_TOKEN__) otherwise land with a literal placeholder as the program
+# path — and KeepAlive turns that into a permanent crash loop.
+if grep -q '__\[A-Z_\]\\{2,\\}__' "$DEV/install.sh" 2>/dev/null; then
+    pass "Installer guards against unsubstituted plist placeholders"
+else
+    fail "install.sh can load plists with unresolved __PLACEHOLDER__ values"
+fi
+
+# Every framework plist should be accounted for by a manifest, otherwise it can
+# never be deployed (or audited) — it just sits in the tree looking official.
+unmanifested=""
+while IFS= read -r plist_path; do
+    [[ -n "$plist_path" ]] || continue
+    base=$(basename "$plist_path")
+    if ! grep -rqF "$base" "$DEV"/core/services/*/service.yaml "$DEV"/core/qareen/service.yaml "$DEV"/config/services.d/*.yaml 2>/dev/null; then
+        unmanifested="$unmanifested $base"
+    fi
+done < <(find "$DEV/config/launchagents" -name 'com.aos.*' 2>/dev/null)
+# The harness itself (scheduler, sentinel, claude-remote) has a launchd presence
+# but is not a service; it is allowlisted in install.sh as INFRA_PLISTS.
+for infra in com.aos.scheduler com.aos.sentinel com.aos.claude-remote com.aos.qareen-tunnel; do
+    unmanifested=$(echo "$unmanifested" | tr ' ' '\n' | grep -v "^${infra}\." | tr '\n' ' ')
+done
+unmanifested=$(echo "$unmanifested" | xargs 2>/dev/null || true)
+if [[ -z "$unmanifested" ]]; then
+    pass "Every framework plist maps to a service manifest"
+else
+    warn "Plists with no service manifest:$unmanifested"
+    echo "    → add a manifest under config/services.d/ or remove the plist"
+fi
+
+# VS Code must not come back. cmux is the only supported terminal surface.
+if grep -q 'visual-studio-code\|Visual Studio Code' "$DEV/install.sh" "$DEV/core/bin/cli/aos" 2>/dev/null; then
+    fail "VS Code referenced in install.sh or the aos CLI — cmux is the only terminal surface"
+else
+    pass "cmux is the only terminal surface (no VS Code)"
+fi
+
 # config/defaults/trust.yaml should exist (install.sh tries to copy it)
 if [[ -f "$DEV/config/defaults/trust.yaml" ]]; then
     pass "Default trust template exists"

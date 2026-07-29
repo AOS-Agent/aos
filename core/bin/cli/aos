@@ -494,48 +494,15 @@ if errors:
         ;;
 
     start)
-        # Flow: write a VS Code task that auto-runs cld → open VS Code
-        # Claude Code needs the IDE terminal for interactive features (AskUserQuestion).
-        EDITOR_FILE="$HOME/.aos/config/editor"
-        EDITOR_CMD=""
-
-        if [[ -f "$EDITOR_FILE" ]]; then
-            EDITOR_CMD=$(cat "$EDITOR_FILE")
-        else
-            command -v code &>/dev/null && EDITOR_CMD="code"
+        # cmux is the only supported surface. One call — `cmux new-workspace`
+        # opens a workspace at $HOME and runs the command in it — replaces the
+        # old VS Code settings.json + tasks.json "runOn: folderOpen" dance.
+        CMUX_BIN=""
+        if command -v cmux &>/dev/null; then
+            CMUX_BIN="$(command -v cmux)"
+        elif [[ -x "/Applications/cmux.app/Contents/Resources/bin/cmux" ]]; then
+            CMUX_BIN="/Applications/cmux.app/Contents/Resources/bin/cmux"
         fi
-
-        # If 'code' isn't on PATH but VS Code app exists, fix the symlink
-        if [[ -z "$EDITOR_CMD" ]] && [[ -d "/Applications/Visual Studio Code.app" ]]; then
-            code_bin="/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code"
-            if [[ -x "$code_bin" ]]; then
-                ln -sf "$code_bin" /usr/local/bin/code 2>/dev/null || true
-                command -v code &>/dev/null && EDITOR_CMD="code"
-            fi
-        fi
-
-        if [[ -z "$EDITOR_CMD" ]]; then
-            echo "VS Code not found. Install it, then run aos start."
-            echo "Or run cld directly: cld"
-            exit 1
-        fi
-
-        # Write VS Code workspace settings + task that auto-runs cld on folder open
-        vscode_dir="$HOME/.vscode"
-        mkdir -p "$vscode_dir"
-
-        # Set terminal to open in editor area (main panel, not bottom)
-        # VS Code settings: terminal in editor area, hide bottom panel
-        # Merge with existing settings if present
-        python3 -c "
-import json
-from pathlib import Path
-p = Path('$vscode_dir/settings.json')
-s = json.loads(p.read_text()) if p.exists() else {}
-s['terminal.integrated.defaultLocation'] = 'editor'
-s['terminal.integrated.tabs.enabled'] = False
-p.write_text(json.dumps(s, indent=2) + '\n')
-" 2>/dev/null
 
         # Build the cld command — if onboarding isn't done, pass initial prompt
         cld_command="cld"
@@ -543,41 +510,53 @@ p.write_text(json.dumps(s, indent=2) + '\n')
             cld_command="cld 'Start onboarding. Read ~/.claude/skills/onboard/SKILL.md and follow the protocol.'"
         fi
 
-        cat > "$vscode_dir/tasks.json" << TASKS
-{
-  "version": "2.0.0",
-  "tasks": [
-    {
-      "label": "Claude Code",
-      "type": "shell",
-      "command": "${cld_command}",
-      "runOptions": { "runOn": "folderOpen" },
-      "presentation": {
-        "reveal": "always",
-        "focus": true,
-        "panel": "dedicated"
-      },
-      "isBackground": true,
-      "problemMatcher": []
-    }
-  ]
-}
-TASKS
+        if [[ -z "$CMUX_BIN" ]]; then
+            echo ""
+            echo "  cmux is not installed — it's the AOS terminal."
+            echo ""
+            echo "    brew install --cask cmux && aos start"
+            echo ""
+            echo "  Or run Claude Code directly in this terminal:"
+            echo "    ${cld_command}"
+            echo ""
+            exit 1
+        fi
 
         echo ""
-        echo "  Opening $EDITOR_CMD..."
-
-        # Close the bottom panel after VS Code opens
-        ( sleep 3 && "$EDITOR_CMD" --command "workbench.action.closePanel" 2>/dev/null ) &
+        echo "  Opening cmux..."
         if [[ ! -f "$HOME/.aos/config/onboarding.yaml" ]]; then
             echo "  Claude Code will start automatically — Sahib will walk you through setup."
         else
-            echo "  Claude Code will start automatically in the terminal."
+            echo "  Claude Code will start automatically."
         fi
         echo ""
 
-        # Open editor to home directory — task auto-runs cld
-        exec "$EDITOR_CMD" "$HOME"
+        # new-workspace talks to the running app over its Unix socket, so the
+        # app has to be up first — launch it and wait for `ping` to answer
+        # rather than racing a cold start.
+        if ! "$CMUX_BIN" ping &>/dev/null; then
+            open -a cmux 2>/dev/null || true
+            for _ in $(seq 1 20); do
+                "$CMUX_BIN" ping &>/dev/null && break
+                sleep 0.5
+            done
+        fi
+
+        # --command runs inside the new workspace's terminal; --focus brings it
+        # forward. If cmux still can't be driven, fall through to running Claude
+        # Code in this terminal so the operator is never stranded — eval keeps
+        # the quoted onboarding prompt intact.
+        if "$CMUX_BIN" new-workspace \
+                --name "AOS" \
+                --cwd "$HOME" \
+                --command "$cld_command" \
+                --focus true &>/dev/null; then
+            exit 0
+        fi
+
+        echo "  cmux did not respond — starting Claude Code here instead."
+        echo ""
+        eval "exec $cld_command"
         ;;
 
     deploy)

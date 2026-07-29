@@ -811,7 +811,7 @@ INITEOF
 Your phone buzzes. A BLUF briefing in Telegram — urgent items first, then what's
 important, what to think about, and what ran overnight. You scan it in 20 seconds.
 
-Open VS Code, type `cld`, and say `/gm` for the same briefing in terminal. Or just
+Open cmux, type `cld`, and say `/gm` for the same briefing in terminal. Or just
 talk — the ramble you did today? You can do that every morning. It becomes your
 daily note.
 
