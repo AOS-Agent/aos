@@ -456,29 +456,61 @@ else
     fail "config/defaults/trust.yaml missing — install.sh expects it"
 fi
 
-# Onboarding skill should not reference non-existent config files
-if grep -q 'projects\.yaml' "$DEV/.claude/skills/onboard/SKILL.md" 2>/dev/null; then
-    fail "Onboarding references projects.yaml which doesn't exist — projects use CLI"
-else
-    pass "Onboarding config references valid"
-fi
+# The onboard skill lives in core/skills/ (moved there in add9e82). These checks
+# used to point at $DEV/.claude/skills/onboard/SKILL.md — a path that has not
+# existed since. `grep -q` on a missing file returns non-zero, so every check
+# fell through to its else branch and reported PASS while reading nothing. That
+# vacuous green is why the integration drift below went unnoticed for months.
+ONBOARD_SKILL="$DEV/core/skills/onboard/SKILL.md"
 
-# Onboarding should not OFFER integrations that don't have setup scripts.
-# Mentioning them in a "not available yet" context is fine — only flag if
-# they appear as setup targets (with AskUserQuestion or setup.sh calls).
-onboard_integration_drift=0
-for tool in "Linear" "Notion" "Plane" "Slack" "Discord"; do
-    # Only flag if the tool is presented as a setup option, not a graceful decline
-    if grep -E "(Set up $tool|ask about $tool|→ ask about $tool)" "$DEV/.claude/skills/onboard/SKILL.md" 2>/dev/null | grep -qv "not in this list\|not available\|wishlist"; then
-        tool_lower=$(echo "$tool" | tr '[:upper:]' '[:lower:]')
-        if [[ ! -d "$DEV/core/infra/integrations/$tool_lower" ]]; then
-            warn "Onboarding offers to set up $tool but no integration exists"
-            onboard_integration_drift=$((onboard_integration_drift + 1))
-        fi
+if [[ ! -f "$ONBOARD_SKILL" ]]; then
+    fail "Onboard skill not found at core/skills/onboard/SKILL.md"
+else
+    # Onboarding skill should not reference non-existent config files
+    if grep -q 'projects\.yaml' "$ONBOARD_SKILL" 2>/dev/null; then
+        fail "Onboarding references projects.yaml which doesn't exist — projects use CLI"
+    else
+        pass "Onboarding config references valid"
     fi
-done
-if [[ $onboard_integration_drift -eq 0 ]]; then
-    pass "Onboarding integration references valid"
+
+    # Onboarding must not hardcode facts the filesystem declares. It described
+    # the system in prose and went stale: "12+ automated jobs" (a large
+    # undercount), seven integrations out of 22, a vault tour naming folders
+    # that no longer existed. `aos snapshot` reads all of it live.
+    if grep -q 'aos snapshot' "$ONBOARD_SKILL" 2>/dev/null; then
+        pass "Onboarding reads the live system snapshot"
+    else
+        fail "Onboarding must read 'aos snapshot' rather than describe the system inline"
+    fi
+
+    # Hardcoded counts are the specific failure mode — they are correct on the
+    # day they are written and wrong by the next release.
+    if grep -nE '\b[0-9]+\+? (automated jobs|scheduled jobs|cron|commands built|integrations|skills|agents)\b' \
+        "$ONBOARD_SKILL" 2>/dev/null | grep -qv 'used to say\|used to\|historically'; then
+        fail "Onboarding hardcodes a count — read it from 'aos snapshot' instead"
+        grep -nE '\b[0-9]+\+? (automated jobs|scheduled jobs|cron|commands built|integrations|skills|agents)\b' \
+            "$ONBOARD_SKILL" | grep -v 'used to say\|used to\|historically' | sed 's/^/      /'
+    else
+        pass "Onboarding hardcodes no system counts"
+    fi
+
+    # Every path the skill tells the operator to run must actually exist.
+    # Phase 4 called core/bin/setup/generate-connect-script for months while no
+    # such file was in the tree.
+    onboard_missing_bin=0
+    while IFS= read -r ref; do
+        [[ -n "$ref" ]] || continue
+        rel="${ref#\~/aos/}"
+        if [[ ! -e "$DEV/$rel" ]]; then
+            warn "Onboarding calls ~/aos/$rel which does not exist"
+            onboard_missing_bin=$((onboard_missing_bin + 1))
+        fi
+    # [~] rather than a bare tilde: this is a regex matching literal text in the
+    # skill, not a path for this shell to expand.
+    done < <(grep -oE '[~]/aos/core/[A-Za-z0-9_/.-]+' "$ONBOARD_SKILL" 2>/dev/null | sort -u)
+    if [[ $onboard_missing_bin -eq 0 ]]; then
+        pass "Onboarding references only paths that exist"
+    fi
 fi
 
 # Every integration directory in registry.yaml should have a setup.sh if referenced
