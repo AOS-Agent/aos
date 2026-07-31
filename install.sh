@@ -44,7 +44,17 @@ if [[ "$_EARLY_DRY_RUN" != true ]]; then
 fi
 
 # ── Version ──────────────────────────────────────────
-AOS_VERSION=$(cat "$HOME/aos/VERSION" 2>/dev/null | tr -d '[:space:]' || echo "0.1.0")
+# Prefer an already-installed ~/aos (upgrade path). On a fresh install that
+# doesn't exist yet — bootstrap.sh stages this script from a tarball — so fall
+# back to the VERSION file sitting next to us, and only then to a placeholder.
+_INSTALL_SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+AOS_VERSION=$(
+    cat "$HOME/aos/VERSION" 2>/dev/null \
+        || cat "$_INSTALL_SRC_DIR/VERSION" 2>/dev/null \
+        || echo "0.1.0"
+)
+AOS_VERSION=$(echo "$AOS_VERSION" | tr -d '[:space:]')
+[[ -n "$AOS_VERSION" ]] || AOS_VERSION="0.1.0"
 AOS_REPO="https://github.com/hishamalhadi/aos.git"
 AOS_BRANCH="main"
 
@@ -229,7 +239,9 @@ _banner() {
     tput civis 2>/dev/null  # hide cursor during install
 
     echo ""
-    echo "  ${MUTED}bismillah${RESET}"
+    # U+FDFD ARABIC LIGATURE BISMILLAH. Printed as raw bytes so the glyph
+    # survives any editor or locale that would mangle the literal character.
+    printf "  ${BRAND}\xef\xb7\xbd${RESET}\n"
     echo ""
     echo "${BRAND}${BOLD}"
     cat << 'BANNER'
@@ -697,6 +709,7 @@ prereq_editor() {
     if command -v cmux &>/dev/null || [[ -x "$CMUX_BIN" ]]; then
         _save_editor "cmux"
         _skip "cmux"
+        _configure_cmux_socket
         return 0
     fi
 
@@ -705,9 +718,47 @@ prereq_editor() {
     if [[ -x "$CMUX_BIN" ]]; then
         _ok "cmux"
         _save_editor "cmux"
+        _configure_cmux_socket
     else
         # Non-fatal: the system is fully usable from any terminal via `cld`.
         _warn "cmux install failed — run 'brew install --cask cmux' later, then 'aos start'"
+    fi
+}
+
+_configure_cmux_socket() {
+    # cmux refuses socket commands from non-cmux callers by default
+    # (socketControlMode: "cmuxOnly"). `aos start` is always a non-cmux caller —
+    # at the end of an install it runs in Terminal — so under the default every
+    # call it makes is rejected and onboarding lands in Terminal instead of cmux.
+    #
+    # Runs during prereqs, which is BEFORE setup_repo clones ~/aos, so the helper
+    # is resolved from wherever this script is staged, with ~/aos as the fallback
+    # for the upgrade path.
+    local helper=""
+    for candidate in "$_INSTALL_SRC_DIR/core" "$AOS_DIR/core"; do
+        if [[ -f "$candidate/infra/cmux_config.py" ]]; then
+            helper="$candidate"
+            break
+        fi
+    done
+
+    if [[ -z "$helper" ]]; then
+        _warn "cmux socket config helper not found — 'aos start' may open Claude Code in this terminal"
+        return 0
+    fi
+
+    local status
+    if status=$(python3 -c "
+import sys
+sys.path.insert(0, '$helper')
+from infra.cmux_config import ensure
+changed, status = ensure()
+print(status)
+" 2>&1); then
+        _ok "$status"
+    else
+        _warn "cmux socket control not configured — 'aos start' may fall back to this terminal"
+        _log "cmux_config failed: $status"
     fi
 }
 
@@ -2756,7 +2807,9 @@ except: print('Operator')
     echo ""
     echo "  ${MUTED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
     echo ""
-    echo "  ${MUTED}alhamdulillah${RESET}"
+    # Closes the ceremony in the same script it opened in: الحمد لله.
+    # Raw bytes, same reasoning as the bismillah in _banner.
+    printf "  ${BRAND}\xd8\xa7\xd9\x84\xd8\xad\xd9\x85\xd8\xaf \xd9\x84\xd9\x84\xd9\x87${RESET}\n"
     echo ""
 }
 
@@ -2827,13 +2880,28 @@ main() {
     # Code, passing the onboarding prompt when ~/.aos/config/onboarding.yaml is
     # absent. Gating this on the developer role is what left fresh operator
     # installs with onboarding that never ran.
-    if command -v claude &>/dev/null; then
+    # `claude` and `aos` were both installed during this run, so the current
+    # shell's command hash may predate them. Refresh it and add the paths we
+    # know we just wrote to, rather than silently skipping the launch and
+    # leaving the operator staring at the handoff panel wondering what to do.
+    hash -r 2>/dev/null || true
+    export PATH="$HOME/.local/bin:/opt/homebrew/bin:$PATH"
+
+    if command -v claude &>/dev/null || command -v cld &>/dev/null; then
         echo ""
         echo "  ${BOLD}Launching AOS...${RESET}"
         echo ""
         sleep 1
-        exec aos start
+        if command -v aos &>/dev/null; then
+            exec aos start
+        fi
+        exec "$AOS_DIR/core/bin/cli/aos" start
     fi
+
+    echo ""
+    echo "  ${YELLOW}Claude Code isn't on PATH yet.${RESET}"
+    echo "  Open a new terminal and run: ${BRAND}${BOLD}aos start${RESET}"
+    echo ""
 }
 
 main "$@"
