@@ -1,6 +1,7 @@
 from .bridge_poll_liveness import BridgePollLivenessCheck
 from .claude_defaults import ClaudeDefaultsCheck
 from .claude_md import GlobalClaudeMdCheck, RootClaudeMdCheck
+from .cmux_socket_control import CmuxSocketControlCheck
 from .context_freshness import ContextFreshnessCheck
 from .cron_health import CronHealthCheck
 from .dead_code import DeadCodeCheck
@@ -126,6 +127,13 @@ ALL_CHECKS = [
     # so the dev uvicorn on 4097 auto-restarts on crash. Notify-only; never
     # auto-installs (modifies ~/Library/LaunchAgents/).
     DevBackendPlistCheck,
+
+    # cmux socket control — cmux's default ("cmuxOnly") refuses socket commands
+    # from outside cmux, which is every call `aos start` makes. Left alone, the
+    # way into the system silently degrades to "Claude Code in whatever terminal
+    # you were already in". periodic_fix=True; the edit is surgical and only
+    # widens from the default, never overrides an operator's chosen mode.
+    CmuxSocketControlCheck,
 
     # Services — every deployed com.aos.*.plist has a loaded (and healthy)
     # launchd job. The generic net for the exact silent state that ate the

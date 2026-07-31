@@ -108,6 +108,7 @@ LABELS: dict[str, str] = {
     "bridge_poll_liveness": "the Telegram bridge",
     "deployment_health": "the last update",
     "dev_backend_plist": "the Qareen dev service",
+    "cmux_socket_control": "your terminal",
     "dev_browser": "the automation browser",
     "launchagent_python_paths": "background services",
     "settings_config": "Claude Code settings",
@@ -253,6 +254,12 @@ TEMPLATES: dict[str, dict[str, object]] = {
     "dev_backend_plist": {
         "notify": ("🔧 The Qareen dev service isn't loaded, so the dashboard and dev "
                    "backend may be offline. Logged for a look."),
+    },
+    "cmux_socket_control": {
+        "notify": ("🖥️ I can't open your terminal for you right now, so starting a "
+                   "session will drop you in the window you're already in. "
+                   "Logged for a look."),
+        "fixed": "🖥️ Fixed your terminal — sessions will open in their own window again.",
     },
     "dev_browser": {
         "notify": ("🌐 The automation browser isn't set up correctly, so some web "
