@@ -1,6 +1,6 @@
 """Voice message transcription — thin client to AOS Transcriber service.
 
-All transcription runs through the shared transcriber at localhost:7601.
+All transcription runs through the shared transcriber at localhost:7602.
 Model: Whisper Large V3 Turbo (809M params, 99+ languages, native EN/AR).
 
 If the service is unreachable, falls back to direct mlx-whisper import.
@@ -16,7 +16,10 @@ from urllib.request import Request, urlopen
 
 logger = logging.getLogger(__name__)
 
-TRANSCRIBER_URL = "http://127.0.0.1:7601"
+# Must match `port:` in core/services/transcriber/service.yaml. :7601 is
+# whatsmeow — posting audio there silently fell through to the slow per-request
+# mlx-whisper fallback while the preloaded model sat idle (aos#180).
+TRANSCRIBER_URL = "http://127.0.0.1:7602"
 
 # Mode maps to transcriber service modes
 _mode = "fast"

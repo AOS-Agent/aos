@@ -171,3 +171,99 @@ def test_no_consumer_hardcodes_multi_service_url_list():
         "consumer file(s) hardcode a multi-service health-URL list instead of "
         f"deriving from the registry: {offenders}"
     )
+
+
+# ── Guard 3: no two services claim the same port ─────────────────────────────
+
+def test_no_two_active_services_declare_the_same_port():
+    """Two manifests claiming one port is a race for the socket: whichever
+    launchd starts first wins and the other dies. The transcriber shipped
+    declaring :7601 — whatsmeow's port — for exactly this reason (aos#180)."""
+    reg = reg_mod.load_registry()
+
+    by_port: dict[int, list[str]] = {}
+    for name, port in reg.ports().items():
+        by_port.setdefault(port, []).append(name)
+
+    collisions = {p: sorted(n) for p, n in by_port.items() if len(n) > 1}
+    assert not collisions, (
+        f"port collision(s) between active services: {collisions}. "
+        "Each service needs its own port — see core/services/<name>/service.yaml."
+    )
+
+
+# ── Guard 4: a service's own port declarations match its manifest ────────────
+
+# `<SERVICE>_PORT` as an env-var default in the service's own code, and as a
+# literal in its plist template. Both must equal `port:` in its service.yaml.
+_ENV_PORT_DEFAULT = re.compile(
+    r"""os\.environ\.get\(\s*["'](\w+)_PORT["']\s*,\s*["'](\d+)["']\s*\)"""
+)
+_PLIST_ENV_PORT = re.compile(
+    r"<key>(\w+)_PORT</key>\s*<string>(\d+)</string>", re.MULTILINE
+)
+
+
+def test_service_own_port_declarations_agree_with_manifest():
+    reg = reg_mod.load_registry()
+    ports = reg.ports()
+
+    offenders: dict[str, str] = {}
+
+    def _check(rel: str, declared_for: str, port: int):
+        name = declared_for.lower()
+        if name in ports and port != ports[name]:
+            offenders[rel] = (
+                f"declares {name.upper()}_PORT={port}, "
+                f"but service.yaml says {ports[name]}"
+            )
+
+    for f in (REPO / "core" / "services").glob("*/*.py"):
+        for declared_for, port in _ENV_PORT_DEFAULT.findall(f.read_text()):
+            _check(f.relative_to(REPO).as_posix(), declared_for, int(port))
+
+    for f in (REPO / "config" / "launchagents").glob("*.plist.template"):
+        for declared_for, port in _PLIST_ENV_PORT.findall(f.read_text()):
+            _check(f.relative_to(REPO).as_posix(), declared_for, int(port))
+
+    assert not offenders, (
+        "port declaration(s) disagree with the owning service.yaml — the "
+        f"manifest is the source of truth: {offenders}"
+    )
+
+
+# ── Guard 5: a `<SERVICE>_URL` constant points at that service's port ────────
+
+_SERVICE_URL_CONST = re.compile(
+    r"""(\w+)_URL\s*=\s*["']http://(?:127\.0\.0\.1|localhost):(\d+)"""
+)
+
+
+def test_service_url_constants_point_at_the_right_service():
+    """`TRANSCRIBER_URL = "http://127.0.0.1:7601"` is syntactically fine and
+    semantically catastrophic — :7601 is whatsmeow, so voice audio was POSTed
+    at the WhatsApp bridge. Guard 2 misses it because it only fires when one
+    file names two ports."""
+    reg = reg_mod.load_registry()
+    ports = reg.ports()
+
+    offenders: dict[str, str] = {}
+    for f in _consumer_files():
+        rel = f.relative_to(REPO).as_posix()
+        if rel in _PORT_LIST_ALLOWLIST:
+            continue
+        code = _strip_comments(f.read_text(), f.suffix)
+        for named, port in _SERVICE_URL_CONST.findall(code):
+            name = named.lower()
+            if name in ports and int(port) != ports[name]:
+                owner = next(
+                    (s for s, p in ports.items() if p == int(port)), "nothing"
+                )
+                offenders[f"{rel}:{named}_URL"] = (
+                    f"points at :{port} ({owner}), "
+                    f"but {name} is on :{ports[name]}"
+                )
+
+    assert not offenders, (
+        f"service URL constant(s) point at the wrong service: {offenders}"
+    )

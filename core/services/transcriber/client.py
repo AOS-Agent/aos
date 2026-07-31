@@ -21,7 +21,8 @@ from urllib.request import Request, urlopen
 
 logger = logging.getLogger(__name__)
 
-TRANSCRIBER_URL = "http://127.0.0.1:7601"
+# Must match `port:` in service.yaml. :7601 is whatsmeow (aos#180).
+TRANSCRIBER_URL = "http://127.0.0.1:7602"
 TIMEOUT = 300  # 5 minutes max for long audio
 
 

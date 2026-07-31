@@ -6,7 +6,7 @@ Single endpoint, single model, shared by bridge + content-engine + listen.
     GET  /health         — service health + model status
     GET  /info           — model info + supported languages
 
-Runs on port 7601.
+Runs on port 7602. :7601 is whatsmeow — see service.yaml.
 """
 
 import asyncio
@@ -26,7 +26,9 @@ from pydantic import BaseModel, Field
 # Config
 # ---------------------------------------------------------------------------
 
-PORT = int(os.environ.get("TRANSCRIBER_PORT", "7601"))
+# Must match `port:` in service.yaml. :7601 is whatsmeow — binding it here is
+# what made the transcriber and the WhatsApp bridge race for the same socket.
+PORT = int(os.environ.get("TRANSCRIBER_PORT", "7602"))
 HOST = "127.0.0.1"
 
 logging.basicConfig(
