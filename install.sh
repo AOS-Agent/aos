@@ -441,6 +441,15 @@ prereq_python3() {
     #     when that path changes rather than having brew change it incidentally.
     #
     # Requires uv, so run_prereqs calls prereq_uv before this.
+    #
+    # Requires the repo too — run_prereqs calls setup_repo before this. Check it
+    # explicitly so a missing clone reports the actual problem instead of
+    # blaming the version file, which is what sent operators looking for a
+    # Python fault that was never there.
+    if [[ ! -d "$AOS_DIR/.git" ]]; then
+        _die "AOS repository missing at $AOS_DIR — the clone did not happen. Re-run: curl -fsSL https://install.hish.am | bash"
+    fi
+
     local pinned
     pinned=$(tr -d "[:space:]" < "$AOS_DIR/.python-version" 2>/dev/null)
     if [[ -z "$pinned" ]]; then
@@ -1035,6 +1044,18 @@ prereq_claude_remote() {
 run_prereqs() {
     prereq_xcode_clt
     prereq_git
+    # The repo has to exist before anything reads out of it. install.sh does not
+    # necessarily run from $AOS_DIR: the install.hish.am bootstrap untars the
+    # repo into a scratch dir and execs this script from there, on the stated
+    # contract that "the repo's install.sh clones ~/aos itself". It did — but in
+    # the repo stage, which runs after this one, so prereq_python3 died reading
+    # ~/aos/.python-version out of a directory nothing had created yet. Every
+    # fresh install failed there.
+    #
+    # setup_repo is idempotent (skips when $AOS_DIR/.git exists), so the repo
+    # stage still calls it and simply skips. Cloning needs git, which
+    # prereq_xcode_clt and prereq_git have just guaranteed.
+    setup_repo
     prereq_homebrew
     # uv first: it provisions the pinned interpreter that prereq_python3 selects
     # and that prereq_aos_env syncs dependencies into.
