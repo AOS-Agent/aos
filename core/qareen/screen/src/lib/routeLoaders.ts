@@ -32,6 +32,7 @@ export const PAGE_LOADERS = {
   '/intelligence/:id': () => import('@/pages/IntelligenceDetail'),
   '/sessions': () => import('@/pages/Sessions'),
   '/sessions/:id': () => import('@/pages/SessionDetail'),
+  '/converse': () => import('@/pages/Converse'),
   '/calendar': () => import('@/pages/Calendar'),
 } satisfies Record<string, Loader>;
 

@@ -25,6 +25,7 @@ const Skills = routeComponent('/skills');
 // ── Sub-views ──
 const Sessions = routeComponent('/sessions');
 const SessionDetail = routeComponent('/sessions/:id');
+const Converse = routeComponent('/converse');
 const AgentConfig = routeComponent('/agents/:id');
 const IntelligenceFeed = lazy(() => import('@/pages/IntelligenceFeed'));
 const IntelligenceDetail = routeComponent('/intelligence/:id');
@@ -79,6 +80,11 @@ export default function App() {
         {/* ── Sub-routes ── */}
         <Route path="/sessions" element={<Sessions />} />
         <Route path="/sessions/:id" element={<SessionDetail />} />
+
+        {/* ── Converse — full-interactive control over Sentinel/Envoy
+            conversation sessions (T4, Wave 2 of the converse-engine build).
+            Binds to core/qareen/api/converse.py. ── */}
+        <Route path="/converse" element={<Converse />} />
 
         {/* ── Review: pages kept for evaluation ── */}
         {/* meeting route removed — companion sessions handle all session types */}
