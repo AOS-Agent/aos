@@ -908,6 +908,7 @@ _api_routers = [
     ("qareen.api.chat", "chat"),
     ("qareen.api.conversations", "conversations"),
     ("qareen.api.sentinel", "sentinel"),
+    ("qareen.api.converse", "converse"),
     ("qareen.api.git", "git"),
     ("qareen.api.remote_access", "remote_access"),
     ("qareen.api.approvals", "approvals"),
