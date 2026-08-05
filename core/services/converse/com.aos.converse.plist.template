@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.aos.converse</string>
+
+    <key>WorkingDirectory</key>
+    <string>__HOME__/aos</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/homebrew/bin/python3</string>
+        <string>-m</string>
+        <string>core.services.converse.main</string>
+    </array>
+
+    <!-- Ships OFF by design (PLAN.md Wave 2/T3 -> Wave 3/T5 cutover):
+         feature-complete but inert until the operator explicitly activates
+         it after the Sana cutover soak. Both RunAtLoad and Disabled are set
+         so the daemon does not start even if this plist is bootstrapped —
+         activation is a deliberate two-step (edit this file, or replace it
+         via the future cutover step, then bootstrap/kickstart). -->
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>Disabled</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <false/>
+
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <key>ProcessType</key>
+    <string>Interactive</string>
+
+    <key>StandardOutPath</key>
+    <string>__HOME__/.aos/logs/converse/launchagent.out.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>__HOME__/.aos/logs/converse/launchagent.err.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:__HOME__/.bun/bin:__HOME__/.local/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>PYTHONPATH</key>
+        <string>__HOME__/aos</string>
+        <key>PYTHONUNBUFFERED</key>
+        <string>1</string>
+    </dict>
+</dict>
+</plist>

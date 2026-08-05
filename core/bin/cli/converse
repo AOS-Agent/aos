@@ -1,0 +1,330 @@
+#!/usr/bin/env python3
+"""converse — CLI for the Converse conversation-session engine (Wave 2 / T3).
+
+Usage:
+  converse create --channel imessage|slack --to HANDLE --mission TEXT [...]
+  converse list [--status active|all|<status>] [--channel imessage|slack] [--limit N]
+  converse show <id>
+  converse pause <id>
+  converse resume <id> [--bump-messages N]
+  converse close <id> [--reason TEXT]
+  converse reauth slack [--workspace-url URL]
+
+Every subcommand accepts a global --db PATH to target a non-default comms.db
+(verification / tests never touch the live ~/.aos/data/comms.db this way).
+
+Full session lifecycle (takeover/release/inject, import-slack-lite) lives in
+the Qareen API / later migration phases per PLAN.md §7-8 — this CLI covers
+the T3 supervisor's own surface: creating sessions and controlling them from
+the terminal.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+import time
+from pathlib import Path
+
+HOME = Path.home()
+CONFIG_PATH = HOME / ".aos" / "config" / "converse.yaml"
+
+
+def _ensure_path() -> None:
+    for p in (HOME / "project" / "aos", HOME / "aos"):
+        if (p / "core").is_dir():
+            if str(p) not in sys.path:
+                sys.path.insert(0, str(p))
+            return
+
+
+_ensure_path()
+
+import yaml  # noqa: E402
+
+from core.engine.comms.converse import db, models  # noqa: E402
+
+
+def _load_config() -> dict:
+    if not CONFIG_PATH.exists():
+        return {}
+    try:
+        return yaml.safe_load(CONFIG_PATH.read_text()) or {}
+    except Exception:
+        return {}
+
+
+def _human_age(ts: int) -> str:
+    delta = int(time.time()) - ts
+    if delta < 60:
+        return f"{delta}s"
+    if delta < 3600:
+        return f"{delta // 60}m"
+    if delta < 86400:
+        return f"{delta // 3600}h"
+    return f"{delta // 86400}d"
+
+
+def _build_channel(channel_name: str):
+    """Best-effort channel construction for resolve_counterpart() on create
+    and workspace_url discovery on reauth. Never raises — a channel that
+    can't be built (e.g. Slack with no secrets yet) just means person
+    resolution is skipped, not a hard failure for the CLI."""
+    try:
+        if channel_name == "imessage":
+            from core.engine.comms.converse.channels_imessage import iMessageChannel
+
+            return iMessageChannel()
+        if channel_name == "slack":
+            from core.engine.comms.converse.channels_slack import SlackChannel
+
+            return SlackChannel()
+    except Exception:
+        return None
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Subcommands
+# ---------------------------------------------------------------------------
+
+
+def cmd_create(args: argparse.Namespace) -> int:
+    cfg = _load_config()
+    defaults = cfg.get("defaults") or {}
+
+    tools = args.tools or defaults.get("tools", models.TOOLS_NONE)
+    trust = args.trust if args.trust is not None else int(defaults.get("trust_level", 2))
+    max_messages = args.max_messages if args.max_messages is not None else int(defaults.get("max_messages", 30))
+    expires_days = args.expires_days if args.expires_days is not None else defaults.get("expires_days")
+    expires_at = int(time.time()) + int(expires_days) * 86400 if expires_days else None
+    ref = args.ref or args.to
+
+    person_id = person_name = None
+    channel = _build_channel(args.channel)
+    if channel is not None:
+        try:
+            info = channel.resolve_counterpart(args.to)
+            if info:
+                person_id = info.get("person_id")
+                person_name = info.get("canonical_name")
+        except Exception:
+            pass
+
+    try:
+        session = db.create_session(
+            mode=args.mode, voice=args.voice, channel=args.channel,
+            conversation_ref=ref, counterpart_handle=args.to,
+            person_id=person_id, person_name=person_name,
+            mission=args.mission, success_criteria=args.success, constraints=args.constraints,
+            tools=tools, trust_level=trust, max_messages=max_messages, expires_at=expires_at,
+            origin=args.origin or "cli", db_path=args.db,
+        )
+    except ValueError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+
+    print(f"Created {session.id}  ({session.mode}/{session.voice}/{session.channel} -> {session.counterpart_handle})")
+    if person_name:
+        print(f"  resolved contact: {person_name} ({person_id})")
+    print(f"  trust={session.trust_level} tools={session.tools} max_messages={session.max_messages}"
+          + (f" expires_at={session.expires_at}" if session.expires_at else ""))
+    return 0
+
+
+def cmd_list(args: argparse.Namespace) -> int:
+    status: str | list[str] | None
+    if args.status in (None, "active"):
+        status = list(models.ACTIVE_STATUSES)
+    elif args.status == "all":
+        status = None
+    else:
+        status = [args.status]
+
+    sessions = db.list_sessions(status=status, channel=args.channel, mode=args.mode, limit=args.limit, db_path=args.db)
+    if not sessions:
+        print("No sessions.")
+        return 0
+
+    for s in sessions:
+        mission = (s.mission or "")[:44]
+        print(
+            f"{s.id}  {s.status:<10} {s.channel:<8} {s.mode}/{s.voice:<8} "
+            f"{s.counterpart_handle:<20} turns={s.turn_count:<3} sent={s.sent_count}/{s.max_messages}  "
+            f"upd={_human_age(s.updated_at):<4} {mission}"
+        )
+    return 0
+
+
+def cmd_show(args: argparse.Namespace) -> int:
+    session = db.get_session(args.id, db_path=args.db)
+    if session is None:
+        print(f"No such session: {args.id}", file=sys.stderr)
+        return 1
+
+    print(json.dumps(session.to_dict(), indent=2, default=str))
+
+    print("\n-- transcript (last 20) --")
+    for m in db.list_messages(args.id, limit=20, db_path=args.db):
+        text = (m.text or "").replace("\n", " ")[:100]
+        print(f"[{m.ts}] {m.role:<8} {m.direction:<9} {m.state:<12} {text}")
+
+    pending = [a for a in db.list_pending_actions(limit=200, db_path=args.db) if a.session_id == args.id]
+    if pending:
+        print("\n-- pending actions --")
+        for a in pending:
+            print(f"{a.id}  {a.kind}  {a.payload}")
+    return 0
+
+
+def cmd_pause(args: argparse.Namespace) -> int:
+    session = db.set_status(args.id, models.STATUS_PAUSED, paused_reason=models.PAUSED_REASON_OPERATOR, db_path=args.db)
+    if session is None:
+        print(f"No such session: {args.id}", file=sys.stderr)
+        return 1
+    print(f"Paused {session.id}")
+    return 0
+
+
+def cmd_resume(args: argparse.Namespace) -> int:
+    session = db.get_session(args.id, db_path=args.db)
+    if session is None:
+        print(f"No such session: {args.id}", file=sys.stderr)
+        return 1
+    if session.is_terminal:
+        print(f"Cannot resume a terminal session (status={session.status})", file=sys.stderr)
+        return 1
+
+    if session.status == models.STATUS_CAPPED:
+        # PLAN.md §7: "resume ... capped: bumps max_messages" — db.py has no
+        # dedicated setter for max_messages, so this is a direct SQL bump
+        # from the CLI layer, same pattern as the supervisor's own
+        # daemon-owned fields (see supervisor.py's module docstring).
+        bump = args.bump_messages if args.bump_messages is not None else 10
+        conn = db.connect(args.db)
+        try:
+            conn.execute(
+                "UPDATE conversation_sessions SET max_messages = max_messages + ? WHERE id = ?",
+                (bump, args.id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        print(f"  bumped max_messages by {bump}")
+
+    session = db.set_status(args.id, models.STATUS_ACTIVE, clear_paused_reason=True, db_path=args.db)
+    print(f"Resumed {session.id} (status={session.status})")
+    return 0
+
+
+def cmd_close(args: argparse.Namespace) -> int:
+    session = db.set_status(args.id, models.STATUS_STOPPED, close_reason=args.reason or "stopped", db_path=args.db)
+    if session is None:
+        print(f"No such session: {args.id}", file=sys.stderr)
+        return 1
+    print(f"Closed {session.id} (close_reason={session.close_reason})")
+    return 0
+
+
+def cmd_reauth(args: argparse.Namespace) -> int:
+    if args.channel != "slack":
+        print("Only 'slack' reauth is supported (iMessage has no auth loop — Full Disk Access is a health check).", file=sys.stderr)
+        return 1
+
+    cfg = _load_config()
+    slack_cfg = (cfg.get("channels") or {}).get("slack") or {}
+    workspace_url = args.workspace_url or slack_cfg.get("workspace_url")
+    if not workspace_url or "<workspace>" in workspace_url:
+        print(
+            "No workspace_url configured — set channels.slack.workspace_url in "
+            f"{CONFIG_PATH} or pass --workspace-url", file=sys.stderr,
+        )
+        return 1
+
+    from core.engine.comms.converse.reauth import reauth_slack
+
+    result = reauth_slack(workspace_url)
+    if not result.get("ok"):
+        print(f"Reauth failed: {result.get('error')}", file=sys.stderr)
+        return 1
+
+    print(f"Reauth OK — user={result.get('user')} team={result.get('team')}")
+
+    resumed = 0
+    for s in db.list_sessions(status=models.STATUS_PAUSED, channel="slack", limit=500, db_path=args.db):
+        if s.paused_reason == models.PAUSED_REASON_REAUTH:
+            db.set_status(s.id, models.STATUS_ACTIVE, clear_paused_reason=True, db_path=args.db)
+            resumed += 1
+    if resumed:
+        print(f"Resumed {resumed} session(s) previously paused for reauth.")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# argparse wiring
+# ---------------------------------------------------------------------------
+
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(prog="converse", description="Converse conversation-session engine CLI")
+    p.add_argument("--db", default=None, help="comms.db path override (tests/verification)")
+    sub = p.add_subparsers(dest="command", required=True)
+
+    c = sub.add_parser("create", help="start a new conversation session")
+    c.add_argument("--channel", required=True, choices=models.CHANNELS)
+    c.add_argument("--to", required=True, help="counterpart handle (phone/email for imessage, Slack user id for slack)")
+    c.add_argument("--mission", required=True, help="goal paragraph (context included)")
+    c.add_argument("--mode", default=models.MODE_ENVOY, choices=models.MODES)
+    c.add_argument("--voice", default=models.VOICE_AGENT, choices=models.VOICES)
+    c.add_argument("--ref", default=None, help="conversation_ref (defaults to --to; Slack channel id if different)")
+    c.add_argument("--success", default=None, dest="success", help="success criteria")
+    c.add_argument("--constraints", default=None)
+    c.add_argument("--tools", default=None, choices=models.TOOLS_PROFILES)
+    c.add_argument("--trust", type=int, default=None, choices=(1, 2, 3))
+    c.add_argument("--max-messages", type=int, default=None, dest="max_messages")
+    c.add_argument("--expires-days", type=int, default=None, dest="expires_days")
+    c.add_argument("--origin", default=None)
+    c.set_defaults(func=cmd_create)
+
+    l = sub.add_parser("list", help="list sessions")
+    l.add_argument("--status", default="active", help="active|all|<status> (default: active)")
+    l.add_argument("--channel", default=None, choices=models.CHANNELS)
+    l.add_argument("--mode", default=None, choices=models.MODES)
+    l.add_argument("--limit", type=int, default=50)
+    l.set_defaults(func=cmd_list)
+
+    s = sub.add_parser("show", help="show a session's detail + transcript + pending actions")
+    s.add_argument("id")
+    s.set_defaults(func=cmd_show)
+
+    pa = sub.add_parser("pause", help="pause a session (operator hold)")
+    pa.add_argument("id")
+    pa.set_defaults(func=cmd_pause)
+
+    r = sub.add_parser("resume", help="resume a paused/escalated/capped session")
+    r.add_argument("id")
+    r.add_argument("--bump-messages", type=int, default=None, dest="bump_messages")
+    r.set_defaults(func=cmd_resume)
+
+    cl = sub.add_parser("close", help="close a session (stopped)")
+    cl.add_argument("id")
+    cl.add_argument("--reason", default=None)
+    cl.set_defaults(func=cmd_close)
+
+    ra = sub.add_parser("reauth", help="reauthenticate a channel (slack only)")
+    ra.add_argument("channel", choices=("slack",))
+    ra.add_argument("--workspace-url", default=None, dest="workspace_url")
+    ra.set_defaults(func=cmd_reauth)
+
+    return p
+
+
+def main() -> int:
+    parser = build_parser()
+    args = parser.parse_args()
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
