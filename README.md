@@ -1,4 +1,5 @@
 <p align="center">
+  <img src="https://img.shields.io/badge/status-beta-F5A623?style=flat-square" alt="Beta" />
   <img src="https://img.shields.io/badge/platform-macOS-000?style=flat-square&logo=apple" alt="macOS" />
   <img src="https://img.shields.io/badge/runtime-Claude_Code-D9730D?style=flat-square" alt="Claude Code" />
   <img src="https://img.shields.io/badge/version-0.7.1-blue?style=flat-square" alt="v0.7.1" />
@@ -11,6 +12,10 @@
   Turn a Mac into an autonomous workstation.<br/>
   AI agents manage your work, run tasks, compound knowledge, and improve over time.
 </p>
+
+> [!NOTE]
+> **AOS is in beta.** It's stable enough to run daily, and we're continuing to
+> improve features and fix issues as we go.
 
 ---
 
