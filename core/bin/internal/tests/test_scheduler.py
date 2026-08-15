@@ -147,3 +147,48 @@ def test_send_failure_does_not_mark_sent(tmp_path, monkeypatch):
     entry = {"consecutive_failures": 3, "exit_code": 1}
     sched._maybe_alert_failure("job", entry, log_file)
     assert "last_alert" not in entry
+
+
+# ── at: catch_up (missed-window recovery) ─────────────────────────────────────
+#
+# A daily at-job on a machine that sleeps through its window is silently
+# skipped for the whole day. catch_up: true makes it due at the first tick
+# after the window has passed, while the once-per-day guard still prevents
+# double runs. (Regression: faisal-mini missed 25 consecutive 04:00
+# auto-updates while asleep.)
+
+def _at(hour, minute):
+    return datetime(2026, 8, 14, hour, minute)
+
+
+def test_at_job_in_window_is_due():
+    job = {"at": "04:00"}
+    assert sched.is_due("j", job, {}, _at(4, 2)) is True
+
+
+def test_at_job_missed_window_not_due_without_catch_up():
+    job = {"at": "04:00"}
+    assert sched.is_due("j", job, {}, _at(9, 0)) is False
+
+
+def test_at_job_missed_window_due_with_catch_up():
+    job = {"at": "04:00", "catch_up": True}
+    assert sched.is_due("j", job, {}, _at(9, 0)) is True
+
+
+def test_catch_up_does_not_double_run_same_day():
+    job = {"at": "04:00", "catch_up": True}
+    status = {"j": {"last_run": _at(9, 0).isoformat()}}
+    assert sched.is_due("j", job, status, _at(11, 0)) is False
+
+
+def test_catch_up_runs_again_next_day():
+    job = {"at": "04:00", "catch_up": True}
+    status = {"j": {"last_run": _at(9, 0).isoformat()}}
+    next_day = datetime(2026, 8, 15, 9, 0)
+    assert sched.is_due("j", job, status, next_day) is True
+
+
+def test_catch_up_not_due_before_window():
+    job = {"at": "04:00", "catch_up": True}
+    assert sched.is_due("j", job, {}, _at(3, 0)) is False

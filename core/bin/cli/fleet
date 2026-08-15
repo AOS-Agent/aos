@@ -1,0 +1,292 @@
+#!/usr/bin/env python3
+"""fleet — AOS fleet update-verification CLI.
+
+Answers, for every AOS node the operator runs: what version is it on,
+is it behind, WHY is it behind, and is it healthy — in one command.
+
+Usage:
+    aos fleet status              Table: version / behind / last apply / health
+    aos fleet status --json       Same, machine-readable (for agents)
+    aos fleet verify              Post-ship check: exits 1 if any node is
+                                  behind or its last apply failed
+    aos fleet update <node|all>   Trigger check-update --apply on node(s),
+                                  then re-verify
+
+Node registry (instance config, never shipped):
+    ~/.aos/config/fleet.yaml
+        nodes:
+          - name: faisal-mini        # ssh alias from ~/.ssh/config
+            auto_update: true        # `fleet update all` includes it
+          - name: local              # magic name: this machine, no SSH
+
+Design notes:
+  - SSH-pull, not push: works on any node reachable by ssh alias — no
+    daemon required (the mesh heartbeat roster, where present, is a
+    complementary live-health source, not a dependency).
+  - The remote probe is plain POSIX shell + cat. It deliberately avoids
+    remote python: fleet nodes have proven to ship Python 3.9 (macOS
+    system python) where even `str | None` fails. Parsing happens locally.
+  - Every failure mode is a row, not an exception: unreachable nodes are
+    reported as status=unreachable with the ssh error, never a crash.
+"""
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta
+from pathlib import Path
+
+AOS_DIR = Path.home() / "aos"
+FLEET_CONFIG = Path.home() / ".aos" / "config" / "fleet.yaml"
+SSH_OPTS = ["-o", "ConnectTimeout=10", "-o", "BatchMode=yes"]
+
+# Field separator for the remote probe output. Unit Separator — never
+# appears in versions, hashes, or launchctl output.
+SEP = "\x1f"
+
+# One probe, POSIX sh, no python, no heredocs that depend on remote quoting.
+# Emits SEP-joined fields in a fixed order; missing files become "".
+PROBE = r"""
+v=$(cat ~/aos/VERSION 2>/dev/null)
+h=$(cat ~/.aos/data/deployed-hash 2>/dev/null)
+m=$(cat ~/.aos/.version 2>/dev/null)
+s=$(cat ~/.aos/data/update-state.json 2>/dev/null | tr -d '\n')
+f=$(launchctl list 2>/dev/null | awk '$3 ~ /^com\.aos\./ && $1 == "-" && $2 != 0 && $2 != "-" {printf "%s:%s ", $3, $2}')
+r=$(launchctl list 2>/dev/null | awk '$3 ~ /^com\.aos\./' | wc -l | tr -d ' ')
+d=$(df -h ~ 2>/dev/null | awk 'NR==2 {print $5}')
+printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s' "$v" "$h" "$m" "$s" "$f" "$r" "$d"
+"""
+
+PROBE_FIELDS = ["version", "deployed_hash", "migration_version",
+                "update_state_raw", "failed_services", "service_count", "disk_used"]
+
+# Prepended to PROBE with --fresh: force the node to re-check against the
+# remote before we read its state. Without this, `fleet verify` right after
+# a ship reads a pre-ship cache and false-PASSes.
+FRESH_PREFIX = "bash ~/aos/core/bin/crons/check-update >/dev/null 2>&1\n"
+
+
+def load_registry():
+    """Parse fleet.yaml without requiring PyYAML on odd interpreters."""
+    if not FLEET_CONFIG.exists():
+        return None
+    try:
+        import yaml  # available under aos-python
+        cfg = yaml.safe_load(FLEET_CONFIG.read_text()) or {}
+        return cfg.get("nodes", [])
+    except Exception as e:
+        print(f"ERROR: cannot parse {FLEET_CONFIG}: {e}", file=sys.stderr)
+        sys.exit(2)
+
+
+def probe_node(node, fresh=False):
+    """Run the probe on one node. Returns a normalized dict, never raises."""
+    name = node.get("name", "?")
+    is_local = name == "local"
+    script = (FRESH_PREFIX + PROBE) if fresh else PROBE
+    timeout = 120 if fresh else 45
+    try:
+        if is_local:
+            proc = subprocess.run(["sh", "-c", script], capture_output=True,
+                                  text=True, timeout=timeout)
+        else:
+            proc = subprocess.run(["ssh", *SSH_OPTS, name, script],
+                                  capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return {"name": name, "status": "unreachable", "error": "probe timeout"}
+    except OSError as e:
+        return {"name": name, "status": "unreachable", "error": str(e)}
+
+    out = proc.stdout
+    if SEP not in out:
+        err = (proc.stderr or "no output").strip().splitlines()
+        return {"name": name, "status": "unreachable",
+                "error": err[-1] if err else "no output"}
+
+    parts = out.split(SEP)
+    raw = dict(zip(PROBE_FIELDS, parts + [""] * (len(PROBE_FIELDS) - len(parts))))
+    result = {
+        "name": name,
+        "auto_update": bool(node.get("auto_update")),
+        "version": raw["version"] or "unknown",
+        "deployed_hash": raw["deployed_hash"][:7],
+        "migration_version": raw["migration_version"] or "?",
+        "failed_services": raw["failed_services"].strip(),
+        "service_count": raw["service_count"] or "0",
+        "disk_used": raw["disk_used"],
+    }
+
+    state = {}
+    if raw["update_state_raw"]:
+        try:
+            state = json.loads(raw["update_state_raw"])
+        except ValueError:
+            pass
+    result["update_status"] = state.get("status", "no state file")
+    result["behind"] = state.get("behind", 0)
+    result["last_check"] = state.get("last_check", "")
+    result["last_apply"] = state.get("last_apply", {})
+
+    # Cache-staleness guard: if the state file's recorded local hash no
+    # longer matches what's actually deployed, the node was updated after
+    # its last self-check — its cached "behind" count is fiction. Don't
+    # report fiction; say the check is stale instead (or use --fresh).
+    state_local = (state.get("local") or "")[:7]
+    if (state_local and result["deployed_hash"]
+            and state_local != result["deployed_hash"]
+            and result["update_status"] == "update_available"):
+        result["update_status"] = "stale_state"
+        result["behind"] = 0
+
+    # Derive one verdict per node.
+    apply_result = result["last_apply"].get("result")
+    if apply_result == "failed":
+        result["status"] = "apply_failed"
+    elif result["update_status"] == "update_available":
+        result["status"] = "behind"
+    elif result["update_status"] in ("up_to_date", "no state file"):
+        result["status"] = "ok" if not result["failed_services"] else "degraded"
+    else:
+        result["status"] = result["update_status"]  # offline / check_error / ...
+    if result["status"] == "ok" and stale_check(result["last_check"]):
+        result["status"] = "stale_check"
+    return result
+
+
+def stale_check(iso):
+    """True if the node hasn't self-checked for updates in >24h."""
+    if not iso:
+        return False
+    try:
+        return datetime.now() - datetime.fromisoformat(iso) > timedelta(hours=24)
+    except ValueError:
+        return False
+
+
+def explain(n):
+    """One human line: WHY is this node in this state."""
+    s = n["status"]
+    if s == "unreachable":
+        return n.get("error", "ssh failed")
+    if s == "apply_failed":
+        la = n["last_apply"]
+        return "apply failed at step '{}': {} ({})".format(
+            la.get("step", "?"), la.get("detail", "?"), la.get("time", "?")[:16])
+    if s == "behind":
+        la = n["last_apply"]
+        why = "no apply ever attempted"
+        if la:
+            why = "last apply {} at {}".format(
+                la.get("result", "?"), la.get("time", "?")[:16])
+        return "{} commit(s) behind — {}".format(n["behind"], why)
+    if s == "degraded":
+        return "services failing: " + n["failed_services"]
+    if s == "stale_check":
+        return "no update check since {} — scheduler asleep?".format(
+            n["last_check"][:16])
+    if s == "ok":
+        return "up to date, {} services loaded".format(n["service_count"])
+    if s == "stale_state":
+        return "updated since last self-check — re-run with --fresh for truth"
+    return n.get("update_status", "")
+
+
+ICON = {"ok": "✓", "behind": "↓", "apply_failed": "✗", "degraded": "⚠",
+        "unreachable": "✗", "stale_check": "⚠"}
+
+
+def collect(fresh=False):
+    nodes = load_registry()
+    if nodes is None:
+        print("No fleet registry at ~/.aos/config/fleet.yaml", file=sys.stderr)
+        print("Create it with a `nodes:` list (see `fleet --help`).", file=sys.stderr)
+        sys.exit(2)
+    if not nodes:
+        print("Fleet registry is empty.", file=sys.stderr)
+        sys.exit(2)
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        return list(pool.map(lambda n: probe_node(n, fresh=fresh), nodes))
+
+
+def cmd_status(as_json, fresh=False):
+    results = collect(fresh)
+    if as_json:
+        print(json.dumps(results, indent=2))
+        return 0
+    wname = max(len(r["name"]) for r in results) + 2
+    print("\nAOS Fleet — {}\n".format(datetime.now().strftime("%Y-%m-%d %H:%M")))
+    print("  {:<{w}} {:<10} {:<8} {:<13} why".format(
+        "node", "version", "mig", "status", w=wname))
+    for r in results:
+        icon = ICON.get(r["status"], "?")
+        print("  {:<{w}} {:<10} {:<8} {} {:<11} {}".format(
+            r["name"], r.get("version", "?"), r.get("migration_version", "?"),
+            icon, r["status"], explain(r), w=wname))
+    print()
+    return 0
+
+
+def cmd_verify(fresh=False):
+    results = collect(fresh)
+    bad = [r for r in results if r["status"] not in ("ok",)]
+    for r in results:
+        mark = "PASS" if r["status"] == "ok" else "FAIL"
+        print("{}  {:<14} {}".format(mark, r["name"], explain(r)))
+    return 1 if bad else 0
+
+
+def cmd_update(target):
+    nodes = load_registry() or []
+    if target != "all":
+        nodes = [n for n in nodes if n.get("name") == target]
+        if not nodes:
+            print(f"Unknown node: {target}", file=sys.stderr)
+            return 2
+    else:
+        nodes = [n for n in nodes if n.get("auto_update")]
+        if not nodes:
+            print("No nodes with auto_update: true in registry.", file=sys.stderr)
+            return 2
+    rc = 0
+    for n in nodes:
+        name = n["name"]
+        print(f"── updating {name} ──")
+        cmd = "bash ~/aos/core/bin/crons/check-update --apply 2>&1 | tail -12"
+        if name == "local":
+            proc = subprocess.run(["sh", "-c", cmd])
+        else:
+            proc = subprocess.run(["ssh", *SSH_OPTS, name, cmd])
+        rc = rc or proc.returncode
+    print("\n── post-update verification ──")
+    return cmd_verify() or rc
+
+
+def main():
+    p = argparse.ArgumentParser(prog="aos fleet", description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = p.add_subparsers(dest="cmd")
+    st = sub.add_parser("status", help="fleet version/health table")
+    st.add_argument("--json", action="store_true")
+    st.add_argument("--fresh", action="store_true",
+                    help="force each node to re-check for updates first")
+    vf = sub.add_parser("verify", help="post-ship check; nonzero exit on drift")
+    vf.add_argument("--fresh", action="store_true",
+                    help="force each node to re-check for updates first")
+    up = sub.add_parser("update", help="trigger update on node(s)")
+    up.add_argument("target", nargs="?", default="all")
+    args = p.parse_args()
+    if args.cmd == "status":
+        sys.exit(cmd_status(args.json, args.fresh))
+    if args.cmd == "verify":
+        sys.exit(cmd_verify(args.fresh))
+    if args.cmd == "update":
+        sys.exit(cmd_update(args.target))
+    p.print_help()
+    sys.exit(2)
+
+
+if __name__ == "__main__":
+    main()
