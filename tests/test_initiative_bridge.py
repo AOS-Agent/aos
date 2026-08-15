@@ -36,11 +36,14 @@ if __name__ != "__main__":
 AOS_DEV = Path.home() / "project" / "aos"
 AOS_RUNTIME = Path.home() / "aos"
 
-# Operator machines have no dev workspace — every file/path/cron check in this
-# suite then targets the deployed runtime tree instead (which is what actually
-# matters there). The dev/runtime sync section below stays honest either way:
-# it keys off AOS_DEV/.git, which an aliased runtime tree doesn't have.
-if not AOS_DEV.exists():
+# Operator machines have no real dev workspace — every file/path/cron check
+# in this suite then targets the deployed runtime tree instead (which is what
+# actually matters there). "Real" means a git repo: a mere ~/project/aos
+# directory isn't enough — one operator machine had a stale near-empty husk
+# there from an old experiment, and existence-testing it failed every file
+# check. The dev/runtime sync section below stays honest either way: it keys
+# off AOS_DEV/.git, which an aliased runtime tree doesn't have.
+if not (AOS_DEV / ".git").exists():
     AOS_DEV = AOS_RUNTIME
 AOS_USER = Path.home() / ".aos"
 VAULT = Path.home() / "vault"
