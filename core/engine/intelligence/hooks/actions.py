@@ -222,9 +222,9 @@ def _create_task(rule: ActionRule, payload: dict[str, Any]) -> None:
             or "(untitled)"
         )
         title = f"{rule.task_prefix} {title_raw}".strip()
-        work_cli = Path.home() / "aos" / "core" / "work" / "cli.py"
+        work_cli = Path.home() / "aos" / "core" / "engine" / "work" / "cli.py"
         if not work_cli.is_file():
-            work_cli = Path.home() / "project" / "aos" / "core" / "work" / "cli.py"
+            work_cli = Path.home() / "project" / "aos" / "core" / "engine" / "work" / "cli.py"
         if not work_cli.is_file():
             return
         subprocess.run(

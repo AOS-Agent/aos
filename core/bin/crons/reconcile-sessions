@@ -98,7 +98,7 @@ def normalize_project(session_project: str) -> str:
 
 
 # Add work engine to path
-sys.path.insert(0, str(Path.home() / "aos" / "core" / "work"))
+sys.path.insert(0, str(Path.home() / "aos" / "core" / "engine" / "work"))
 
 
 def load_reconciled() -> set:

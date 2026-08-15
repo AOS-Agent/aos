@@ -321,7 +321,7 @@ def _build_briefing() -> str:
     try:
         import importlib.util
         spec = importlib.util.spec_from_file_location(
-            "engine", str(Path.home() / "aos" / "core" / "work" / "engine.py"))
+            "engine", str(Path.home() / "aos" / "core" / "engine" / "work" / "engine.py"))
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
         work_tasks = mod.get_all_tasks()
@@ -679,7 +679,7 @@ def _build_morning_prompt() -> str:
     try:
         import importlib.util
         spec = importlib.util.spec_from_file_location(
-            "engine", str(Path.home() / "aos" / "core" / "work" / "engine.py"))
+            "engine", str(Path.home() / "aos" / "core" / "engine" / "work" / "engine.py"))
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
         tasks = mod.get_all_tasks()

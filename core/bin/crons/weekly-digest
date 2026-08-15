@@ -322,7 +322,7 @@ def load_prev_review(prev_sunday):
 def compute_metrics(work, start, end):
     """Compute flow metrics and drift."""
     try:
-        sys.path.insert(0, str(Path.home() / "aos" / "core" / "work"))
+        sys.path.insert(0, str(Path.home() / "aos" / "core" / "engine" / "work"))
         import metrics as work_metrics
         tasks = work.get("tasks", [])
         goals = work.get("goals", [])
