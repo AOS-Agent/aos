@@ -244,7 +244,7 @@ Step-by-step uses two complementary tracking systems:
 | Layer | Tool | Purpose |
 |-------|------|---------|
 | **In-session** | `TaskCreate` / `TaskUpdate` | Visual progress in Claude Code UI — spinners, checkmarks, status |
-| **Persistent** | Work CLI (`~/aos/core/work/cli.py`) | Cross-session state, dashboard events, initiative linking |
+| **Persistent** | Work CLI (`~/aos/core/engine/work/cli.py`) | Cross-session state, dashboard events, initiative linking |
 
 Both are mandatory. TaskCreate gives the operator live visual feedback. The work system gives resumability and downstream automation.
 
@@ -254,18 +254,18 @@ Both are mandatory. TaskCreate gives the operator live visual feedback. The work
 
 ```bash
 # Create parent task for the whole step-by-step flow
-python3 ~/aos/core/work/cli.py add "{Task Name}" --project {project}
+python3 ~/aos/core/engine/work/cli.py add "{Task Name}" --project {project}
 # Note the returned ID (e.g., aos#15)
 
 # Create subtasks — one per part
-python3 ~/aos/core/work/cli.py subtask aos#15 "Part 1: {name}"
-python3 ~/aos/core/work/cli.py subtask aos#15 "Part 2: {name}"
-python3 ~/aos/core/work/cli.py subtask aos#15 "Part 3: {name}"
+python3 ~/aos/core/engine/work/cli.py subtask aos#15 "Part 1: {name}"
+python3 ~/aos/core/engine/work/cli.py subtask aos#15 "Part 2: {name}"
+python3 ~/aos/core/engine/work/cli.py subtask aos#15 "Part 3: {name}"
 ```
 
 If this work belongs to an initiative phase, add `source_ref` when creating the parent:
 ```bash
-python3 ~/aos/core/work/cli.py add "{Task Name}" --project {project} --source-ref "vault/knowledge/initiatives/{slug}.md"
+python3 ~/aos/core/engine/work/cli.py add "{Task Name}" --project {project} --source-ref "vault/knowledge/initiatives/{slug}.md"
 ```
 
 **2. Create in-session tasks** (visual layer):
@@ -330,7 +330,7 @@ This activates the spinner with the `activeForm` text. The operator sees live pr
 TaskUpdate(taskId: "{id}", status: "completed")
 
 # Persistent: mark subtask done
-python3 ~/aos/core/work/cli.py done aos#15.1
+python3 ~/aos/core/engine/work/cli.py done aos#15.1
 ```
 
 The work engine handles everything downstream:
@@ -345,19 +345,19 @@ You do NOT need to manually update initiative docs, plan files, or dashboards. T
 
 Verify the parent task cascaded:
 ```bash
-python3 ~/aos/core/work/cli.py show aos#15
+python3 ~/aos/core/engine/work/cli.py show aos#15
 ```
 
 If it shows `status: done` with `auto_completed: true`, everything synced. If not, mark it done manually:
 ```bash
-python3 ~/aos/core/work/cli.py done aos#15
+python3 ~/aos/core/engine/work/cli.py done aos#15
 ```
 
 ## Resumability
 
 If a session ends mid-flow, the operator can say "resume" or "continue" and you should:
 1. Read your injected context — active tasks with subtask status are already there
-2. Or run `python3 ~/aos/core/work/cli.py show {parent-id}` to see which subtasks are done
+2. Or run `python3 ~/aos/core/engine/work/cli.py show {parent-id}` to see which subtasks are done
 3. Confirm: "Parts 1-3 are done. Picking up at Part 4 — {name}. Sound right?"
 4. Continue from MAP for the next uncompleted part
 
