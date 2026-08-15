@@ -253,8 +253,13 @@ jobs:
     description: Nightly lint pass — orphans, stale docs, topic refresh, synthesis suggestions
 
   # ── Kanban Phase 3: islah data plane ────────────────────────────────────────
+  # RETIRED 2026-08-15 (operator decision, aos#198): islah is shelved — its
+  # LaunchAgents were removed and ascbuild-sync had been failing on every run
+  # (missing `cryptography` for the ASC JWT). Data preserved in ~/.aos/islah/.
+  # Re-enable by flipping `enabled: true` if islah is ever revived.
 
   ascbuild-sync:
+    enabled: false
     command: python3 ~/aos/core/bin/crons/ascbuild-sync
     every: 1h
     timeout: 600
@@ -262,6 +267,7 @@ jobs:
     description: App Store Connect intake — TestFlight feedback + beta crashes → bug tasks
 
   islah-mirror:
+    enabled: false
     command: python3 ~/aos/core/bin/crons/islah-mirror
     every: 30m
     timeout: 120
