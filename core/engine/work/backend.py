@@ -12,6 +12,8 @@ Side effects (activity log, dashboard SSE, GitHub sync, initiative
 checkbox sync) are handled here in sync form — no async, no event bus.
 """
 
+from __future__ import annotations
+
 import contextlib
 import dataclasses
 import fcntl

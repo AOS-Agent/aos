@@ -10,6 +10,8 @@ v3: SQLite backend via qareen.db. Same API as v2.
 v2: Project-scoped IDs, fuzzy resolution, subtasks, handoff context.
 """
 
+from __future__ import annotations
+
 import fcntl
 import json
 import logging

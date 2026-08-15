@@ -14,6 +14,8 @@ Claude Code hooks protocol:
 - MUST output valid JSON and exit 0 — any failure kills the session start
 """
 
+from __future__ import annotations
+
 import json
 import os
 import sys
