@@ -2,14 +2,11 @@
 name: report
 description: >
   Investigate, diagnose, and report AOS issues to the developer. Trigger on
-  "this is broken", "there's a bug", "report this", "something's wrong with",
-  "/bug", "/report", "file an issue", "the [service] keeps [failing]", or any
-  user frustration with AOS behavior. Also trigger on "I have an idea",
-  "it would be nice if", "feature request", "I wish", "/idea" for enhancement
-  requests. Activate proactively when you notice AOS errors during normal work
-  — but only for issues that are clearly AOS-related (services, skills, config,
-  crons, hooks, dashboard, bridge, work system), not external environment
-  problems (network, disk, hardware).
+  "this is broken", "there's a bug", "report this", "/bug", "/report", "file an
+  issue", or user frustration with AOS behavior; also "/idea", "I have an idea",
+  "feature request". Activate proactively on AOS-related errors noticed during
+  work (services, skills, config, crons, hooks, bridge) — not external
+  environment problems.
 allowed-tools: Bash, Read, Grep, Glob, Agent
 ---
 

@@ -1,15 +1,12 @@
 ---
 name: ios-dev-loop
 description: >
-  Fast agentic UI iteration for any iOS app: snapshot any screen on the
-  simulator, self-judge against the design system, show the operator
-  candidates, deploy to their physical iPhone — no TestFlight in the loop.
-  Trigger on "iterate on the UI", "snap the screen", "show me the screen",
-  "deploy to my phone", "put it on my phone", "set up the dev loop",
-  "screenshot the app", or whenever making visual changes to an iOS app
-  that should be verified by looking, not guessing. Self-scaffolding:
-  if the project has no script/snap or script/device, this skill wires
-  them up first — works out of the box on any Xcode project.
+  Fast agentic UI iteration for any iOS app: snapshot simulator screens, self-
+  judge against the design system, deploy to the operator's physical iPhone — no
+  TestFlight. Trigger on "iterate on the UI", "snap the screen", "show me the
+  screen", "deploy to my phone", "set up the dev loop", "screenshot the app", or
+  whenever making visual iOS changes that should be verified by looking. Self-
+  scaffolds script/snap and script/device if missing.
 allowed-tools: Bash, Read, Glob, Grep, Edit, Write, AskUserQuestion
 ---
 

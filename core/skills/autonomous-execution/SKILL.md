@@ -1,14 +1,13 @@
 ---
 name: autonomous-execution
 description: >
-  Core execution framework for autonomous task completion. Enforces tool selection
-  from the capability map, anti-excuse fallback chains, and pattern compilation.
-  This skill activates whenever the agent is about to interact with a desktop app,
-  web page, system service, or any target outside the terminal. It also activates
-  when the agent is about to say "I can't", "please do this manually", or escalate
-  to the operator — forcing it to check all available tools first. Use this skill
-  proactively on ANY task involving GUI interaction, app control, notifications,
-  or multi-step workflows that span multiple tools.
+  Execution framework enforcing tool selection from the capability map and anti-
+  excuse fallback chains. Activates before interacting with any desktop app, web
+  page, or system service outside the terminal — and whenever the agent is about
+  to say "I can't", "please do this manually", or escalate without checking all
+  available tools first. Use proactively on GUI interaction, app control,
+  notifications, multi-tool workflows.
+
 ---
 
 # Autonomous Execution Framework

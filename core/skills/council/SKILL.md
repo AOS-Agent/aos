@@ -1,21 +1,12 @@
 ---
 name: council
 description: >
-  Convene a multi-agent council to deliberate on a high-stakes question via
-  token-passing chat — agents address each other directly with @name, the chat
-  lives in an append-only JSONL log, and the operator can inject at any time.
-  Use this skill when a question deserves multiple sharp lenses, when you want
-  cross-engagement between perspectives (not just parallel opinions), or when
-  you want to stress-test a decision before locking it. Trigger on: /council,
-  "convene a council", "deliberate with personas", "stress-test this decision",
-  "get multiple lenses on X", or any high-stakes architectural / strategic
-  question that would benefit from a structured cross-engaged debate.
-
-  Distinct from `deliberate`: that skill dispatches parallel Advisor agents in
-  one shot and synthesizes. This skill runs an ongoing chat across multiple
-  turns where agents engage each other directly — closer to a real cabinet
-  meeting. Use `deliberate` for quick multi-lens scans, `council` when the
-  cross-engagement is the point.
+  Convene a multi-agent council — personas deliberate via token-passing chat,
+  addressing each other with @name; the operator can inject at any time. Trigger
+  on: /council, "convene a council", "deliberate with personas", "stress-test
+  this decision", "get multiple lenses on X", or any high-stakes
+  architectural/strategic question. Use `deliberate` for quick parallel scans;
+  use council when cross-engagement between perspectives is the point.
 allowed-tools: Bash, Read, Write
 ---
 
