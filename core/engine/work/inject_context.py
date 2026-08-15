@@ -404,8 +404,10 @@ def main():
     try:
         tasks = engine.get_all_tasks()
     except Exception:
-        print(json.dumps({}))
-        sys.exit(0)
+        # Even when the work engine can't load (e.g. brand-new install with
+        # no work.yaml), the onboarding banner must still reach the session —
+        # this early exit used to swallow it.
+        _safe_exit(_check_onboarding() or "")
 
     today = date.today().isoformat()
 
