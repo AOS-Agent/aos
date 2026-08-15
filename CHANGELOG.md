@@ -2,6 +2,19 @@
 
 All notable changes to AOS. Release notes sent via Telegram after each 4am update.
 
+## v0.7.3 — 2026-08-15
+
+Summary: The update pipeline stops assuming every machine is the dev machine. Three fixes from watching the v0.7.2 rollout land on an operator Mac in real time: services resolve their own Python, the updater leaves switched-off services alone, and post-update verification runs with the right interpreter and leaves a record fleet status can see.
+
+- Fixed service templates hardcoding `/opt/homebrew/bin/python3` — sentinel, converse, and work-runner now exec the `aos-python` resolver, which picks each machine's own interpreter (`~/.aos/config/python`) at every start. A baked-in dev-machine path took down sentinel on an operator machine when the launcher rename regenerated its wrapper around a python3 that didn't exist there
+- Added migration `104_interpreter_resolver` — rewrites already-deployed `com.aos.*` plists and their launcher wrappers to the resolver, restarting only services that are actually running; stopped and ships-off services are updated on disk and left alone
+- Changed the bridge to launch work-CLI subprocesses with `sys.executable` instead of a hardcoded interpreter path — the Python already running the bridge is by definition correct
+- Added a blocking `ship-check` rule: no service template may hardcode a Python interpreter path again
+- Fixed the post-update restart loop restarting every changed service unconditionally — it now skips services launchd isn't managing (disabled, opted-out, ships-off like converse), ending the two guaranteed ERRORs and false warning notification on every update
+- Changed `aos test` to run every suite under the AOS-owned interpreter instead of bare `python3` — on operator machines PATH python3 is Apple's 3.9 with no pytest, which manufactured 24 of the 25 "failures" in the v0.7.2 rollout
+- Changed the dev==runtime sync assertion to informational unless a dev workspace exists, sits on `main`, and still mismatches — it failed on every operator machine (no dev workspace) and during all normal branch work
+- Added `last_verify {time, result, failed_suites}` to `~/.aos/data/update-state.json` after every test run, and a `verify_failed` fleet status with the failing suites in the why-line — a machine failing verification every night is now visible from `aos fleet status` without ssh
+
 ## v0.7.2 — 2026-08-15
 
 Summary: The fleet catches up, and ships verify themselves. Everything running on the dev Mini but never landed on main — Converse, named launchers, the installer fixes — ships to every machine, a new `aos fleet` CLI proves each node actually received it, and a bootstrap-layer audit fixes context drift that every pre-marker install carried.
