@@ -8,6 +8,7 @@ import logging
 import os
 import re
 import subprocess
+import sys
 import tempfile
 import time as _time
 from pathlib import Path
@@ -798,7 +799,7 @@ class TelegramChannel:
                         parse_mode="HTML",
                     )
                     return
-                cmd = ["/opt/homebrew/bin/python3", str(Path(__file__).resolve().parent.parent.parent / "bin" / "friction-rules"), "apply"] + args
+                cmd = [sys.executable, str(Path(__file__).resolve().parent.parent.parent / "bin" / "friction-rules"), "apply"] + args
                 result = _sp.run(cmd, capture_output=True, text=True, timeout=30)
                 if result.returncode != 0:
                     await update.message.reply_text(f"Error: {result.stderr[:500]}", parse_mode="HTML")
