@@ -433,6 +433,22 @@ def main():
     # Build context string
     lines = []
 
+    # ── Budget-first rendering ──────────────────────────────────────────
+    # The briefing has a hard byte budget: every AOS feature that appends a
+    # section competes for space instead of accreting forever. Droppable
+    # sections register their span + drop_rank (higher = dropped first);
+    # if the assembled briefing exceeds the budget, whole sections are
+    # removed and replaced by a pointer to the command that shows them.
+    BRIEFING_BUDGET = 4000  # bytes
+    _sections = []
+
+    def _mark(name, start, rank, fallback=None):
+        if len(lines) > start:
+            _sections.append({
+                "name": name, "start": start, "end": len(lines),
+                "rank": rank, "fallback": fallback,
+            })
+
     # Current thread (continuity)
     if current_thread:
         session_count = len(current_thread.get("sessions", []))
@@ -468,15 +484,24 @@ def main():
             init = _initiative_info(t)
             lines.append(f"- {t['id']}: {t['title']}{sub}{init}")
 
-    # All active tasks
+    # All active tasks — most recently touched first, capped. A 24-item list
+    # of half-stale actives is noise; the tail is one command away.
     other_active = [t for t in active if t not in project_active]
     if other_active:
+        def _recency(t):
+            return t.get("updated") or t.get("created") or ""
+        other_sorted = sorted(other_active, key=_recency, reverse=True)
+        shown = other_sorted[:8]
         lines.append("**Active (other projects):**")
-        for t in other_active:
+        for t in shown:
             proj = f" [{t['project']}]" if t.get("project") else ""
             sub = _subtask_info(t, tasks)
             init = _initiative_info(t)
             lines.append(f"- {t['id']}: {t['title']}{proj}{sub}{init}")
+        if len(other_sorted) > len(shown):
+            lines.append(
+                f"  …+{len(other_sorted) - len(shown)} more active — `work list --status active`"
+            )
 
     if due:
         lines.append("**Due today/overdue:**")
@@ -574,10 +599,28 @@ def main():
         if triage_file.exists():
             triage_state = json.loads(triage_file.read_text())
             unanswered_entries = list(triage_state.get("unanswered", {}).values())
+            # Staleness filter: a message unanswered for months is not a
+            # briefing item — injecting it daily just numbs the section.
+            from datetime import datetime as _dtf
+            from datetime import timedelta as _tdf
+
+            def _fresh(entry, max_days=14):
+                ts = entry.get("received_at", "")
+                if not ts:
+                    return False
+                try:
+                    msg_dt = _dtf.fromisoformat(ts.replace("Z", "+00:00"))
+                    now_dt = _dtf.now(msg_dt.tzinfo) if msg_dt.tzinfo else _dtf.now()
+                    return (now_dt - msg_dt) <= _tdf(days=max_days)
+                except Exception:
+                    return False
+
+            unanswered_entries = [e for e in unanswered_entries if _fresh(e)]
             if unanswered_entries:
                 # Sort oldest first
                 unanswered_entries.sort(key=lambda e: e.get("received_at", ""))
-                lines.append("**Unanswered messages:**")
+                _s = len(lines)
+                lines.append("**Unanswered messages (≤14d):**")
                 for entry in unanswered_entries[:3]:
                     name = entry.get("person_name", "Unknown")
                     channel = entry.get("channel", "?")
@@ -602,19 +645,21 @@ def main():
                     except Exception:
                         pass
                     lines.append(f"- {name} ({channel}, {ago}): {preview[:60]}")
+                _mark("unanswered", _s, 3, "comms-recall search --since <date>")
     except Exception:
         pass  # Never crash the hook
 
     # --- Today's Relevant People ---
-    # Inject a short list of currently-relevant people from people.db so Chief
-    # is aware of who's active in the operator's life without having to ask.
-    # Reads person_classification + signal_store directly. Best-effort: any
-    # failure returns an empty string, never crashes the hook.
+    # A short awareness list (top 6 by signal density). The full circle is one
+    # query away in people.db — 20 entries with channel lists was dashboard
+    # content, not briefing content.
     try:
-        people_section = _build_people_section()
+        people_section = _build_people_section(limit=6)
         if people_section:
+            _s = len(lines)
             lines.append("")
             lines.append(people_section)
+            _mark("people", _s, 4, "people.db via resolver/profile CLI")
     except Exception:
         pass  # Never crash the hook
 
@@ -627,13 +672,15 @@ def main():
             mc = yaml.safe_load(mc_path.read_text()) or {}
             nudges_list = mc.get("people_today") or []
             if nudges_list:
+                _s = len(lines)
                 lines.append("")
                 lines.append("**People nudges:**")
-                for nudge in nudges_list[:5]:
+                for nudge in nudges_list[:3]:
                     if isinstance(nudge, dict):
                         prompt = nudge.get("prompt", "")
                         if prompt:
                             lines.append(f"- {prompt}")
+                _mark("nudges", _s, 3, "cat ~/.aos/work/morning-context.yaml")
     except Exception:
         pass  # Never crash the hook
 
@@ -648,157 +695,56 @@ def main():
         if core_dir not in sys.path:
             sys.path.insert(0, core_dir)
         from core.engine.comms.ambient.digest import build_digest
-        ambient = build_digest(surface_nudges=True)
+        # surface_nudges=False: people nudges already have their own section
+        # above — the ambient copy was a straight duplicate every session.
+        ambient = build_digest(surface_nudges=False)
         if ambient:
+            _s = len(lines)
             lines.append("")
             lines.append(ambient)
+            _mark("ambient", _s, 3, "comms ambient digest CLI")
     except Exception:
         pass  # Never crash the hook
 
-    # --- System Capabilities ---
-    # Inject capability map so Chief knows execution methods and fallback chains.
-    # This prevents "I can't do X" when 3 other methods exist.
-    #
-    # Two sources, merged:
-    #   1. capabilities.yaml — curated base map (Apple native apps, generic interactions)
-    #   2. integration manifests — each declares what methods it adds to which apps
-    # Result: when someone adds a new integration with a capabilities: section,
-    # it auto-appears in every session's context. No manual editing of capabilities.yaml.
-    try:
-        cap_file = Path.home() / "aos" / "config" / "capabilities.yaml"
-        if cap_file.exists():
-            capabilities = yaml.safe_load(cap_file.read_text()) or {}
-
-            # --- Merge capabilities from integration manifests ---
-            cost_order = ["zero", "low", "medium", "high", "very-high"]
-            integrations_dir = Path.home() / "aos" / "core" / "integrations"
-            if integrations_dir.is_dir():
-                for manifest_path in sorted(integrations_dir.glob("*/manifest.yaml")):
-                    try:
-                        manifest = yaml.safe_load(manifest_path.read_text()) or {}
-                        for app_name, cap_data in manifest.get("capabilities", {}).items():
-                            apps = capabilities.setdefault("apps", {})
-                            if app_name not in apps:
-                                # New app from manifest — create entry
-                                apps[app_name] = {
-                                    "type": "service",
-                                    "approaches": [cap_data]
-                                }
-                            else:
-                                # Existing app — insert method at correct cost position
-                                existing = apps[app_name]
-                                existing_methods = [
-                                    a.get("method") for a in existing.get("approaches", [])
-                                ]
-                                if cap_data.get("method") not in existing_methods:
-                                    cap_cost_idx = cost_order.index(
-                                        cap_data.get("cost", "medium")
-                                    ) if cap_data.get("cost") in cost_order else 3
-                                    # Find insertion point: after methods with equal or lower cost
-                                    insert_idx = 0
-                                    for i, a in enumerate(existing.get("approaches", [])):
-                                        a_cost = cost_order.index(
-                                            a.get("cost", "medium")
-                                        ) if a.get("cost") in cost_order else 3
-                                        if a_cost <= cap_cost_idx:
-                                            insert_idx = i + 1
-                                        else:
-                                            break
-                                    existing.setdefault("approaches", []).insert(
-                                        insert_idx, cap_data
-                                    )
-                    except Exception:
-                        pass  # Skip malformed manifests, never crash
-
-            # --- Auto-detect MCP servers not in any chain ---
-            try:
-                settings_file = Path.home() / ".claude" / "settings.json"
-                if settings_file.exists():
-                    settings = json.loads(settings_file.read_text())
-                    mcp_servers = set(settings.get("mcpServers", {}).keys())
-                    # Collect all methods already referenced
-                    known_refs = set()
-                    for app_data in capabilities.get("apps", {}).values():
-                        for a in app_data.get("approaches", []):
-                            known_refs.add(a.get("method", ""))
-                    # Flag unmapped MCP servers
-                    unmapped = []
-                    for srv in sorted(mcp_servers):
-                        # Check if any method references this server name
-                        if not any(srv in ref for ref in known_refs):
-                            unmapped.append(srv)
-                    if unmapped:
-                        apps = capabilities.setdefault("apps", {})
-                        for srv in unmapped:
-                            if srv not in apps:
-                                apps[srv] = {
-                                    "type": "mcp",
-                                    "approaches": [{
-                                        "method": f"{srv}-mcp",
-                                        "cost": "zero",
-                                        "notes": f"MCP server '{srv}' — auto-detected from settings.json"
-                                    }]
-                                }
-            except Exception:
-                pass  # Non-fatal
-
-            # --- Format output ---
-            cap_lines = []
-
-            # App-specific chains
-            for app_name, app_data in capabilities.get("apps", {}).items():
-                approaches = app_data.get("approaches", [])
-                chain = " → ".join(
-                    f"{a.get('method')}({a.get('cost', '?')})"
-                    for a in approaches
-                )
-                cap_lines.append(f"- **{app_name}**: {chain}")
-
-            # Interaction-type chains
-            for itype, idata in capabilities.get("interactions", {}).items():
-                approaches = idata.get("approaches", [])
-                chain = " → ".join(
-                    f"{a.get('method')}({a.get('cost', '?')})"
-                    for a in approaches
-                )
-                cap_lines.append(f"- **{itype}**: {chain}")
-
-            # Default fallback for unknown targets
-            default = capabilities.get("_default", {})
-            if default:
-                default_chain = " → ".join(
-                    f"{a.get('method')}({a.get('cost', '?')})"
-                    for a in default.get("approaches", [])
-                )
-                cap_lines.append(f"- **_default**: {default_chain}")
-
-            if cap_lines:
-                lines.append("\n**System Capabilities (fallback chains):**")
-                lines.extend(cap_lines)
-                lines.append("Cheapest method first. If it fails, try next in chain. Never stop at first failure.")
-    except Exception:
-        pass  # Non-fatal — never crash the hook
+    # --- System Capabilities (pointer) ---
+    # The full fallback-chain map (~1.5KB, 29 apps) is static reference, not
+    # briefing content — it lives in ~/aos/config/capabilities.yaml merged
+    # with integration manifests, and the autonomous-execution skill owns the
+    # protocol. One line preserves the behavioral rule.
+    lines.append("")
+    lines.append(
+        '**Capabilities:** before saying "I can\'t do X" or asking the operator '
+        "to do something manually, load the `autonomous-execution` skill — full "
+        "app fallback chains (cheapest first) in `~/aos/config/capabilities.yaml` "
+        "+ integration manifests. Never stop at first failure."
+    )
 
     # --- Handoff context ---
     handoff_tasks = [t for t in (project_active or active) if t.get("handoff")]
     if handoff_tasks:
         lines.append("**Handoff (pick up where last session left off):**")
-        for t in handoff_tasks[:3]:
+        for t in handoff_tasks[:2]:
             h = t["handoff"]
             lines.append(f"- {t['id']}: {t['title']}")
             if h.get("next_step"):
                 lines.append(f"  Next: {h['next_step'][:150]}")
             if h.get("blockers"):
-                lines.append(f"  Blockers: {', '.join(h['blockers'][:3])}")
+                lines.append(f"  Blockers: {', '.join(h['blockers'][:2])[:150]}")
+        if len(handoff_tasks) > 2:
+            lines.append(
+                f"  …+{len(handoff_tasks) - 2} more with handoffs — `work dispatch <id>`"
+            )
 
     # --- Inbox preview ---
     try:
         inbox_items = engine.get_inbox()
         if inbox_items:
+            _s = len(lines)
             lines.append(f"**Inbox ({len(inbox_items)} items):**")
             for item in inbox_items[:3]:
                 text = item.get("text", str(item)) if isinstance(item, dict) else str(item)
                 lines.append(f"- {text[:80]}")
+            _mark("inbox-preview", _s, 4, "work inbox")
     except Exception:
         pass
 
@@ -887,8 +833,52 @@ def main():
     except Exception:
         pass  # Never crash the hook
 
+    # ── Budget enforcement ──────────────────────────────
+    # Drop whole droppable sections (highest rank first, biggest first on
+    # ties) until the briefing fits. Each dropped section leaves a pointer.
+    dropped = []
+    try:
+        def _ctx_size():
+            return len("\n".join(lines))
+
+        while _ctx_size() > BRIEFING_BUDGET:
+            candidates = sorted(
+                (s for s in _sections if not s.get("dropped")),
+                key=lambda s: (-s["rank"], -(s["end"] - s["start"])),
+            )
+            if not candidates:
+                break
+            victim = candidates[0]
+            removed = victim["end"] - victim["start"]
+            del lines[victim["start"]:victim["end"]]
+            victim["dropped"] = True
+            for other in _sections:
+                if other.get("dropped"):
+                    continue
+                if other["start"] >= victim["end"]:
+                    other["start"] -= removed
+                    other["end"] -= removed
+            label = victim["name"]
+            if victim.get("fallback"):
+                label += f" → `{victim['fallback']}`"
+            dropped.append(label)
+        if dropped:
+            lines.append(f"(budget: trimmed {', '.join(dropped)})")
+    except Exception:
+        pass  # Budgeting must never break the briefing itself
+
     if stale_recovery:
         lines.insert(0, stale_recovery)
+
+    # Onboarding trigger — MUST be inserted before the context string is
+    # built (this previously happened after the join, so the banner was
+    # silently dropped and fresh installs never saw it via the hook).
+    onboarding_file = Path.home() / ".aos" / "config" / "onboarding.yaml"
+    first_session_file = Path.home() / ".aos" / "config" / ".first-session-done"
+    if not onboarding_file.exists():
+        lines.insert(0, "**ONBOARDING REQUIRED**: This is a fresh install. You MUST load the onboard skill (`~/.claude/skills/onboard/SKILL.md`) and run the onboarding flow NOW before doing anything else. Read the skill file and follow its protocol.")
+    elif not first_session_file.exists():
+        lines.insert(0, "**FIRST SESSION AFTER ONBOARDING**: Read the 'Post-Onboarding: First Real Session' section in your agent definition and follow it. Verify Telegram, run morning briefing, remind about daily practice, check their first task.")
 
     if not lines:
         lines.append("No active tasks or urgent items.")
@@ -911,14 +901,6 @@ def main():
         context_file.write_text(json.dumps(session_ctx))
     except Exception:
         pass  # Non-fatal
-
-    # Onboarding trigger
-    onboarding_file = Path.home() / ".aos" / "config" / "onboarding.yaml"
-    first_session_file = Path.home() / ".aos" / "config" / ".first-session-done"
-    if not onboarding_file.exists():
-        lines.insert(0, "**ONBOARDING REQUIRED**: This is a fresh install. You MUST load the onboard skill (`~/.claude/skills/onboard/SKILL.md`) and run the onboarding flow NOW before doing anything else. Read the skill file and follow its protocol.")
-    elif not first_session_file.exists():
-        lines.insert(0, "**FIRST SESSION AFTER ONBOARDING**: Read the 'Post-Onboarding: First Real Session' section in your agent definition and follow it. Verify Telegram, run morning briefing, remind about daily practice, check their first task.")
 
     # Behavioral guidance
     guidance_lines = []
