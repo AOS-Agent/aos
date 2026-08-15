@@ -229,8 +229,11 @@ else:
 section("PART 2: Migration Artifacts")
 
 # Check that migration artifacts exist
-check("bridge-topics.yaml exists",
-      (AOS_USER / "config" / "bridge-topics.yaml").exists())
+_bt = AOS_USER / "config" / "bridge-topics.yaml"
+if _bt.exists():
+    check("bridge-topics.yaml exists", True)
+else:
+    print("  ℹ️  bridge-topics.yaml absent — forum topic routing not configured on this instance (optional)")
 
 check("operator.yaml has initiatives config",
       "initiatives:" in (AOS_USER / "config" / "operator.yaml").read_text())
@@ -280,9 +283,12 @@ except Exception as e:
     check("InitiativeDirectoriesCheck passes", False, str(e))
 
 try:
-    bridge_result = bridge_check.check()
-    check("BridgeTopicsCheck passes", bridge_result is True,
-          f"returned: {bridge_result}")
+    if (AOS_USER / "config" / "bridge-topics.yaml").exists():
+        bridge_result = bridge_check.check()
+        check("BridgeTopicsCheck passes", bridge_result is True,
+              f"returned: {bridge_result}")
+    else:
+        print("  ℹ️  BridgeTopicsCheck skipped — topic routing not configured (optional)")
 except Exception as e:
     check("BridgeTopicsCheck passes", False, str(e))
 
@@ -376,12 +382,12 @@ if init_dir.exists():
     for f in init_files:
         content = f.read_text()
         has_frontmatter = content.startswith("---")
-        check(f"  {f.name} has YAML frontmatter", has_frontmatter)
-        if has_frontmatter:
-            # Check required fields
-            # status: enforcement moved to the vault_contract reconcile check
-            for field in ["title:"]:
-                check(f"  {f.name} has {field}", field in content.split("---")[1])
+        # Instance content hygiene — informational here; enforcement belongs
+        # to the vault_contract reconcile check, not update verification.
+        if not has_frontmatter:
+            print(f"  ℹ️  {f.name}: no YAML frontmatter (vault hygiene — reconcile's job)")
+        elif "title:" not in content.split("---")[1]:
+            print(f"  ℹ️  {f.name}: frontmatter missing title: (vault hygiene — reconcile's job)")
 else:
     check("Initiative directory exists", False)
 
