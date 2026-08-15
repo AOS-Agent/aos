@@ -690,8 +690,18 @@ def _session_count(path: Path) -> int:
 
 # ── the reconciler ──────────────────────────────────────────────────
 
-def reconcile() -> ReconcileReport:
-    """Classify every directory under ~/project/. Report-only; writes nothing."""
+def reconcile(*, drift_only: bool = False) -> ReconcileReport:
+    """Classify every directory under ~/project/. Report-only; writes nothing.
+
+    ``drift_only`` skips the three expensive passes — the nested-repo walk, the
+    batched ``git grep`` reference search, and the new-project proposals — none
+    of which feed drift detection. The full pass costs ~19s on this machine,
+    almost all of it grepping 22.5k-commit repos for hardcoded paths; that is a
+    fine price for a triage session an operator runs deliberately and a bad one
+    for a health check that runs every half hour. Dispositions degrade to
+    ``unclassified`` for anything those passes would have resolved, which is
+    honest: this mode is not asking that question.
+    """
     declared_dirs, declared_projects, _layer = load_declared()
 
     projects = engine.load_all().get("projects", []) if engine else []
@@ -754,7 +764,7 @@ def reconcile() -> ReconcileReport:
 
     # ---- pass 1: nested repos inside LINKED projects → component_of ----
     nested_entries: list[Entry] = []
-    for pid, ppath in proj_path.items():
+    for pid, ppath in ({} if drift_only else proj_path).items():
         for repo in nested_repos(ppath):
             # ~/project is a symlink to the AOS-X volume; compare resolved.
             root = _resolve(PROJECT_ROOT)
@@ -950,7 +960,7 @@ def reconcile() -> ReconcileReport:
         for needle in {str(rp), str(HOME / "project" / name)}:
             needle_owner[needle] = (name, rp)
     ref_hits: dict[str, tuple[str, str]] = {}   # dir name → (project id, file:line)
-    for pid, ppath in proj_path.items():
+    for pid, ppath in ({} if drift_only else proj_path).items():
         for needle, loc in _references_any(ppath, list(needle_owner)).items():
             dname, _rp = needle_owner[needle]
             ref_hits.setdefault(dname, (pid, loc))
@@ -970,8 +980,8 @@ def reconcile() -> ReconcileReport:
         # 7. unclassified — surfaced with everything needed to triage
         third_party = _is_third_party(gi.get("remote"))
         has_claude = (d / "CLAUDE.md").exists()
-        sc = _session_count(rp)
-        inner = nested_repos(d)
+        sc = 0 if drift_only else _session_count(rp)
+        inner = [] if drift_only else nested_repos(d)
         ev_bits = []
         if gi["is_git"]:
             ev_bits.append(f"git repo, branch {gi['branch']}")
@@ -1082,7 +1092,10 @@ def reconcile() -> ReconcileReport:
     stale = sorted(n for n in declared_dirs if n not in on_disk)
 
     # ---- proposals: unclassified dirs that look like real untracked work ----
-    proposals = _propose(ordered)
+    # Skipped in drift_only mode: proposing a project needs the session counts
+    # and nested-repo facts that mode does not gather, and a proposal made from
+    # half the evidence is worse than no proposal.
+    proposals = [] if drift_only else _propose(ordered)
 
     return ReconcileReport(entries=ordered, gaps=gaps, proposals=proposals,
                            conflicts=conflicts, declared_stale=stale,

@@ -20,6 +20,7 @@ from .log_location import LogLocationCheck
 from .mcp_location import McpLocationCheck
 from .network_binding import NetworkBindingCheck
 from .power_autorestart import PowerAutorestartCheck
+from .project_layer import ProjectLayerCheck
 from .push_guard import PushGuardCheck
 from .runtime_protection import RuntimeProtectionCheck
 from .sentinel_plist import SentinelPlistDriftCheck
@@ -127,6 +128,15 @@ ALL_CHECKS = [
     # Storage layout — verify data dirs are on the data drive per policy.
     # Reports drift but never auto-moves (operator awareness required).
     StorageLayoutCheck,
+
+    # Project layer — every directory under ~/project/ is accounted for and
+    # still is what it claims to be (unmanifested, archived-but-active,
+    # unversioned-unmarked, third-party at top level, dirty trees).
+    # Report-only (NOTIFY, log-only): the corrections available here are
+    # git init, git commit and moving directories, and none of those belong
+    # in an unattended health check. `project new/adopt/archive` are the
+    # sanctioned mutations. Runs the reconciler in drift_only mode (~3s).
+    ProjectLayerCheck,
 
     # Vault inventory — refresh vault_inventory table, report drift.
     # Never mutates vault files; the bootstrap flow (Part 8) handles
