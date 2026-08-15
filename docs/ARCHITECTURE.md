@@ -81,10 +81,10 @@ before adding a service or touching a bind address.
 ```bash
 aos update                                      # Pull, reconcile, sync, restart
 aos self-test                                   # Run smoke tests against all services
-python3 ~/aos/core/work/cli.py add "Title"      # Create a task
-python3 ~/aos/core/work/cli.py done "fuzzy"     # Complete a task
-python3 ~/aos/core/work/cli.py list             # List active tasks
-python3 ~/aos/core/work/cli.py handoff <id> ... # Write handoff before ending session
+python3 ~/aos/core/engine/work/cli.py add "Title"      # Create a task
+python3 ~/aos/core/engine/work/cli.py done "fuzzy"     # Complete a task
+python3 ~/aos/core/engine/work/cli.py list             # List active tasks
+python3 ~/aos/core/engine/work/cli.py handoff <id> ... # Write handoff before ending session
 qmd query "<topic>"                             # Search vault + AOS docs
 agent-secret get <key>                          # Read a secret from Keychain
 ```

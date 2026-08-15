@@ -105,7 +105,7 @@ Lines: +X / -Y
 Changes:
   ✦ core/infra/reconcile/checks/new_check.py (new)
   ↻ core/bin/crons/check-update (modified)
-  ✓ core/work/inject_context.py (modified)
+  ✓ core/engine/work/inject_context.py (modified)
 
 Self-test: ✓ passed
 Reconcile: ✓ all checks pass

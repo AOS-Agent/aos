@@ -50,8 +50,8 @@ You receive:
 
 Read these for context:
 - `~/.aos/config/operator.yaml` — who they are, what they do
-- Active tasks: `python3 ~/aos/core/work/cli.py list`
-- Active projects: `python3 ~/aos/core/work/cli.py projects`
+- Active tasks: `python3 ~/aos/core/engine/work/cli.py list`
+- Active projects: `python3 ~/aos/core/engine/work/cli.py projects`
 
 ## Processing
 
@@ -91,8 +91,8 @@ Read the full transcript. Identify:
 
 ```bash
 # Get current tasks and projects
-python3 ~/aos/core/work/cli.py list 2>/dev/null
-python3 ~/aos/core/work/cli.py projects 2>/dev/null
+python3 ~/aos/core/engine/work/cli.py list 2>/dev/null
+python3 ~/aos/core/engine/work/cli.py projects 2>/dev/null
 ```
 
 For each extracted task:
@@ -152,7 +152,7 @@ AskUserQuestion:
 If "Approve all":
 ```bash
 # Create tasks
-python3 ~/aos/core/work/cli.py add "{title}" --project {project} --priority {N}
+python3 ~/aos/core/engine/work/cli.py add "{title}" --project {project} --priority {N}
 # ... for each task
 ```
 
