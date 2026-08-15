@@ -128,6 +128,10 @@ Schema: `~/aos/core/engine/work/schema.yaml`
 
 When `operator.yaml → initiatives.enabled: true`:
 
+### Full Pipeline Protocol
+
+**Whenever an initiative is being shaped, planned, gate-checked, or an execution decision arises (routing by status, deviation rules, session boundaries), read `references/initiative-pipeline.md` in this skill's directory first.** It is the single source of truth for the pipeline — chief.md only routes here.
+
 ### Source Reference Display
 When showing task details (`work show`), if the task has a `source_ref` field, display it:
 ```bash

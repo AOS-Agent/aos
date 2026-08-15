@@ -264,6 +264,81 @@ fi
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 2b. CONTEXT BUDGET — always-loaded context must stay lean
+#
+# chief.md rides in the system prompt of EVERY session; rules load into
+# every session's memory; skill descriptions load at startup. Protocols
+# belong in skills (loaded on demand), reference docs in docs/reference/
+# (QMD-indexed). This gate makes the context diet structural: the next
+# feature that fattens Chief fails here and puts its protocol in a skill.
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+echo ""
+echo "Context Budget"
+echo "──────────────"
+
+# chief.md is the always-loaded system prompt — hard cap 6KB
+CHIEF_CAP=6000
+chief_size=$(wc -c < "$DEV/core/agents/chief.md" 2>/dev/null | tr -d ' ')
+chief_size=${chief_size:-0}
+if [[ "$chief_size" -gt "$CHIEF_CAP" ]]; then
+    fail "chief.md is ${chief_size}B (cap ${CHIEF_CAP}B) — move protocol text into the skill that owns it; chief.md routes, it doesn't recite"
+else
+    pass "chief.md within budget (${chief_size}B / ${CHIEF_CAP}B)"
+fi
+
+# Rules load into every session. Per-file cap 4KB (a rule states behavior or
+# points at a reference — it never IS the reference); total soft cap 12KB.
+RULE_CAP=4000
+RULES_TOTAL_CAP=12000
+rule_over=0
+rules_total=0
+for rule in "$DEV"/.claude/rules/*.md; do
+    [[ -f "$rule" ]] || continue
+    sz=$(wc -c < "$rule" | tr -d ' ')
+    rules_total=$((rules_total + sz))
+    if [[ "$sz" -gt "$RULE_CAP" ]]; then
+        fail "Rule $(basename "$rule") is ${sz}B (cap ${RULE_CAP}B) — move the reference body to docs/reference/ and leave a pointer"
+        rule_over=$((rule_over + 1))
+    fi
+done
+if [[ $rule_over -eq 0 ]]; then
+    pass "All rules within per-file budget (${RULE_CAP}B)"
+fi
+if [[ "$rules_total" -gt "$RULES_TOTAL_CAP" ]]; then
+    warn "Rules total ${rules_total}B exceeds ${RULES_TOTAL_CAP}B — every session pays this; trim or convert to pointers"
+else
+    pass "Rules total within budget (${rules_total}B / ${RULES_TOTAL_CAP}B)"
+fi
+
+# Skill descriptions (frontmatter) load into every session at startup.
+# The body loads on demand — the description is the only always-paid part.
+DESC_CAP=1500
+desc_over=0
+for skill_md in "$DEV"/core/skills/*/SKILL.md; do
+    [[ -f "$skill_md" ]] || continue
+    skill_name=$(basename "$(dirname "$skill_md")")
+    desc_len=$(python3 - "$skill_md" <<'PYEOF'
+import sys, re
+text = open(sys.argv[1]).read()
+m = re.match(r'^---\n(.*?)\n---', text, re.S)
+if not m:
+    print(0); sys.exit()
+fm = m.group(1)
+dm = re.search(r'^description:\s*(.*?)(?=^\S|\Z)', fm, re.S | re.M)
+print(len(dm.group(1)) if dm else 0)
+PYEOF
+)
+    if [[ "${desc_len:-0}" -gt "$DESC_CAP" ]]; then
+        warn "Skill '$skill_name' description is ${desc_len} chars (cap ${DESC_CAP}) — every session pays for it; state triggers, not the manual"
+        desc_over=$((desc_over + 1))
+    fi
+done
+if [[ $desc_over -eq 0 ]]; then
+    pass "All skill descriptions within budget (${DESC_CAP} chars)"
+fi
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 3. CONSISTENCY — internal references are wired up
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 echo ""

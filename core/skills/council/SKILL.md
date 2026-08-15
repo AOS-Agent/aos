@@ -99,6 +99,42 @@ council show <id>               # specific one
 council close                   # adjourn the current council
 ```
 
+## Auto-Dispatch (for Chief)
+
+When Chief encounters a high-stakes decision, **it does not ask the operator to run `council convene`** — it dispatches the council itself, in the background, and the operator reads the synthesis memo when ready. The operator is not the orchestrator of the council; the council is Chief's tool for serving them.
+
+**Triggers that MUST auto-dispatch a council:**
+
+| Trigger | What to do |
+|---------|-----------|
+| Gate check returns CONCERNS | `council background "<gate question>" --personas architect,builder,skeptic,dreamer --seed "<the concerns + context>"` |
+| Initiative shaping for 2-weeks-or-more appetite | Convene a shaping council on the open shaping questions before locking decisions |
+| Complex planning (4+ phases or unclear sequence) | Convene before dispatching Advisor solo — council debates phase structure |
+| Architecture change mid-execution | Auto-convene; don't proceed until verdict |
+| Operator asks "what should I do" / "I'm stuck" on initiative-scale work | Convene to stress-test priorities |
+| Pre-ship review for any user-facing change | Convene; verdict gates the ship decision |
+| Mid-task fork (agent in worktree hits a decision) | The agent calls council via the council CLI; agent waits for verdict file |
+
+**Background dispatch (one command):**
+
+```bash
+~/aos/core/bin/cli/council background "<topic — the question>" \
+  --personas architect,builder,skeptic,dreamer \
+  --seed "<your framing of the question with all context the personas need>" \
+  --rounds 8 \
+  --first architect
+```
+
+Returns immediately. Reply to the operator with: *"Convening council on <topic>. Verdict in ~2 min. I'll surface the memo when it lands."* Then continue with other work — don't block.
+
+**The synthesis is automatic.** Every adjourned council writes `~/vault/knowledge/decisions/<date>-<slug>-council.md` — full memo with frontmatter (QMD-indexed): verdict, reasoning, dissent, lock-in items. Surface key points in plain prose — lead with the verdict, name the strongest dissent, point to the memo for detail.
+
+**Persistent councils for initiatives.** Tie the council to the initiative in the seed: `council background "<topic>" --seed "Initiative: <slug>. Context: <key locked decisions>. Question: <topic>"`. The chat.jsonl persists — resume across sessions with `council show <id>`.
+
+**Operator interjection on a verdict:** `council say "@architect, the dissent on X is real — re-examine"` (or reply to a Telegram synthesis with `@council <message>`). Treat the interjection as a new seed and re-run — the operator doesn't run the protocol; Chief does.
+
+**When NOT to council:** simple lookups, single-action requests, decisions already made, operator said "just do it", or high-trust catalog agent with clear scope. If in doubt on a multi-session architectural choice: convene — ~2 minutes wall-clock for a multi-lens stress-test on a decision otherwise made alone.
+
 ## Patterns that work
 
 ### Four-round structure
