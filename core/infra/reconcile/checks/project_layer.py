@@ -28,16 +28,21 @@ relationships — worth it for a triage session, wrong for something that runs
 every half hour. drift_only answers the same five questions in ~3s.
 
 Fresh installs: no ~/project/ at all is the expected state until the first
-`project new` lazy-creates the zones, so it reports OK rather than SKIP. That is
-a real answer — a machine with no projects has no project drift — not the
-"reported fine while verifying nothing" failure the base class warns about.
+`project new` lazy-creates the zones, and this check SKIPs there rather than
+reporting OK. The tempting alternative — "no directories, therefore no misfiled
+directory, therefore healthy" — is true and still wrong to report, because it is
+indistinguishable from a check that looked at nothing. ~/project/ is an input
+this check READS, not the condition it TESTS, which is exactly the line
+base.py draws for precondition(); a check for whether ~/project/ ought to exist
+would be a different check. See tests/test_reconcile_blindness.py, the ratchet
+this invariant is worth.
 """
 
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from base import CheckResult, ReconcileCheck, Status
+from base import CheckResult, ReconcileCheck, Status, aos_installed
 
 # The work engine's modules are flat, not a package. Resolved from this file
 # rather than from ~/aos so the check is importable in a dev worktree too.
@@ -89,15 +94,20 @@ class ProjectLayerCheck(ReconcileCheck):
 
     # ── the check ───────────────────────────────────────────────────
 
-    def check(self) -> bool:
-        """True when nothing under ~/project/ is drifting.
+    def precondition(self) -> bool:
+        """An AOS install, and a ~/project/ to have an opinion about.
 
-        A missing or empty ~/project/ is clean, not unverified: there are no
-        directories, therefore no directory is misfiled. The zones appear on the
-        first `project new`.
+        Without the directory there is no invariant to verify, and answering
+        "fine" would be reporting on a machine this never looked at. The runner
+        records SKIP — visible as unverified — until the first `project new`
+        creates the structure.
         """
+        return aos_installed() and self.PROJECT_ROOT.exists()
+
+    def check(self) -> bool:
+        """True when nothing under ~/project/ is drifting."""
         if not self.PROJECT_ROOT.exists():
-            return True
+            return True     # unreachable via the runner; precondition gates it
         r = self._reconcile()
         if r is None:
             return False        # could not evaluate → fix() reports why

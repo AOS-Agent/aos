@@ -75,8 +75,8 @@ Detection order — first match wins, and every match records citable evidence:
 3. **linked** — the directory's resolved realpath equals a work project's
    resolved ``path``. ``~/project`` is a symlink to the AOS-X volume, so paths
    are compared *resolved*, never as strings — half the live project records
-   spell the same directory ``/Users/agentalhadi/project/x`` and half
-   ``/Volumes/AOS-X/project/x``.
+   spell the same directory ``~/project/x`` and half
+   ``/Volumes/<data-volume>/project/x``.
 4. **worktree_of** — asked of git, not inferred from a name. In a worktree,
    ``git rev-parse --git-common-dir`` points into the *main* checkout's
    ``.git`` while ``--git-dir`` points at the worktree's own admin dir. The
@@ -1190,24 +1190,36 @@ def _archived_activity(directory: Path, marker) -> str | None:
                      - timedelta(days=ARCHIVE_STALE_DAYS))
 
     gi = git_info(directory)
-    last = gi.get("last_commit")
-    if last:
-        try:
-            commit_at = datetime.fromisoformat(last)
-            if commit_at.tzinfo is None:
-                commit_at = commit_at.replace(tzinfo=timezone.utc)
-            if commit_at > reference:
-                return (f"commit at {last[:10]}, after the archive point "
-                        f"({reference.date().isoformat()})")
-        except ValueError:
-            pass
+    if gi.get("is_git"):
+        # A repo answers precisely, so mtime is not consulted for one. Its
+        # working tree is clean (checked above) and its history is dated, which
+        # is everything this question needs. Falling back to mtime here would
+        # only add false positives: Spotlight, Time Machine, an editor writing a
+        # swap file and `chmod -R` all bump mtimes without anybody doing work,
+        # and a check that cries wolf on a backup run is a check the operator
+        # learns to skip.
+        last = gi.get("last_commit")
+        if last:
+            try:
+                commit_at = datetime.fromisoformat(last)
+                if commit_at.tzinfo is None:
+                    commit_at = commit_at.replace(tzinfo=timezone.utc)
+                if commit_at > reference:
+                    return (f"commit at {last[:10]}, after the archive point "
+                            f"({reference.date().isoformat()})")
+            except ValueError:
+                pass
+        return None
 
+    # No git to ask. mtime is the only signal there is, so its noise is the
+    # price of noticing anything at all here.
     newest = _newest_mtime(directory)
     if newest is not None:
         touched = datetime.fromtimestamp(newest, tz=timezone.utc)
         if touched > reference:
             return (f"files modified {touched.date().isoformat()}, after the "
-                    f"archive point ({reference.date().isoformat()})")
+                    f"archive point ({reference.date().isoformat()}) — no git "
+                    f"here, so mtime is the only signal")
     return None
 
 
