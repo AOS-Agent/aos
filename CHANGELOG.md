@@ -2,10 +2,21 @@
 
 All notable changes to AOS. Release notes sent via Telegram after each 4am update.
 
-## Unreleased
+## v0.7.2 — 2026-08-15
 
-Summary: Fresh-install onboarding actually reaches the finish line. Every new operator hit the same three walls — the one-liner died on a Mac with no git and had to be pasted twice, and onboarding then started in Terminal while cmux sat open and empty next to it. All three were deterministic, not flaky: nobody's first install had ever worked the way it was designed to.
+Summary: The fleet catches up, and ships verify themselves. Everything running on the dev Mini but never landed on main — Converse, named launchers, the installer fixes — ships to every machine, a new `aos fleet` CLI proves each node actually received it, and a bootstrap-layer audit fixes context drift that every pre-marker install carried.
 
+- Added the Converse engine (Waves 0–2) — always-on conversation substrate: channels, turn handler, gate, supervisor daemon, and Qareen UI wiring, provisioned per machine by migrations `100_converse_init`/`101_converse_service`
+- Added named launchers for all AOS services — Login Items show real service names instead of `python3`/`bun` (aos#198), with migration `102_launcher_names` and a `launcher_naming` reconcile check that catches ANY interpreter-named LaunchAgent, not just AOS ones
+- Added `aos fleet status|verify|update` — one command for every node's version, migration level, health, and why it's behind; `--fresh` forces a re-check so post-ship verify can't false-PASS, and `verify` exits 1 on any drift
+- Added apply-result recording to `check-update` — every apply failure now writes `last_apply {step, detail, from, to}` into state, ending "activated but migrations failed, exit 0" mysteries
+- Added `catch_up: true` scheduling for `auto-update` and `harness-update` — a missed 04:00 window now runs at first wake instead of waiting a full day
+- Changed `/ship` with a fleet post-flight step: a ship isn't done until every node has it or has a named blocker; also fixed runtime sync, which was `git pull`-ing a release symlink
+- Fixed duplicate `## Rules` and `## Quick Reference` sections in `~/.claude/CLAUDE.md` on every pre-marker install — the managed rules block (v4) absorbs the legacy-only bullets and migration `103_dedupe_legacy_claude_md` strips the duplicates, version-gated so content is never lost
+- Changed the `boundaries` managed block to discover the machine's real storage layout from its actual symlinks — operator machines no longer carry the dev Mini's AOS-X storage map
+- Changed `chief.md` to a third smaller with no behavior change — session-start collapsed to three gates (the `onboard` and `whats-new` skills own their protocols), hardcoded catalog-agent roster replaced with directory discovery, trust logging deduplicated into one canonical block
+- Removed the `core/work` compat symlink left by the engine refactor — all skills and docs now point at `core/engine/work`
+- Added `component-lifecycle.md` to the shipped rules — it was a local orphan on the dev machine that operator installs never received
 - Fixed the install one-liner dying on a fresh Mac — `bootstrap.sh` opened with `git clone`, but on a clean machine `/usr/bin/git` is a stub that pops the Xcode Command Line Tools installer and exits non-zero, killing the script under `set -e`. The operator sat through the CLT install, then had to re-paste the one-liner and start over. Bootstrap now fetches a tarball with `curl` (no toolchain needed) and hands off to `install.sh`, whose existing three-tier `prereq_xcode_clt` installs CLT properly and clones `~/aos` with git once git exists. One paste, start to finish
 - Fixed onboarding starting in Terminal instead of cmux — `aos start` drove cmux with `new-workspace`, which cmux documents as creating a workspace *in the caller's window*, resolved from `$CMUX_WORKSPACE_ID`/`$CMUX_SURFACE_ID`. `aos start` is always an outside caller, so there was no caller window, the call failed, and it fell through to running Claude Code in the calling terminal. It now waits on the socket properly, targets a window explicitly, and degrades to opening cmux with the command to run rather than yanking the operator back to Terminal
 - Fixed the other half of that bug: nothing in AOS had ever configured cmux's `socketControlMode`, which defaults to `"cmuxOnly"` — refusing socket commands from non-cmux callers outright. Every socket call `aos start` made was rejected on every install ever done. The installer and migration `099_cmux_socket_control` now set it to `"automation"`, editing `cmux.json` surgically so operator comments, formatting, and any already-permissive mode they chose are preserved, with a backup written first

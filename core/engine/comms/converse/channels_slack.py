@@ -24,8 +24,14 @@ from pathlib import Path
 
 import yaml
 
-from .channels import InboundMsg, SendResult, WatchSpec, ChannelAuthError, resolve_contact
-from ..channels.slack_session import SlackSessionClient, SlackAuthError
+from ..channels.slack_session import SlackAuthError, SlackSessionClient
+from .channels import (
+    ChannelAuthError,
+    InboundMsg,
+    SendResult,
+    WatchSpec,
+    resolve_contact,
+)
 
 log = logging.getLogger(__name__)
 
