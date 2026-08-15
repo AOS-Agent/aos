@@ -109,6 +109,14 @@ try:
 except ImportError:  # pragma: no cover
     engine = None
 
+try:
+    # A project id and a project directory name are the same shape, so they get
+    # one definition rather than two regexes that drift apart.
+    from project_zones import NAME_RE as ID_RE
+except Exception:  # pragma: no cover
+    import re as _re
+    ID_RE = _re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+
 HOME = Path.home()
 PROJECT_ROOT = HOME / "project"
 VAULT_ROOT = HOME / "vault"
@@ -123,7 +131,7 @@ KINDS = ("ios", "web", "python", "content", "mixed")
 # for sensitive data to go" a property of the schema rather than a hope.
 TOP_LEVEL_KEYS = {
     "schema", "id", "kind", "title", "description", "done_when", "appetite",
-    "initiative", "goal", "docs", "repos", "worktrees",
+    "initiative", "goal", "docs", "repos", "worktrees", "depends_on",
 }
 REPOS_KEYS = {"root", "components"}
 COMPONENT_KEYS = {"path", "role", "remote", "note"}
@@ -182,6 +190,7 @@ class Manifest:
     initiative: str | None = None
     goal: str | None = None
     docs: list[str] = field(default_factory=list)
+    depends_on: list[str] = field(default_factory=list)
     repo_root: str = "."
     components: list[Component] = field(default_factory=list)
     worktree_location: str = WORKTREE_DEFAULT_LOCATION
@@ -266,6 +275,27 @@ def validate(raw: dict, *, project_ids: set[str] | None = None) -> list[str]:
                           f"to the vault root (it leaks the username and "
                           f"breaks on other machines)")
 
+    dep = raw.get("depends_on")
+    if dep is not None:
+        if not isinstance(dep, list):
+            errors.append("'depends_on' must be a list of project ids")
+        else:
+            for i, d in enumerate(dep):
+                if not isinstance(d, str):
+                    errors.append(f"depends_on[{i}] {d!r} must be a project id string")
+                elif _is_absolute_ish(d) or "/" in d:
+                    errors.append(
+                        f"depends_on[{i}] '{d}' looks like a path. Declare the "
+                        f"project ID, not where it happens to live — a path "
+                        f"would break the moment the project is archived or the "
+                        f"manifest is read on another machine")
+                elif not ID_RE.match(d):
+                    errors.append(
+                        f"depends_on[{i}] '{d}' is not a kebab-case project id "
+                        f"(lowercase letters, digits, single hyphens)")
+                elif d == pid:
+                    errors.append(f"depends_on[{i}] '{d}' is this project itself")
+
     repos = raw.get("repos")
     if repos is not None:
         if not isinstance(repos, dict):
@@ -336,6 +366,7 @@ def parse(raw: dict, *, source: str | None = None) -> Manifest:
         initiative=raw.get("initiative"),
         goal=raw.get("goal"),
         docs=list(raw.get("docs") or []),
+        depends_on=list(raw.get("depends_on") or []),
         repo_root=repos.get("root", "."),
         components=[Component(path=c["path"], role=c.get("role", "sub-app"),
                               remote=c.get("remote"), note=c.get("note"))
@@ -603,6 +634,19 @@ def render_manifest_yaml(m: Manifest) -> str:
         L += [f"  - {d}" for d in m.docs]
     else:
         L.append("docs: []")
+    L.append("")
+    L.append("# Other AOS projects this one consumes, BY ID — never by path.")
+    L.append("#")
+    L.append("# This is how a dataset stays inside the project that owns it while")
+    L.append("# the projects that read it still say so out loud. The alternative")
+    L.append("# considered was a shared _data/ zone; it was cut because membership")
+    L.append("# would then be declared twice — once by location, once here — and two")
+    L.append("# signals for one fact is how drift starts.")
+    if m.depends_on:
+        L.append("depends_on:")
+        L += [f"  - {d}" for d in m.depends_on]
+    else:
+        L.append("depends_on: []")
     L.append("")
     L.append("# Repo layout. Every path is RELATIVE to this project directory.")
     L.append("repos:")

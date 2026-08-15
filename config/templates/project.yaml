@@ -65,6 +65,21 @@ docs:
   - knowledge/initiatives/example-initiative.md
   - knowledge/decisions/example-decision.md
 
+# Other AOS projects this one consumes, BY ID — never by path, never a
+# directory name that happens to match.
+#
+# This is where a cross-project dependency gets stated. A shared `_data/` zone
+# was considered for the same job and cut: a dataset placed there would declare
+# its membership twice — once by sitting in the zone, once by being listed here
+# — and two signals for one fact is exactly how the drift this whole design
+# exists to kill gets started. So datasets live inside the project that owns
+# them, and the projects that read them say so here.
+#
+# Ids only, because a path breaks the moment the dependency is archived, and
+# leaks the operator's username on the way out.
+depends_on:
+  - example-data-project
+
 # Repo layout. EVERY path is relative to this project directory.
 repos:
   root: .                        # the primary repo; "." means this directory
