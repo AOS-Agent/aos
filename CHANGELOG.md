@@ -2,6 +2,16 @@
 
 All notable changes to AOS. Release notes sent via Telegram after each 4am update.
 
+## v0.7.4 — 2026-08-15
+
+Summary: The last four operator-machine defects from tonight's fleet audit. Every one is the same species — code assuming the dev machine's layout — and every one was found by watching a real update land on a real operator Mac.
+
+- Fixed `test_initiative_bridge` running the reconcile check against the dev workspace (`~/project/aos`), which doesn't exist on operator machines — it now runs against the runtime tree, which is what's deployed and exists everywhere. This was the one real failure left in operator post-update verification
+- Fixed `claude-remote-start` hardcoding `--spawn worktree`, which requires a git repository — `~/aos` is a read-only release snapshot with no `.git`, so every session spawn errored and the service looped exit 1. It now uses session mode unless a repo backs worktree mode
+- Fixed the memory service writing its Chroma index inside the framework tree (`~/aos/data/…`) — "Permission denied" on every start under release deploys, and the index would have been lost at every release swap regardless. The index now lives in the instance layer (`~/.aos/data/memory/chromadb`); what gets *indexed* still reads from the runtime tree
+- Fixed the per-update "bridge venv creation failed" on operator machines — the rebuild called bare `uv` under launchd's minimal PATH. A `_find_uv` resolver now locates uv absolutely (PATH, /opt/homebrew/bin, ~/.local/bin, ~/.cargo/bin) and fails loudly with the searched locations if truly absent
+- Changed `_find_venv_python` to try the machine's sanctioned interpreter (`~/.aos/config/python`) before any hardcoded homebrew path — the same per-machine-resolution rule v0.7.3 applied to service templates
+
 ## v0.7.3 — 2026-08-15
 
 Summary: The update pipeline stops assuming every machine is the dev machine. Three fixes from watching the v0.7.2 rollout land on an operator Mac in real time: services resolve their own Python, the updater leaves switched-off services alone, and post-update verification runs with the right interpreter and leaves a record fleet status can see.
