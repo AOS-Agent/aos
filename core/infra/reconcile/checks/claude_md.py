@@ -133,7 +133,7 @@ def _fix_sections(filepath: Path, sections: dict, header: str) -> CheckResult:
 # ~/CLAUDE.md — Root context file
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-ROOT_HEADER = "# AOS — Agentic Operating System\n\nThis Mac Mini runs AOS. The operating system lives at `~/aos/`."
+ROOT_HEADER = "# AOS — Agentic Operating System\n\nThis machine runs AOS. The operating system lives at `~/aos/`."
 
 # ~/CLAUDE.md is user-managed — no managed sections.
 # Content is maintained directly. Storage layout, quick reference, and rules
@@ -196,6 +196,42 @@ _RULES_OPERATOR = """\
 - Delegate: dispatch to specialist agents for domain work."""
 
 
+def _boundaries_content() -> str:
+    """Machine-aware storage boundaries — discover, never assume.
+
+    The dev Mini symlinks its data dirs to an external volume (AOS-X); most
+    machines keep everything internal. Shipping one machine's layout to the
+    fleet gives every other agent a false storage map (bug found 2026-08-15:
+    an operator machine with no external volume carried an AOS-X boundaries
+    block). Inspect the actual symlinks and describe THIS machine.
+    """
+    home = Path.home()
+    lines = [
+        "## Boundaries",
+        "",
+        "```",
+        "INTERNAL:  ~/aos/ (system), ~/.aos/ (instance data)",
+    ]
+    by_volume: dict[str, list[str]] = {}
+    for rel in ("vault", "project", ".cache", "go", "nltk_data", "Library/Developer"):
+        p = home / rel
+        if not p.is_symlink():
+            continue
+        try:
+            parts = p.resolve().parts
+        except OSError:
+            continue
+        if len(parts) >= 3 and parts[1] == "Volumes":
+            by_volume.setdefault(parts[2], []).append(f"~/{rel}/")
+    if by_volume:
+        for vol, dirs in sorted(by_volume.items()):
+            lines.append(f"{vol}:  {', '.join(dirs)} (symlinked to /Volumes/{vol})")
+    else:
+        lines.append("DATA:      ~/vault/ (knowledge), ~/project/ (projects) — internal disk, no external volume")
+    lines.append("```")
+    return "\n".join(lines)
+
+
 def _global_sections(role: str) -> dict:
     """Managed sections for ~/.claude/CLAUDE.md, role-aware.
 
@@ -207,13 +243,7 @@ def _global_sections(role: str) -> dict:
     re-syncs the block if a machine's role later flips.
     """
     return {
-        "boundaries": (2, """\
-## Boundaries
-
-```
-INTERNAL:  ~/aos/ (system), ~/.aos/ (instance data)
-AOS-X:     ~/vault/, ~/project/, ~/.cache/, ~/Library/Developer/ (all symlinked)
-```"""),
+        "boundaries": (3, _boundaries_content()),
 
         "agents": (1, """\
 ## Agents
