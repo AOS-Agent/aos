@@ -5,6 +5,8 @@ Used by skills, CLI, and dashboard to find relevant work items.
 v2: Subtask trees, progress rollup, handoff-aware queries.
 """
 
+from __future__ import annotations
+
 from typing import Optional
 
 

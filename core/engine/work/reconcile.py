@@ -16,6 +16,8 @@ The live context is set by `work start` and cleared by `work done`/`work stop`.
 This hook just reads it — making the Stop hook trivial and reliable.
 """
 
+from __future__ import annotations
+
 import json
 import os
 import sys

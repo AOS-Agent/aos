@@ -34,6 +34,8 @@ separate, explicit action (apply_path_matches) that a caller must invoke by
 hand after a human has reviewed the mapping.
 """
 
+from __future__ import annotations
+
 import getpass
 import json
 import os

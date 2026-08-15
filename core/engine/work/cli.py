@@ -17,6 +17,8 @@ Usage:
     work migrate                      (migrate old t1,t2 IDs to new format)
 """
 
+from __future__ import annotations
+
 import json
 import os
 import sys

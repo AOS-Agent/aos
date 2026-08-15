@@ -5,6 +5,8 @@ Provides: throughput, cycle time, lead time, WIP, capture sources, goal health.
 All functions are pure — they take data in, return metrics out. No I/O.
 """
 
+from __future__ import annotations
+
 import os
 import sys
 from datetime import date, datetime, timedelta
