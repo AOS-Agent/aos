@@ -118,13 +118,17 @@ for f in REQUIRED_FILES:
     path = AOS_DEV / f
     check(f"File exists: {f}", path.exists())
 
-# Python syntax check
+# Python syntax check — compile in memory, never write bytecode: on operator
+# machines AOS_DEV aliases the read-only runtime tree, where py_compile's
+# __pycache__ write is Permission-denied (the #2323 read-only-release class).
 PYTHON_FILES = [f for f in REQUIRED_FILES if f.endswith(".py")]
 for f in PYTHON_FILES:
     path = AOS_DEV / f
     if path.exists():
         result = subprocess.run(
-            [sys.executable, "-m", "py_compile", str(path)],
+            [sys.executable, "-c",
+             "import sys; p = sys.argv[1]; compile(open(p).read(), p, 'exec')",
+             str(path)],
             capture_output=True, text=True
         )
         check(f"Compiles: {f}", result.returncode == 0, result.stderr.strip())
