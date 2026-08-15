@@ -135,6 +135,16 @@ MARKER_DIR = ".aos"
 ARCHIVED_MARKER = "archived"
 NO_GIT_MARKER = "no-git"
 
+# The policy file that loads automatically for any session under ~/project/.
+# FRAMEWORK ships the template; the INSTANCE gets a copy it may then edit. Both
+# migration 102 and the first `project new` install it through ``ensure_zones``,
+# because a fresh machine has no ~/project/ when migrations run and the policy
+# must not wait for the migration watermark to come round again — it never
+# would.
+POLICY_FILENAME = "CLAUDE.md"
+POLICY_TEMPLATE = (Path(__file__).resolve().parents[3]
+                   / "config" / "templates" / "project-root-CLAUDE.md")
+
 
 # ── names ───────────────────────────────────────────────────────────
 
@@ -210,7 +220,32 @@ def ensure_zones(root: Path | None = None) -> list[Path]:
         readme = d / "README.md"
         if not readme.exists():
             readme.write_text(ZONE_READMES[zone])
+    policy = ensure_policy(base)
+    if policy is not None:
+        created.append(policy)
     return created
+
+
+def ensure_policy(root: Path | None = None) -> Path | None:
+    """Install ``~/project/CLAUDE.md`` from the framework template, if absent.
+
+    Returns the path when it wrote one, ``None`` when there was already a file
+    there or the template is missing.
+
+    **Never overwrites.** The installed copy is the operator's — they are
+    expected to add their own conventions to it, and this function has no way to
+    tell an edit from drift. A framework that silently reverts the file its own
+    policy invites people to extend would be teaching them not to trust it.
+    Updated policy therefore ships as a new template that an operator adopts
+    deliberately, not as a background overwrite.
+    """
+    base = root or PROJECT_ROOT
+    target = base / POLICY_FILENAME
+    if target.exists() or not POLICY_TEMPLATE.exists():
+        return None
+    base.mkdir(parents=True, exist_ok=True)
+    target.write_text(POLICY_TEMPLATE.read_text())
+    return target
 
 
 # ── markers ─────────────────────────────────────────────────────────
