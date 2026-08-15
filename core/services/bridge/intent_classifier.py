@@ -346,7 +346,7 @@ def handle_list_tasks(text: str) -> str:
     """List tasks from the v2 work engine."""
     try:
         result = subprocess.run(
-            ["/opt/homebrew/bin/python3", str(AOS_DIR / "core" / "work" / "cli.py"), "json"],
+            ["/opt/homebrew/bin/python3", str(AOS_DIR / "core" / "engine" / "work" / "cli.py"), "json"],
             capture_output=True, text=True, timeout=10,
         )
         if result.returncode != 0:
@@ -414,7 +414,7 @@ def handle_add_task(text: str) -> str:
 
     try:
         result = subprocess.run(
-            ["/opt/homebrew/bin/python3", str(AOS_DIR / "core" / "work" / "cli.py"), "add", title],
+            ["/opt/homebrew/bin/python3", str(AOS_DIR / "core" / "engine" / "work" / "cli.py"), "add", title],
             capture_output=True, text=True, timeout=10,
         )
         if result.returncode == 0:
@@ -458,14 +458,14 @@ def handle_done_task(text: str) -> str:
 
     try:
         result = subprocess.run(
-            ["/opt/homebrew/bin/python3", str(AOS_DIR / "core" / "work" / "cli.py"), "done", task_id],
+            ["/opt/homebrew/bin/python3", str(AOS_DIR / "core" / "engine" / "work" / "cli.py"), "done", task_id],
             capture_output=True, text=True, timeout=10,
         )
         if result.returncode == 0:
             output = result.stdout.strip()
             # Get remaining task count
             count_result = subprocess.run(
-                ["/opt/homebrew/bin/python3", str(AOS_DIR / "core" / "work" / "cli.py"), "json"],
+                ["/opt/homebrew/bin/python3", str(AOS_DIR / "core" / "engine" / "work" / "cli.py"), "json"],
                 capture_output=True, text=True, timeout=10,
             )
             remaining = "?"
@@ -498,7 +498,7 @@ def handle_inbox(text: str) -> str:
 
     try:
         result = subprocess.run(
-            ["/opt/homebrew/bin/python3", str(AOS_DIR / "core" / "work" / "cli.py"), "inbox", content],
+            ["/opt/homebrew/bin/python3", str(AOS_DIR / "core" / "engine" / "work" / "cli.py"), "inbox", content],
             capture_output=True, text=True, timeout=10,
         )
         if result.returncode == 0:

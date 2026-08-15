@@ -1625,7 +1625,7 @@ class TelegramChannel:
         if thread_id:
             kwargs["message_thread_id"] = thread_id
 
-        work_cli = str(Path.home() / "aos" / "core" / "work" / "cli.py")
+        work_cli = str(Path.home() / "aos" / "core" / "engine" / "work" / "cli.py")
 
         def _run(*cmd_args):
             try:

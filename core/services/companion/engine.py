@@ -186,7 +186,7 @@ class MeetingEngine:
         # 2. Active tasks (top 5, compact)
         try:
             result = subprocess.run(
-                ["python3", str(Path.home() / "aos" / "core" / "work" / "cli.py"), "next", "--json"],
+                ["python3", str(Path.home() / "aos" / "core" / "engine" / "work" / "cli.py"), "next", "--json"],
                 capture_output=True, text=True, timeout=5
             )
             if result.returncode == 0:

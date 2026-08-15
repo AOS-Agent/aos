@@ -91,7 +91,7 @@ except Exception:
 def _load_work_engine():
     """Dynamically import the work engine. Returns the module or None."""
     try:
-        engine_path = AOS_ROOT / "core" / "work" / "engine.py"
+        engine_path = AOS_ROOT / "core" / "engine" / "work" / "engine.py"
         spec = importlib.util.spec_from_file_location("engine", str(engine_path))
         if spec:
             mod = importlib.util.module_from_spec(spec)
