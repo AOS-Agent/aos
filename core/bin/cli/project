@@ -1,0 +1,224 @@
+#!/usr/bin/env python3
+"""project — create, adopt, list and archive the projects under ~/project/.
+
+The sole sanctioned mutation interface for the project layer. Everything else
+in the layer reports: `work projects reconcile` classifies, `work projects
+adopt` plans, the steward check warns. This is the one command that changes
+what is on disk.
+
+    ~/project/
+      <project>/     active work — git, and a .aos/project.yaml manifest
+      _ref/          third-party clones, kept to read. Fetch, never commit.
+      _archive/      finished work
+      _scratch/      ephemeral
+
+Usage:
+    project new <name> [--title T] [--kind K] [--description D]
+                       [--no-git] [--work]
+    project adopt <dir> [--git | --no-git]
+    project list [--json]
+    project archive <name> [--reason R] [--no-qmd]
+
+`new` refuses names that start with '_' (reserved for zones) or end in '-wt'
+(the retired sibling-worktree convention). Zones are created on first use.
+
+`adopt` will never `git init` a directory carrying a .aos/no-git marker, with
+or without --git: the marker outranks the flag, which is what makes it a deny.
+
+`archive` moves a project to _archive/ when that is safe — no registered git
+worktrees, no open tasks — and otherwise marks it in place and says loudly what
+blocked the move. It never deletes anything.
+
+Exit codes:
+    0  the operation completed
+    1  refused, or completed without the move it intended
+    2  usage / runtime error
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+# The work engine's modules are flat, not a package — the same sys.path shape
+# the work CLI and the test suite use.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "engine" / "work"))
+
+import project_lifecycle as lifecycle  # noqa: E402
+import project_zones as zones  # noqa: E402
+
+# ── output ──────────────────────────────────────────────────────────
+
+def _emit(outcome: lifecycle.Outcome) -> int:
+    for e in outcome.errors:
+        print(f"  ✗ {e}")
+    for s in outcome.steps:
+        print(f"  · {s}")
+    if outcome.warnings:
+        print()
+        for w in outcome.warnings:
+            # Multi-line warnings (the entangled report) keep their own layout.
+            prefix = "  ! "
+            lines = w.splitlines() or [""]
+            print(prefix + lines[0])
+            for line in lines[1:]:
+                print(f"    {line}" if line else "")
+    if not outcome.ok:
+        return 2 if outcome.errors else 1
+    return 1 if outcome.action.endswith("-in-place") else 0
+
+
+# ── commands ────────────────────────────────────────────────────────
+
+def cmd_new(args) -> int:
+    out = lifecycle.create(
+        args.name,
+        title=args.title,
+        kind=args.kind,
+        description=args.description,
+        git=not args.no_git,
+        register_work=args.work,
+    )
+    if out.ok:
+        print(f"Created {out.path}")
+    return _emit(out)
+
+
+def cmd_adopt(args) -> int:
+    git = True if args.git else (False if args.no_git else None)
+    out = lifecycle.adopt(args.directory, git=git)
+    if out.ok:
+        print(f"Adopted {out.path}")
+    return _emit(out)
+
+
+def cmd_archive(args) -> int:
+    out = lifecycle.archive(args.name, reason=args.reason,
+                            run_qmd=not args.no_qmd)
+    if out.ok and out.action == "archive":
+        print(f"Archived {args.name}")
+    elif out.ok:
+        print(f"Marked {args.name} archived — IN PLACE")
+    return _emit(out)
+
+
+def cmd_list(args) -> int:
+    s = lifecycle.survey()
+    if args.json:
+        print(json.dumps({
+            "root_exists": s.root_exists,
+            "projects": [vars(r) for r in s.rows],
+            "zone_counts": s.zone_counts,
+            "zones_present": s.zones_present,
+            "drift": s.drift,
+        }, indent=2))
+        return 0
+
+    if not s.root_exists:
+        print(f"  {zones.PROJECT_ROOT} does not exist yet.")
+        print("  `project new <name>` creates it, with the zones.")
+        return 0
+
+    print(f"  {len(s.rows)} active project(s) under {zones.PROJECT_ROOT}")
+    print()
+    for r in s.rows:
+        flags = []
+        if not r.has_manifest:
+            flags.append("no-manifest")
+        if r.archived:
+            flags.append("ARCHIVED-MARKER")
+        if r.no_git_marker:
+            flags.append("no-git")
+        elif not r.is_git:
+            flags.append("no-vcs")
+        if r.dirty:
+            flags.append("dirty")
+        state = f"  [{', '.join(flags)}]" if flags else ""
+        branch = f"  {r.branch}" if r.branch else ""
+        ident = r.project_id or "—"
+        print(f"    {r.name:<28} {ident:<22}{branch}{state}")
+
+    print()
+    print("  Zones:")
+    for zone in zones.ZONES:
+        if s.zones_present.get(zone):
+            print(f"    {zone:<12} {s.zone_counts.get(zone, 0)} entries")
+        else:
+            print(f"    {zone:<12} (not created yet)")
+
+    if s.drift:
+        print()
+        print(f"  Drift — {len(s.drift)} finding(s). Reported, never corrected:")
+        for d in s.drift:
+            print(f"    ! {d}")
+    return 0
+
+
+# ── parser ──────────────────────────────────────────────────────────
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="project", description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    sp_new = sub.add_parser("new", help="create a new project")
+    sp_new.add_argument("name", help="kebab-case directory name")
+    sp_new.add_argument("--title", help="human title (defaults to the name)")
+    sp_new.add_argument("--kind", default="mixed", choices=list(_kinds()),
+                        help="what sort of project this is (default: mixed)")
+    sp_new.add_argument("--description", help="ONE line; detail goes in the vault")
+    sp_new.add_argument("--no-git", action="store_true",
+                        help="skip git init and write a .aos/no-git deny marker")
+    sp_new.add_argument("--work", action="store_true",
+                        help="also register a work.db project (default: manifest only)")
+    sp_new.set_defaults(func=cmd_new)
+
+    sp_adopt = sub.add_parser("adopt", help="write a manifest for an existing dir")
+    sp_adopt.add_argument("directory", help="name under ~/project/, or a path")
+    g = sp_adopt.add_mutually_exclusive_group()
+    g.add_argument("--git", action="store_true",
+                   help="git init if unversioned (refused when .aos/no-git exists)")
+    g.add_argument("--no-git", action="store_true",
+                   help="write the .aos/no-git deny marker")
+    sp_adopt.set_defaults(func=cmd_adopt)
+
+    sp_list = sub.add_parser("list", help="what is under ~/project/, with drift")
+    sp_list.add_argument("--json", action="store_true")
+    sp_list.set_defaults(func=cmd_list)
+
+    sp_arch = sub.add_parser("archive", help="archive a finished project")
+    sp_arch.add_argument("name")
+    sp_arch.add_argument("--reason", help="why it is finished — recorded in the marker")
+    sp_arch.add_argument("--no-qmd", action="store_true",
+                         help="skip the search reindex after the move")
+    sp_arch.set_defaults(func=cmd_archive)
+
+    return p
+
+
+def _kinds() -> tuple:
+    """The manifest's kind vocabulary, read from the schema rather than copied."""
+    try:
+        import project_manifest as pm
+        return pm.KINDS
+    except Exception:
+        return ("ios", "web", "python", "content", "mixed")
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    try:
+        return args.func(args)
+    except KeyboardInterrupt:
+        print("\ninterrupted", file=sys.stderr)
+        return 2
+    except Exception as e:  # noqa: BLE001 — CLI boundary, honest exit code
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())

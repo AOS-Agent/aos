@@ -730,6 +730,80 @@ def plan_adoption(project_id: str | None = None) -> list[AdoptionPlan]:
     return plans
 
 
+def plan_adoption_for_directory(directory: Path, *,
+                                project_id: str | None = None) -> AdoptionPlan:
+    """Plan a manifest for a directory that no work project points at.
+
+    ``plan_adoption`` reads ``work.db`` and works outwards to the filesystem,
+    which is right for the six directories the tracker already knows about and
+    useless for the other thirty-three. This is the same planning, sourced the
+    other way round: everything is inferred from what is on disk, and nothing is
+    invented that the directory does not evidence.
+
+    The id defaults to the directory name. That is a real assumption rather than
+    a neutral one, so it is stated in the plan's findings — the operator is the
+    one who knows whether ``tafsir`` is a project id or two projects sharing a
+    name (it is the latter; see the initiative doc).
+
+    Writes nothing. ``write_manifest()`` is still the only write path.
+    """
+    d = Path(directory).expanduser().resolve()
+    pid = project_id or d.name
+    findings: list[str] = []
+    warnings: list[str] = []
+
+    if project_id is None:
+        findings.append(f"id={pid} taken from the directory name — no work "
+                        f"project points here, so nothing else could supply it")
+
+    components = _nested_components(d)
+    kind, why = _infer_kind(d, components)
+    findings.append(f"kind={kind} ({why}) — inferred, please confirm")
+    for c in components:
+        findings.append(f"found nested repo '{c.path}' (role={c.role})"
+                        + (f", remote {c.remote}" if c.remote else ""))
+
+    docs = _relative_docs(pid, None)
+    if docs:
+        findings.append(f"linked {len(docs)} vault doc(s) by path")
+
+    wt_loc, wt_note = _declared_worktree_location(d)
+    if wt_note:
+        findings.append(wt_note)
+
+    m = Manifest(id=pid, kind=kind, title=pid.replace("-", " ").title(),
+                 docs=docs, components=components, worktree_location=wt_loc)
+
+    try:
+        from project_reconcile import git_info
+        gi = git_info(d)
+        if gi.get("remote"):
+            warnings.append(f"this repo has remote {gi['remote']} — the manifest "
+                            f"will be pushed there once committed")
+        if not gi.get("is_git"):
+            warnings.append("not a git repo — the manifest will sit in an "
+                            "unversioned directory, so it has no history and no "
+                            "way back if it is edited wrongly")
+    except Exception:
+        pass
+
+    mp = manifest_path_for(d)
+    rendered = render_manifest_yaml(m)
+    existing, errs = load_manifest(d)
+    if errs:
+        warnings.append(f"existing manifest is invalid: {'; '.join(errs)}")
+    if existing and mp.exists() and mp.read_text() == rendered:
+        action = "unchanged"
+    elif mp.exists():
+        action = "update"
+    else:
+        action = "create"
+
+    return AdoptionPlan(project_id=pid, directory=str(d), manifest_path=str(mp),
+                        action=action, manifest_yaml=rendered,
+                        findings=findings, warnings=warnings)
+
+
 def _declared_worktree_location(directory: Path) -> tuple[str, str | None]:
     """Where this project's branches already live, as a project-relative path.
 
