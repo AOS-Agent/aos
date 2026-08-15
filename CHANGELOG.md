@@ -2,6 +2,18 @@
 
 All notable changes to AOS. Release notes sent via Telegram after each 4am update.
 
+## v0.7.5 — 2026-08-15
+
+Summary: The context diet — every session starts ~30k tokens lighter, and budget gates keep it that way.
+
+- Changed `chief.md` from a 17KB manual into a 5.5KB router: the initiative pipeline moved to the `work` skill (`references/initiative-pipeline.md`), council auto-dispatch merged into the `council` skill, and trust rules compressed — each protocol now has exactly one home, loaded on demand.
+- Added a "Context Budget" section to `ship-check`: fails the ship if `chief.md` exceeds 6KB, any rule exceeds 4KB, or a skill description exceeds 1,500 chars — the diet is enforced, not aspirational.
+- Added a hard 4KB budget to the SessionStart briefing (`inject_context.py`): active tasks capped at 8 by recency, unanswered messages filtered to 14 days, people list trimmed to top 6, the 1.5KB capability table replaced by a one-line pointer to the `autonomous-execution` skill, and overflow sections drop themselves leaving a `+N more → command` trail.
+- Changed reconcile symlink backups to live in `~/.aos/backups/pre-reconcile/` instead of the live `~/.claude/{agents,skills,rules}` directories — a `.pre-reconcile` backup left in place loads as a duplicate agent/skill in every session (this actually shipped for months); strays are now swept automatically.
+- Added `paths:` frontmatter to domain rules (`people-system`, `comms-pipeline`, `claude-code-config`, `design-language`) so they load only when a matching file is read; their reference bodies moved to `docs/reference/` where QMD indexes them.
+- Changed the 8 longest skill descriptions to trigger-dense form (council 1,034 → 439 chars) — every trigger phrase kept, rationale prose moved into skill bodies.
+- Fixed the fresh-install `ONBOARDING REQUIRED` banner never reaching the session: it was inserted after the context string was built, and a work-engine failure on brand-new installs swallowed it entirely.
+
 ## v0.7.4 — 2026-08-15
 
 Summary: The last four operator-machine defects from tonight's fleet audit. Every one is the same species — code assuming the dev machine's layout — and every one was found by watching a real update land on a real operator Mac.
