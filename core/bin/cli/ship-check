@@ -389,6 +389,20 @@ else
     pass "Skill checks use auto-discovery ($skill_count skills)"
 fi
 
+# Python service templates must NOT hardcode a machine-specific interpreter.
+# The interpreter differs per machine (~/.aos/config/python, uv-managed since
+# migration 096); a baked-in /opt/homebrew path took down sentinel on an
+# operator machine on 2026-08-15 (launcher rename regenerated the launcher
+# around a python3 that didn't exist there). Templates exec the aos-python
+# resolver instead — it picks the machine's interpreter at every start.
+hardcoded_interp=$(grep -l '<string>/opt/homebrew/bin/python3\{0,1\}</string>\|<string>/usr/bin/python3\{0,1\}</string>\|<string>/usr/local/bin/python3\{0,1\}</string>' \
+    "$DEV"/config/launchagents/*.template "$DEV"/core/services/*/*.template 2>/dev/null | xargs -n1 basename 2>/dev/null | tr '\n' ' ')
+if [[ -n "$hardcoded_interp" ]]; then
+    fail "Templates hardcode a Python interpreter (use __HOME__/aos/core/bin/internal/aos-python): $hardcoded_interp"
+else
+    pass "No template hardcodes a Python interpreter (aos-python resolver in use)"
+fi
+
 # LaunchAgents in scorecard should use auto-discovery
 if grep -q 'for la in com.aos.scheduler com.aos.bridge' "$DEV/install.sh" 2>/dev/null; then
     fail "install.sh has hardcoded LaunchAgent list — should auto-discover"

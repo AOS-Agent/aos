@@ -10,7 +10,7 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/opt/homebrew/bin/python3</string>
+        <string>__HOME__/aos/core/bin/internal/aos-python</string>
         <string>-m</string>
         <string>core.services.converse.main</string>
     </array>
