@@ -1,6 +1,14 @@
 ---
 name: envoy
-description: Commission an autonomous outbound conversation — the system texts a real person over iMessage, introduces itself as the operator's AI agent, and goes back and forth until the mission is done, escalating when unsure. Trigger on "reach out to X and…", "message X and get/arrange/ask…", "have a conversation with X", "talk to X for me", "send your agent to X", "envoy", "handle this over text with X", or any request where the operator delegates a goal-directed text conversation with a third party. Works identically when the request arrives via Telegram bridge. NOT for one-off messages the operator dictates verbatim (just send those), and NOT for replying in the operator's own voice (that is Sentinel's domain).
+description: >
+  Commission an autonomous outbound iMessage conversation — the system
+  introduces itself as the operator's AI agent and goes back and forth until the
+  mission is done, escalating when unsure. Trigger on "reach out to X and…",
+  "message X and get/arrange/ask…", "talk to X for me", "envoy", "handle this
+  over text with X", or any delegated goal-directed conversation with a third
+  party (also via Telegram bridge). NOT for verbatim one-off messages (just send
+  them) or replying in the operator's own voice (Sentinel's domain).
+
 ---
 
 # Envoy — Autonomous Outbound Conversations

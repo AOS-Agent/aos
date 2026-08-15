@@ -1,17 +1,14 @@
 ---
 name: step-by-step
 description: >
-  Structured decomposition and execution workflow that prevents overwhelm by
-  presenting one part at a time -- one context, one decision, one execution, then
-  next. Use this skill whenever the user says "step by step", "one by one",
-  "one at a time", "do X properly", "build out X", "set up X the right way",
-  "let's work through X", or any multi-part task where dumping everything at
-  once would overwhelm. Also trigger proactively when a task clearly has 3+
-  parts even if the user doesn't explicitly ask -- infrastructure migrations,
-  multi-service setups, large refactors, business strategy rollouts, system
-  configurations. Do NOT trigger for "walk me through" or "explain" requests
-  where the user just wants to understand something, not make decisions and
-  execute.
+  Structured decomposition and execution — one part at a time: context,
+  decision, execution, next. Trigger on "step by step", "one by one", "one at a
+  time", "do X properly", "build out X", "set up X the right way", "let's work
+  through X". Trigger proactively on any task with 3+ parts (migrations, multi-
+  service setups, large refactors, system configs). NOT for "walk me
+  through"/"explain" requests where the user only wants understanding, not
+  decisions.
+
 ---
 
 # Step by Step -- Structured Decomposition & Execution

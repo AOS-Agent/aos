@@ -1,6 +1,14 @@
 ---
 name: extract
-description: "Extract content from any social media URL — YouTube, Instagram, TikTok, X/Twitter. Auto-detects platform, pulls metadata, transcribes audio, and saves to vault. TRIGGER when: user pastes any social media link, asks to transcribe/summarize/extract a video or post, says 'what does this say', 'check this out', 'research this', or sends a URL from youtube.com, youtu.be, instagram.com, tiktok.com, x.com, or twitter.com. Also triggers on /capture with social media URLs. This skill replaces the separate instagram and youtube skills — use it for ALL social media content extraction."
+description: >
+  Extract content from any social media URL — YouTube, Instagram, TikTok,
+  X/Twitter: metadata, audio transcription, saved to vault. TRIGGER when the
+  user pastes a social link or URL from
+  youtube.com/youtu.be/instagram.com/tiktok.com/x.com/twitter.com, asks to
+  transcribe/summarize/extract a video or post, or uses /capture with a social
+  URL. Use for ALL social media extraction (replaces the old instagram/youtube
+  skills).
+
 ---
 
 # Skill: Content Extraction

@@ -1,14 +1,12 @@
 ---
 name: architect
 description: >
-  Governance framework for deciding whether a new capability should be an agent,
-  a skill, or handled by the main agent directly. Use this skill BEFORE creating
-  any new agent or skill. Triggers on: "I need the system to do X", "should this
-  be an agent?", "add capability for X", "create an agent for X", "we need a new
-  agent", "should I make a skill for this?". Also activates when the skill-creator
-  skill is about to be used — architect runs first as a gatekeeper to prevent
-  agent/skill sprawl. Use proactively whenever you're about to create something
-  new in .claude/agents/ or .claude/skills/.
+  Gatekeeper for new capabilities: decides agent vs skill vs main-agent-
+  directly, BEFORE anything is created in .claude/agents/ or .claude/skills/.
+  Triggers: "I need the system to do X", "should this be an agent?", "create an
+  agent/skill for X", "we need a new agent". Always runs before skill-creator.
+  Use proactively to prevent agent/skill sprawl.
+
 ---
 
 # Architect — Capability Design Framework
