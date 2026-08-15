@@ -230,7 +230,15 @@ def is_due(name: str, job: dict, status: dict, now: datetime) -> bool:
         now_minutes = now.hour * 60 + now.minute
         target_minutes = at_h * 60 + at_m
         # 5-minute window: target in [now-4, now]
-        if not (target_minutes <= now_minutes <= target_minutes + 4):
+        in_window = target_minutes <= now_minutes <= target_minutes + 4
+        # catch_up: true — if the machine was asleep/off during the window,
+        # run at the first tick after it wakes (same day only; the
+        # once-per-day/week/month guards below prevent double runs).
+        # Without this, a Mac that sleeps overnight silently skips its
+        # 04:00 jobs forever (faisal-mini: 25 consecutive missed
+        # auto-updates before anyone noticed).
+        missed = bool(job.get("catch_up")) and now_minutes > target_minutes + 4
+        if not (in_window or missed):
             return False
 
         # weekday check

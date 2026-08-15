@@ -1139,6 +1139,14 @@ if dismiss_list:
         exec "$AOS_DIR/core/bin/cli/mesh" "$@"
         ;;
 
+    fleet)
+        # Fleet update-verification: what version is each node on, is it
+        # behind, WHY, and is it healthy. SSH-pull; registry in
+        # ~/.aos/config/fleet.yaml.
+        shift
+        "$AOS_DIR/core/bin/internal/aos-python" "$AOS_DIR/core/bin/cli/fleet" "$@"
+        ;;
+
     track)
         # Auto Tracker — shipments + new-carrier onboarding pipeline
         shift

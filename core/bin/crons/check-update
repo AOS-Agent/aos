@@ -137,6 +137,34 @@ with open(os.environ["STATE_FILE"], "w") as f:
 PY
 }
 
+# Record the outcome of an apply attempt WITHOUT clobbering the check state.
+# Merges a `last_apply` object into update-state.json so `aos fleet status`
+# can answer not just "is this node behind" but WHY: which step failed, when,
+# and with what detail. (Born from the faisal-mini incident: release activated,
+# migrations failed, script exited 0, nothing recorded anywhere.)
+_write_apply_result() {
+    # $1=result(ok|failed)  $2=step  $3=detail  $4=from_version  $5=to_version
+    RESULT="$1" STEP="$2" DETAIL="$3" FROM_V="${4:-}" TO_V="${5:-}" python3 - <<'PY'
+import json, datetime, os
+path = os.environ["STATE_FILE"]
+try:
+    with open(path) as f:
+        state = json.load(f)
+except Exception:
+    state = {}
+state["last_apply"] = {
+    "time": datetime.datetime.now().isoformat(),
+    "result": os.environ.get("RESULT", "unknown"),
+    "step": os.environ.get("STEP", ""),
+    "detail": os.environ.get("DETAIL", ""),
+    "from": os.environ.get("FROM_V", ""),
+    "to": os.environ.get("TO_V", ""),
+}
+with open(path, "w") as f:
+    json.dump(state, f, indent=2)
+PY
+}
+
 # ── Telegram notification (best-effort) ──────────────────────────────────────
 
 # Topic-routed, with the old direct send kept as a fallback. This is the one
@@ -349,6 +377,7 @@ apply_release() {
     repo=$(find_repo)
     if [[ -z "$repo" ]]; then
         log "ERROR: no source repo found — cannot build a release"
+        _write_apply_result failed no_source_repo "no source repo at ~/project/aos or ~/.aos/repo"
         notify "⚠️ Update failed: no source repo (~/project/aos or ~/.aos/repo). Cannot self-update."
         return 1
     fi
@@ -356,6 +385,7 @@ apply_release() {
     local rm="$AOS_DIR/core/bin/internal/release-manager"
     if [[ ! -x "$rm" && ! -f "$rm" ]]; then
         log "ERROR: release-manager not found at $rm"
+        _write_apply_result failed release_manager_missing "$rm not found"
         return 1
     fi
 
@@ -365,6 +395,7 @@ apply_release() {
 
     _fetch_channel_refs "$repo" || {
         log "ERROR: git fetch failed in $repo"
+        _write_apply_result failed git_fetch "git fetch failed in $repo"
         notify "⚠️ System update failed (git fetch). Will retry next cycle."
         return 1
     }
@@ -375,6 +406,7 @@ apply_release() {
     IFS=$'\t' read -r channel ref new_hash fellback reason < <(_resolve_channel_target "$repo")
     if [[ -z "$new_hash" ]]; then
         log "ERROR: could not resolve channel ref '$ref' in $repo (channel: $channel)"
+        _write_apply_result failed channel_resolve "cannot resolve $ref (channel: $channel)"
         return 1
     fi
     [[ "$fellback" == "1" ]] && log "NOTE (stable): $reason"
@@ -394,6 +426,7 @@ apply_release() {
     log "Creating release $release_name from $ref (channel: $channel) ..."
     if ! bash "$rm" create "$ref" >/dev/null 2>&1; then
         log "ERROR: release-manager create failed"
+        _write_apply_result failed release_create "release-manager create $ref failed" "$old_version" "$new_version"
         notify "⚠️ Update failed during release build. Will retry next cycle."
         return 1
     fi
@@ -404,6 +437,7 @@ apply_release() {
     log "Activating $release_name ..."
     if ! bash "$rm" activate "$release_name" "$new_hash" >/dev/null 2>&1; then
         log "ERROR: release-manager activate failed for $release_name"
+        _write_apply_result failed release_activate "activate $release_name failed — still on previous release" "$old_version" "$new_version"
         notify "⚠️ Update failed during activation of $release_name. Still on previous release."
         return 1
     fi
@@ -814,6 +848,7 @@ deploy() {
     log "Running migrations..."
     "$AOS_DIR/core/bin/internal/aos-python" "$AOS_DIR/core/infra/migrations/runner.py" migrate 2>/dev/null || {
         log "ERROR: migrations failed"
+        _write_apply_result failed migrations "release $new_version is ACTIVE but migrations failed — services not restarted; run: aos migrate" "$old_version" "$new_version"
         notify "⚠️ Update to $new_version: migrations failed. Services not restarted."
         return 1
     }
@@ -888,7 +923,7 @@ deploy() {
 
     # new_hash comes from the handoff (release installs have no .git in ~/aos).
     [[ -z "$new_hash" ]] && new_hash=$(git rev-parse HEAD 2>/dev/null || echo "")
-    VERSION="$new_version" NEW_HASH="$new_hash" python3 - <<'PY'
+    VERSION="$new_version" OLD_VERSION="$old_version" NEW_HASH="$new_hash" python3 - <<'PY'
 import json, datetime, os
 state = {
     "last_check": datetime.datetime.now().isoformat(),
@@ -897,6 +932,14 @@ state = {
     "version": os.environ.get("VERSION", "unknown"),
     "local": os.environ.get("NEW_HASH", ""),
     "remote": os.environ.get("NEW_HASH", ""),
+    "last_apply": {
+        "time": datetime.datetime.now().isoformat(),
+        "result": "ok",
+        "step": "complete",
+        "detail": "deployed " + os.environ.get("VERSION", "unknown"),
+        "from": os.environ.get("OLD_VERSION", ""),
+        "to": os.environ.get("VERSION", "unknown"),
+    },
 }
 with open(os.environ["STATE_FILE"], "w") as f:
     json.dump(state, f, indent=2)

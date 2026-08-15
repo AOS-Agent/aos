@@ -43,6 +43,7 @@ jobs:
   auto-update:
     command: bash ~/aos/core/bin/crons/check-update --apply
     at: "04:00"
+    catch_up: true   # machines that sleep at 04:00 run it on first wake
     timeout: 300
     tier: 1
     description: Pulls and applies AOS updates automatically
@@ -50,6 +51,7 @@ jobs:
   harness-update:
     command: bash ~/aos/core/bin/crons/harness-update
     at: "04:15"
+    catch_up: true   # same: run on first wake if the 04:15 window was missed
     timeout: 300
     tier: 1
     description: Keeps the Claude Code harness current (npm) so new models stay reachable
