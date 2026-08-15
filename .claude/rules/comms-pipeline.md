@@ -1,3 +1,11 @@
+---
+paths:
+  - "**/core/engine/comms/**"
+  - "**/core/comms/**"
+  - "**/core/services/comms_bus/**"
+  - "**/comms.db*"
+---
+
 # Comms Pipeline — pointer
 
 Message history: `~/.aos/data/comms.db` (all channels, FTS5); identity: `people.db`. To search past messages ("what did I tell X", topics, timeframes) use `comms-recall search|person|get` — access control is enforced inside the tool; never pass `--include-private` on a contact's behalf.
