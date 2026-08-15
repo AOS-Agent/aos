@@ -125,7 +125,11 @@ def cmd_list(args) -> int:
     print()
     for r in s.rows:
         flags = []
-        if not r.has_manifest:
+        if r.manifest_invalid:
+            # Distinct from no-manifest: the file is there, and `adopt` is the
+            # wrong advice for it — adoption regenerates over declarations.
+            flags.append("MANIFEST-INVALID")
+        elif not r.has_manifest:
             flags.append("no-manifest")
         if r.archived:
             flags.append("ARCHIVED-MARKER")

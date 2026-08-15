@@ -156,6 +156,7 @@ class SurveyRow:
     dirty: bool
     archived: bool
     no_git_marker: bool
+    manifest_invalid: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -599,10 +600,18 @@ def _settle_git(directory: Path, git: bool | None,
 def survey(root: Path | None = None) -> Survey:
     """What is actually under ``~/project/``, grouped by zone, drift called out.
 
-    Zone counts are read straight off the filesystem rather than taken from the
-    reconciler, so this stays honest on a machine where work.db is unavailable
-    — the layout is a property of the disk, and a listing that cannot be
-    produced without a database would be a listing of the wrong thing.
+    Zone counts and rows are read straight off the filesystem rather than taken
+    from the reconciler, so the listing stays honest on a machine where work.db
+    is unavailable — the layout is a property of the disk, and a listing that
+    cannot be produced without a database would be a listing of the wrong thing.
+
+    **Drift is not.** That comes from ``project_reconcile._detect_drift``, the
+    same call the steward check makes, because this used to be a second
+    implementation of the same rules and two implementations of "what counts as
+    drift" is how ``project list`` and the health check end up telling the
+    operator different things about the same directory. If the reconciler cannot
+    be imported the drift list is empty and says so — a listing is still useful
+    without it, and inventing a fallback would recreate the divergence.
     """
     base = Path(root) if root else PROJECT_ROOT
     s = Survey(root_exists=base.exists())
@@ -627,12 +636,12 @@ def survey(root: Path | None = None) -> Survey:
                         key=lambda p: p.name.lower()):
         if child.name in zones.ZONES:
             continue
-        manifest, _errs = pm.load_manifest(child) if pm else (None, [])
+        manifest, errs = pm.load_manifest(child) if pm else (None, [])
         try:
             resolved = str(child.resolve())
         except OSError:
             resolved = str(child)
-        row = SurveyRow(
+        s.rows.append(SurveyRow(
             name=child.name,
             project_id=(manifest.id if manifest else by_dir.get(resolved)),
             has_manifest=manifest is not None,
@@ -641,21 +650,22 @@ def survey(root: Path | None = None) -> Survey:
             dirty=is_dirty(child),
             archived=zones.read_archived_marker(child) is not None,
             no_git_marker=zones.has_no_git_marker(child),
-        )
-        s.rows.append(row)
+            manifest_invalid=list(errs),
+        ))
 
-        if not row.has_manifest:
-            s.drift.append(f"{row.name}: no .aos/project.yaml — the directory "
-                           f"cannot identify itself (`project adopt {row.name}`)")
-        if row.dirty:
-            s.drift.append(f"{row.name}: uncommitted changes in the working tree")
-        if not row.is_git and not row.no_git_marker:
-            s.drift.append(f"{row.name}: no version control and no .aos/no-git "
-                           f"marker — decision or oversight is unrecorded")
-        if row.archived:
-            s.drift.append(f"{row.name}: carries a .aos/archived marker but is "
-                           f"still a top-level project — the move never happened")
+    s.drift = _drift_lines(base)
     return s
+
+
+def _drift_lines(base: Path) -> list[str]:
+    """The reconciler's typed drift rows, rendered one per line for the CLI."""
+    try:
+        import project_reconcile
+        report = project_reconcile.reconcile(drift_only=True, root=base)
+    except Exception as e:
+        return [f"drift could not be evaluated ({e}) — the listing above is "
+                f"still accurate; run `work projects reconcile` for detail"]
+    return [f"{d.name}: {d.evidence}  [{d.kind}]" for d in report.drift]
 
 
 # ── archive ─────────────────────────────────────────────────────────

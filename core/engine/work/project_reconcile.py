@@ -40,12 +40,18 @@ Drift — the second question this module answers
 ------------------------------------------------
 
 Disposition asks "is this directory accounted for". Drift asks the sharper
-question: "does how this directory sits still match what it claims to be?" Five
+question: "does how this directory sits still match what it claims to be?" Seven
 kinds, reported as typed ``Drift`` rows so the steward check counts structure
 rather than prose:
 
   ``unmanifested``             cannot identify itself. Reported on EVERY run,
                                forever — the council's answer to residue risk.
+  ``manifest_invalid``         it tried to, and the manifest does not validate.
+                               Separate from ``unmanifested`` because the advice
+                               differs: adoption is the fix for a missing
+                               manifest and would clobber a broken one.
+  ``layer_not_installed``      a zone or ``~/project/CLAUDE.md`` is missing —
+                               migration 102 deferred and never came back.
   ``archived_but_active``      marked finished, still being worked in. This one
                                was made non-negotiable at the council close: a
                                reconciler that only reports *missing* manifests
@@ -201,10 +207,13 @@ DISPOSITIONS = ("linked", "worktree_of", "component_of", "archived",
 # and proposed six non-repos as new projects. The steward check counts THESE.
 DRIFT_KINDS = (
     "unmanifested",             # a directory that cannot identify itself
+    "manifest_invalid",         # it tried to, and the manifest does not validate
     "archived_but_active",      # marked done, still being worked in
+    "archived_not_moved",       # marked done, still sitting at the top level
     "no_git_unmarked",          # unversioned, with no recorded decision
     "third_party_at_top_level", # someone else's repo sitting among your work
     "dirty_tree",               # uncommitted changes
+    "layer_not_installed",      # a zone or the policy file is missing
 )
 
 # How far past the archive marker a change is forgiven before it counts as
@@ -523,33 +532,35 @@ def _resolve(p: str | Path) -> Path:
         return Path(p).expanduser()
 
 
-def top_level_dirs() -> list[Path]:
+def top_level_dirs(root: Path | None = None) -> list[Path]:
     """Candidate project directories: top level, minus the zones themselves.
 
     The zones are infrastructure, not projects. Classifying ``_ref`` as a
     directory that needs a disposition would be the reconciler asking the
     operator to explain the filing cabinet.
     """
-    if not PROJECT_ROOT.exists():
+    base = Path(root) if root else PROJECT_ROOT
+    if not base.exists():
         return []
-    return sorted((c for c in PROJECT_ROOT.iterdir()
+    return sorted((c for c in base.iterdir()
                    if c.is_dir() and not c.name.startswith(".")
                    and c.name not in ZONE_NAMES),
                   key=lambda p: p.name.lower())
 
 
-def zone_contents() -> list[tuple[str, Path]]:
+def zone_contents(root: Path | None = None) -> list[tuple[str, Path]]:
     """``(zone, directory)`` for everything sitting inside a zone. One level deep.
 
     Zone membership is the classification — nothing inside is walked further,
     because a clone under ``_ref/`` is not a project and its internals are not
     the reconciler's business.
     """
+    base = Path(root) if root else PROJECT_ROOT
     out: list[tuple[str, Path]] = []
-    if not PROJECT_ROOT.exists():
+    if not base.exists():
         return out
     for zone in ZONE_NAMES:
-        d = PROJECT_ROOT / zone
+        d = base / zone
         if not d.is_dir():
             continue
         for child in sorted((c for c in d.iterdir()
@@ -640,7 +651,7 @@ def nested_repos(root: Path, max_depth: int = MAX_NEST_DEPTH) -> list[Path]:
 
 
 def _base_facts(directory: Path, gi: dict, manifests: dict,
-                is_third_party) -> dict:
+                is_third_party, invalid: dict | None = None) -> dict:
     """The structured facts every top-level directory carries, whatever it is.
 
     Computed once per directory rather than per classification branch, so a
@@ -648,6 +659,12 @@ def _base_facts(directory: Path, gi: dict, manifests: dict,
     it. ``archived_activity`` is only computed when there is a marker to
     contradict — it walks the tree, and there is no sense paying for that on the
     thirty-odd directories that never claimed to be finished.
+
+    ``manifest`` and ``manifest_invalid`` are separate facts on purpose. A
+    manifest that exists and fails validation is not the same condition as no
+    manifest at all, and collapsing the two sends the operator to ``project
+    adopt`` — which would then regenerate over the file whose typo is the entire
+    problem.
     """
     marker = _zones.read_archived_marker(directory) if _zones else None
     facts = {
@@ -658,6 +675,7 @@ def _base_facts(directory: Path, gi: dict, manifests: dict,
         "commit_count": gi.get("commit_count"),
         "third_party_remote": is_third_party(gi.get("remote")),
         "manifest": directory.name in manifests,
+        "manifest_invalid": (invalid or {}).get(directory.name) or [],
         "no_git_marker": _zones.has_no_git_marker(directory) if _zones else False,
         "archived_marker": marker is not None,
         "empty": _is_empty(directory),
@@ -690,7 +708,8 @@ def _session_count(path: Path) -> int:
 
 # ── the reconciler ──────────────────────────────────────────────────
 
-def reconcile(*, drift_only: bool = False) -> ReconcileReport:
+def reconcile(*, drift_only: bool = False,
+              root: Path | None = None) -> ReconcileReport:
     """Classify every directory under ~/project/. Report-only; writes nothing.
 
     ``drift_only`` skips the three expensive passes — the nested-repo walk, the
@@ -701,7 +720,13 @@ def reconcile(*, drift_only: bool = False) -> ReconcileReport:
     for a health check that runs every half hour. Dispositions degrade to
     ``unclassified`` for anything those passes would have resolved, which is
     honest: this mode is not asking that question.
+
+    ``root`` overrides ``~/project/``. It exists so ``project_lifecycle.survey``
+    can take its drift list from here instead of keeping a second copy of the
+    rules: two implementations of "what counts as drift" is how `project list`
+    and the steward check end up disagreeing in front of the operator.
     """
+    base = Path(root) if root else PROJECT_ROOT
     declared_dirs, declared_projects, _layer = load_declared()
 
     projects = engine.load_all().get("projects", []) if engine else []
@@ -738,13 +763,19 @@ def reconcile(*, drift_only: bool = False) -> ReconcileReport:
         return bool(ns and owners and ns not in owners)
 
     # Manifests, keyed by directory name — the deterministic discovery layer.
+    # `invalid` keeps the *per-directory* errors: a manifest that exists and
+    # does not validate is its own condition, not an absence, and the drift
+    # report has to be able to tell the operator which file to open.
     manifests: dict[str, object] = {}
+    invalid: dict[str, list[str]] = {}
     manifest_errors: list[str] = []
     brief_conflicts: list = []
     if _pm is not None:
-        for d in top_level_dirs():
+        for d in top_level_dirs(base):
             m, errs = _pm.load_manifest(d)
             manifest_errors.extend(errs)
+            if errs:
+                invalid[d.name] = errs
             if m:
                 manifests[d.name] = m
         by_id = {p["id"]: p for p in live}
@@ -756,7 +787,7 @@ def reconcile(*, drift_only: bool = False) -> ReconcileReport:
             if c:
                 brief_conflicts.append(c)
 
-    tops = top_level_dirs()
+    tops = top_level_dirs(base)
     entries: list[Entry] = []
     conflicts: list[str] = list(manifest_errors)
     suppressed_nested: dict[str, list[str]] = {}
@@ -767,8 +798,8 @@ def reconcile(*, drift_only: bool = False) -> ReconcileReport:
     for pid, ppath in ({} if drift_only else proj_path).items():
         for repo in nested_repos(ppath):
             # ~/project is a symlink to the AOS-X volume; compare resolved.
-            root = _resolve(PROJECT_ROOT)
-            rel = repo.relative_to(root) if repo.is_relative_to(root) else repo
+            rroot = _resolve(base)
+            rel = repo.relative_to(rroot) if repo.is_relative_to(rroot) else repo
             gi = git_info(repo)
             why = [f"git repo nested inside {pid}'s tree"]
             if gi.get("remote"):
@@ -805,7 +836,7 @@ def reconcile(*, drift_only: bool = False) -> ReconcileReport:
         # detection reads these; without a uniform bundle it would have to
         # infer from whichever branch happened to fire, which is the same
         # class of mistake as reading the evidence prose.
-        base_facts = _base_facts(d, gi, manifests, _is_third_party)
+        base_facts = _base_facts(d, gi, manifests, _is_third_party, invalid)
 
         # 1. declared — an operator decision, never re-litigated
         dec = declared_dirs.get(name)
@@ -915,7 +946,7 @@ def reconcile(*, drift_only: bool = False) -> ReconcileReport:
             for other_pid, other_path in proj_path.items():
                 if other_pid == pid:
                     continue
-                found = _references_any(other_path, [str(rp), str(HOME / "project" / name)])
+                found = _references_any(other_path, [str(rp), str(base / name)])
                 if found:
                     loc = next(iter(found.values()))
                     e.notes.append(f"also referenced by {other_pid} at {loc} — "
@@ -957,7 +988,7 @@ def reconcile(*, drift_only: bool = False) -> ReconcileReport:
     # /Users symlink path and half the /Volumes realpath.
     needle_owner: dict[str, tuple[str, Path]] = {}
     for _d, rp, name, _gi, _bf in deferred:
-        for needle in {str(rp), str(HOME / "project" / name)}:
+        for needle in {str(rp), str(base / name)}:
             needle_owner[needle] = (name, rp)
     ref_hits: dict[str, tuple[str, str]] = {}   # dir name → (project id, file:line)
     for pid, ppath in ({} if drift_only else proj_path).items():
@@ -1016,7 +1047,7 @@ def reconcile(*, drift_only: bool = False) -> ReconcileReport:
     # the zone IS the answer — that is the whole reason the zones exist. Asking
     # a further question here would reintroduce the ambiguity they removed.
     zone_entries: list[Entry] = []
-    for zone, child in zone_contents():
+    for zone, child in zone_contents(base):
         rp = _resolve(child)
         rel = f"{zone}/{child.name}"
         gi = git_info(child)
@@ -1088,8 +1119,15 @@ def reconcile(*, drift_only: bool = False) -> ReconcileReport:
                         explained=bool(reason)))
 
     # ---- declared entries for directories that no longer exist ----
+    # Zone names are excluded, and that is not the same as ignoring them. A
+    # declaration like `_scratch: not_a_project` was true and useful before the
+    # zones existed; now `top_level_dirs()` filters ZONE_NAMES out, so the
+    # directory is still right there and the entry is simply satisfied by the
+    # layer itself. Calling it stale would send the operator to delete a line
+    # describing something that has not gone anywhere.
     on_disk = {d.name for d in tops}
-    stale = sorted(n for n in declared_dirs if n not in on_disk)
+    stale = sorted(n for n in declared_dirs
+                   if n not in on_disk and n not in ZONE_NAMES)
 
     # ---- proposals: unclassified dirs that look like real untracked work ----
     # Skipped in drift_only mode: proposing a project needs the session counts
@@ -1099,7 +1137,8 @@ def reconcile(*, drift_only: bool = False) -> ReconcileReport:
 
     return ReconcileReport(entries=ordered, gaps=gaps, proposals=proposals,
                            conflicts=conflicts, declared_stale=stale,
-                           drift=_detect_drift(ordered, declared_dirs),
+                           drift=(_layer_drift(base)
+                                  + _detect_drift(ordered, declared_dirs)),
                            brief_conflicts=brief_conflicts)
 
 
@@ -1167,6 +1206,16 @@ def _archived_activity(directory: Path, marker) -> str | None:
     preserves mtimes and the final commit precedes the marker, so a clean
     archive has nothing after its date at all — which makes anything that *is*
     after it a real signal rather than a threshold to tune.
+
+    Both sides are compared as instants, and the marker's side has to be placed
+    on the timeline before that can happen. ``date.today()`` writes a *local*
+    date, while ``git log %cI`` carries a real UTC offset, so reading the bare
+    date as UTC midnight silently shifts the reference by the machine's offset.
+    West of UTC that shift is backwards: on this machine (UTC-7) every archive
+    made after 17:00 local produced a final commit whose UTC timestamp landed
+    past the reference, and the project was reported ``archived_but_active``
+    from the moment it was archived, forever. So a naive marker date is placed
+    at local midnight, which is what it meant when it was written.
     """
     from datetime import datetime, timedelta, timezone
 
@@ -1179,7 +1228,10 @@ def _archived_activity(directory: Path, marker) -> str | None:
         try:
             d = datetime.fromisoformat(str(marker.date))
             if d.tzinfo is None:
-                d = d.replace(tzinfo=timezone.utc)
+                # astimezone() on a naive datetime reads it as local time and
+                # attaches the local offset — exactly the intent of a date the
+                # marker wrote with date.today().
+                d = d.astimezone()
             reference = d + timedelta(days=ARCHIVE_GRACE_DAYS)
         except ValueError:
             reference = None
@@ -1215,7 +1267,9 @@ def _archived_activity(directory: Path, marker) -> str | None:
     # price of noticing anything at all here.
     newest = _newest_mtime(directory)
     if newest is not None:
-        touched = datetime.fromtimestamp(newest, tz=timezone.utc)
+        # Local, like the reference: both dates end up in the evidence string
+        # and a report that mixes timezones reads as a report that is wrong.
+        touched = datetime.fromtimestamp(newest).astimezone()
         if touched > reference:
             return (f"files modified {touched.date().isoformat()}, after the "
                     f"archive point ({reference.date().isoformat()}) — no git "
@@ -1223,16 +1277,51 @@ def _archived_activity(directory: Path, marker) -> str | None:
     return None
 
 
+def _layer_drift(root: Path) -> list[Drift]:
+    """The zones and the policy file that migration 102 was supposed to install.
+
+    Reported because the install can genuinely not have happened and nothing
+    else would ever say so: migration 102 defers zone creation when ``~/project``
+    is unreachable, and an operator whose external volume was unmounted during an
+    update ends up with the CLI on PATH, the rule linked, and no zones at all.
+    That state is silent — every verb lazily creates what it needs — so the gap
+    only surfaces if something looks for it.
+    """
+    out: list[Drift] = []
+    if _zones is None or not root.exists():
+        return out
+    for zone, d in _zones.zone_dirs(root).items():
+        if not d.is_dir():
+            out.append(Drift(
+                "layer_not_installed", zone, str(d),
+                f"zone {zone}/ does not exist — `project new` or `project adopt` "
+                f"will create it, or re-run `aos update` to apply migration 102"))
+    policy = root / _zones.POLICY_FILENAME
+    if not policy.exists():
+        out.append(Drift(
+            "layer_not_installed", _zones.POLICY_FILENAME, str(policy),
+            f"{policy} is missing — the policy that loads for every session "
+            f"under ~/project/ is not installed"))
+    return out
+
+
 def _detect_drift(entries: list[Entry], declared_dirs: dict) -> list[Drift]:
     """Everything the layer wants an operator to look at. Reports, never fixes.
 
-    Five kinds, each with a stated reason for existing:
+    Seven kinds, each with a stated reason for existing:
 
       ``unmanifested``            the directory cannot identify itself, so
                                   discovery falls back to slug guessing. Reported
                                   on EVERY run, forever — the council's answer to
                                   residue risk, since a directory never triaged
                                   becomes permanent invisible drift.
+      ``manifest_invalid``        it tried to identify itself and the file does
+                                  not validate. A *different* finding from
+                                  ``unmanifested`` because it has a different
+                                  fix: the advice for a missing manifest is
+                                  ``project adopt``, and running that against a
+                                  manifest with a typo in it would regenerate
+                                  over the very declarations the operator wrote.
       ``archived_but_active``     a claim contradicted by the tree.
       ``no_git_unmarked``         unversioned with nothing recording whether that
                                   is a decision. Not "you must use git" — the
@@ -1242,6 +1331,8 @@ def _detect_drift(entries: list[Entry], declared_dirs: dict) -> list[Drift]:
                                   operator's work. Belongs in ``_ref/``.
       ``dirty_tree``              uncommitted changes: work that exists nowhere
                                   but this disk.
+      ``layer_not_installed``     a zone or the policy file is missing. Emitted
+                                  by ``_layer_drift``, not from an entry.
 
     An operator declaration of ``not_a_project`` silences the housekeeping kinds
     for that directory. A decision already made is not re-litigated — that rule
@@ -1264,9 +1355,36 @@ def _detect_drift(entries: list[Entry], declared_dirs: dict) -> list[Drift]:
             why = facts.get("archived_activity")
             if why:
                 drift.append(Drift("archived_but_active", e.name, e.path, why))
+            # The flip-in-place case. `project archive` writes the marker
+            # without moving when something still points at the directory, and
+            # says so loudly at the time — but the loud warning scrolls away and
+            # the condition stays. A marker with no corroborating location is
+            # the weak signal the council accepted only as a fallback, so it is
+            # reported until the move actually happens.
+            if not e.zone and facts.get("archived_marker") and not excluded:
+                drift.append(Drift(
+                    "archived_not_moved", e.name, e.path,
+                    "carries a .aos/archived marker but still sits at the top "
+                    "level — the move to _archive/ never happened, so nothing "
+                    "walking ~/project/ can tell this is finished"))
             continue                     # an archived project owes nothing else
 
-        if not facts.get("manifest") and not excluded:
+        if facts.get("manifest_invalid") and not excluded:
+            # Never advised towards `project adopt`: adoption regenerates, and
+            # the file this is complaining about is the one holding the
+            # operator's declarations.
+            drift.append(Drift(
+                "manifest_invalid", e.name, e.path,
+                ".aos/project.yaml exists but does not validate, so the "
+                "directory still cannot identify itself: "
+                + "; ".join(facts["manifest_invalid"][:3])
+                + " — fix the file by hand"))
+        elif not facts.get("manifest") and not excluded \
+                and not facts.get("empty"):
+            # The empty guard its no_git_unmarked sibling already had. A husk
+            # left behind by a retired worktree convention has nothing to
+            # identify, and telling the operator to adopt it every run forever
+            # is the noise that makes the whole report skippable.
             drift.append(Drift(
                 "unmanifested", e.name, e.path,
                 "no .aos/project.yaml — the directory cannot identify itself, so "
@@ -1279,13 +1397,21 @@ def _detect_drift(entries: list[Entry], declared_dirs: dict) -> list[Drift]:
                 "no version control and no .aos/no-git marker — nothing records "
                 "whether that is a decision or an oversight"))
 
-        if facts.get("third_party_remote") and not excluded:
+        # A manifest is the operator saying "this one is mine", and it outranks
+        # the namespace heuristic that produced this finding. Owner namespaces
+        # are derived only from the remotes of work.db projects that have a
+        # path, so a repo published under a second GitHub org the tracker has
+        # never seen looks exactly like somebody else's clone. Adopting it is
+        # the answer to that, and it must not still be third-party afterwards.
+        if facts.get("third_party_remote") and not excluded \
+                and not facts.get("manifest"):
             remote = facts.get("remote") or "an unowned remote"
             drift.append(Drift(
                 "third_party_at_top_level", e.name, e.path,
                 f"remote {remote} is outside the operator's namespaces — a clone "
                 f"of someone else's repo sitting as a peer of real work; it "
-                f"belongs in _ref/"))
+                f"belongs in _ref/ (a manifest, or a `not_a_project` "
+                f"disposition, settles it the other way)"))
 
         if facts.get("dirty"):
             drift.append(Drift(

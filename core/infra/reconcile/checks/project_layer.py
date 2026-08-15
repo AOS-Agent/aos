@@ -8,10 +8,23 @@ and `work projects reconcile` exists for the operator to sit down with. Drift �
 "does how this directory sits still match what it claims to be" — is a standing
 condition, and standing conditions are what reconcile checks are for.
 
-Five drift kinds, all sourced from project_reconcile's typed Drift rows:
+Eight drift kinds, all sourced from project_reconcile's typed Drift rows:
 
     unmanifested              a directory that cannot identify itself
+    manifest_invalid          it tried to, and the manifest does not validate.
+                              Distinct from unmanifested because the fix is
+                              different: `project adopt` is the answer to a
+                              missing manifest and would regenerate over a
+                              broken one, so this kind never advises it.
+    layer_not_installed       a zone or ~/project/CLAUDE.md is missing. Migration
+                              102 defers zone creation when ~/project cannot be
+                              written into (an unmounted volume), and without
+                              this nothing would ever say the install is half
+                              done — every verb lazily creates what it needs.
     archived_but_active       marked finished, still being worked in
+    archived_not_moved        marked finished, still at the top level: the
+                              flip-in-place fallback, whose blockers were never
+                              cleared
     no_git_unmarked           unversioned, with nothing recording that decision
     third_party_at_top_level  someone else's repo among the operator's work
     dirty_tree                work that exists nowhere but this disk

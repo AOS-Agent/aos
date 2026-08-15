@@ -19,6 +19,7 @@ to the reader.
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -51,15 +52,23 @@ def git_identity(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def no_work_db(monkeypatch):
-    """Detach the lifecycle from work.db by default.
+def no_work_db(monkeypatch, tmp_path):
+    """Detach the lifecycle AND the reconciler from live instance state.
 
     Most of these tests are about the filesystem, and a verb that quietly
     consulted the operator's real tracker would make them both slow and
     non-deterministic. Tests that DO want the tracker opt back in with the
     `work_env` fixture, which rebinds the same module to an isolated DB.
+
+    The reconciler is detached too because `survey()` now takes its drift from
+    it, so `project list` reaches work.db and the instance dispositions file by
+    a path it did not use before. Left live, a declaration in the operator's own
+    `~/.aos/config/project-dispositions.yaml` could silence a finding a test is
+    asserting.
     """
     monkeypatch.setattr(lifecycle, "engine", None)
+    monkeypatch.setattr(reconcile, "engine", None)
+    monkeypatch.setenv("AOS_CONFIG_DIR", str(tmp_path / "no-instance-config"))
 
 
 @pytest.fixture()
@@ -516,6 +525,9 @@ def test_archive_refuses_something_already_archived(root):
 def test_survey_reports_zone_counts_and_drift(root):
     lifecycle.create("clean-one", root=root)
     (root / "no-manifest").mkdir()
+    # Not empty: an empty directory has nothing to identify, and is deliberately
+    # exempt from the unmanifested finding (see the husk tests below).
+    (root / "no-manifest" / "notes.md").write_text("stuff")
     (root / "_ref" / "a-clone").mkdir(parents=True)
     (root / "_scratch" / "junk").mkdir(parents=True)
 
@@ -643,7 +655,10 @@ def test_mtime_is_only_consulted_where_there_is_no_git(reconcile_root):
 
     reconcile._GIT_CACHE.clear()
     r = reconcile.reconcile(drift_only=True)
-    assert _drift_kinds(r, "quiet-repo") == set()
+    # Both carry a marker at the top level, so both are archived_not_moved. The
+    # question this test asks is the other one: did mtime alone make either of
+    # them look active?
+    assert "archived_but_active" not in _drift_kinds(r, "quiet-repo")
     assert "archived_but_active" in _drift_kinds(r, "quiet-notes")
 
 
@@ -702,6 +717,219 @@ def test_an_operator_declaration_silences_housekeeping(reconcile_root, tmp_path,
 
     r = reconcile.reconcile(drift_only=True)
     assert _drift_kinds(r, "deliberate") == set()
+
+
+@pytest.fixture()
+def pacific_time(monkeypatch):
+    """Run the body west of UTC, where the timezone bug actually bites."""
+    monkeypatch.setenv("TZ", "America/Los_Angeles")
+    time.tzset()
+    yield
+    monkeypatch.undo()
+    time.tzset()
+
+
+def test_a_same_day_archive_west_of_utc_is_not_reported_active(reconcile_root,
+                                                               pacific_time):
+    """`date.today()` writes a LOCAL date; `git log %cI` carries a real offset.
+    Reading the bare marker date as UTC midnight shifts the reference back by
+    the machine's offset, so on UTC-7 every archive made after 17:00 local
+    produced a final commit whose UTC timestamp landed past the reference — and
+    the project was reported archived_but_active from the moment it was
+    archived, permanently.
+    """
+    d = _repo(reconcile_root / "same-day")
+    zones.write_archived_marker(d, "done", when="2026-08-15")
+    (d / "final.txt").write_text("last thing")
+    _git(d, "add", "-A")
+    # 20:00 local on the marker's own date — 03:00Z the following day.
+    subprocess.run(("git", "-C", str(d), "commit", "-m", "archive: final state"),
+                   capture_output=True, text=True,
+                   env={**os.environ,
+                        "GIT_AUTHOR_DATE": "2026-08-15T20:00:00-07:00",
+                        "GIT_COMMITTER_DATE": "2026-08-15T20:00:00-07:00"})
+    reconcile._GIT_CACHE.clear()
+
+    r = reconcile.reconcile(drift_only=True)
+    assert "archived_but_active" not in _drift_kinds(r, "same-day")
+
+
+def test_a_commit_a_week_after_the_marker_is_still_caught(reconcile_root,
+                                                          pacific_time):
+    """The companion: the timezone fix widens the reference by hours, not days,
+    so real post-archive work is still a finding."""
+    d = _repo(reconcile_root / "carried-on")
+    zones.write_archived_marker(d, "done", when="2026-08-15")
+    (d / "more.txt").write_text("a week later")
+    _git(d, "add", "-A")
+    subprocess.run(("git", "-C", str(d), "commit", "-m", "more work"),
+                   capture_output=True, text=True,
+                   env={**os.environ,
+                        "GIT_AUTHOR_DATE": "2026-08-22T09:00:00-07:00",
+                        "GIT_COMMITTER_DATE": "2026-08-22T09:00:00-07:00"})
+    reconcile._GIT_CACHE.clear()
+
+    r = reconcile.reconcile(drift_only=True)
+    assert "archived_but_active" in _drift_kinds(r, "carried-on")
+
+
+# ── an invalid manifest is not a missing one ────────────────────────
+
+def _manifest_file(directory: Path, body: str) -> Path:
+    p = pm.manifest_path_for(directory)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(body)
+    return p
+
+
+def test_an_invalid_manifest_is_its_own_finding(reconcile_root):
+    """Reporting it as `unmanifested` sends the operator to `project adopt` —
+    which would then regenerate over the file whose typo is the whole problem."""
+    d = reconcile_root / "typo"
+    d.mkdir()
+    _manifest_file(d, "schema: 1\nid: typo\nkind: mixed\ntitle: Typo\n"
+                      "status: active\n")
+
+    r = reconcile.reconcile(drift_only=True)
+    kinds = _drift_kinds(r, "typo")
+    assert "manifest_invalid" in kinds
+    assert "unmanifested" not in kinds, "it is not missing; it is broken"
+
+    row = next(d_ for d_ in r.drift if d_.name == "typo"
+               and d_.kind == "manifest_invalid")
+    assert "status" in row.evidence, "name the validator's actual complaint"
+    assert "adopt" not in row.evidence, "adoption is the wrong advice here"
+
+
+def test_survey_flags_an_invalid_manifest_separately(root):
+    d = root / "typo"
+    d.mkdir()
+    _manifest_file(d, "schema: 1\nid: typo\nkind: mixed\ntitle: Typo\n"
+                      "progress: 40\n")
+
+    row = next(r for r in lifecycle.survey(root=root).rows if r.name == "typo")
+    assert row.has_manifest is False
+    assert row.manifest_invalid, "the errors travel with the row"
+
+
+# ── third-party is a heuristic, and a manifest outranks it ──────────
+
+def test_a_manifested_repo_in_another_namespace_is_not_third_party(
+        reconcile_root, work_env, monkeypatch):
+    """Owner namespaces are derived only from the remotes of work.db projects
+    that have a path, so an operator's own repo published under a second GitHub
+    org looks exactly like somebody else's clone. Adopting it is the answer to
+    that, and it must not still be third-party afterwards."""
+    eng = work_env["engine"]
+    monkeypatch.setattr(reconcile, "engine", eng)
+
+    known = _repo(reconcile_root / "known")
+    _git(known, "remote", "add", "origin",
+         "https://github.com/operator/known.git")
+    eng.add_project("Known", project_id="known")
+    eng.update_project("known", path=str(known))
+
+    other = _repo(reconcile_root / "other-org")
+    _git(other, "remote", "add", "origin",
+         "https://github.com/operators-second-org/other-org.git")
+    reconcile._GIT_CACHE.clear()
+
+    r = reconcile.reconcile(drift_only=True)
+    assert "third_party_at_top_level" in _drift_kinds(r, "other-org"), \
+        "unadopted, the heuristic is all there is and it should still fire"
+
+    _manifest_file(other, "schema: 1\nid: other-org\nkind: mixed\n"
+                          "title: Other Org\n")
+    reconcile._GIT_CACHE.clear()
+    r = reconcile.reconcile(drift_only=True)
+    assert "third_party_at_top_level" not in _drift_kinds(r, "other-org"), \
+        "a manifest is the operator saying 'this one is mine'"
+
+
+# ── declarations, husks, and the layer itself ───────────────────────
+
+def test_a_zone_name_declaration_is_not_reported_stale(reconcile_root, tmp_path,
+                                                       monkeypatch):
+    """`top_level_dirs()` filters ZONE_NAMES, so a pre-existing declaration
+    keyed by a bare zone name looks like it names a directory that has gone.
+    It has not gone; the layer now answers for it."""
+    cfg = tmp_path / "cfg"
+    cfg.mkdir()
+    (cfg / "project-dispositions.yaml").write_text(yaml.safe_dump({
+        "version": 1,
+        "directories": {
+            "_scratch": {"disposition": "not_a_project",
+                         "reason": "predates the zones"},
+            "genuinely-gone": {"disposition": "not_a_project",
+                               "reason": "deleted last year"},
+        },
+    }))
+    monkeypatch.setenv("AOS_CONFIG_DIR", str(cfg))
+
+    r = reconcile.reconcile(drift_only=True)
+    assert "_scratch" not in r.declared_stale
+    assert "genuinely-gone" in r.declared_stale, "real staleness still reported"
+
+
+def test_an_empty_husk_is_not_told_to_adopt_itself(reconcile_root):
+    """The empty guard `no_git_unmarked` already had. A husk left by the retired
+    worktree convention has nothing to identify, and telling the operator to
+    adopt it on every run forever is the noise that makes the report skippable."""
+    (reconcile_root / "aos-wt").mkdir()
+
+    r = reconcile.reconcile(drift_only=True)
+    assert _drift_kinds(r, "aos-wt") == set()
+
+    entry = next(e for e in r.entries if e.name == "aos-wt")
+    assert entry.disposition == "not_a_project", "still accounted for, though"
+
+
+def test_missing_zones_and_policy_are_reported(tmp_path, monkeypatch):
+    """Migration 102 defers zone creation when ~/project cannot be written into.
+    Every verb lazily creates what it needs, so a half-installed layer is
+    otherwise completely silent."""
+    bare = tmp_path / "project"
+    bare.mkdir()
+    monkeypatch.setattr(reconcile, "PROJECT_ROOT", bare)
+    reconcile._GIT_CACHE.clear()
+
+    r = reconcile.reconcile(drift_only=True)
+    missing = {d.name for d in r.drift if d.kind == "layer_not_installed"}
+    assert missing == set(zones.ZONES) | {zones.POLICY_FILENAME}
+
+    zones.ensure_zones(bare)
+    r = reconcile.reconcile(drift_only=True)
+    assert [d for d in r.drift if d.kind == "layer_not_installed"] == []
+
+
+def test_an_archived_marker_that_never_moved_is_reported(reconcile_root):
+    """The flip-in-place fallback. `project archive` shouts about it once, and
+    then the warning scrolls away while the condition stays."""
+    d = _repo(reconcile_root / "flipped")
+    zones.write_archived_marker(d, "done", entangled=True, when="2020-01-01")
+    reconcile._GIT_CACHE.clear()
+
+    r = reconcile.reconcile(drift_only=True)
+    assert "archived_not_moved" in _drift_kinds(r, "flipped")
+
+
+def test_survey_and_the_reconciler_report_the_same_drift(root):
+    """One implementation, two readers. `project list` and the steward check
+    disagreeing about the same directory in front of the operator is worse than
+    either being wrong alone."""
+    _repo(root / "wip")
+    (root / "wip" / "uncommitted.txt").write_text("x")
+    (root / "orphan").mkdir()
+    (root / "orphan" / "notes.md").write_text("stuff")
+    reconcile._GIT_CACHE.clear()
+
+    s = lifecycle.survey(root=root)
+    reconcile._GIT_CACHE.clear()
+    r = reconcile.reconcile(drift_only=True, root=root)
+
+    assert len(s.drift) == len(r.drift)
+    for row in r.drift:
+        assert any(row.name in line and row.kind in line for line in s.drift)
 
 
 def test_drift_only_and_the_full_pass_agree_on_drift(reconcile_root):
