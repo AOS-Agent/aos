@@ -1,6 +1,7 @@
 from .bridge_poll_liveness import BridgePollLivenessCheck
 from .claude_defaults import ClaudeDefaultsCheck
 from .claude_md import GlobalClaudeMdCheck, RootClaudeMdCheck
+from .cmux_socket_control import CmuxSocketControlCheck
 from .context_freshness import ContextFreshnessCheck
 from .cron_health import CronHealthCheck
 from .dead_code import DeadCodeCheck
@@ -13,6 +14,7 @@ from .hooks import HooksPathCheck
 from .initiatives import BridgeTopicsCheck, InitiativeDirectoriesCheck
 from .instance_hygiene import InstanceHygieneCheck
 from .launchagents import LaunchAgentPythonCheck
+from .launcher_naming import LauncherNamingCheck
 from .log_location import LogLocationCheck
 from .mcp_location import McpLocationCheck
 from .n8n import N8nServiceCheck
@@ -57,6 +59,11 @@ ALL_CHECKS = [
 
     # Services — LaunchAgent plists reference existing Python
     LaunchAgentPythonCheck,
+
+    # Services — clean Login Items names via named launchers (aos#198):
+    # any AOS plist exec'ing a bare interpreter gets wrapped so System
+    # Settings shows "AOS Bridge", not "python3"
+    LauncherNamingCheck,
 
     # Services — deployed Sentinel plist matches its framework template
     # (catches drift back to hardcoded operator paths after a manual edit
@@ -126,6 +133,13 @@ ALL_CHECKS = [
     # so the dev uvicorn on 4097 auto-restarts on crash. Notify-only; never
     # auto-installs (modifies ~/Library/LaunchAgents/).
     DevBackendPlistCheck,
+
+    # cmux socket control — cmux's default ("cmuxOnly") refuses socket commands
+    # from outside cmux, which is every call `aos start` makes. Left alone, the
+    # way into the system silently degrades to "Claude Code in whatever terminal
+    # you were already in". periodic_fix=True; the edit is surgical and only
+    # widens from the default, never overrides an operator's chosen mode.
+    CmuxSocketControlCheck,
 
     # Services — every deployed com.aos.*.plist has a loaded (and healthy)
     # launchd job. The generic net for the exact silent state that ate the

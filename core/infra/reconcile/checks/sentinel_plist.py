@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from base import CheckResult, ReconcileCheck, Status
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+from lib import launchers
 from lib.service_ctl import restart_launchagent
 
 
@@ -42,6 +43,11 @@ class SentinelPlistDriftCheck(ReconcileCheck):
             return None
         return self.TEMPLATE_PATH.read_text().replace("__HOME__", str(self.HOME))
 
+    # Login Items display name — the template keeps the REAL command line; the
+    # deployed plist points at a named launcher (lib/launchers.py) so System
+    # Settings shows "AOS Sentinel" instead of "python3".
+    DISPLAY_NAME = "AOS Sentinel"
+
     def check(self) -> bool:
         expected = self._render()
         if expected is None:
@@ -50,7 +56,23 @@ class SentinelPlistDriftCheck(ReconcileCheck):
             return True
         if not self.PLIST_PATH.exists():
             return False
-        return self.PLIST_PATH.read_text() == expected
+        # Canonical deployed form = rendered template + launcher transform.
+        import plistlib
+        canonical = plistlib.loads(
+            launchers.canonical_plist_bytes(expected, self.DISPLAY_NAME)
+        )
+        try:
+            deployed = launchers.read_plist(self.PLIST_PATH)
+        except Exception:
+            return False
+        if deployed != canonical:
+            return False
+        lp = launchers.launcher_path(self.DISPLAY_NAME)
+        if not lp.exists():
+            return False
+        return lp.read_text() == launchers.expected_launcher_text(
+            expected, self.PLIST_NAME
+        )
 
     def fix(self) -> CheckResult:
         expected = self._render()
@@ -62,7 +84,15 @@ class SentinelPlistDriftCheck(ReconcileCheck):
             )
 
         self.PLIST_PATH.parent.mkdir(parents=True, exist_ok=True)
-        self.PLIST_PATH.write_text(expected)
+        # Deploy the canonical launcher-wrapped form: named launcher carries
+        # the real command, plist points at it (clean Login Items name).
+        launchers.LAUNCHERS_DIR.mkdir(parents=True, exist_ok=True)
+        lp = launchers.launcher_path(self.DISPLAY_NAME)
+        lp.write_text(launchers.expected_launcher_text(expected, self.PLIST_NAME))
+        lp.chmod(0o755)
+        self.PLIST_PATH.write_bytes(
+            launchers.canonical_plist_bytes(expected, self.DISPLAY_NAME)
+        )
 
         # Reload through the shared guarded choke-point so the running service
         # picks up the corrected definition (settle → verify → retry, with

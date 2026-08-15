@@ -12,3 +12,6 @@ keepalive: true
 liveness: http
 port: 7601
 health_endpoint: /health
+
+# Login Items display name (see core/infra/lib/launchers.py)
+display_name: AOS WhatsApp

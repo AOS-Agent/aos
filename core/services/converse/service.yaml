@@ -1,0 +1,17 @@
+name: converse
+purpose: Conversation-Session engine — supervised multi-turn iMessage/Slack sessions (Sentinel + Envoy runtime).
+# OPTIONAL by design, ships OFF (PLAN.md Wave 2/T3; cutover is Wave 3/T5).
+# The daemon is feature-complete but its LaunchAgent is installed disabled
+# (RunAtLoad=false, Disabled=true — see com.aos.converse.plist.template)
+# until the operator runs the Sana cutover and explicitly activates it.
+# Because status=optional, ServiceLoadedCheck treats "not loaded" as fine
+# (never auto-restarted) — the same posture as work-runner before
+# `work runner enable`. liveness=none: no HTTP port, KeepAlive owns process
+# liveness once activated.
+status: optional
+type: resident
+owner_layer: framework
+label: com.aos.converse
+plist_template: com.aos.converse.plist.template
+keepalive: false
+liveness: none
