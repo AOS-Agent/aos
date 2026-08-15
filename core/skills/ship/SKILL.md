@@ -160,11 +160,17 @@ git push origin HEAD:main
 ### Step 4: Sync Runtime
 
 After pushing, update the local runtime so the operator's own machine
-matches what they just shipped:
+matches what they just shipped. `~/aos` is a release symlink (no `.git`)
+on modern installs — never `git pull` it; go through the update pipeline:
 
 ```bash
-cd ~/aos && git pull origin main --ff-only
+bash ~/aos/core/bin/crons/check-update --apply
 ```
+
+Watch the output. If any step reports ERROR (migrations, venv rebuild,
+service restart), that is a failed ship on this machine — fix it now,
+not later. The failure is also recorded in
+`~/.aos/data/update-state.json` under `last_apply`.
 
 ### Step 5: Close Resolved Issues
 
@@ -190,7 +196,32 @@ Issues closed: #4, #7, #8 (resolved by this ship)
 Issues still open: #12 (unrelated)
 ```
 
-### Step 6: Confirm
+### Step 6: Fleet Post-Flight
+
+A ship is not done when the push lands — it is done when every fleet
+node either has it or has a *known reason* why not. Never assume "the
+4am cron will get it" (that assumption once left a node 68 commits and
+25 days behind, silently).
+
+If `~/.aos/config/fleet.yaml` exists:
+
+```bash
+# Push the update to nodes marked auto_update: true, then verify
+aos fleet update all
+
+# Or, if the operator prefers nodes to self-update on their own schedule:
+aos fleet verify --fresh
+```
+
+Read the verdict per node and report it. `apply_failed` and `behind`
+rows include the WHY (failed step + detail from the node's
+`last_apply`). Do not swallow a failing node into a success message —
+name it and either fix it now or tell the operator what's blocking it.
+
+If there is no fleet registry, skip this step and note in the
+confirmation that only the local machine is verified.
+
+### Step 7: Confirm
 
 ```
 ━━━━━━━━━━━━━━━━━━
@@ -198,9 +229,9 @@ Shipped ✓
 ━━━━━━━━━━━━━━━━━━
 
 Pushed to main: <short hash>
-Local runtime synced: ~/aos/ is up to date
+Local runtime: applied + verified (vX.Y.Z, migrations N)
+Fleet: <node>: ✓ vX.Y.Z / <node>: ✗ <why>
 Issues closed: N resolved
-Next auto-update: 4am — all machines will receive this
 ```
 
 ## Version Bumps
@@ -263,6 +294,8 @@ Dev workspace is synced so the next /ship doesn't re-push reverted code.
 - NEVER use `git add -A` — stage files explicitly
 - ALWAYS fetch origin before diffing (ensures accurate comparison)
 - ALWAYS sync ~/aos/ after pushing so the operator runs what they shipped
+- ALWAYS run the fleet post-flight when a fleet registry exists — a ship
+  isn't done until every node has it or has a named blocker
 - ALWAYS sync ~/project/aos/ after a rollback
 - If dev is behind main, pull first before shipping
 - If in doubt about a change, suggest the operator test it first

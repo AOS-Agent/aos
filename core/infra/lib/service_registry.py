@@ -64,6 +64,9 @@ Optional:
   label           str   launchd label (defaults to "com.aos.<name>").
   keepalive       bool  whether the plist sets KeepAlive.
   depends_on      list  service names this one needs up first.
+  display_name    str   Login Items display name (e.g. "AOS Bridge") used for
+                        the generated ~/.aos/launchers/ wrapper; derived from
+                        the label when unset (see lib/launchers.py).
 
 Strict validation: an unknown key is an error, a missing required key is an
 error, a wrong enum value is an error. A manifest that does not validate makes
@@ -96,6 +99,7 @@ _REQUIRED = {"name", "purpose", "status", "type", "owner_layer", "liveness"}
 _OPTIONAL = {
     "port", "health_endpoint", "start_interval",
     "plist_template", "label", "keepalive", "depends_on",
+    "display_name",
 }
 _ALLOWED = _REQUIRED | _OPTIONAL
 
@@ -119,6 +123,7 @@ class ServiceManifest:
     plist_template: str | None = None
     keepalive: bool | None = None
     depends_on: list[str] = field(default_factory=list)
+    display_name: str | None = None  # Login Items name; derived from label when unset
     source: str = ""  # path the manifest was loaded from (diagnostics)
 
     # ── Derived helpers ──────────────────────────────────────────────────────
@@ -222,6 +227,15 @@ def _validate(raw: dict, source: Path) -> ServiceManifest:
     if not isinstance(label, str):
         raise ManifestError(f"{where}: label must be a string")
 
+    display_name = raw.get("display_name")
+    if display_name is not None and (
+        not isinstance(display_name, str) or not display_name.strip()
+        or "/" in display_name
+    ):
+        raise ManifestError(
+            f"{where}: display_name must be a non-empty string without '/'"
+        )
+
     return ServiceManifest(
         name=name,
         purpose=purpose,
@@ -236,6 +250,7 @@ def _validate(raw: dict, source: Path) -> ServiceManifest:
         plist_template=plist_template,
         keepalive=keepalive,
         depends_on=list(depends_on),
+        display_name=display_name,
         source=str(where),
     )
 

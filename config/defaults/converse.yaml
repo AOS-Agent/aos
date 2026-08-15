@@ -1,0 +1,58 @@
+# Converse configuration — Default Template
+# Copied to ~/.aos/config/converse.yaml on install (migration 100, Wave 0/T1).
+# Full design: ~/.aos/tmp/sessions-build/PLAN.md §6.
+#
+# Converse is the Conversation-Session engine — the supervised runtime that
+# holds multi-turn conversations with real people over iMessage and Slack.
+# Sentinel and Envoy are its two *modes*, not separate systems (PLAN.md §1).
+#
+# ── KILL SWITCH ──────────────────────────────────────────────────────────
+# `enabled` ships TRUE, but as of Wave 0 (T1) there is no supervisor daemon
+# yet — this migration only lands the schema, models, and this config. The
+# daemon (core/services/converse, T3) reads this file at start and per-pass;
+# `enabled: false` is a clean idle exit for it once it exists. Nothing reads
+# or writes conversation_sessions autonomously until then.
+enabled: true
+
+# Max simultaneous claude -p turn handlers across all sessions.
+max_concurrent_handlers: 2
+
+# Debounce window: a burst of inbound messages within this many quiet
+# seconds becomes ONE turn, not one per message.
+batch_quiet_seconds: 30
+
+# Defaults applied to a new session when the creator doesn't override them
+# (CLI, Qareen POST /sessions, the Sentinel trigger factory in Phase D).
+defaults:
+  trust_level: 2        # 1 gate-all, 2 confidence-gated, 3 autonomous
+  max_messages: 30
+  expires_days: 5
+  tools: none            # none | research | full
+
+# Hard floor — applies at ALL trust levels, every outbound message
+# (PLAN.md §6.1). Never bypassed by confidence or trust_level.
+hard_floor:
+  blocked_intent_words:
+    - book
+    - schedule
+    - pay
+    - buy
+    - "send money"
+    - reserve
+    - transfer
+  block_inner_circle_importance: 1   # importance==1 always holds for approval (voice=operator)
+  max_sends_per_hour: 6
+
+channels:
+  imessage:
+    enabled: true
+  slack:
+    enabled: true
+    workspace_url: "https://<workspace>.slack.com"   # set before creating a Slack session
+    poll_interval_s: 25
+
+notify:
+  on_send: true
+  on_escalate: true
+  on_complete: true
+  on_fail: true

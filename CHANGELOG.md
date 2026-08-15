@@ -2,6 +2,17 @@
 
 All notable changes to AOS. Release notes sent via Telegram after each 4am update.
 
+## Unreleased
+
+Summary: Fresh-install onboarding actually reaches the finish line. Every new operator hit the same three walls — the one-liner died on a Mac with no git and had to be pasted twice, and onboarding then started in Terminal while cmux sat open and empty next to it. All three were deterministic, not flaky: nobody's first install had ever worked the way it was designed to.
+
+- Fixed the install one-liner dying on a fresh Mac — `bootstrap.sh` opened with `git clone`, but on a clean machine `/usr/bin/git` is a stub that pops the Xcode Command Line Tools installer and exits non-zero, killing the script under `set -e`. The operator sat through the CLT install, then had to re-paste the one-liner and start over. Bootstrap now fetches a tarball with `curl` (no toolchain needed) and hands off to `install.sh`, whose existing three-tier `prereq_xcode_clt` installs CLT properly and clones `~/aos` with git once git exists. One paste, start to finish
+- Fixed onboarding starting in Terminal instead of cmux — `aos start` drove cmux with `new-workspace`, which cmux documents as creating a workspace *in the caller's window*, resolved from `$CMUX_WORKSPACE_ID`/`$CMUX_SURFACE_ID`. `aos start` is always an outside caller, so there was no caller window, the call failed, and it fell through to running Claude Code in the calling terminal. It now waits on the socket properly, targets a window explicitly, and degrades to opening cmux with the command to run rather than yanking the operator back to Terminal
+- Fixed the other half of that bug: nothing in AOS had ever configured cmux's `socketControlMode`, which defaults to `"cmuxOnly"` — refusing socket commands from non-cmux callers outright. Every socket call `aos start` made was rejected on every install ever done. The installer and migration `099_cmux_socket_control` now set it to `"automation"`, editing `cmux.json` surgically so operator comments, formatting, and any already-permissive mode they chose are preserved, with a backup written first
+- Added the `cmux_socket_control` reconcile check — the setting lives in the operator's own config, which they edit and cmux's settings UI rewrites, so drift is silent: nothing errors, the terminal just quietly stops being the terminal. Auto-fixes on the periodic pass
+- Fixed the installer silently skipping its own final launch — it gated on `command -v claude`, but `claude` and `aos` were both installed during that same run, so the shell's command hash could predate them. It now refreshes the hash and PATH, and if Claude Code still isn't reachable it says so instead of leaving the operator staring at the handoff panel
+- Changed the installer to open with the Arabic ligature ﷽ and close with الحمد لله, replacing the lowercase `bismillah`/`alhamdulillah` gray text
+
 ## v0.7.1 — 2026-07-25
 
 Summary: Auto Tracker actually runs now. v0.7.0 shipped a complete tracking library that was connected to almost nothing — the poll cron had failed every run since release, detection was never registered on the live message bus, notifications were unreachable, and order extraction had no caller. Four one-line seams, each invisible because the health check only inspected structure and never execution.

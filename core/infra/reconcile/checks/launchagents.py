@@ -23,6 +23,9 @@ class LaunchAgentPythonCheck(ReconcileCheck):
 
     LA_DIR = Path.home() / "Library" / "LaunchAgents"
     AOS_PLIST_PREFIX = "com.aos."
+    # Named launcher wrappers (lib/launchers.py) carry the real command line —
+    # since the launcher transform, python paths live HERE, not in the plists.
+    LAUNCHERS_DIR = Path.home() / ".aos" / "launchers"
 
     # Candidate Python binaries in preference order
     PYTHON_CANDIDATES = [
@@ -40,6 +43,10 @@ class LaunchAgentPythonCheck(ReconcileCheck):
         for plist in self.LA_DIR.glob(f"{self.AOS_PLIST_PREFIX}*.plist"):
             text = plist.read_text()
             for python_path in self._find_python_refs(text):
+                if not Path(python_path).exists():
+                    return False
+        for launcher in self._launcher_files():
+            for python_path in self._find_python_refs(launcher.read_text()):
                 if not Path(python_path).exists():
                     return False
         return True
@@ -76,12 +83,40 @@ class LaunchAgentPythonCheck(ReconcileCheck):
                                        actor="reconcile:launchagent_python"):
                     fixed.append(plist.name)
 
+        for launcher in self._launcher_files():
+            text = launcher.read_text()
+            stale_refs = [p for p in self._find_python_refs(text)
+                          if not Path(p).exists()]
+            if not stale_refs:
+                continue
+            new_text = text
+            for stale in stale_refs:
+                new_text = new_text.replace(stale, str(current_python))
+            launcher.write_text(new_text)
+            fixed.append(launcher.name)
+            # The launcher header records its label — reload that job so the
+            # running service picks up the corrected interpreter.
+            m = re.search(r'# AOS launcher for (\S+)', text)
+            if m:
+                label = m.group(1)
+                plist = self.LA_DIR / f"{label}.plist"
+                if plist.exists():
+                    restart_launchagent(label, plist,
+                                        actor="reconcile:launchagent_python")
+
         if fixed:
             return CheckResult(
                 self.name, Status.FIXED,
                 f"Updated Python paths in: {', '.join(fixed)} → {current_python}"
             )
         return CheckResult(self.name, Status.OK, "ok")
+
+    def _launcher_files(self) -> list[Path]:
+        """Generated launcher wrappers for AOS services (skip dotfiles)."""
+        if not self.LAUNCHERS_DIR.exists():
+            return []
+        return [f for f in self.LAUNCHERS_DIR.iterdir()
+                if f.is_file() and not f.name.startswith(".")]
 
     def _find_python_refs(self, text: str) -> list[str]:
         """Extract Python binary paths from plist XML."""

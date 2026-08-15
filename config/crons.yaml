@@ -43,6 +43,7 @@ jobs:
   auto-update:
     command: bash ~/aos/core/bin/crons/check-update --apply
     at: "04:00"
+    catch_up: true   # machines that sleep at 04:00 run it on first wake
     timeout: 300
     tier: 1
     description: Pulls and applies AOS updates automatically
@@ -50,6 +51,7 @@ jobs:
   harness-update:
     command: bash ~/aos/core/bin/crons/harness-update
     at: "04:15"
+    catch_up: true   # same: run on first wake if the 04:15 window was missed
     timeout: 300
     tier: 1
     description: Keeps the Claude Code harness current (npm) so new models stay reachable
@@ -253,8 +255,13 @@ jobs:
     description: Nightly lint pass — orphans, stale docs, topic refresh, synthesis suggestions
 
   # ── Kanban Phase 3: islah data plane ────────────────────────────────────────
+  # RETIRED 2026-08-15 (operator decision, aos#198): islah is shelved — its
+  # LaunchAgents were removed and ascbuild-sync had been failing on every run
+  # (missing `cryptography` for the ASC JWT). Data preserved in ~/.aos/islah/.
+  # Re-enable by flipping `enabled: true` if islah is ever revived.
 
   ascbuild-sync:
+    enabled: false
     command: python3 ~/aos/core/bin/crons/ascbuild-sync
     every: 1h
     timeout: 600
@@ -262,6 +269,7 @@ jobs:
     description: App Store Connect intake — TestFlight feedback + beta crashes → bug tasks
 
   islah-mirror:
+    enabled: false
     command: python3 ~/aos/core/bin/crons/islah-mirror
     every: 30m
     timeout: 120
