@@ -13,10 +13,51 @@ disposition:
 ``worktree_of:<id>``    a git worktree / branch checkout of a linked project
 ``component_of:<id>``   a supporting repo of a project (data, sources,
                         sub-app, nested repo)
+``archived``            finished work, living in ``_archive/``
 ``not_a_project``       deliberately excluded — always carries a stated reason
 ``unclassified``        genuinely unknown → SURFACED for the operator to
                         triage. Never auto-guessed.
 ======================  ====================================================
+
+Zones — location is the classification
+--------------------------------------
+
+``~/project/`` has four zones (see ``project_zones.py``)::
+
+    <project>/     active work
+    _ref/          third-party clones, kept to read
+    _archive/      finished work
+    _scratch/      ephemeral
+
+Anything inside a zone is classified **by where it sits and nothing else** — no
+git question, no work-record lookup, no heuristic. The zone is a decision the
+operator (or ``project archive``) already made, and re-deriving it would
+reintroduce exactly the ambiguity the zones removed. The zone directories
+themselves are not classified at all: asking for a disposition on ``_ref`` would
+be the reconciler asking the operator to explain the filing cabinet.
+
+Drift — the second question this module answers
+------------------------------------------------
+
+Disposition asks "is this directory accounted for". Drift asks the sharper
+question: "does how this directory sits still match what it claims to be?" Five
+kinds, reported as typed ``Drift`` rows so the steward check counts structure
+rather than prose:
+
+  ``unmanifested``             cannot identify itself. Reported on EVERY run,
+                               forever — the council's answer to residue risk.
+  ``archived_but_active``      marked finished, still being worked in. This one
+                               was made non-negotiable at the council close: a
+                               reconciler that only reports *missing* manifests
+                               will watch an archived project accumulate a month
+                               of commits, because nothing re-reads the claim.
+  ``no_git_unmarked``          unversioned with no ``.aos/no-git`` marker. The
+                               finding is the *silence*, not the absence of git.
+  ``third_party_at_top_level`` someone else's repo among the operator's work.
+  ``dirty_tree``               work that exists nowhere but this disk.
+
+An operator declaration of ``not_a_project`` silences the housekeeping kinds for
+that directory, because a decision already made is not re-litigated.
 
 Detection order — first match wins, and every match records citable evidence:
 
@@ -126,6 +167,11 @@ try:
 except Exception:  # pragma: no cover — reconciler still works without manifests
     _pm = None
 
+try:
+    import project_zones as _zones
+except Exception:  # pragma: no cover — zone awareness degrades, nothing crashes
+    _zones = None
+
 HOME = Path.home()
 PROJECT_ROOT = HOME / "project"
 CLAUDE_PROJECTS = HOME / ".claude" / "projects"
@@ -134,11 +180,42 @@ CLAUDE_PROJECTS = HOME / ".claude" / "projects"
 # depth 3 reaches e.g. quran-tools/shared/quran-data.
 MAX_NEST_DEPTH = 3
 SKIP_DIRS = {
-    "node_modules", ".venv", "venv", "_archive", "dist", "build", "__pycache__",
+    "node_modules", ".venv", "venv", "dist", "build", "__pycache__",
     "vendor", ".git", "Pods", ".next", "target", "DerivedData",
+    # The zones. A nested walk must not descend into them: their contents are
+    # classified by where they sit, and a clone under _ref/ is emphatically not
+    # a component of whatever project happens to be its neighbour.
+    "_ref", "_archive", "_scratch",
 }
 
-DISPOSITIONS = ("linked", "worktree_of", "component_of", "not_a_project", "unclassified")
+ZONE_NAMES = tuple(_zones.ZONES) if _zones else ("_ref", "_archive", "_scratch")
+_ZONE_REF = _zones.ZONE_REF if _zones else "_ref"
+_ZONE_ARCHIVE = _zones.ZONE_ARCHIVE if _zones else "_archive"
+
+DISPOSITIONS = ("linked", "worktree_of", "component_of", "archived",
+                "not_a_project", "unclassified")
+
+# Drift is reported as typed rows, never as prose in a notes list. The reason is
+# the one this module already learned the hard way: a triage decision that
+# substring-matches human text is how "not a git repo" once scored as "git repo"
+# and proposed six non-repos as new projects. The steward check counts THESE.
+DRIFT_KINDS = (
+    "unmanifested",             # a directory that cannot identify itself
+    "archived_but_active",      # marked done, still being worked in
+    "no_git_unmarked",          # unversioned, with no recorded decision
+    "third_party_at_top_level", # someone else's repo sitting among your work
+    "dirty_tree",               # uncommitted changes
+)
+
+# How far past the archive marker a change is forgiven before it counts as
+# "still active". A move preserves mtimes, so an honest archive produces no
+# activity after its marker date at all; the grace is only here to absorb clock
+# skew and same-evening tidying, not to hide a week of work.
+ARCHIVE_GRACE_DAYS = 1
+
+# For a directory sitting in _archive/ with no marker at all (moved by hand),
+# there is no reference date, so fall back to a fixed window.
+ARCHIVE_STALE_DAYS = 30
 
 
 # ── data ────────────────────────────────────────────────────────────
@@ -154,6 +231,7 @@ class Entry:
     source: str = ""                # declared | work-record | git | filesystem | reference
     notes: list[str] = field(default_factory=list)
     nested: bool = False            # discovered by the nested walk, not top-level
+    zone: str | None = None         # _ref | _archive | _scratch, by location alone
     # Structured facts. Triage decisions read THESE, never the evidence string —
     # substring-matching human prose is how "not a git repo" once scored as
     # "git repo" and proposed six non-repos as new projects.
@@ -185,12 +263,28 @@ class Proposal:
 
 
 @dataclass
+class Drift:
+    """One reportable divergence between how a directory sits and what it is.
+
+    Typed rather than prose, because the steward check counts these and a count
+    derived from string matching is a count that will eventually be wrong. Every
+    row carries its own evidence so the operator never has to re-derive why it
+    was flagged.
+    """
+    kind: str                       # one of DRIFT_KINDS
+    name: str                       # directory name, relative to ~/project/
+    path: str
+    evidence: str
+
+
+@dataclass
 class ReconcileReport:
     entries: list[Entry]
     gaps: list[Gap]
     proposals: list[Proposal]
     conflicts: list[str]
     declared_stale: list[str]       # declared names that no longer exist on disk
+    drift: list[Drift] = field(default_factory=list)
     # Typed conflicts in the brief_types.Conflict shape, so the project page
     # renders manifest divergence exactly like status_disagreement.
     brief_conflicts: list = field(default_factory=list)
@@ -430,11 +524,88 @@ def _resolve(p: str | Path) -> Path:
 
 
 def top_level_dirs() -> list[Path]:
+    """Candidate project directories: top level, minus the zones themselves.
+
+    The zones are infrastructure, not projects. Classifying ``_ref`` as a
+    directory that needs a disposition would be the reconciler asking the
+    operator to explain the filing cabinet.
+    """
     if not PROJECT_ROOT.exists():
         return []
     return sorted((c for c in PROJECT_ROOT.iterdir()
-                   if c.is_dir() and not c.name.startswith(".")),
+                   if c.is_dir() and not c.name.startswith(".")
+                   and c.name not in ZONE_NAMES),
                   key=lambda p: p.name.lower())
+
+
+def zone_contents() -> list[tuple[str, Path]]:
+    """``(zone, directory)`` for everything sitting inside a zone. One level deep.
+
+    Zone membership is the classification — nothing inside is walked further,
+    because a clone under ``_ref/`` is not a project and its internals are not
+    the reconciler's business.
+    """
+    out: list[tuple[str, Path]] = []
+    if not PROJECT_ROOT.exists():
+        return out
+    for zone in ZONE_NAMES:
+        d = PROJECT_ROOT / zone
+        if not d.is_dir():
+            continue
+        for child in sorted((c for c in d.iterdir()
+                             if c.is_dir() and not c.name.startswith(".")),
+                            key=lambda p: p.name.lower()):
+            out.append((zone, child))
+    return out
+
+
+def is_dirty(path: Path) -> bool:
+    """True when a repo has uncommitted changes. False for anything not a repo.
+
+    Defined here rather than in the CLI so the reconciler and ``project archive``
+    agree on what "dirty" means — one definition, because an eligibility check
+    and the drift report disagreeing about the same tree would be worse than
+    either being wrong alone.
+    """
+    if not (path / ".git").exists():
+        return False
+    out = _git(path, "status", "--porcelain")
+    return bool(out and out.strip())
+
+
+def _newest_mtime(root: Path, max_depth: int = 2) -> float | None:
+    """Most recent mtime under ``root``, bounded. ``None`` when nothing is readable.
+
+    Bounded on purpose: this runs against directories that are 16GB and 30GB on
+    this machine, and a full walk to answer "was anything touched here" would
+    turn a reconcile pass into a coffee break. Two levels catches real editing;
+    a change buried five levels down without touching anything shallower is a
+    case this deliberately misses rather than pays for.
+    """
+    newest: float | None = None
+
+    def walk(d: Path, depth: int) -> None:
+        nonlocal newest
+        if depth > max_depth:
+            return
+        try:
+            children = list(d.iterdir())
+        except (PermissionError, OSError):
+            return
+        for c in children:
+            if c.name in SKIP_DIRS or c.name == ".git":
+                continue
+            try:
+                mt = c.stat().st_mtime
+            except (PermissionError, OSError):
+                continue
+            if newest is None or mt > newest:
+                newest = mt
+            if c.is_dir() and not c.is_symlink():
+                walk(c, depth + 1)
+
+    walk(root, 1)
+    return newest
 
 
 def nested_repos(root: Path, max_depth: int = MAX_NEST_DEPTH) -> list[Path]:
@@ -466,6 +637,35 @@ def nested_repos(root: Path, max_depth: int = MAX_NEST_DEPTH) -> list[Path]:
 
     walk(root, 1)
     return found
+
+
+def _base_facts(directory: Path, gi: dict, manifests: dict,
+                is_third_party) -> dict:
+    """The structured facts every top-level directory carries, whatever it is.
+
+    Computed once per directory rather than per classification branch, so a
+    directory's facts do not depend on which detection rule happened to claim
+    it. ``archived_activity`` is only computed when there is a marker to
+    contradict — it walks the tree, and there is no sense paying for that on the
+    thirty-odd directories that never claimed to be finished.
+    """
+    marker = _zones.read_archived_marker(directory) if _zones else None
+    facts = {
+        "is_git": bool(gi.get("is_git")),
+        "remote": gi.get("remote"),
+        "branch": gi.get("branch"),
+        "last_commit": gi.get("last_commit"),
+        "commit_count": gi.get("commit_count"),
+        "third_party_remote": is_third_party(gi.get("remote")),
+        "manifest": directory.name in manifests,
+        "no_git_marker": _zones.has_no_git_marker(directory) if _zones else False,
+        "archived_marker": marker is not None,
+        "empty": _is_empty(directory),
+        "dirty": is_dirty(directory),
+    }
+    if marker is not None:
+        facts["archived_activity"] = _archived_activity(directory, marker)
+    return facts
 
 
 def _is_empty(path: Path) -> bool:
@@ -550,7 +750,7 @@ def reconcile() -> ReconcileReport:
     entries: list[Entry] = []
     conflicts: list[str] = list(manifest_errors)
     suppressed_nested: dict[str, list[str]] = {}
-    deferred: list[tuple[Path, Path, str, dict]] = []
+    deferred: list[tuple[Path, Path, str, dict, dict]] = []
 
     # ---- pass 1: nested repos inside LINKED projects → component_of ----
     nested_entries: list[Entry] = []
@@ -590,6 +790,13 @@ def reconcile() -> ReconcileReport:
         name = d.name
         gi = git_info(d)
 
+        # Structured facts for EVERY top-level directory, computed once and
+        # merged into whichever Entry this loop ends up producing. Drift
+        # detection reads these; without a uniform bundle it would have to
+        # infer from whichever branch happened to fire, which is the same
+        # class of mistake as reading the evidence prose.
+        base_facts = _base_facts(d, gi, manifests, _is_third_party)
+
         # 1. declared — an operator decision, never re-litigated
         dec = declared_dirs.get(name)
         if dec:
@@ -616,11 +823,13 @@ def reconcile() -> ReconcileReport:
                     source="work-record",
                     evidence=f"project '{pid}'.path resolves to this directory",
                     notes=[f"a declaration says '{disp}' ({reason}) — contradicted "
-                           f"by the live project record, see conflicts"]))
+                           f"by the live project record, see conflicts"],
+                    facts=dict(base_facts)))
                 continue
             else:
                 entries.append(Entry(name=name, path=str(rp), disposition=disp,
-                                     target=target, source="declared", evidence=reason))
+                                     target=target, source="declared",
+                                     evidence=reason, facts=dict(base_facts)))
                 continue
 
         # 2. manifest — the directory declares its own identity. Deterministic:
@@ -642,7 +851,7 @@ def reconcile() -> ReconcileReport:
                 name=name, path=str(rp), disposition="linked", target=pid,
                 source="manifest",
                 evidence=f".aos/project.yaml declares id '{pid}'",
-                notes=notes, facts={"is_git": gi["is_git"], "manifest": True}))
+                notes=notes, facts={**base_facts, "manifest": True}))
             continue
 
         # 3. linked — resolved path equals a live project's resolved path
@@ -659,7 +868,7 @@ def reconcile() -> ReconcileReport:
                 name=name, path=str(rp), disposition="linked", target=pid,
                 source="work-record",
                 evidence=f"project '{pid}'.path resolves to this directory",
-                notes=notes, facts={"is_git": gi["is_git"], "manifest": False}))
+                notes=notes, facts=dict(base_facts)))
             continue
 
         # 3. worktree_of — asked of git
@@ -669,14 +878,17 @@ def reconcile() -> ReconcileReport:
             ev = (f"git --git-common-dir points at {gi['common_dir']} "
                   f"(≠ --git-dir {gi['git_dir']}); branch '{gi['branch']}'")
             if owner:
-                entries.append(Entry(name=name, path=str(rp), disposition="worktree_of",
-                                     target=owner, source="git", evidence=ev))
+                entries.append(Entry(name=name, path=str(rp),
+                                     disposition="worktree_of", target=owner,
+                                     source="git", evidence=ev,
+                                     facts=dict(base_facts)))
             else:
                 entries.append(Entry(
                     name=name, path=str(rp), disposition="worktree_of",
                     target=main.name, source="git", evidence=ev,
                     notes=[f"main checkout {main} is not a tracked project — "
-                           f"target is a directory, not a project id"]))
+                           f"target is a directory, not a project id"],
+                    facts=dict(base_facts)))
             continue
 
         # 4. component_of — remote matches a linked project's submodule url
@@ -686,7 +898,8 @@ def reconcile() -> ReconcileReport:
             e = Entry(name=name, path=str(rp), disposition="component_of", target=pid,
                       source="git",
                       evidence=f"remote {gi['remote']} == {pid} .gitmodules "
-                               f"url for submodule '{sub_path}'")
+                               f"url for submodule '{sub_path}'",
+                      facts=dict(base_facts))
             # A component can serve more than one project. Say so; don't hide it
             # behind the single owner the table is able to show.
             for other_pid, other_path in proj_path.items():
@@ -708,7 +921,8 @@ def reconcile() -> ReconcileReport:
                 source="git",
                 evidence=f"same git remote as project '{pid}' ({gi['remote']}) "
                          f"but a separate clone, not a worktree",
-                notes=["second clone of a tracked repo — verify it is not a stale copy"]))
+                notes=["second clone of a tracked repo — verify it is not a stale copy"],
+                facts=dict(base_facts)))
             continue
 
         # 5. filesystem-evident non-project — an empty directory is a fact, not
@@ -721,18 +935,18 @@ def reconcile() -> ReconcileReport:
                 source="filesystem",
                 evidence="directory is empty (no entries) — nothing to track",
                 notes=["if this was a worktree parent, git no longer knows about it"],
-                facts={"empty": True, "is_git": False}))
+                facts={**base_facts, "empty": True}))
             continue
 
         # 6/7. Needs a code search across the linked projects. Deferred so all
         #      candidates can be batched into one grep per project.
-        deferred.append((d, rp, name, gi))
+        deferred.append((d, rp, name, gi, base_facts))
 
     # ---- pass 3: batched reference search over the deferred candidates ----
     # Two spellings per candidate, because half the repo records use the
     # /Users symlink path and half the /Volumes realpath.
     needle_owner: dict[str, tuple[str, Path]] = {}
-    for _d, rp, name, _gi in deferred:
+    for _d, rp, name, _gi, _bf in deferred:
         for needle in {str(rp), str(HOME / "project" / name)}:
             needle_owner[needle] = (name, rp)
     ref_hits: dict[str, tuple[str, str]] = {}   # dir name → (project id, file:line)
@@ -741,7 +955,7 @@ def reconcile() -> ReconcileReport:
             dname, _rp = needle_owner[needle]
             ref_hits.setdefault(dname, (pid, loc))
 
-    for d, rp, name, gi in deferred:
+    for d, rp, name, gi, base_facts in deferred:
         # 6. component_of — path hardcoded in a linked project's tracked code
         if name in ref_hits:
             pid, loc = ref_hits[name]
@@ -750,7 +964,7 @@ def reconcile() -> ReconcileReport:
                 source="reference",
                 evidence=f"absolute path hardcoded in {pid}'s tracked code at {loc}",
                 notes=["binding is a code-level dependency, not a doc mention"],
-                facts={"is_git": gi["is_git"]}))
+                facts=dict(base_facts)))
             continue
 
         # 7. unclassified — surfaced with everything needed to triage
@@ -783,15 +997,50 @@ def reconcile() -> ReconcileReport:
         entries.append(Entry(
             name=name, path=str(rp), disposition="unclassified",
             source="", evidence="; ".join(ev_bits), notes=notes,
-            facts={"is_git": gi["is_git"], "third_party_remote": third_party,
-                   "has_claude_md": has_claude, "sessions": sc,
-                   "nested_repos": len(inner), "empty": False,
-                   "last_commit": gi.get("last_commit"),
-                   "commit_count": gi.get("commit_count")}))
+            facts={**base_facts, "has_claude_md": has_claude, "sessions": sc,
+                   "nested_repos": len(inner)}))
+
+    # ---- pass 2b: zone contents, classified by location alone ----
+    # No git question, no work-record lookup, no heuristic. A directory inside a
+    # zone has already been filed by the operator (or by `project archive`), and
+    # the zone IS the answer — that is the whole reason the zones exist. Asking
+    # a further question here would reintroduce the ambiguity they removed.
+    zone_entries: list[Entry] = []
+    for zone, child in zone_contents():
+        rp = _resolve(child)
+        rel = f"{zone}/{child.name}"
+        gi = git_info(child)
+        if zone == _ZONE_ARCHIVE:
+            marker = _zones.read_archived_marker(child) if _zones else None
+            facts = {"is_git": bool(gi.get("is_git")), "archived_marker": marker is not None,
+                     "archived_activity": _archived_activity(child, marker)}
+            notes = []
+            if marker is None:
+                notes.append("no .aos/archived marker — moved here by hand rather "
+                             "than by `project archive`, so no date or reason was "
+                             "recorded")
+            elif marker.entangled:
+                notes.append("marker says entangled, yet it is in _archive/ — the "
+                             "blockers were presumably cleared; re-run "
+                             "`project archive` to tidy the marker")
+            zone_entries.append(Entry(
+                name=rel, path=str(rp), disposition="archived", zone=zone,
+                source="zone", evidence=f"lives in {zone}/ — finished work",
+                notes=notes, facts=facts))
+        else:
+            why = ("third-party clone kept to read — fetch only, never committed"
+                   if zone == _ZONE_REF else
+                   "ephemeral scratch — nothing here is tracked, by design")
+            zone_entries.append(Entry(
+                name=rel, path=str(rp), disposition="not_a_project", zone=zone,
+                source="zone", evidence=f"lives in {zone}/ — {why}",
+                facts={"is_git": bool(gi.get("is_git"))}))
 
     # Nested rows come after their parents, so the table reads as a tree. Top
     # level is re-sorted because the deferred reference pass classifies out of
-    # order; the report must still read as the directory listing does.
+    # order; the report must still read as the directory listing does. Zone rows
+    # go last, as a block: they are settled business and should not interleave
+    # with the directories that still need a decision.
     by_parent: dict[str, list[Entry]] = {}
     for ne in nested_entries:
         top = ne.name.split("/")[0]
@@ -801,6 +1050,7 @@ def reconcile() -> ReconcileReport:
         ordered.append(e)
         for ne in sorted(by_parent.get(e.name, []), key=lambda x: x.name):
             ordered.append(ne)
+    ordered.extend(sorted(zone_entries, key=lambda x: x.name.lower()))
 
     # ---- reverse gap: projects with no directory ----
     # "Has a directory" means path set OR a manifest claims it. A project whose
@@ -836,6 +1086,7 @@ def reconcile() -> ReconcileReport:
 
     return ReconcileReport(entries=ordered, gaps=gaps, proposals=proposals,
                            conflicts=conflicts, declared_stale=stale,
+                           drift=_detect_drift(ordered, declared_dirs),
                            brief_conflicts=brief_conflicts)
 
 
@@ -889,10 +1140,139 @@ def _propose(entries: list[Entry]) -> list[Proposal]:
     return out
 
 
+# ── drift ───────────────────────────────────────────────────────────
+
+def _archived_activity(directory: Path, marker) -> str | None:
+    """Evidence that an "archived" project is still being worked in, or ``None``.
+
+    The skeptic lens made this a non-negotiable at the council close: a
+    reconciler that only reports *missing* manifests will happily watch an
+    archived project accumulate a month of commits, because nothing ever
+    re-reads the claim. So the claim gets checked against the tree.
+
+    The reference point is the marker's own date, not a rolling window. A move
+    preserves mtimes and the final commit precedes the marker, so a clean
+    archive has nothing after its date at all — which makes anything that *is*
+    after it a real signal rather than a threshold to tune.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    if is_dirty(directory):
+        return ("uncommitted changes in the working tree — someone edited this "
+                "after it was archived")
+
+    reference: datetime | None = None
+    if marker is not None and getattr(marker, "date", ""):
+        try:
+            d = datetime.fromisoformat(str(marker.date))
+            if d.tzinfo is None:
+                d = d.replace(tzinfo=timezone.utc)
+            reference = d + timedelta(days=ARCHIVE_GRACE_DAYS)
+        except ValueError:
+            reference = None
+    if reference is None:
+        # No marker, or an unparseable one: no reference date exists, so fall
+        # back to "has anything happened lately".
+        reference = (datetime.now(timezone.utc)
+                     - timedelta(days=ARCHIVE_STALE_DAYS))
+
+    gi = git_info(directory)
+    last = gi.get("last_commit")
+    if last:
+        try:
+            commit_at = datetime.fromisoformat(last)
+            if commit_at.tzinfo is None:
+                commit_at = commit_at.replace(tzinfo=timezone.utc)
+            if commit_at > reference:
+                return (f"commit at {last[:10]}, after the archive point "
+                        f"({reference.date().isoformat()})")
+        except ValueError:
+            pass
+
+    newest = _newest_mtime(directory)
+    if newest is not None:
+        touched = datetime.fromtimestamp(newest, tz=timezone.utc)
+        if touched > reference:
+            return (f"files modified {touched.date().isoformat()}, after the "
+                    f"archive point ({reference.date().isoformat()})")
+    return None
+
+
+def _detect_drift(entries: list[Entry], declared_dirs: dict) -> list[Drift]:
+    """Everything the layer wants an operator to look at. Reports, never fixes.
+
+    Five kinds, each with a stated reason for existing:
+
+      ``unmanifested``            the directory cannot identify itself, so
+                                  discovery falls back to slug guessing. Reported
+                                  on EVERY run, forever — the council's answer to
+                                  residue risk, since a directory never triaged
+                                  becomes permanent invisible drift.
+      ``archived_but_active``     a claim contradicted by the tree.
+      ``no_git_unmarked``         unversioned with nothing recording whether that
+                                  is a decision. Not "you must use git" — the
+                                  finding is the *silence*, and a ``.aos/no-git``
+                                  marker clears it permanently.
+      ``third_party_at_top_level`` someone else's repo sitting among the
+                                  operator's work. Belongs in ``_ref/``.
+      ``dirty_tree``              uncommitted changes: work that exists nowhere
+                                  but this disk.
+
+    An operator declaration of ``not_a_project`` silences the housekeeping kinds
+    for that directory. A decision already made is not re-litigated — that rule
+    is the whole reason the dispositions file exists.
+    """
+    drift: list[Drift] = []
+    for e in entries:
+        if e.nested:
+            continue
+        declared = declared_dirs.get(e.name) or {}
+        excluded = declared.get("disposition") == "not_a_project"
+        facts = e.facts
+
+        if e.zone == "_scratch":
+            continue                     # ephemeral by definition; nothing to report
+        if e.zone == "_ref":
+            continue                     # expected, correct, and not the operator's
+
+        if e.zone == "_archive" or facts.get("archived_marker"):
+            why = facts.get("archived_activity")
+            if why:
+                drift.append(Drift("archived_but_active", e.name, e.path, why))
+            continue                     # an archived project owes nothing else
+
+        if not facts.get("manifest") and not excluded:
+            drift.append(Drift(
+                "unmanifested", e.name, e.path,
+                "no .aos/project.yaml — the directory cannot identify itself, so "
+                "discovery falls back to slug guessing"))
+
+        if not facts.get("is_git") and not facts.get("no_git_marker") \
+                and not excluded and not facts.get("empty"):
+            drift.append(Drift(
+                "no_git_unmarked", e.name, e.path,
+                "no version control and no .aos/no-git marker — nothing records "
+                "whether that is a decision or an oversight"))
+
+        if facts.get("third_party_remote") and not excluded:
+            remote = facts.get("remote") or "an unowned remote"
+            drift.append(Drift(
+                "third_party_at_top_level", e.name, e.path,
+                f"remote {remote} is outside the operator's namespaces — a clone "
+                f"of someone else's repo sitting as a peer of real work; it "
+                f"belongs in _ref/"))
+
+        if facts.get("dirty"):
+            drift.append(Drift(
+                "dirty_tree", e.name, e.path,
+                "uncommitted changes — this work exists nowhere but this disk"))
+    return drift
+
+
 # ── rendering ───────────────────────────────────────────────────────
 
 _ICON = {"linked": "=", "worktree_of": "w", "component_of": "c",
-         "not_a_project": "x", "unclassified": "?"}
+         "archived": "a", "not_a_project": "x", "unclassified": "?"}
 
 
 def render_report(r: ReconcileReport) -> str:
@@ -906,11 +1286,17 @@ def render_report(r: ReconcileReport) -> str:
     for e in r.entries:
         counts[e.disposition] = counts.get(e.disposition, 0) + 1
     L.append("  " + "   ".join(f"{k}={counts.get(k, 0)}" for k in DISPOSITIONS))
+    zone_counts: dict[str, int] = {}
+    for e in r.entries:
+        if e.zone:
+            zone_counts[e.zone] = zone_counts.get(e.zone, 0) + 1
+    L.append("  zones: " + "   ".join(f"{z}={zone_counts.get(z, 0)}"
+                                      for z in ZONE_NAMES))
     L.append("")
 
     for e in r.entries:
         icon = _ICON.get(e.disposition, "?")
-        indent = "    " if e.nested else "  "
+        indent = "    " if (e.nested or e.zone) else "  "
         L.append(f"{indent}{icon} {e.name:<28} {e.label}")
         L.append(f"{indent}    {e.evidence}"
                  + (f"   [{e.source}]" if e.source else ""))
@@ -942,6 +1328,21 @@ def render_report(r: ReconcileReport) -> str:
             L.append(f"    ? {e.name}")
         L.append("")
 
+    if r.drift:
+        by_kind: dict[str, list] = {}
+        for d in r.drift:
+            by_kind.setdefault(d.kind, []).append(d)
+        L.append(f"  Drift ({len(r.drift)}) — reported, never corrected:")
+        for kind in DRIFT_KINDS:
+            rows = by_kind.get(kind)
+            if not rows:
+                continue
+            L.append(f"    {kind}  ({len(rows)})")
+            for d in rows:
+                L.append(f"      {d.name}")
+                L.append(f"          {d.evidence}")
+        L.append("")
+
     if r.brief_conflicts:
         L.append(f"  Manifest conflicts ({len(r.brief_conflicts)}) — reported as "
                  f"brief_types.Conflict, so these surface on the project page:")
@@ -970,7 +1371,10 @@ def report_to_dict(r: ReconcileReport) -> dict:
             "name": e.name, "path": e.path, "disposition": e.disposition,
             "target": e.target, "label": e.label, "evidence": e.evidence,
             "source": e.source, "notes": e.notes, "nested": e.nested,
+            "zone": e.zone,
         } for e in r.entries],
+        "drift": [{"kind": d.kind, "name": d.name, "path": d.path,
+                   "evidence": d.evidence} for d in r.drift],
         "gaps": [{"project_id": g.project_id, "title": g.title,
                   "reason": g.reason, "explained": g.explained} for g in r.gaps],
         "proposals": [{"name": p.name, "path": p.path,
@@ -999,7 +1403,10 @@ def propose_instance_yaml(r: ReconcileReport) -> str:
          "",
          "directories:"]
     for e in r.entries:
-        if e.nested or e.disposition == "unclassified":
+        # Zone rows are derived from location and re-derived correctly on every
+        # run, so freezing them as declarations would add rows that can only go
+        # stale. Nested rows and unknowns are excluded for the reasons above.
+        if e.nested or e.zone or e.disposition == "unclassified":
             continue
         L.append(f"  {e.name}:")
         L.append(f"    disposition: {e.disposition}")

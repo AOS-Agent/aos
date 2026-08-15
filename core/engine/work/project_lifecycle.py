@@ -189,11 +189,24 @@ def is_git_repo(directory: Path) -> bool:
 
 
 def is_dirty(directory: Path) -> bool:
-    """True when the working tree has uncommitted changes (tracked or not)."""
+    """True when the working tree has uncommitted changes (tracked or not).
+
+    Delegates to ``project_reconcile`` so archive eligibility and the drift
+    report can never disagree about the same tree — a safety check and a
+    warning that use different definitions of "dirty" is a bug waiting for the
+    day they diverge.
+
+    The local fallback exists because this is a *mutation* path: an archive must
+    not lose its final-commit step because a reporting module failed to import.
+    """
     if not is_git_repo(directory):
         return False
-    code, out, _err = _git(Path(directory), "status", "--porcelain")
-    return code == 0 and bool(out.strip())
+    try:
+        import project_reconcile
+        return project_reconcile.is_dirty(Path(directory))
+    except Exception:
+        code, out, _err = _git(Path(directory), "status", "--porcelain")
+        return code == 0 and bool(out.strip())
 
 
 def _branch(directory: Path) -> str | None:
