@@ -11,6 +11,8 @@ Summary: The last four operator-machine defects from tonight's fleet audit. Ever
 - Fixed the memory service writing its Chroma index inside the framework tree (`~/aos/data/…`) — "Permission denied" on every start under release deploys, and the index would have been lost at every release swap regardless. The index now lives in the instance layer (`~/.aos/data/memory/chromadb`); what gets *indexed* still reads from the runtime tree
 - Fixed the per-update "bridge venv creation failed" on operator machines — the rebuild called bare `uv` under launchd's minimal PATH. A `_find_uv` resolver now locates uv absolutely (PATH, /opt/homebrew/bin, ~/.local/bin, ~/.cargo/bin) and fails loudly with the searched locations if truly absent
 - Changed `_find_venv_python` to try the machine's sanctioned interpreter (`~/.aos/config/python`) before any hardcoded homebrew path — the same per-machine-resolution rule v0.7.3 applied to service templates
+- Fixed the memory service crashing on freshly-built venvs — `mcp>=1.0.0` allowed mcp 2.0, which removed `mcp.server.fastmcp`; older dev-machine venvs had 1.x so the break only appeared on machines that rebuilt. Pinned `mcp>=1.2,<2`
+- Fixed the rest of `test_initiative_bridge`'s dev-workspace reachback — on machines with no `~/project/aos`, the whole suite now targets the deployed runtime tree instead of failing every file-existence check
 
 ## v0.7.3 — 2026-08-15
 

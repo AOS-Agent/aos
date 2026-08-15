@@ -35,6 +35,13 @@ if __name__ != "__main__":
 # Setup paths
 AOS_DEV = Path.home() / "project" / "aos"
 AOS_RUNTIME = Path.home() / "aos"
+
+# Operator machines have no dev workspace — every file/path/cron check in this
+# suite then targets the deployed runtime tree instead (which is what actually
+# matters there). The dev/runtime sync section below stays honest either way:
+# it keys off AOS_DEV/.git, which an aliased runtime tree doesn't have.
+if not AOS_DEV.exists():
+    AOS_DEV = AOS_RUNTIME
 AOS_USER = Path.home() / ".aos"
 VAULT = Path.home() / "vault"
 
