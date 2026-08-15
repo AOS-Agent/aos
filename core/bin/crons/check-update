@@ -905,6 +905,15 @@ deploy() {
         svc_name="${la_name#com.aos.}"
 
         if echo "$changed_services" | grep -qx "$svc_name"; then
+            # Restart ONLY services launchd currently manages. A service that
+            # is disabled, opted-out, or ships-off (converse on operator
+            # machines) is updated on disk and skipped silently — restarting
+            # it would fail by design and bury real alarms in fake ones
+            # (observed on both fleet machines, 2026-08-15).
+            if ! launchctl print "gui/${uid}/${la_name}" >/dev/null 2>&1; then
+                log "Skipping $svc_name — not loaded (disabled or opted out)"
+                continue
+            fi
             log "Restarting $svc_name..."
             _restart_launchagent "$uid" "$la_name" "$la_plist" \
                 || log "  WARN: $svc_name restart incomplete — health check will retry"
