@@ -129,6 +129,7 @@ def probe_node(node, fresh=False):
     result["behind"] = state.get("behind", 0)
     result["last_check"] = state.get("last_check", "")
     result["last_apply"] = state.get("last_apply", {})
+    result["last_verify"] = state.get("last_verify", {})
 
     # Cache-staleness guard: if the state file's recorded local hash no
     # longer matches what's actually deployed, the node was updated after
@@ -148,7 +149,14 @@ def probe_node(node, fresh=False):
     elif result["update_status"] == "update_available":
         result["status"] = "behind"
     elif result["update_status"] in ("up_to_date", "no state file"):
-        result["status"] = "ok" if not result["failed_services"] else "degraded"
+        if result["failed_services"]:
+            result["status"] = "degraded"
+        elif result["last_verify"].get("result") == "failed":
+            # Up to date but the post-update self-check found real failures —
+            # visible from the operator's chair instead of evaporating.
+            result["status"] = "verify_failed"
+        else:
+            result["status"] = "ok"
     else:
         result["status"] = result["update_status"]  # offline / check_error / ...
     if result["status"] == "ok" and stale_check(result["last_check"]):
@@ -184,6 +192,11 @@ def explain(n):
         return "{} commit(s) behind — {}".format(n["behind"], why)
     if s == "degraded":
         return "services failing: " + n["failed_services"]
+    if s == "verify_failed":
+        lv = n.get("last_verify", {})
+        suites = ",".join(lv.get("failed_suites", [])) or "?"
+        return "post-update verification failed at {}: {}".format(
+            lv.get("time", "?")[:16], suites)
     if s == "stale_check":
         return "no update check since {} — scheduler asleep?".format(
             n["last_check"][:16])

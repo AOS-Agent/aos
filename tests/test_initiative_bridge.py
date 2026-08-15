@@ -179,20 +179,33 @@ try:
 except ImportError as e:
     check("Import: reconcile ALL_CHECKS", False, str(e))
 
-# Dev/runtime sync
+# Dev/runtime sync — INFORMATIONAL in almost every legitimate state:
+# operator machines have no dev workspace at all, and a dev machine mid-
+# feature sits on a branch on purpose. Only a dev workspace ON MAIN that
+# still doesn't match the deployed release is genuine drift worth failing.
+# (Before this gate, the check failed on every operator machine and on
+# every dev machine doing normal branch work — v0.7.2 rollout, 2026-08-15.)
 print("\n  — Dev/runtime sync —")
-dev_head = subprocess.run(
-    ["git", "-C", str(AOS_DEV), "rev-parse", "--short", "HEAD"],
-    capture_output=True, text=True
-).stdout.strip()
-# Runtime is a release snapshot (no .git since release-channel deploys);
-# the deployed commit is encoded in the release dir name: vX.Y.Z-<short>.
 _rt_target = Path(AOS_RUNTIME).resolve().name
 runtime_head = _rt_target.rsplit("-", 1)[-1] if "-" in _rt_target else ""
-_n = min(len(dev_head), len(runtime_head)) or 1
-check(f"Dev ({dev_head}) == Runtime ({runtime_head})",
-      bool(runtime_head) and dev_head[:_n] == runtime_head[:_n],
-      f"DRIFT: dev={dev_head} runtime={runtime_head}")
+if not (AOS_DEV / ".git").exists():
+    print(f"  ℹ️  No dev workspace (operator machine) — runtime {runtime_head or 'unknown'}, sync check skipped")
+else:
+    dev_head = subprocess.run(
+        ["git", "-C", str(AOS_DEV), "rev-parse", "--short", "HEAD"],
+        capture_output=True, text=True
+    ).stdout.strip()
+    dev_branch = subprocess.run(
+        ["git", "-C", str(AOS_DEV), "rev-parse", "--abbrev-ref", "HEAD"],
+        capture_output=True, text=True
+    ).stdout.strip()
+    if dev_branch != "main":
+        print(f"  ℹ️  Dev on branch '{dev_branch}' ({dev_head}) vs runtime {runtime_head} — expected during feature work, not drift")
+    else:
+        _n = min(len(dev_head), len(runtime_head)) or 1
+        check(f"Dev ({dev_head}) == Runtime ({runtime_head})",
+              bool(runtime_head) and dev_head[:_n] == runtime_head[:_n],
+              f"DRIFT: dev=main@{dev_head} runtime={runtime_head}")
 
 
 # ─────────────────────────────────────────────────────────────

@@ -997,19 +997,47 @@ sys.exit(0 if errors == 0 else 1)
             exit 1
         fi
 
+        # Run under the AOS-owned interpreter (aos-python resolver), never bare
+        # python3: on operator machines PATH python3 can be Apple's 3.9 with no
+        # pytest — 24 of 25 "failures" in the v0.7.2 rollout were the grader
+        # failing to open the exam, not the system being broken.
+        AOS_PY="$AOS_DIR/core/bin/internal/aos-python"
         test_errors=0
+        failed_suites=""
         for test_file in "$TEST_DIR"/test_*.py; do
             [ -f "$test_file" ] || continue
             name=$(basename "$test_file" .py)
             echo "Running: $name"
             echo "─────────────────────────────────────────"
-            if python3 "$test_file"; then
+            if "$AOS_PY" "$test_file"; then
                 echo ""
             else
                 ((test_errors++))
+                failed_suites="${failed_suites:+$failed_suites,}$name"
                 echo ""
             fi
         done
+
+        # Record the verdict where `aos fleet` can see it — a machine failing
+        # verification every night must be visible without ssh (update-state is
+        # what fleet status reads; before this, the verdict evaporated).
+        "$AOS_PY" - "$test_errors" "$failed_suites" <<'PYEOF' 2>/dev/null || true
+import json, sys, datetime
+from pathlib import Path
+state_file = Path.home() / ".aos" / "data" / "update-state.json"
+try:
+    state = json.loads(state_file.read_text()) if state_file.exists() else {}
+except Exception:
+    state = {}
+errors, suites = int(sys.argv[1]), sys.argv[2]
+state["last_verify"] = {
+    "time": datetime.datetime.now().isoformat(),
+    "result": "ok" if errors == 0 else "failed",
+    "failed_suites": [s for s in suites.split(",") if s],
+}
+state_file.parent.mkdir(parents=True, exist_ok=True)
+state_file.write_text(json.dumps(state, indent=2))
+PYEOF
 
         if [ "$test_errors" -eq 0 ]; then
             echo "  ✓ All test suites passed"
