@@ -114,8 +114,18 @@ exists. Use the CLI, which fixes both.
 One-off experiments, throwaway clones, things you are about to delete.
 
 Nothing here is tracked, nothing here is reported as drift, and nothing here
-should be trusted to survive. If something in this directory turns out to
-matter, promote it: `project adopt _scratch/<name>`.
+should be trusted to survive.
+
+If something in this directory turns out to matter, promote it by MOVING it
+out first, then adopting it:
+
+    mv ~/project/_scratch/<name> ~/project/<name>
+    project adopt <name>
+
+Adopting it where it sits does not promote it. Zone membership is the
+classification — `project list` skips zone contents and the reconciler
+classifies everything under here as ephemeral by location alone — so a manifest
+written inside `_scratch/` is real and permanently invisible.
 """,
 }
 

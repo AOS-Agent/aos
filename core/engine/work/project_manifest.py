@@ -205,10 +205,25 @@ class AdoptionPlan:
     project_id: str
     directory: str | None
     manifest_path: str | None
-    action: str                 # create | update | skip_no_directory | unchanged
+    # create | update | unchanged | skip_no_directory | blocked_invalid
+    action: str
     manifest_yaml: str          # exactly what would land on disk
     findings: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+
+
+# Declarations adoption must never regenerate over. Every one of these is
+# something only a human could have stated — inference has no source for a
+# `done_when` or a `depends_on`, so "regenerate" means "replace with a blank".
+# Adopting an already-adopted directory used to do exactly that, and for a
+# manifest that had not yet been committed the hand-written version was simply
+# gone. The existing file therefore wins on every field it states, and inference
+# is demoted to filling the gaps.
+PRESERVED_FIELDS = (
+    "id", "kind", "title", "description", "done_when", "appetite",
+    "initiative", "goal", "docs", "depends_on", "repo_root",
+    "worktree_location", "worktree_naming",
+)
 
 
 # ── validation — the schema is the safety mechanism ──────────────────
@@ -671,13 +686,18 @@ def render_manifest_yaml(m: Manifest) -> str:
     return "\n".join(L) + "\n"
 
 
-def plan_adoption(project_id: str | None = None) -> list[AdoptionPlan]:
+def plan_adoption(project_id: str | None = None, *,
+                  force: bool = False) -> list[AdoptionPlan]:
     """Plan a manifest for every linked project (or just one). Writes nothing.
 
     This is adoption, not scaffolding: the manifest is built from what
     ``work.db`` and the filesystem already know, so running it against ``hre``
     recovers the nested ``app/`` repo, the vault docs and the crammed
     ``appetite``/``initiative`` fields without anyone retyping them.
+
+    ``force`` regenerates over an existing manifest, discarding the declarations
+    a human put in it. Without it the existing file wins field by field — see
+    ``_merge_existing``.
     """
     if engine is None:
         return []
@@ -739,18 +759,6 @@ def plan_adoption(project_id: str | None = None) -> list[AdoptionPlan]:
                      appetite=appetite, initiative=initiative, goal=p.get("goal"),
                      docs=docs, components=components, worktree_location=wt_loc)
 
-        mp = manifest_path_for(d)
-        existing, errs = load_manifest(d)
-        if errs:
-            warnings.append(f"existing manifest is invalid: {'; '.join(errs)}")
-        rendered = render_manifest_yaml(m)
-        if existing and mp.exists() and mp.read_text() == rendered:
-            action = "unchanged"          # idempotent: re-running is a no-op
-        elif mp.exists():
-            action = "update"
-        else:
-            action = "create"
-
         # Committed-to-git caution, stated per project rather than in general.
         try:
             from project_reconcile import git_info
@@ -767,15 +775,13 @@ def plan_adoption(project_id: str | None = None) -> list[AdoptionPlan]:
         except Exception:
             pass
 
-        plans.append(AdoptionPlan(project_id=pid, directory=str(d),
-                                  manifest_path=str(mp), action=action,
-                                  manifest_yaml=rendered,
-                                  findings=findings, warnings=warnings))
+        plans.append(_finalize_plan(pid, d, m, findings, warnings, force=force))
     return plans
 
 
 def plan_adoption_for_directory(directory: Path, *,
-                                project_id: str | None = None) -> AdoptionPlan:
+                                project_id: str | None = None,
+                                force: bool = False) -> AdoptionPlan:
     """Plan a manifest for a directory that no work project points at.
 
     ``plan_adoption`` reads ``work.db`` and works outwards to the filesystem,
@@ -831,21 +837,122 @@ def plan_adoption_for_directory(directory: Path, *,
     except Exception:
         pass
 
-    mp = manifest_path_for(d)
-    rendered = render_manifest_yaml(m)
-    existing, errs = load_manifest(d)
-    if errs:
-        warnings.append(f"existing manifest is invalid: {'; '.join(errs)}")
-    if existing and mp.exists() and mp.read_text() == rendered:
-        action = "unchanged"
-    elif mp.exists():
-        action = "update"
+    return _finalize_plan(pid, d, m, findings, warnings, force=force)
+
+
+def _stated(value) -> bool:
+    """True when a manifest field actually says something."""
+    return value not in (None, "", [], {})
+
+
+def _merge_existing(inferred: Manifest, existing: Manifest,
+                    findings: list[str]) -> Manifest:
+    """Let an existing manifest win over inference, field by field.
+
+    Adoption builds a manifest from what is on disk. Run a second time against a
+    directory whose manifest a human has since edited, an unguarded regeneration
+    replaces ``depends_on``, ``description``, ``done_when`` and ``goal`` with the
+    inferred blanks — and if the manifest was never committed, that is the end of
+    them. So the file that is already there is authoritative for everything it
+    states, and inference only fills what it left empty.
+
+    New evidence — a nested repo that appeared since the last adoption — is
+    reported as a finding rather than merged in, because the operator may have
+    removed it on purpose and this function cannot tell the difference.
+    """
+    kept: list[str] = []
+    for f in PRESERVED_FIELDS:
+        have = getattr(existing, f, None)
+        if not _stated(have):
+            continue
+        if getattr(inferred, f, None) != have:
+            kept.append(f)
+        setattr(inferred, f, have)
+
+    if existing.components:
+        declared = {c.path for c in existing.components}
+        appeared = [c.path for c in inferred.components if c.path not in declared]
+        inferred.components = list(existing.components)
+        for path in appeared:
+            findings.append(
+                f"nested repo '{path}' is on disk but not in the manifest — "
+                f"left out, because it may have been removed deliberately. Add "
+                f"it by hand, or re-adopt with --force to regenerate")
+
+    if kept:
+        findings.append(
+            f"kept from the existing manifest: {', '.join(kept)} — these are "
+            f"declarations, and adoption has no source for them")
+    return inferred
+
+
+def _discarded_by_force(existing: Manifest, inferred: Manifest) -> list[str]:
+    """The declared fields a ``--force`` regeneration is about to overwrite."""
+    out: list[str] = []
+    for f in PRESERVED_FIELDS:
+        have = getattr(existing, f, None)
+        if _stated(have) and getattr(inferred, f, None) != have:
+            out.append(f"{f}={have!r}")
+    if existing.components and (
+            [c.path for c in existing.components]
+            != [c.path for c in inferred.components]):
+        out.append("repos.components="
+                   + repr([c.path for c in existing.components]))
+    return out
+
+
+def _finalize_plan(project_id: str, directory: Path, inferred: Manifest,
+                   findings: list[str], warnings: list[str], *,
+                   force: bool) -> AdoptionPlan:
+    """Turn an inferred manifest into a plan, guarding whatever is already there.
+
+    The one place both adoption entry points converge, so the rule about not
+    overwriting a human's declarations has one implementation rather than two
+    that drift.
+    """
+    mp = manifest_path_for(directory)
+    existing, errs = load_manifest(directory)
+
+    # A file that exists and does not validate is the worst thing to regenerate
+    # over: `load_manifest` returns None for it, so a merge would preserve
+    # nothing, and the usual cause is a typo one edit away from a good manifest.
+    # Refuse, hand back the validator's complaint, and let the operator decide.
+    if mp.exists() and errs and not force:
+        warnings.append(
+            f"{mp} exists but does not validate, so it cannot be merged and "
+            f"will NOT be overwritten: " + "; ".join(errs))
+        warnings.append("fix the file by hand, or re-run with --force to "
+                        "replace it with a generated one")
+        return AdoptionPlan(project_id=project_id, directory=str(directory),
+                            manifest_path=str(mp), action="blocked_invalid",
+                            manifest_yaml="", findings=findings,
+                            warnings=warnings)
+
+    if force:
+        if errs:
+            warnings.append("existing manifest does not validate and --force "
+                            "was given — it will be replaced: " + "; ".join(errs))
+        if existing is not None:
+            lost = _discarded_by_force(existing, inferred)
+            if lost:
+                warnings.append(
+                    "--force DISCARDS these declarations from the existing "
+                    "manifest: " + "; ".join(lost))
+    elif existing is not None:
+        inferred = _merge_existing(inferred, existing, findings)
+
+    rendered = render_manifest_yaml(inferred)
+    if mp.exists():
+        try:
+            action = "unchanged" if mp.read_text() == rendered else "update"
+        except OSError:
+            action = "update"
     else:
         action = "create"
-
-    return AdoptionPlan(project_id=pid, directory=str(d), manifest_path=str(mp),
-                        action=action, manifest_yaml=rendered,
-                        findings=findings, warnings=warnings)
+    return AdoptionPlan(project_id=project_id, directory=str(directory),
+                        manifest_path=str(mp), action=action,
+                        manifest_yaml=rendered, findings=findings,
+                        warnings=warnings)
 
 
 def _declared_worktree_location(directory: Path) -> tuple[str, str | None]:
@@ -904,12 +1011,12 @@ def render_plan(plans: list[AdoptionPlan], *, show_yaml: bool = False) -> str:
 
 
 def cli_entry(args: list[str]) -> None:
-    """``work projects adopt [<project>] [--yaml] [--json]`` — plans only."""
+    """``work projects adopt [<project>] [--yaml] [--json] [--force]`` — plans only."""
     if engine is None:
         print("Work engine not available")
         return
     rest = [a for a in args if not a.startswith("--")]
-    plans = plan_adoption(rest[0] if rest else None)
+    plans = plan_adoption(rest[0] if rest else None, force="--force" in args)
     if "--json" in args:
         import json
         print(json.dumps([{

@@ -15,7 +15,7 @@ what is on disk.
 Usage:
     project new <name> [--title T] [--kind K] [--description D]
                        [--no-git] [--work]
-    project adopt <dir> [--git | --no-git]
+    project adopt <dir> [--git | --no-git] [--force]
     project list [--json]
     project archive <name> [--reason R] [--no-qmd]
 
@@ -24,10 +24,13 @@ Usage:
 
 `adopt` will never `git init` a directory carrying a .aos/no-git marker, with
 or without --git: the marker outranks the flag, which is what makes it a deny.
+Re-adopting a directory that already has a manifest keeps every declaration
+that manifest states and fills only the gaps; --force regenerates instead, and
+says which declarations it is discarding.
 
 `archive` moves a project to _archive/ when that is safe — no registered git
 worktrees, no open tasks — and otherwise marks it in place and says loudly what
-blocked the move. It never deletes anything.
+blocked the move. It never deletes anything. It refuses to archive a zone.
 
 Exit codes:
     0  the operation completed
@@ -88,7 +91,7 @@ def cmd_new(args) -> int:
 
 def cmd_adopt(args) -> int:
     git = True if args.git else (False if args.no_git else None)
-    out = lifecycle.adopt(args.directory, git=git)
+    out = lifecycle.adopt(args.directory, git=git, force=args.force)
     if out.ok:
         print(f"Adopted {out.path}")
     return _emit(out)
@@ -187,6 +190,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="git init if unversioned (refused when .aos/no-git exists)")
     g.add_argument("--no-git", action="store_true",
                    help="write the .aos/no-git deny marker")
+    sp_adopt.add_argument("--force", action="store_true",
+                          help="regenerate an existing manifest, DISCARDING the "
+                               "declarations in it (default: keep them)")
     sp_adopt.set_defaults(func=cmd_adopt)
 
     sp_list = sub.add_parser("list", help="what is under ~/project/, with drift")

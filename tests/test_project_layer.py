@@ -366,6 +366,129 @@ def test_adopt_is_idempotent(root):
     assert any("already up to date" in s for s in out.steps)
 
 
+def test_adopt_creates_the_zones_when_they_are_missing(tmp_path):
+    """`adopt` is the first verb an operator with a pre-existing ~/project/
+    reaches for, and it used to be the one verb that did not install the layer —
+    `create` and `archive` both call ensure_zones and it did not, so a machine
+    whose migration deferred stayed without zones or a policy file."""
+    base = tmp_path / "project"
+    (base / "already-here").mkdir(parents=True)
+
+    out = lifecycle.adopt("already-here", root=base)
+    assert out.ok
+    for zone in zones.ZONES:
+        assert (base / zone).is_dir()
+    assert (base / zones.POLICY_FILENAME).exists()
+
+
+def test_adopt_refuses_a_zone_directory(root):
+    out = lifecycle.adopt("_scratch", root=root)
+    assert not out.ok
+    assert "is a zone" in out.errors[0]
+    assert not pm.manifest_path_for(root / "_scratch").exists()
+
+
+def test_adopting_inside_scratch_says_the_manifest_will_not_surface(root):
+    """A manifest written under _scratch/ is real and permanently invisible:
+    zone membership is the classification, so neither `project list` nor the
+    reconciler will ever show it. The README used to advise exactly this."""
+    d = root / "_scratch" / "promising"
+    d.mkdir(parents=True)
+
+    out = lifecycle.adopt(d, root=root)
+    assert out.ok
+    assert any("does not promote it" in w for w in out.warnings)
+    assert any("mv " in w for w in out.warnings)
+
+    # ...and the claim the warning makes is true.
+    assert d.name not in {r.name for r in lifecycle.survey(root=root).rows}
+
+
+# ── adopt: never regenerate over a human's declarations ─────────────
+
+def _hand_edit(directory: Path) -> None:
+    """Put declarations into a manifest that only a person could have written."""
+    mp = pm.manifest_path_for(directory)
+    raw = mp.read_text()
+    raw = raw.replace("depends_on: []", "depends_on:\n  - quran-garden-data")
+    raw = raw.replace("description: null", "description: The hand-written truth")
+    raw = raw.replace("done_when: null", "done_when: when the curriculum ships")
+    raw = raw.replace("goal: null", "goal: g-teaching")
+    mp.write_text(raw)
+
+
+def test_readopting_keeps_hand_written_declarations(root):
+    """The destructive case: adoption infers, and inference has no source for a
+    `depends_on` or a `done_when`, so regenerating them means blanking them. For
+    a manifest not yet committed there is no way back."""
+    d = root / "hre"
+    d.mkdir()
+    (d / "main.py").write_text("print(1)\n")
+    assert lifecycle.adopt("hre", root=root).ok
+    _hand_edit(d)
+
+    out = lifecycle.adopt("hre", root=root)
+    assert out.ok
+
+    m, errors = pm.load_manifest(d)
+    assert errors == []
+    assert m.depends_on == ["quran-garden-data"]
+    assert m.description == "The hand-written truth"
+    assert m.done_when == "when the curriculum ships"
+    assert m.goal == "g-teaching"
+
+
+def test_readopting_still_fills_the_gaps_it_can(root):
+    """Preserving is not freezing: a field the existing manifest leaves empty is
+    still filled from what is on disk."""
+    d = root / "gaps"
+    d.mkdir()
+    assert lifecycle.adopt("gaps", root=root).ok
+    _hand_edit(d)
+    (d / "app.py").write_text("x = 1\n")     # now unmistakably python
+
+    lifecycle.adopt("gaps", root=root)
+    m, _ = pm.load_manifest(d)
+    assert m.depends_on == ["quran-garden-data"], "declaration still there"
+
+
+def test_force_regenerates_and_names_what_it_discards(root):
+    d = root / "forced"
+    d.mkdir()
+    (d / "main.py").write_text("print(1)\n")
+    lifecycle.adopt("forced", root=root)
+    _hand_edit(d)
+
+    out = lifecycle.adopt("forced", root=root, force=True)
+    assert out.ok
+    m, _ = pm.load_manifest(d)
+    assert m.depends_on == [], "--force is the destructive path, on purpose"
+    assert any("DISCARDS" in w and "depends_on" in w for w in out.warnings), \
+        "the operator must be told exactly what --force threw away"
+
+
+def test_adopt_refuses_to_overwrite_an_invalid_manifest(root):
+    """An invalid manifest cannot be merged — `load_manifest` returns None for
+    it — so regenerating would preserve nothing at all. And the usual cause is a
+    typo one edit away from a good manifest."""
+    d = root / "broken"
+    d.mkdir()
+    lifecycle.adopt("broken", root=root)
+    mp = pm.manifest_path_for(d)
+    mp.write_text(mp.read_text()
+                  + "\nstatus: active\nsecret_notes: do not publish\n")
+    before = mp.read_text()
+
+    out = lifecycle.adopt("broken", root=root)
+    assert not out.ok
+    assert mp.read_text() == before, "nothing may be written over it"
+    assert any("does not validate" in e for e in out.errors)
+    assert any("--force" in e for e in out.errors)
+
+    assert lifecycle.adopt("broken", root=root, force=True).ok
+    assert pm.load_manifest(d)[1] == [], "--force is the way through"
+
+
 # ── archive: eligibility ────────────────────────────────────────────
 
 def test_eligibility_is_clean_for_a_plain_repo(root):
@@ -518,6 +641,111 @@ def test_archive_refuses_something_already_archived(root):
     out = lifecycle.archive(d, root=root, run_qmd=False)
     assert not out.ok
     assert "already in" in out.errors[0]
+
+
+# ── archive: what must never be archived ────────────────────────────
+
+@pytest.mark.parametrize("zone", zones.ZONES)
+def test_archive_refuses_a_zone_by_name(root, zone):
+    """A zone is the filing cabinet, not a thing that can be filed. Without the
+    guard `project archive _scratch` passes every other check — the directory
+    exists, it is not inside _archive/, nothing is registered against it — and
+    moves the entire zone, contents and all, into _archive/_scratch."""
+    inhabitant = root / zone / "contents"
+    inhabitant.mkdir(parents=True)
+
+    out = lifecycle.archive(zone, root=root, run_qmd=False)
+    assert not out.ok
+    assert (root / zone).is_dir(), "the zone must still be where it was"
+    assert inhabitant.is_dir()
+    assert not (root / "_archive" / zone).exists()
+    assert not zones.marker_path(root / zone, zones.ARCHIVED_MARKER).exists()
+
+
+def test_archive_refuses_a_zone_by_absolute_path(root):
+    out = lifecycle.archive(root / "_ref", root=root, run_qmd=False)
+    assert not out.ok
+    assert "is a zone" in out.errors[0]
+    assert (root / "_ref").is_dir()
+
+
+def test_archive_refuses_a_name_the_layer_cannot_address(root):
+    """Archive moves the directory into _archive/ under the same name, so the
+    name has to be one every other verb can name back."""
+    (root / "Legacy_Thing").mkdir()
+    out = lifecycle.archive("Legacy_Thing", root=root, run_qmd=False)
+    assert not out.ok
+    assert "kebab-case" in out.errors[0]
+    assert "Rename it first" in out.errors[0]
+    assert (root / "Legacy_Thing").is_dir()
+
+
+# ── archive: the worktree guard must fail CLOSED ────────────────────
+
+@pytest.fixture()
+def worktree_query_broken(monkeypatch):
+    """Make `git worktree list` unanswerable, the way a timeout would."""
+    import project_worktrees as pw
+
+    def boom(repo):
+        raise pw.WorktreeQueryFailed("timed out after 30s")
+
+    monkeypatch.setattr(pw, "list_worktrees_checked", boom)
+
+
+def test_eligibility_records_that_worktrees_could_not_be_enumerated(
+        root, worktree_query_broken):
+    d = _repo(root / "opaque")
+    ent = lifecycle.eligibility(d)
+    assert ent.worktrees == []
+    assert ent.worktrees_unknown
+    assert not ent.clean, "'could not tell' must never read as 'nothing found'"
+
+
+def test_archive_refuses_when_worktrees_cannot_be_enumerated(
+        root, worktree_query_broken):
+    """The guard failed OPEN: enumeration collapsed to [], which reads exactly
+    like 'no worktrees registered', and the move went ahead — orphaning every
+    checkout whose .git file stores this absolute path."""
+    d = _repo(root / "opaque")
+
+    out = lifecycle.archive("opaque", root=root, run_qmd=False)
+    assert not out.ok
+    assert "could not be asked" in out.errors[0]
+    assert d.is_dir(), "nothing may have moved"
+    assert not (root / "_archive" / "opaque").exists()
+    assert not zones.marker_path(d, zones.ARCHIVED_MARKER).exists(), \
+        "not even the marker: the project is not known to be safe to call done"
+
+
+def test_a_healthy_repo_still_archives(root):
+    """The companion to the test above: fail-closed must not mean fail-always."""
+    _repo(root / "healthy")
+    out = lifecycle.archive("healthy", root=root, run_qmd=False)
+    assert out.ok and out.action == "archive"
+    assert (root / "_archive" / "healthy").is_dir()
+
+
+def test_reindex_does_not_block_the_verb(root, monkeypatch, tmp_path):
+    """`qmd update` used to run synchronously with a 300s timeout, so a verb
+    that had already finished its durable work held the terminal waiting on a
+    search index it does not own."""
+    # A stand-in qmd that takes its time. Nothing is mocked: the point is what
+    # the real spawn does, and a mocked Popen would only prove the call shape.
+    fake_qmd = tmp_path / "qmd"
+    fake_qmd.write_text("#!/bin/sh\nsleep 20\n")
+    fake_qmd.chmod(0o755)
+    monkeypatch.setattr(lifecycle, "QMD_BIN", fake_qmd)
+
+    _repo(root / "indexed")
+    started = time.monotonic()
+    out = lifecycle.archive("indexed", root=root, run_qmd=True)
+    elapsed = time.monotonic() - started
+
+    assert out.ok
+    assert elapsed < 5, (f"archive waited {elapsed:.1f}s on the reindex; the "
+                         f"move is already durable by then")
+    assert any("background" in s for s in out.steps)
 
 
 # ── survey ──────────────────────────────────────────────────────────

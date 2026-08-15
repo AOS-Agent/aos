@@ -149,16 +149,59 @@ def _default_branch(repo: Path) -> str:
     return "HEAD"
 
 
+class WorktreeQueryFailed(RuntimeError):
+    """``git worktree list`` could not be answered for a repo."""
+
+
+def _git_result(cwd: Path, *args: str, timeout: int = 30) -> tuple[int, str, str]:
+    """Run git and hand back code, stdout and stderr — the whole answer.
+
+    ``_git`` above collapses every failure to ``None``, which is right for a
+    reporter and wrong for anything gating a mutation: it cannot tell "git said
+    nothing" from "git never ran".
+    """
+    try:
+        out = subprocess.run(("git", "-C", str(cwd), *args),
+                             capture_output=True, text=True, timeout=timeout)
+    except Exception as e:
+        return 1, "", str(e)
+    return out.returncode, out.stdout.strip(), out.stderr.strip()
+
+
+def list_worktrees_checked(repo: Path) -> list[dict]:
+    """``list_worktrees`` that raises rather than returning ``[]`` on failure.
+
+    Same parse, different failure contract. A caller deciding whether it is safe
+    to move a repository needs "could not tell" to be distinguishable from "none
+    registered", because those two demand opposite decisions and the lenient
+    version reports them identically. ``project_lifecycle.eligibility`` uses
+    this one; the reports keep the lenient one.
+    """
+    code, out, err = _git_result(repo, "worktree", "list", "--porcelain")
+    if code != 0:
+        raise WorktreeQueryFailed(
+            err or f"git worktree list exited {code} in {repo}")
+    return _parse_worktree_porcelain(out)
+
+
 def list_worktrees(repo: Path) -> list[dict]:
     """Parse ``git worktree list --porcelain`` including prunable reasons.
 
     The reason matters: ``prunable gitdir file points to non-existent location``
     means the worktree's ``.git`` file is gone, which is a very different
     situation from the directory being gone.
+
+    Lenient: a git that could not answer yields ``[]``, same as a repo with no
+    worktrees. Fine for the audit report, never for a safety gate — that is what
+    ``list_worktrees_checked`` is for.
     """
     raw = _git(repo, "worktree", "list", "--porcelain")
     if not raw:
         return []
+    return _parse_worktree_porcelain(raw)
+
+
+def _parse_worktree_porcelain(raw: str) -> list[dict]:
     out: list[dict] = []
     cur: dict = {}
     for line in raw.splitlines():

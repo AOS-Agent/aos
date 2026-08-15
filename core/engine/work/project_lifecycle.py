@@ -59,6 +59,15 @@ call site, under any flag. It will not move a directory out of ``_archive/``.
 It will not invent a work.db project unless asked with ``--work``: a manifest is
 the identity, and a tracker row is a separate decision the operator makes when
 they actually have tasks to put in it.
+
+And it will not promote anything out of a zone. There is no ``promote`` verb,
+deliberately: zone membership IS the classification, so the promotion is the
+move, and the move is one ``mv`` the operator can see the whole of. What that
+costs is that ``project adopt _scratch/<thing>`` writes a real manifest into a
+directory nothing will ever surface — ``survey()`` skips zone contents and the
+reconciler classifies everything under ``_scratch/`` by location alone. ``adopt``
+therefore warns loudly when its target sits in ``_scratch/`` and prints the
+``mv`` that would actually promote it, rather than pretending the manifest did.
 """
 
 from __future__ import annotations
@@ -128,21 +137,37 @@ class Outcome:
         return cls(ok=False, action=action, errors=list(errors))
 
 
+class WorktreesUnknown(RuntimeError):
+    """git could not be asked which worktrees are registered for a repo.
+
+    Its own exception type because the answer it stands for is not "none" — and
+    those two must never collapse into each other on a path that gates a move.
+    """
+
+
 @dataclass
 class Entanglement:
     """What is still holding a project in place, blocking a clean archive.
 
-    Both fields are *citable*: worktree paths you can ``ls``, task ids you can
-    ``work show``. A warning that says "this project is entangled" and stops
+    Both list fields are *citable*: worktree paths you can ``ls``, task ids you
+    can ``work show``. A warning that says "this project is entangled" and stops
     there is a warning the operator cannot act on, so the eligibility check
     carries the specifics or it is not worth running.
+
+    ``worktrees_unknown`` is the third state, and it exists because the check
+    fails in the dangerous direction without it. An empty worktree list reads as
+    "safe to move"; a git that timed out also produced an empty list. Collapsing
+    the two waves a move through precisely when the guard was unable to run, so
+    "could not tell" is recorded as its own answer and counts as not clean.
     """
     worktrees: list[str] = field(default_factory=list)
     open_tasks: list[str] = field(default_factory=list)
+    worktrees_unknown: str | None = None    # why enumeration failed
 
     @property
     def clean(self) -> bool:
-        return not self.worktrees and not self.open_tasks
+        return (not self.worktrees and not self.open_tasks
+                and self.worktrees_unknown is None)
 
 
 @dataclass
@@ -222,14 +247,23 @@ def _registered_worktrees(repo: Path) -> list[str]:
     ``project_reconcile`` documents at length: the ``-wt`` naming convention
     drifted, and on this machine the directories carrying that suffix were empty
     husks while the real worktrees were named after their branches.
+
+    Raises ``WorktreesUnknown`` when the question could not be answered. The
+    older shape returned ``[]`` for both "none registered" and "git timed out",
+    which made the archive guard fail open — see ``Entanglement``.
     """
     if not is_git_repo(repo):
         return []
     try:
         import project_worktrees as pw
-        rows = pw.list_worktrees(Path(repo))
-    except Exception:
-        return []
+    except Exception as e:
+        raise WorktreesUnknown(f"project_worktrees is not importable ({e})") from e
+    try:
+        rows = pw.list_worktrees_checked(Path(repo))
+    except WorktreesUnknown:
+        raise
+    except Exception as e:
+        raise WorktreesUnknown(str(e) or e.__class__.__name__) from e
     main = str(Path(repo).resolve())
     out: list[str] = []
     for row in rows:
@@ -451,7 +485,7 @@ def _register(project_id: str, title: str, path: str,
 # ── adopt ───────────────────────────────────────────────────────────
 
 def adopt(target: str | Path, *, root: Path | None = None,
-          git: bool | None = None) -> Outcome:
+          git: bool | None = None, force: bool = False) -> Outcome:
     """Write a manifest for a directory that already exists.
 
     Adoption, not scaffolding. Where the directory belongs to a live work
@@ -470,6 +504,13 @@ def adopt(target: str | Path, *, root: Path | None = None,
                  not a deny marker.
       ``False``  write the ``.aos/no-git`` marker, recording the decision where
                  the next agent will actually look for it.
+
+    ``force`` regenerates a manifest that already exists, discarding whatever
+    declarations a human wrote into it. Off by default because those fields —
+    ``depends_on``, ``done_when``, ``description``, ``goal`` — have no source
+    other than the operator, so regenerating them means blanking them. The
+    default path merges instead: the file that is there wins, inference fills
+    only the gaps.
     """
     if pm is None:
         return Outcome.failed("adopt", "project_manifest is unavailable")
@@ -480,8 +521,19 @@ def adopt(target: str | Path, *, root: Path | None = None,
         return Outcome.failed("adopt", f"{directory} does not exist")
     if not directory.is_dir():
         return Outcome.failed("adopt", f"{directory} is not a directory")
+    if _is_zone_directory(directory, base):
+        return Outcome.failed(
+            "adopt", f"{directory.name} is a zone, not a project — adopt "
+                     f"something inside it instead")
 
     out = Outcome(ok=True, action="adopt", path=str(directory))
+
+    # The zones may not exist yet on a machine whose ~/project/ predates the
+    # layer, and `adopt` is exactly the verb such an operator reaches for first.
+    # `create` and `archive` both call this; `adopt` skipping it left the policy
+    # file and the zone READMEs uninstalled for anyone who never ran `new`.
+    for created in zones.ensure_zones(base):
+        out.steps.append(f"created zone {created}")
 
     zone = zones.zone_of(directory, base)
     if zone == zones.ZONE_REF:
@@ -491,6 +543,17 @@ def adopt(target: str | Path, *, root: Path | None = None,
             f"first, then adopt it.")
         out.ok = False
         return out
+    if zone == zones.ZONE_SCRATCH:
+        # A manifest written here is real but invisible: `project list` skips
+        # zone contents and the reconciler classifies everything under _scratch/
+        # by location alone, so nothing will ever surface it. Say so at the
+        # moment the operator is about to be surprised by it.
+        out.warnings.append(
+            f"{directory.name} is in {zones.ZONE_SCRATCH}/, and a manifest does "
+            f"not promote it out. Zone membership is the classification, so "
+            f"`project list` and the reconciler will keep treating this as "
+            f"ephemeral no matter what the manifest says. To promote it, move "
+            f"it up a level first: mv {directory} {base / directory.name}")
     if zone == zones.ZONE_ARCHIVE:
         out.warnings.append(f"{directory.name} is in {zones.ZONE_ARCHIVE}/ — "
                             f"adopting an archived project is unusual; check "
@@ -502,7 +565,7 @@ def adopt(target: str | Path, *, root: Path | None = None,
     out.steps.extend(_settle_git(directory, git, out.warnings))
 
     existing = pm.manifest_path_for(directory)
-    plan = _plan_for(directory)
+    plan = _plan_for(directory, force=force)
     if plan is None:
         return Outcome.failed("adopt", f"could not build a manifest plan for "
                                        f"{directory}")
@@ -510,6 +573,15 @@ def adopt(target: str | Path, *, root: Path | None = None,
     out.warnings.extend(plan.warnings)
     for f in plan.findings:
         out.steps.append(f"found: {f}")
+
+    if plan.action == "blocked_invalid":
+        out.ok = False
+        out.errors.append(
+            f"{existing} exists but does not validate — nothing was written. "
+            f"An invalid manifest cannot be merged, and overwriting it would "
+            f"throw away whatever is in it. Fix it by hand (the validator's "
+            f"complaints are above), or re-run with --force to replace it.")
+        return out
 
     if plan.action == "unchanged":
         out.steps.append(f"{existing} is already up to date — nothing written")
@@ -532,15 +604,31 @@ def _resolve_target(target: str | Path, base: Path) -> Path:
     return (base / p)
 
 
-def _plan_for(directory: Path):
+def _is_zone_directory(directory: Path, base: Path) -> bool:
+    """True when ``directory`` IS one of the zones, rather than something in one."""
+    try:
+        target = directory.resolve()
+    except OSError:
+        target = directory
+    for d in zones.zone_dirs(base).values():
+        try:
+            if d.resolve() == target:
+                return True
+        except OSError:
+            if d == directory:
+                return True
+    return directory.name in zones.ZONES
+
+
+def _plan_for(directory: Path, *, force: bool = False):
     """The adoption plan for a directory, from work.db when it knows about it."""
     project = _project_for_directory(directory)
     if project is not None:
-        plans = pm.plan_adoption(project["id"])
+        plans = pm.plan_adoption(project["id"], force=force)
         for pl in plans:
             if pl.manifest_path:
                 return pl
-    return pm.plan_adoption_for_directory(directory)
+    return pm.plan_adoption_for_directory(directory, force=force)
 
 
 def _settle_git(directory: Path, git: bool | None,
@@ -684,10 +772,15 @@ def eligibility(directory: Path, project_id: str | None = None) -> Entanglement:
 
     work.db being unavailable yields no task blockers, which is the correct
     failure direction only because the worktree check still runs and the CLI
-    reports which checks it was able to make.
+    reports which checks it was able to make. When the *worktree* check is the
+    one that cannot run, there is no second guard behind it, so the failure is
+    recorded on ``worktrees_unknown`` and ``clean`` goes False — see the class.
     """
     e = Entanglement()
-    e.worktrees = _registered_worktrees(Path(directory))
+    try:
+        e.worktrees = _registered_worktrees(Path(directory))
+    except WorktreesUnknown as exc:
+        e.worktrees_unknown = str(exc)
     if project_id:
         e.open_tasks = _open_tasks(project_id)
     return e
@@ -706,6 +799,28 @@ def archive(name: str, *, reason: str | None = None, root: Path | None = None,
     directory = _resolve_target(name, base)
     if not directory.exists():
         return Outcome.failed("archive", f"{directory} does not exist")
+
+    # A zone is the filing cabinet, not a thing that can be filed. Without this
+    # guard `project archive _scratch` walks straight through every check below
+    # — the zone directory exists, it is not itself inside _archive/, nothing is
+    # registered against it — and moves the entire zone, contents and all, to
+    # _archive/_scratch. Checked against the resolved zone paths rather than the
+    # spelling of the argument, so an absolute path cannot slip past it.
+    if _is_zone_directory(directory, base):
+        return Outcome.failed(
+            "archive",
+            f"{directory.name} is a zone, not a project. Zones are where "
+            f"projects are filed ({', '.join(zones.ZONES)}); archiving one "
+            f"would move the whole zone and everything in it. Name the project "
+            f"inside it instead.")
+    err = zones.validate_name(directory.name)
+    if err:
+        return Outcome.failed(
+            "archive",
+            f"{err} Archive moves this directory into {zones.ZONE_ARCHIVE}/ "
+            f"under the same name, so the name has to be one the layer can "
+            f"address. Rename it first, then archive.")
+
     if zones.zone_of(directory, base) == zones.ZONE_ARCHIVE:
         return Outcome.failed(
             "archive", f"{directory} is already in {zones.ZONE_ARCHIVE}/")
@@ -718,6 +833,22 @@ def archive(name: str, *, reason: str | None = None, root: Path | None = None,
     db_project = project or _writable_project(manifest, directory)
 
     ent = eligibility(directory, project_id)
+
+    # Refused, not warned, and refused before the marker is written. The
+    # worktree check is the only guard standing between a move and a set of
+    # orphaned checkouts whose .git files store this absolute path, and this
+    # module cannot repair those afterwards. An unanswered guard is not a
+    # passed guard.
+    if ent.worktrees_unknown:
+        return Outcome.failed(
+            "archive",
+            f"git could not be asked which worktrees are registered for "
+            f"{directory} ({ent.worktrees_unknown}). Nothing was written and "
+            f"nothing was moved: an unanswered worktree check reads exactly "
+            f"like 'no worktrees', and moving a project that still has one "
+            f"orphans every checkout pointing at this path. Check that "
+            f"`git -C {directory} worktree list` answers, then re-run.")
+
     if engine is None:
         out.warnings.append("work engine unavailable — open tasks could not be "
                             "checked, so eligibility rests on worktrees alone")
@@ -832,17 +963,23 @@ def _move(src: Path, dst: Path) -> None:
 def _reindex() -> str:
     """Fire ``qmd update`` so search stops serving the pre-move path.
 
-    Best-effort by design: a machine without QMD is not a broken machine, and an
-    archive that succeeded should not report failure because a search index it
-    does not own is stale.
+    Detached and unwaited. The move is already done and durable by the time this
+    runs, so there is nothing for the verb to learn by blocking — and blocking
+    was expensive: a full reindex on this machine can take minutes, and the
+    earlier version held `project archive` at the terminal for up to 300s to
+    watch a search index it does not own catch up.
+
+    Best-effort in both directions: a machine without QMD is not a broken
+    machine, and an archive that succeeded must not report failure because the
+    reindex could not be started.
     """
     if not QMD_BIN.exists():
         return f"qmd not installed at {QMD_BIN} — search index not refreshed"
     try:
-        out = subprocess.run((str(QMD_BIN), "update"), capture_output=True,
-                             text=True, timeout=300)
+        subprocess.Popen(                       # noqa: S603 — fixed argv
+            (str(QMD_BIN), "update"),
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL, start_new_session=True)
     except Exception as e:
-        return f"qmd update did not run ({e}) — reindex manually"
-    if out.returncode != 0:
-        return f"qmd update exited {out.returncode} — reindex manually"
-    return "qmd update: search index refreshed"
+        return f"qmd update could not be started ({e}) — reindex manually"
+    return "qmd update started in the background — search will catch up shortly"
