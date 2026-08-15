@@ -172,7 +172,10 @@ GLOBAL_HEADER = "# AOS — Agentic Operating System\n\nThis machine runs AOS. Ev
 _RULES_DEVELOPER = """\
 ## Rules
 
-- **NEVER edit `~/aos/` directly.** All framework changes go in `~/project/aos/` (dev workspace). Commit and push from there. Runtime pulls on next update. Only `~/.aos/` and `~/.claude/` are edited directly.
+- **NEVER edit `~/aos/` directly.** It's the runtime copy — read-only at runtime. All framework changes go in `~/project/aos/` (dev workspace). Commit and push from there. Runtime pulls on next update. Only `~/.aos/` and `~/.claude/` are edited directly.
+- **NEVER push to main without explicit operator approval.** Committing and pushing are separate actions. "Commit this" does NOT mean "ship this." Always ask before `git push`. No exceptions.
+- **Never hardcode lists the filesystem declares.** Discover services, skills, agents from their directories. Lists drift. Directories don't.
+- **Destructive operations require operator approval.** Deleting files, removing services, dropping data — present what you'll do, get explicit approval. No auto-delete ever.
 - Secrets: macOS Keychain only (`agent-secret get/set`). Never in files.
 - Network: localhost only. Tailscale for remote access. Cloudflare Tunnel permitted ONLY as explicit operator opt-in via the remote-access wizard (approved 2026-07-15).
 - Questions: one at a time, never batch.
@@ -184,6 +187,8 @@ _RULES_OPERATOR = """\
 
 - **AOS is managed software.** Instance-level fixes — your config (`~/.aos/`), preferences, secrets, and services — do them directly.
 - **Framework issues** — a bug in `~/aos/`, or a broken skill, service, or behavior — are never fixed by editing `~/aos/`. Use the report skill to file the issue upstream; the fix ships back in an update.
+- **Never hardcode lists the filesystem declares.** Discover services, skills, agents from their directories. Lists drift. Directories don't.
+- **Destructive operations require operator approval.** Deleting files, removing services, dropping data — present what you'll do, get explicit approval. No auto-delete ever.
 - Secrets: macOS Keychain only (`agent-secret get/set`). Never in files.
 - Network: localhost only. Tailscale for remote access. Cloudflare Tunnel permitted ONLY as explicit operator opt-in via the remote-access wizard (approved 2026-07-15).
 - Questions: one at a time, never batch.
@@ -195,7 +200,9 @@ def _global_sections(role: str) -> dict:
     """Managed sections for ~/.claude/CLAUDE.md, role-aware.
 
     Only the rules block differs by role; every other section is shared. The
-    rules block is version 3 (bumped from 2 when it became role-aware) — both
+    rules block is version 4 (v3 made it role-aware; v4 absorbed the legacy
+    pre-marker bullets — push-to-main approval, no hardcoded lists, destructive
+    ops approval — so migration 103 can strip the unmanaged duplicates). Both
     roles share the version, and the content-drift path in _fix_sections
     re-syncs the block if a machine's role later flips.
     """
@@ -225,7 +232,7 @@ Additional agents activated from catalog or created by user."""),
 Skills at `~/.claude/skills/`. Each has `SKILL.md` with trigger phrases.
 When a request matches, load and follow the skill's protocol."""),
 
-        "rules": (3, _RULES_OPERATOR if role == "operator" else _RULES_DEVELOPER),
+        "rules": (4, _RULES_OPERATOR if role == "operator" else _RULES_DEVELOPER),
 
         "quick-reference": (3, """\
 ## Quick Reference

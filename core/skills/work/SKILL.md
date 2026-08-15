@@ -18,68 +18,68 @@ Manage all work items through the work engine CLI.
 
 All commands run via:
 ```bash
-python3 ~/aos/core/work/cli.py <command> [args]
+python3 ~/aos/core/engine/work/cli.py <command> [args]
 ```
 
 ### Task Commands
 
 ```bash
 # Add a task
-python3 ~/aos/core/work/cli.py add "Buy groceries"
-python3 ~/aos/core/work/cli.py add "Fix login bug" --priority 2 --project website --tags bug,urgent
+python3 ~/aos/core/engine/work/cli.py add "Buy groceries"
+python3 ~/aos/core/engine/work/cli.py add "Fix login bug" --priority 2 --project website --tags bug,urgent
 
 # List tasks (hides done/cancelled by default)
-python3 ~/aos/core/work/cli.py list
-python3 ~/aos/core/work/cli.py list --status active
-python3 ~/aos/core/work/cli.py list --project aos
+python3 ~/aos/core/engine/work/cli.py list
+python3 ~/aos/core/engine/work/cli.py list --status active
+python3 ~/aos/core/engine/work/cli.py list --project aos
 
 # Change status
-python3 ~/aos/core/work/cli.py done t1
-python3 ~/aos/core/work/cli.py start t2
-python3 ~/aos/core/work/cli.py cancel t3
+python3 ~/aos/core/engine/work/cli.py done t1
+python3 ~/aos/core/engine/work/cli.py start t2
+python3 ~/aos/core/engine/work/cli.py cancel t3
 
 # Show details
-python3 ~/aos/core/work/cli.py show t1
+python3 ~/aos/core/engine/work/cli.py show t1
 
 # Search
-python3 ~/aos/core/work/cli.py search "groceries"
+python3 ~/aos/core/engine/work/cli.py search "groceries"
 ```
 
 ### Session & Thread Commands
 
 ```bash
 # Link current session to a task (for multi-session work)
-python3 ~/aos/core/work/cli.py link t5 --session <id> --outcome "what was done"
+python3 ~/aos/core/engine/work/cli.py link t5 --session <id> --outcome "what was done"
 
 # Create a thread (for explorations spanning sessions)
-python3 ~/aos/core/work/cli.py thread "Researching WebSocket approach"
+python3 ~/aos/core/engine/work/cli.py thread "Researching WebSocket approach"
 
 # List active threads
-python3 ~/aos/core/work/cli.py thread
+python3 ~/aos/core/engine/work/cli.py thread
 
 # List all threads (including promoted/abandoned)
-python3 ~/aos/core/work/cli.py threads
+python3 ~/aos/core/engine/work/cli.py threads
 
 # Promote a thread to a project
-python3 ~/aos/core/work/cli.py promote th1 --title "WebSocket Integration" --goal launch-mvp
+python3 ~/aos/core/engine/work/cli.py promote th1 --title "WebSocket Integration" --goal launch-mvp
 ```
 
 ### Other Commands
 
 ```bash
 # Inbox (capture now, triage later)
-python3 ~/aos/core/work/cli.py inbox "Look into WebSocket approach"
-python3 ~/aos/core/work/cli.py inbox   # show inbox
+python3 ~/aos/core/engine/work/cli.py inbox "Look into WebSocket approach"
+python3 ~/aos/core/engine/work/cli.py inbox   # show inbox
 
 # Projects and goals
-python3 ~/aos/core/work/cli.py projects
-python3 ~/aos/core/work/cli.py goals
+python3 ~/aos/core/engine/work/cli.py projects
+python3 ~/aos/core/engine/work/cli.py goals
 
 # Overview
-python3 ~/aos/core/work/cli.py summary
+python3 ~/aos/core/engine/work/cli.py summary
 
 # Raw data (for programmatic use)
-python3 ~/aos/core/work/cli.py json
+python3 ~/aos/core/engine/work/cli.py json
 ```
 
 ### Priority Markers
@@ -122,7 +122,7 @@ python3 ~/aos/core/work/cli.py json
 ## Data Location
 
 Work file: `~/.aos/work/work.yaml`
-Schema: `~/aos/core/work/schema.yaml`
+Schema: `~/aos/core/engine/work/schema.yaml`
 
 ## Initiative Integration
 
@@ -131,19 +131,19 @@ When `operator.yaml → initiatives.enabled: true`:
 ### Source Reference Display
 When showing task details (`work show`), if the task has a `source_ref` field, display it:
 ```bash
-python3 ~/aos/core/work/cli.py show {id}
+python3 ~/aos/core/engine/work/cli.py show {id}
 ```
 The CLI already handles this — `source_ref` is shown as "Initiative: {path}".
 
 ### Initiative Command
 ```bash
-python3 ~/aos/core/work/cli.py initiatives       # Show active initiatives with phase progress
-python3 ~/aos/core/work/cli.py initiatives --all  # Include done/archived
+python3 ~/aos/core/engine/work/cli.py initiatives       # Show active initiatives with phase progress
+python3 ~/aos/core/engine/work/cli.py initiatives --all  # Include done/archived
 ```
 
 ### Task-Initiative Checkbox Sync
 When completing a task that has `source_ref` pointing to an initiative:
-1. Complete the task: `python3 ~/aos/core/work/cli.py done {id}`
+1. Complete the task: `python3 ~/aos/core/engine/work/cli.py done {id}`
 2. Read the initiative doc at the source_ref path
 3. Find the matching checkbox (by task title or ID reference)
 4. Check it: `- [ ]` → `- [x]`
@@ -160,10 +160,10 @@ Bad: `"Build the auth API endpoints for the Nuchay app including register, login
 
 ```bash
 # Title only
-python3 ~/aos/core/work/cli.py add "Build auth API endpoints" --project nuchay
+python3 ~/aos/core/engine/work/cli.py add "Build auth API endpoints" --project nuchay
 
 # Title + notes for detail
-python3 ~/aos/core/work/cli.py add "Build auth API endpoints" --project nuchay --notes "register, login, logout, token refresh with JWT"
+python3 ~/aos/core/engine/work/cli.py add "Build auth API endpoints" --project nuchay --notes "register, login, logout, token refresh with JWT"
 ```
 
 The CLI auto-splits titles > 80 characters: first clause becomes the title, rest becomes notes. Unknown flags are silently skipped (never captured as title text).

@@ -22,8 +22,8 @@ Generate structured reviews by reading work data, vault, and session history.
 ## Daily Review
 
 **Data sources:**
-1. Work tasks: `python3 ~/aos/core/work/cli.py list --status done` (completed today)
-2. Work tasks: `python3 ~/aos/core/work/cli.py list` (remaining active/todo)
+1. Work tasks: `python3 ~/aos/core/engine/work/cli.py list --status done` (completed today)
+2. Work tasks: `python3 ~/aos/core/engine/work/cli.py list` (remaining active/todo)
 3. Daily log: `~/vault/log/YYYY-MM-DD.md` (health, sessions, work summary)
 4. Sessions: `~/vault/log/sessions/` for recent session summaries
 
@@ -53,12 +53,12 @@ Generate structured reviews by reading work data, vault, and session history.
 
 **Data sources:**
 1. All tasks completed this week: filter by completed date
-2. Goal progress: `python3 ~/aos/core/work/cli.py goals`
+2. Goal progress: `python3 ~/aos/core/engine/work/cli.py goals`
 3. Daily logs from the week: `~/vault/log/` for health/energy/work patterns
 4. Session summaries: `~/vault/log/sessions/` for this week
 5. Friction reports: `~/vault/log/friction/` for this week
-6. Work summary: `python3 ~/aos/core/work/cli.py summary`
-7. Initiative state: `python3 ~/aos/core/work/cli.py initiatives` for active initiative progress
+6. Work summary: `python3 ~/aos/core/engine/work/cli.py summary`
+7. Initiative state: `python3 ~/aos/core/engine/work/cli.py initiatives` for active initiative progress
 
 **Output format:**
 

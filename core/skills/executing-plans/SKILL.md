@@ -83,7 +83,7 @@ When executing a plan that references an initiative (via the `**Initiative:**` h
 2. **After each task**: Update the initiative's matching checkbox
 3. **After all tasks**: Run a gate check to see if the current phase is complete:
    ```bash
-   python3 ~/aos/core/work/cli.py initiatives
+   python3 ~/aos/core/engine/work/cli.py initiatives
    ```
    If the phase is complete, note it for the operator: "Phase {N} is now complete. Ready for gate check before Phase {N+1}?"
 4. **On completion**: Append to the initiative's Progress section:
