@@ -894,3 +894,83 @@ def test_migration_backs_up_a_handwritten_rule(migration):
                                            + ".pre-reconcile")
     assert backup.read_text() == "# my own rule, written by hand"
     assert migration.RULE_LINK.is_symlink()
+
+
+def test_migration_never_deletes_an_earlier_backup(migration):
+    """Nothing in this repo auto-deletes, and the old version broke that rule on
+    exactly the file the backup exists to protect: it unlinked any existing
+    `.pre-reconcile` to make room for a new one."""
+    migration.RULE_LINK.parent.mkdir(parents=True)
+    first = migration.RULE_LINK.with_name(migration.RULE_LINK.name
+                                          + ".pre-reconcile")
+    first.write_text("# the version I actually care about")
+    migration.RULE_LINK.write_text("# a later hand-edit")
+
+    migration.up()
+
+    assert first.read_text() == "# the version I actually care about"
+    second = migration.RULE_LINK.with_name(migration.RULE_LINK.name
+                                           + ".pre-reconcile.2")
+    assert second.read_text() == "# a later hand-edit"
+    assert migration.RULE_LINK.is_symlink()
+
+
+def test_migration_stays_pending_when_project_root_is_unreachable(migration):
+    """`~/project` is a symlink onto an external volume. Unmounted, it dangles —
+    and `exists()` follows symlinks, so it reports exactly what a machine with
+    no projects directory reports. Answering "complete" there is unrecoverable:
+    the runner records the watermark and never offers the migration again.
+    """
+    migration.PROJECT_ROOT.parent.mkdir(parents=True, exist_ok=True)
+    os.symlink(migration.HOME / "not-mounted", migration.PROJECT_ROOT)
+    assert migration.PROJECT_ROOT.is_symlink()
+    assert not migration.PROJECT_ROOT.exists(), "the link dangles"
+
+    assert migration.check() is False, "nothing was installed there"
+    # runner.py:112-133 — anything other than True/None leaves the watermark
+    # where it is, so the migration is retried on the next update cycle.
+    assert migration.up() is False
+
+    # The parts that live on the internal disk still went in: the operator gets
+    # the CLI and the rule now, and the zones when the volume comes back.
+    assert migration.RULE_LINK.is_symlink()
+    assert migration.CLI_LINK.is_symlink()
+
+
+def test_migration_completes_once_the_volume_is_back(migration):
+    """The retry has to actually converge, or 'stays pending' is just broken."""
+    migration.PROJECT_ROOT.parent.mkdir(parents=True, exist_ok=True)
+    target = migration.HOME / "volume" / "project"
+    os.symlink(target, migration.PROJECT_ROOT)
+    assert migration.up() is False
+
+    target.mkdir(parents=True)                  # volume mounted
+    assert migration.up() is True
+    assert migration.check() is True
+    for zone in zones.ZONES:
+        assert (migration.PROJECT_ROOT / zone).is_dir()
+    assert migration.POLICY.exists()
+
+
+def test_migration_imports_under_the_system_python(migration):
+    """The runner loads migrations with whatever interpreter is running `aos
+    update`, which on this machine is /usr/bin/python3 — 3.9.6. A `str | None`
+    annotation is evaluated at def time without `from __future__ import
+    annotations`, so the module raised TypeError on import and the migration
+    could never run at all.
+    """
+    system_python = Path("/usr/bin/python3")
+    if not system_python.exists():              # pragma: no cover — Linux CI
+        pytest.skip("no /usr/bin/python3 on this machine")
+
+    path = REPO_ROOT / "core" / "infra" / "migrations" / "102_project_layer.py"
+    proc = subprocess.run(
+        (str(system_python), "-c",
+         "import importlib.util, sys;"
+         f"spec = importlib.util.spec_from_file_location('m102', {str(path)!r});"
+         "mod = importlib.util.module_from_spec(spec);"
+         "spec.loader.exec_module(mod);"
+         "print(mod.DESCRIPTION)"),
+        capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stderr
+    assert "Project layer" in proc.stdout

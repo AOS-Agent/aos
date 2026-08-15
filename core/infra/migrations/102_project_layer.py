@@ -43,7 +43,27 @@ does the triage when they sit down to it.
 
 `~/project/CLAUDE.md` is written only when absent. An operator who has extended
 their policy file keeps their version.
+
+WHEN ~/project IS THERE BUT NOT REACHABLE
+------------------------------------------
+
+On this machine `~/project` is a symlink onto an external volume. With that
+volume unmounted the link dangles, and `Path.exists()` — which follows symlinks
+— reports exactly what it reports for a machine that has never had a projects
+directory at all. The two states want opposite answers: a fresh machine has
+nothing to install into and this migration is genuinely complete, while an
+unmounted volume has everything to install into and the migration has not run.
+Answering "complete" for the second one is unrecoverable, because the runner
+records the watermark and never offers the migration again.
+
+So the symlink itself is checked, not just its target, and an unreachable root
+makes `up()` return False. The runner's contract (`runner.py:112-133`) treats
+anything other than True/None as a failure: the watermark stays put and the
+migration is retried on the next update cycle, by which time the volume is
+probably back.
 """
+
+from __future__ import annotations
 
 DESCRIPTION = "Project layer: zones, ~/project/CLAUDE.md, rule, project CLI on PATH"
 
@@ -95,6 +115,26 @@ def _linked(link: Path, source: Path) -> bool:
         return False
 
 
+def _backup_name(link: Path) -> Path:
+    """A free `.pre-reconcile` name for `link`. Never reuses an occupied one.
+
+    The obvious version deletes the old backup to make room. That breaks the
+    repo-wide rule that nothing auto-deletes, and it breaks it on exactly the
+    file the backup exists to protect: an operator who has already been through
+    one relink still has their hand-written original sitting there, and a second
+    pass must not be the thing that throws it away.
+    """
+    base = link.with_name(link.name + ".pre-reconcile")
+    if not base.exists() and not base.is_symlink():
+        return base
+    n = 2
+    while True:
+        cand = link.with_name(f"{link.name}.pre-reconcile.{n}")
+        if not cand.exists() and not cand.is_symlink():
+            return cand
+        n += 1
+
+
 def _relink(link: Path, source: Path) -> str | None:
     """Point `link` at `source`. Backs up anything real that is in the way.
 
@@ -111,12 +151,23 @@ def _relink(link: Path, source: Path) -> str | None:
     if link.is_symlink():
         link.unlink()
     elif link.exists():
-        backup = link.with_name(link.name + ".pre-reconcile")
-        if backup.exists():
-            backup.unlink()
-        link.rename(backup)
+        link.rename(_backup_name(link))
     os.symlink(source, link)
     return str(link)
+
+
+# ``present`` — a real directory to install into.
+# ``absent``  — nothing there, and nothing claiming to be there. Correct on a
+#               fresh machine; zones are deferred to the first `project new`.
+# ``unreachable`` — something IS there (a symlink, or a non-directory) but it
+#               cannot be written into. See the module docstring: this is the
+#               unmounted-volume case, and it must not be mistaken for `absent`.
+def _project_root_state() -> str:
+    if PROJECT_ROOT.is_dir():
+        return "present"
+    if PROJECT_ROOT.is_symlink() or PROJECT_ROOT.exists():
+        return "unreachable"
+    return "absent"
 
 
 def check() -> bool:
@@ -125,7 +176,10 @@ def check() -> bool:
     if z is None:
         return False
 
-    if PROJECT_ROOT.exists():
+    state = _project_root_state()
+    if state == "unreachable":
+        return False            # nothing could have been installed there yet
+    if state == "present":
         for d in z.zone_dirs(PROJECT_ROOT).values():
             if not d.is_dir():
                 return False
@@ -147,18 +201,26 @@ def up() -> bool:
         return False
 
     done: list[str] = []
+    incomplete: list[str] = []
 
     # 1. Zones + policy file. Only for a ~/project/ that already exists; a
     #    machine without one gets the whole structure from its first
     #    `project new`, through this same function.
-    if PROJECT_ROOT.exists():
+    state = _project_root_state()
+    if state == "present":
         created = z.ensure_zones(PROJECT_ROOT)
         for c in created:
             done.append(f"created {Path(c).name}/")
         if not created:
             done.append("zones already present")
-    else:
+    elif state == "absent":
         done.append("no ~/project/ — zones deferred to the first `project new`")
+    else:
+        incomplete.append(
+            f"{PROJECT_ROOT} exists but cannot be written into — most likely a "
+            f"symlink to a volume that is not mounted. Zones, {POLICY.name} and "
+            f"the policy file were NOT installed. Mount the volume and re-run "
+            f"`aos update` (this migration stays pending until it succeeds).")
 
     # 2. The global rule.
     if _relink(RULE_LINK, RULE_SOURCE):
@@ -178,8 +240,11 @@ def up() -> bool:
 
     # Said out loud on every install, because the thing this migration most
     # needs the operator to know is what it chose not to touch.
-    if PROJECT_ROOT.exists():
+    if state == "present":
         print("       - existing directories left exactly as they were. "
               "Run `project list` to see what is unaccounted for, then "
               "`project adopt` them one at a time.")
-    return True
+
+    for line in incomplete:
+        print(f"       ! {line}")
+    return not incomplete
