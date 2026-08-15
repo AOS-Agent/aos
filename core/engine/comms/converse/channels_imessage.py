@@ -17,12 +17,18 @@ driven by the supervisor (T3, a later wave), not by this module.
 from __future__ import annotations
 
 import logging
-import subprocess
 import sqlite3
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .channels import InboundMsg, SendResult, WatchSpec, ensure_repo_root_on_path, resolve_contact
+from .channels import (
+    InboundMsg,
+    SendResult,
+    WatchSpec,
+    ensure_repo_root_on_path,
+    resolve_contact,
+)
 
 log = logging.getLogger(__name__)
 

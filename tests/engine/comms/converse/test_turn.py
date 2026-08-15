@@ -244,7 +244,7 @@ def _session(**overrides) -> models.ConversationSession:
         voice=models.VOICE_AGENT,
         channel=models.CHANNEL_IMESSAGE,
         conversation_ref="ref",
-        counterpart_handle="+15550001111",
+        counterpart_handle="+15555550100",
         mission="Confirm the delivery address.",
         status=models.STATUS_ACTIVE,
         created_at=0,
