@@ -237,10 +237,14 @@ check("vault/knowledge/captures/ exists",
 
 section("PART 3: Reconcile Checks")
 
-# Run reconcile check
+# Run reconcile check against the RUNTIME tree — it's what's actually
+# deployed and exists on every machine. AOS_DEV exists only on dev machines;
+# pointing here at the dev workspace made this check fail on every operator
+# install ("can't open file") — the one real failure left after the v0.7.3
+# verification fixes.
 result = subprocess.run(
-    [sys.executable, str(AOS_DEV / "core" / "infra" / "reconcile" / "runner.py"), "check"],
-    capture_output=True, text=True, cwd=str(AOS_DEV)
+    [sys.executable, str(AOS_RUNTIME / "core" / "infra" / "reconcile" / "runner.py"), "check"],
+    capture_output=True, text=True, cwd=str(AOS_RUNTIME)
 )
 check("Reconcile runner executes (check mode)", result.returncode == 0,
       (result.stdout + result.stderr).strip()[:200] if result.returncode != 0 else "")

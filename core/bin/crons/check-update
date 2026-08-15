@@ -524,8 +524,14 @@ apply_git() {
 # Pick the newest available Python (3.11+) for venv creation — mirrors the
 # `aos deploy` _find_python logic so rebuilds match a fresh deploy.
 _find_venv_python() {
-    local p minor
-    for p in /opt/homebrew/bin/python3.13 /opt/homebrew/bin/python3 "$HOME/.local/bin/python3"; do
+    local p minor candidates=()
+    # The machine's sanctioned interpreter first (uv-managed, migration 096) —
+    # hardcoded homebrew paths don't exist on every machine (the Fix-#1 class).
+    if [[ -f "$HOME/.aos/config/python" ]]; then
+        candidates+=("$(cat "$HOME/.aos/config/python")")
+    fi
+    candidates+=(/opt/homebrew/bin/python3.13 /opt/homebrew/bin/python3 "$HOME/.local/bin/python3")
+    for p in "${candidates[@]}"; do
         if [[ -f "$p" ]]; then
             minor=$("$p" --version 2>&1 | awk '{print $2}' | cut -d. -f2)
             if [[ "$minor" =~ ^[0-9]+$ && "$minor" -ge 11 ]]; then
@@ -535,6 +541,19 @@ _find_venv_python() {
         fi
     done
     echo "python3"
+}
+
+# uv is installed at different places per machine, and the update runs under
+# launchd with a minimal PATH — bare `uv` failed on every update on machines
+# where /opt/homebrew/bin wasn't in the cron PATH ("bridge venv creation
+# failed — keeping existing venv", every single update, silently).
+_find_uv() {
+    local p
+    p=$(command -v uv 2>/dev/null) && { echo "$p"; return; }
+    for p in /opt/homebrew/bin/uv "$HOME/.local/bin/uv" "$HOME/.cargo/bin/uv"; do
+        [[ -x "$p" ]] && { echo "$p"; return; }
+    done
+    return 1
 }
 
 # Extract the newline-separated dependency list from a pyproject.toml.
@@ -681,14 +700,18 @@ _rebuild_service_venv() {
         return 0
     fi
 
-    local py_bin
+    local py_bin uv_bin
     py_bin=$(_find_venv_python)
+    if ! uv_bin=$(_find_uv); then
+        log "  ERROR: uv not found (checked PATH, /opt/homebrew/bin, ~/.local/bin, ~/.cargo/bin) — cannot rebuild $svc venv"
+        return 1
+    fi
 
     # Clear any leftover staging/backup from a previously interrupted rebuild.
     rm -rf "$staging" "$backup"
 
     log "  Staging new $svc venv ($depmode: $(basename "$depfile"))..."
-    if ! uv venv "$staging" --python "$py_bin" >/dev/null 2>&1 || [[ ! -x "$staging/bin/python" ]]; then
+    if ! "$uv_bin" venv "$staging" --python "$py_bin" >/dev/null 2>&1 || [[ ! -x "$staging/bin/python" ]]; then
         log "  ERROR: $svc venv creation failed — keeping existing venv"
         rm -rf "$staging"
         return 1
@@ -696,13 +719,13 @@ _rebuild_service_venv() {
 
     local install_ok=false
     if [[ "$depmode" == "req" ]]; then
-        if uv pip install -p "$staging/bin/python" -r "$depfile" >/dev/null 2>&1; then
+        if "$uv_bin" pip install -p "$staging/bin/python" -r "$depfile" >/dev/null 2>&1; then
             install_ok=true
         fi
     else
         local deps
         deps=$(_pyproject_deps "$depfile")
-        if [[ -n "$deps" ]] && echo "$deps" | uv pip install -p "$staging/bin/python" -r - >/dev/null 2>&1; then
+        if [[ -n "$deps" ]] && echo "$deps" | "$uv_bin" pip install -p "$staging/bin/python" -r - >/dev/null 2>&1; then
             install_ok=true
         fi
     fi

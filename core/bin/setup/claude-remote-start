@@ -5,7 +5,16 @@
 # Find claude on PATH
 CLAUDE_BIN=$(command -v claude 2>/dev/null || echo "$HOME/.local/bin/claude")
 
+# Worktree spawn mode requires a git repository. Since release-channel
+# deploys, ~/aos is a read-only snapshot with no .git — worktree mode then
+# errors on every session spawn ("Worktree mode requires a git repository")
+# and the service loops exit 1. Use worktree only where a repo backs it.
+SPAWN_MODE="session"
+if [ -d "$HOME/aos/.git" ]; then
+    SPAWN_MODE="worktree"
+fi
+
 exec echo "y" | "$CLAUDE_BIN" remote-control \
     --name "AOS" \
-    --spawn worktree \
+    --spawn "$SPAWN_MODE" \
     --permission-mode default

@@ -10,10 +10,15 @@ from typing import Optional
 
 import chromadb
 
-# Workspace root (two levels up from apps/memory/)
+# Workspace root (two levels up from apps/memory/) — READ side only: what
+# gets indexed. Never write here: since release-channel deploys this resolves
+# into a read-only ~/aos-releases/<ver>/ snapshot (chromadb died with
+# "Permission denied (os error 13)" on every start, and any index written
+# into a release dir would be lost at the next release swap anyway).
 WORKSPACE = Path(__file__).resolve().parent.parent.parent
 
-CHROMA_PATH = WORKSPACE / "data" / "memory" / "chromadb"
+# WRITE side lives in the instance layer, which survives release swaps.
+CHROMA_PATH = Path.home() / ".aos" / "data" / "memory" / "chromadb"
 
 WATCH_GLOBS = [
     "config/*.yaml",
@@ -132,6 +137,7 @@ def _chunk_file(path: Path) -> list[dict]:
 
 class MemoryIndexer:
     def __init__(self):
+        CHROMA_PATH.mkdir(parents=True, exist_ok=True)
         self._client = chromadb.PersistentClient(path=str(CHROMA_PATH))
         # Clean up stale collections on startup — prevents UUID mismatch errors
         # after crashes or unclean shutdowns
