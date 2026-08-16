@@ -24,6 +24,21 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from base import CheckResult, ReconcileCheck, Status
 
+# The operator's opt-out lives in the service registry, one directory up.
+# Imported defensively: if it cannot load, every service stays enforced rather
+# than the reconciler dying. The fallback is deliberately loud in tests —
+# test_service_optout asserts the REAL registry binds here, because a silently
+# active stub would ignore every opt-out while looking perfectly healthy.
+sys.path.insert(0, str(Path(__file__).parent.parent))
+try:
+    from lib.service_registry import disabled_services, services_config_error
+except Exception:  # noqa: BLE001
+    def disabled_services() -> frozenset[str]:
+        return frozenset()
+
+    def services_config_error() -> Optional[str]:
+        return None
+
 LOG_FILE = Path.home() / ".aos" / "logs" / "reconcile.jsonl"
 STATE_FILE = Path.home() / ".aos" / "data" / "reconcile-state.json"
 
@@ -167,6 +182,9 @@ def _write_state(results: list[CheckResult]):
         "fixed": sum(1 for r in results if r.status == Status.FIXED),
         "notify": sum(1 for r in results if r.status == Status.NOTIFY),
         "error": sum(1 for r in results if r.status == Status.ERROR),
+        # Counted separately so a deliberately-off service never inflates
+        # the failure count Qareen reads.
+        "disabled": sum(1 for r in results if r.status == Status.DISABLED),
         "checks": {
             r.name: {"status": r.status.value, "message": r.message}
             for r in results
@@ -195,9 +213,35 @@ def run_all(dry_run: bool = False, periodic: bool = False) -> list[CheckResult]:
     results = list(load_failures)
     needs_notify = [r for r in load_failures if r.notify]
 
+    # Read the operator's opt-out once per run, not per check.
+    off = disabled_services()
+    config_error = services_config_error()
+    if config_error:
+        # Fail-open is only defensible if it is loud. A malformed opt-out means
+        # services the operator switched off are running again — they must hear
+        # about it rather than discover it from a restarted service.
+        broken = CheckResult(
+            "services_config", Status.NOTIFY,
+            f"Service opt-out config unreadable — all services enforced: {config_error}",
+            notify=True,
+        )
+        results.append(broken)
+        needs_notify.append(broken)
+
     for cls in check_classes:
         c = cls()
         try:
+            # The operator's decision outranks every other answer, so it is
+            # tested before precondition(): whether this check's inputs exist
+            # is irrelevant for a service that was deliberately switched off.
+            owned = getattr(c, "service", None)
+            if owned and owned in off:
+                results.append(CheckResult(
+                    c.name, Status.DISABLED,
+                    f"{owned} is disabled by the operator — not enforced",
+                ))
+                continue
+
             # "I could not evaluate this" must never render as "this is fine".
             # See ReconcileCheck.precondition — on an empty machine most checks
             # used to report OK, which is what let several real regressions run
@@ -305,6 +349,7 @@ def cmd_run():
             Status.OK: "✓",
             Status.FIXED: "⚡",
             Status.SKIP: "~",
+            Status.DISABLED: "○",
             Status.NOTIFY: "⚠",
             Status.ERROR: "✗",
         }.get(r.status, "?")
@@ -362,6 +407,7 @@ def cmd_periodic():
     for r in results:
         icon = {
             Status.OK: "✓", Status.FIXED: "⚡", Status.SKIP: "~",
+            Status.DISABLED: "○",
             Status.NOTIFY: "⚠", Status.ERROR: "✗",
         }.get(r.status, "?")
         print(f"  {icon} {r.name}: {r.message}")
