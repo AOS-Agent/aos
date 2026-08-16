@@ -125,6 +125,31 @@ def last_restart_age(label: str) -> float | None:
         return None
 
 
+def _operator_disabled(label: str) -> bool:
+    """True when the operator has switched off the service owning ``label``.
+
+    Callers work in launchd labels (``com.aos.transcriber``); the operator
+    config works in service names (``transcriber``). The registry owns that
+    mapping — deriving it here rather than string-stripping the ``com.aos.``
+    prefix keeps a service whose label doesn't match its name working.
+
+    Total by construction: any failure to resolve means "not disabled", so a
+    registry problem can never wedge every restart in the system.
+    """
+    try:
+        from lib.service_registry import is_disabled, load_registry
+    except Exception:  # noqa: BLE001
+        try:
+            from service_registry import is_disabled, load_registry  # type: ignore
+        except Exception:  # noqa: BLE001
+            return False
+    try:
+        m = load_registry().by_label(label)
+        return bool(m) and is_disabled(m.name)
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def restart_launchagent(label: str, plist_path=None, actor: str = "unknown") -> bool:
     """Guarded restart of LaunchAgent ``label``. Returns True iff the job is
     verified loaded afterwards.
@@ -137,6 +162,17 @@ def restart_launchagent(label: str, plist_path=None, actor: str = "unknown") -> 
     domain = f"gui/{uid}"
     service = f"gui/{uid}/{label}"
     plist = Path(plist_path) if plist_path else (LA_DIR / f"{label}.plist")
+
+    # Operator opt-out wins over every caller. This is the choke-point EVERY
+    # restart routes through, so refusing here means no check, migration,
+    # watchdog, or `aos repair` can switch a disabled service back on — they
+    # would each otherwise need to remember to ask, and one that forgot would
+    # silently override the operator. Returning True (not False) is deliberate:
+    # the job is in the state the operator asked for, so this is a success, and
+    # callers must not escalate it as a failed restart.
+    if _operator_disabled(label):
+        _audit(label, "restart", actor, "skipped", "disabled by operator")
+        return True
 
     if not plist.exists():
         _audit(label, "restart", actor, "error", f"plist missing: {plist}")
