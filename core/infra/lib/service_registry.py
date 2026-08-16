@@ -359,6 +359,87 @@ def health_url(name: str) -> str | None:
     return m.health_url if m else None
 
 
+# ── Operator opt-out ─────────────────────────────────────────────────────────
+#
+# The manifests above are the FRAMEWORK's declaration: what a service is and
+# whether every node should run it. This is the OPERATOR's declaration: what
+# this particular machine has chosen to switch off.
+#
+# They are different axes and both are needed. Without this file, "off" is not
+# a state the system can represent — a service the operator deliberately
+# disabled looks identical to one that crashed, so reconcile reads it as drift
+# and restarts it. That is the bug this exists to close.
+#
+#   ~/.aos/config/services.yaml
+#   disabled:
+#     - transcriber
+#
+# Instance data, never in git — one machine's choice must not become everyone's.
+
+OPERATOR_CONFIG = Path.home() / ".aos" / "config" / "services.yaml"
+
+
+def disabled_services() -> frozenset[str]:
+    """Service names the operator has switched off on THIS machine.
+
+    Deliberately total: a missing file, unreadable file, malformed YAML, or a
+    `disabled:` key that isn't a list all return the empty set rather than
+    raising. This is read on the reconcile hot path, and a typo in a config
+    file must never be able to take the reconciler down.
+
+    The trade-off is chosen, not accidental: a malformed file fails OPEN
+    (services run) rather than closed (nothing starts). A syntax error should
+    not silently shut down the operator's bridge. `services_config_error()`
+    reports the parse failure so a caller can surface it.
+    """
+    raw = _read_operator_config()
+    if not isinstance(raw, dict):
+        return frozenset()
+    names = raw.get("disabled")
+    if not isinstance(names, list):
+        return frozenset()
+    return frozenset(str(n).strip() for n in names if str(n).strip())
+
+
+def services_config_error() -> str | None:
+    """The parse error from the operator config, or None if it read cleanly.
+
+    Lets a caller distinguish "nothing disabled" from "the file is broken and
+    the operator's opt-out is being silently ignored" — the failure mode that
+    fail-open otherwise hides.
+    """
+    if not OPERATOR_CONFIG.exists():
+        return None
+    try:
+        raw = yaml.safe_load(OPERATOR_CONFIG.read_text())
+    except Exception as e:  # noqa: BLE001 — surfacing the parse failure IS the job
+        return f"{OPERATOR_CONFIG}: could not parse YAML: {e}"
+    if raw is None or raw == {}:
+        return None
+    if not isinstance(raw, dict):
+        return f"{OPERATOR_CONFIG}: expected a mapping, got {type(raw).__name__}"
+    if "disabled" in raw and not isinstance(raw["disabled"], list):
+        return (
+            f"{OPERATOR_CONFIG}: `disabled:` must be a list of service names, "
+            f"got {type(raw['disabled']).__name__}"
+        )
+    return None
+
+
+def _read_operator_config():
+    if not OPERATOR_CONFIG.exists():
+        return None
+    try:
+        return yaml.safe_load(OPERATOR_CONFIG.read_text())
+    except Exception:  # noqa: BLE001 — see disabled_services() docstring
+        return None
+
+
+def is_disabled(name: str) -> bool:
+    """True when the operator has switched ``name`` off on this machine."""
+    return name in disabled_services()
+
+
 def _main(argv: list[str]) -> int:
     """`service_registry.py [list|validate|health]` — inspect the registry."""
     cmd = argv[0] if argv else "list"

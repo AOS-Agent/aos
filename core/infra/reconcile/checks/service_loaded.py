@@ -44,7 +44,7 @@ from lib.service_ctl import (
     last_restart_age,
     restart_launchagent,
 )
-from lib.service_registry import ManifestError, load_registry
+from lib.service_registry import ManifestError, is_disabled, load_registry
 
 # Liveness strategies for which "the job is loaded" is the whole signal — the
 # service's own dedicated check (or launchd KeepAlive) owns anything finer.
@@ -120,7 +120,16 @@ class ServiceLoadedCheck(ReconcileCheck):
             retired_loaded = False
             health_url = None
 
-            if manifest is not None and manifest.status == "retired":
+            disabled = is_disabled(svc)
+
+            if disabled:
+                # The operator switched this off. Not loaded is the POINT, and
+                # still-loaded is not an error either (they may have disabled it
+                # without stopping it yet). Either way this check has nothing to
+                # enforce — reporting it broken would restart it on the next
+                # pass and quietly override the decision.
+                pass
+            elif manifest is not None and manifest.status == "retired":
                 # Must NOT be loaded. If it is, flag for the operator — but never
                 # auto-bootout (removing a service is an operator decision).
                 if loaded:
@@ -150,7 +159,7 @@ class ServiceLoadedCheck(ReconcileCheck):
             records.append({
                 "label": label, "plist": plist, "svc": svc, "loaded": loaded,
                 "health_url": health_url, "broken": broken, "reason": reason,
-                "retired_loaded": retired_loaded,
+                "retired_loaded": retired_loaded, "disabled": disabled,
             })
         return records
 
