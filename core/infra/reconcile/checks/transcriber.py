@@ -40,6 +40,11 @@ def _registry_health_url(name: str) -> str | None:
 class TranscriberServiceCheck(ReconcileCheck):
     name = "transcriber_service"
     description = "Transcriber service is running and healthy on its declared port"
+    # Names the service this check enforces, so the runner can skip it entirely
+    # when the operator has disabled the transcriber. Without this the check
+    # reports the service down (correct, and intended) and fix() starts it
+    # again on the next pass.
+    service = "transcriber"
 
     HOME = Path.home()
     VENV_PYTHON = HOME / ".aos" / "services" / "transcriber" / ".venv" / "bin" / "python"

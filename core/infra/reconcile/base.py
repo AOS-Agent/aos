@@ -30,6 +30,12 @@ class Status(Enum):
     SKIP = "skip"      # Cannot verify (missing prereq), logged and moved on
     NOTIFY = "notify"  # Broken but cannot safely auto-fix — operator notified
     ERROR = "error"    # Check itself crashed
+    # Operator switched this service off. NOT a failure: the invariant is
+    # deliberately not being enforced. Distinct from SKIP, which means "could
+    # not verify" — this means "was told not to". Without it, a service the
+    # operator disabled is indistinguishable from one that died, so reconcile
+    # reads intent as drift and restarts it.
+    DISABLED = "disabled"
 
 
 @dataclass
@@ -84,6 +90,16 @@ class ReconcileCheck:
     name: str = "unnamed"
     description: str = ""
     periodic_fix: bool = False
+
+    # The service this check enforces, when it enforces one. Set it and the
+    # runner skips this check entirely while the operator has that service
+    # disabled — check() and fix() are never called.
+    #
+    # Deliberately NOT expressed as a precondition() override. precondition is
+    # for inputs the check READS; a disabled service is the condition it TESTS,
+    # and it would report SKIP ("could not verify") for something that was in
+    # fact verified and then deliberately ignored.
+    service: Optional[str] = None
 
     def precondition(self) -> bool:
         """
