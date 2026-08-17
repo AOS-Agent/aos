@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { ConnectorLogo } from "./logos";
+import { ConnectorLogo, domainFor } from "./logos";
 
 /* ────────────────────────────────────────────────────────────────
    Screens: welcome → configure → install → done
@@ -1033,12 +1033,75 @@ interface Connector {
   connect_hint: string;
   key_fields?: KeyField[];
   composio_slug?: string | null;
+  /** Optional: false when nothing in the runtime tree consumes this connection. */
+  in_use?: boolean | null;
+}
+/** Who actually consumes this connection — `connector_usage`. */
+interface ConnectorUsage {
+  in_use: boolean;
+  used_by: string[];
 }
 interface ToolkitCard {
   slug: string;
   label: string;
   blurb: string;
   logo?: string | null;
+}
+/** Result of a live end-to-end probe — `test_connector`. */
+interface TestResult {
+  ok: boolean;
+  message: string;
+  ms?: number;
+  identity?: string;
+}
+/**
+ * One live bot from `telegram_bot_info` (getMe per configured slot).
+ * A slot whose probe failed returns only `slot`, `ok: false` and `error` —
+ * name and username are absent, so they are optional here.
+ */
+interface TelegramBot {
+  slot: string;
+  name?: string;
+  username?: string;
+  ok?: boolean;
+  error?: string;
+  detail?: string;
+}
+
+/** Where the operator manages this connection at the provider. */
+const MANAGE_URLS: Record<string, { label: string; url: string }> = {
+  google: { label: "myaccount.google.com", url: "https://myaccount.google.com/connections" },
+  github: { label: "github.com/settings", url: "https://github.com/settings/apps" },
+  telegram: { label: "@BotFather", url: "https://t.me/BotFather" },
+  composio: { label: "app.composio.dev", url: "https://app.composio.dev" },
+  notion: { label: "notion.so/my-integrations", url: "https://www.notion.so/my-integrations" },
+  slack: { label: "api.slack.com/apps", url: "https://api.slack.com/apps" },
+  cloudflare: { label: "dash.cloudflare.com", url: "https://dash.cloudflare.com/profile/api-tokens" },
+  clickup: { label: "app.clickup.com", url: "https://app.clickup.com/settings/apps" },
+  linear: { label: "linear.app/settings/api", url: "https://linear.app/settings/api" },
+  discord: { label: "discord.com/developers", url: "https://discord.com/developers/applications" },
+  todoist: { label: "todoist.com/integrations", url: "https://app.todoist.com/app/settings/integrations" },
+  openrouter: { label: "openrouter.ai/keys", url: "https://openrouter.ai/keys" },
+  elevenlabs: { label: "elevenlabs.io", url: "https://elevenlabs.io/app/settings/api-keys" },
+  whatsapp: { label: "your phone", url: "https://faq.whatsapp.com/378279804439436" },
+  obsidian: { label: "obsidian.md", url: "https://obsidian.md" },
+  airtable: { label: "airtable.com/create/tokens", url: "https://airtable.com/create/tokens" },
+};
+
+function manageTarget(id: string): { label: string; url: string } | null {
+  const known = MANAGE_URLS[id];
+  if (known) return known;
+  const d = domainFor(id);
+  return d ? { label: d, url: `https://${d}` } : null;
+}
+
+/** Opens in the operator's real browser when packaged, a tab in demo mode. */
+function openExternal(url: string) {
+  if (IN_TAURI) {
+    invoke("open_url", { url }).catch(() => window.open(url, "_blank"));
+  } else {
+    window.open(url, "_blank");
+  }
 }
 
 const DEMO_CONNECTORS: Connector[] = [
@@ -1053,14 +1116,48 @@ const DEMO_CONNECTORS: Connector[] = [
   { id: "whatsapp", name: "WhatsApp", category: "communication", auth_kind: "session", status: "connected", detail: "phone-paired session", connect_hint: "", accounts: [{ identity: "paired device", detail: "QR session · re-pair if your phone unlinks it" }] },
   { id: "slack", name: "Slack", category: "communication", auth_kind: "token", status: "connected", detail: "bot + app tokens in Keychain", connect_hint: "", accounts: [], key_fields: [], composio_slug: null },
   { id: "cloudflare", name: "Cloudflare", category: "infrastructure", auth_kind: "token", status: "connected", detail: "2 accounts", connect_hint: "", accounts: [{ identity: "personal (hish.am)", detail: "API token" }, { identity: "Elora Greens", detail: "API token" }] },
-  { id: "clickup", name: "ClickUp", category: "productivity", auth_kind: "token", status: "connected", detail: "API token in Keychain", connect_hint: "", accounts: [], key_fields: [], composio_slug: null },
+  { id: "clickup", name: "ClickUp", category: "productivity", auth_kind: "token", status: "connected", detail: "API token in Keychain", connect_hint: "", accounts: [], key_fields: [{ secret: "CLICKUP_API_KEY", label: "API token (pk_…)", get_url: "https://app.clickup.com/settings/apps" }], composio_slug: null, in_use: false },
   { id: "obsidian", name: "Obsidian", category: "knowledge", auth_kind: "token", status: "connected", detail: "local REST API", connect_hint: "", accounts: [], key_fields: [], composio_slug: null },
-  { id: "composio", name: "Composio", category: "infrastructure", auth_kind: "token", status: "available", detail: "Enable one-click sign-in for 500+ apps", connect_hint: "", accounts: [], key_fields: [{ secret: "COMPOSIO_API_KEY", label: "Project API key (ak_…)", get_url: "https://app.composio.dev/developers" }], composio_slug: null },
+  { id: "composio", name: "Composio", category: "infrastructure", auth_kind: "token", status: "connected", detail: "Hosted sign-in enabled — 500+ apps one-click", connect_hint: "", accounts: [{ identity: "aos_9f2c4e1b (this Mac)", detail: "hosted sign-ins · 3 apps linked" }], key_fields: [{ secret: "COMPOSIO_API_KEY", label: "Project API key (ak_…)", get_url: "https://app.composio.dev/developers" }], composio_slug: null },
   { id: "notion", name: "Notion", category: "knowledge", auth_kind: "oauth", status: "available", detail: "Pages and databases as agent workspace.", connect_hint: "", accounts: [], key_fields: [{ secret: "NOTION_API_KEY", label: "Internal integration secret", get_url: "https://www.notion.so/my-integrations" }], composio_slug: "notion" },
   { id: "linear", name: "Linear", category: "development", auth_kind: "token", status: "available", detail: "Issues and cycles.", connect_hint: "Ask your agent to connect it — setup is guided.", accounts: [], key_fields: [], composio_slug: null },
   { id: "discord", name: "Discord", category: "communication", auth_kind: "token", status: "available", detail: "Bot presence in your servers.", connect_hint: "Ask your agent to connect it — setup is guided.", accounts: [], key_fields: [], composio_slug: null },
   { id: "todoist", name: "Todoist", category: "productivity", auth_kind: "token", status: "available", detail: "Tasks and projects.", connect_hint: "Ask your agent to connect it — setup is guided.", accounts: [], key_fields: [], composio_slug: null },
+  { id: "plane", name: "Plane", category: "productivity", auth_kind: "token", status: "connected", detail: "API token in Keychain", connect_hint: "", accounts: [], key_fields: [{ secret: "PLANE_API_KEY", label: "API token", get_url: "https://app.plane.so/profile/api-tokens" }], composio_slug: null, in_use: false },
+  { id: "openrouter", name: "OpenRouter", category: "ai", auth_kind: "token", status: "available", detail: "One key, every model.", connect_hint: "", accounts: [], key_fields: [{ secret: "OPENROUTER_API_KEY", label: "API key (sk-or-…)", get_url: "https://openrouter.ai/keys" }], composio_slug: null },
+  { id: "airtable", name: "Airtable", category: "productivity", auth_kind: "oauth", status: "available", detail: "Bases and records.", connect_hint: "", accounts: [], key_fields: [], composio_slug: "airtable" },
 ];
+
+// Shaped exactly like the real telegram_bot_info payload, failed slot included.
+const DEMO_TELEGRAM_BOTS: TelegramBot[] = [
+  { slot: "primary", name: "AOS Bridge", username: "hish_aos_bot", ok: true },
+  { slot: "tabib", name: "Tabib", username: "tabib_care_bot", ok: true },
+  { slot: "archive", ok: false, error: "Telegram rejected the token (401) — re-issue it in @BotFather." },
+];
+
+const DEMO_USAGE: Record<string, ConnectorUsage> = {
+  google: { in_use: true, used_by: ["dashboard", "automations", "core system"] },
+  telegram: { in_use: true, used_by: ["bridge service", "tracking alerts", "core system"] },
+  github: { in_use: true, used_by: ["ship skill", "work-runner"] },
+  whatsapp: { in_use: true, used_by: ["whatsmeow service"] },
+  composio: { in_use: true, used_by: ["connectors pane"] },
+  cloudflare: { in_use: true, used_by: ["publishing platform", "core system"] },
+  slack: { in_use: true, used_by: ["slack-watch service"] },
+  // Matches the real machine: the Obsidian key appears only in declaration
+  // files (accounts.yaml / capabilities.yaml), which aren't consumers.
+  obsidian: { in_use: false, used_by: [] },
+  clickup: { in_use: false, used_by: [] },
+  plane: { in_use: false, used_by: [] },
+};
+
+const DEMO_TESTS: Record<string, TestResult> = {
+  google: { ok: true, message: "Reached Gmail as hishamalhadi@gmail.com", ms: 412 },
+  telegram: { ok: true, message: "Bot @hish_aos_bot is alive", ms: 320 },
+  github: { ok: true, message: "Authenticated as @hishamalhadi", ms: 188 },
+  whatsapp: { ok: true, message: "Paired device is online", ms: 96 },
+  composio: { ok: true, message: "Session aos_9f2c4e1b is active", ms: 240 },
+  cloudflare: { ok: true, message: "Token valid for 2 accounts", ms: 175 },
+};
 
 const CATEGORY_LABELS: Record<string, string> = {
   communication: "Communication",
@@ -1082,15 +1179,37 @@ const AUTH_LABELS: Record<string, string> = {
   apple: "Built into macOS — just needs permission",
 };
 
-function ConnectorCard({ c, onOpen }: { c: Connector; onOpen: (c: Connector) => void }) {
+/** Short form of the same thing, for the metadata footer. */
+const AUTH_SHORT: Record<string, string> = {
+  oauth: "Provider sign-in (OAuth)",
+  token: "API key — Keychain",
+  session: "QR-paired device",
+  cli: "Official command-line tool",
+  apple: "macOS permission",
+};
+
+function ConnectorCard({
+  c,
+  usage,
+  onOpen,
+}: {
+  c: Connector;
+  usage?: ConnectorUsage;
+  onOpen: (c: Connector) => void;
+}) {
   const connected = c.status === "connected";
   const attention = c.status === "attention";
+  // Connected is not the same as in use. Usage arrives after first paint.
+  const dormant = connected && (usage ? !usage.in_use : c.in_use === false);
   return (
     <button
       onClick={() => onOpen(c)}
-      className="text-left rounded-2xl border border-zinc-800 bg-zinc-950/60 px-4 py-3.5 hover:border-zinc-600 transition flex items-center gap-3.5"
+      className={
+        "text-left rounded-2xl border border-zinc-800 bg-zinc-950/60 px-4 py-3.5 hover:border-zinc-600 transition flex items-center gap-3.5 " +
+        (dormant ? "opacity-65 hover:opacity-100" : "")
+      }
     >
-      <ConnectorLogo id={c.id} name={c.name} />
+      <ConnectorLogo id={c.id} name={c.name} domain={domainFor(c.id)} />
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
           <span className="text-[13.5px] font-medium text-zinc-100 truncate">{c.name}</span>
@@ -1098,12 +1217,20 @@ function ConnectorCard({ c, onOpen }: { c: Connector; onOpen: (c: Connector) => 
             <span className="text-[10.5px] text-zinc-500 font-mono">×{c.accounts.length}</span>
           )}
         </div>
-        <div className="text-[11.5px] text-zinc-500 truncate mt-0.5">{c.detail}</div>
+        <div className="text-[11.5px] text-zinc-500 truncate mt-0.5">
+          {dormant ? "Connected · not in use" : c.detail}
+        </div>
       </div>
       {connected ? (
-        <span className="inline-flex items-center gap-1.5 text-[11px] text-zinc-200 shrink-0">
-          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400/90" /> Connected
-        </span>
+        dormant ? (
+          <span className="inline-flex items-center gap-1.5 text-[11px] text-zinc-500 shrink-0">
+            <span className="w-1.5 h-1.5 rounded-full bg-zinc-600" /> Idle
+          </span>
+        ) : (
+          <span className="inline-flex items-center gap-1.5 text-[11px] text-zinc-200 shrink-0">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400/90" /> Connected
+          </span>
+        )
       ) : attention ? (
         <span className="inline-flex items-center gap-1.5 text-[11px] text-amber-300 shrink-0">
           <span className="w-1.5 h-1.5 rounded-full bg-amber-400/90" /> Attention
@@ -1136,44 +1263,284 @@ const DEMO_TOOLKITS: ToolkitCard[] = [
   { slug: "todoist", label: "Todoist", blurb: "Tasks and projects" },
 ];
 
-type ModalPhase = "view" | "keys" | "browser-wait" | "confirm-remove" | "done";
+type ConnectPhase = "view" | "keys" | "browser-wait" | "done";
 
-function ConnectorModal({
+/** The only modal left in the connectors flow — destructive confirmations. */
+function ConfirmDialog({
+  title,
+  body,
+  confirmLabel,
+  busy,
+  onCancel,
+  onConfirm,
+}: {
+  title: string;
+  body: string;
+  confirmLabel: string;
+  busy: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={onCancel}>
+      <div
+        className="console w-[400px] max-w-[88vw] rounded-2xl border border-zinc-700 bg-zinc-900 p-6"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="text-[15px] font-semibold text-zinc-100 mb-1.5">{title}</div>
+        <div className="text-[12.5px] text-zinc-400 leading-relaxed">{body}</div>
+        <div className="flex justify-end gap-3 mt-6">
+          <button
+            onClick={onCancel}
+            className="px-4 h-10 rounded-xl text-[13.5px] text-zinc-300 hover:text-zinc-100 transition"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={busy}
+            className="px-5 h-10 rounded-xl bg-red-400/90 text-zinc-950 text-[13.5px] font-medium hover:bg-red-300 transition disabled:opacity-40"
+          >
+            {busy ? "Working…" : confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Small outlined button used for per-account actions. */
+function RowAction({
+  children,
+  onClick,
+  danger,
+  disabled,
+}: {
+  children: React.ReactNode;
+  onClick: () => void;
+  danger?: boolean;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className={
+        "px-2.5 h-7 rounded-lg border text-[11.5px] whitespace-nowrap transition disabled:opacity-40 " +
+        (danger
+          ? "border-zinc-800 text-zinc-500 hover:text-red-300 hover:border-red-900/70"
+          : "border-zinc-800 text-zinc-400 hover:text-zinc-100 hover:border-zinc-600")
+      }
+    >
+      {children}
+    </button>
+  );
+}
+
+function MetaBlock({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <div className="text-[10.5px] uppercase tracking-[0.14em] text-zinc-600 mb-1.5">{label}</div>
+      <div className="text-[12.5px] text-zinc-300">{children}</div>
+    </div>
+  );
+}
+
+function StatusPill({ status, dormant }: { status: string; dormant?: boolean }) {
+  if (status === "connected")
+    return dormant ? (
+      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-zinc-800 bg-zinc-950/70 text-[11px] text-zinc-400">
+        <span className="w-1.5 h-1.5 rounded-full bg-zinc-600" /> Connected · not in use
+      </span>
+    ) : (
+      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-zinc-800 bg-zinc-950/70 text-[11px] text-zinc-200">
+        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400/90" /> Connected
+      </span>
+    );
+  if (status === "attention")
+    return (
+      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-amber-900/60 bg-amber-950/20 text-[11px] text-amber-300">
+        <span className="w-1.5 h-1.5 rounded-full bg-amber-400/90" /> Needs attention
+      </span>
+    );
+  return (
+    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-zinc-800 bg-zinc-950/70 text-[11px] text-zinc-400">
+      Not connected
+    </span>
+  );
+}
+
+type Probe = TestResult | "running";
+
+interface AccountRow {
+  identity: string;
+  detail: string;
+  badge?: string;
+  failed?: boolean;
+}
+
+/**
+ * A connector is a page, not a modal: breadcrumb, hero with live actions,
+ * description, per-account actions, provider metadata.
+ */
+function ConnectorDetail({
   c,
   composioReady,
-  onClose,
+  initialUsage,
+  onBack,
   onChanged,
 }: {
   c: Connector;
   composioReady: boolean;
-  onClose: () => void;
+  /** Already read for the list card — seeds the page so it paints complete. */
+  initialUsage?: ConnectorUsage;
+  onBack: () => void;
   onChanged: () => void;
 }) {
-  const [phase, setPhase] = useState<ModalPhase>("view");
+  const [phase, setPhase] = useState<ConnectPhase>("view");
   const [about, setAbout] = useState<{ about: string; provides: string[] } | null>(null);
+  const [bots, setBots] = useState<TelegramBot[] | null>(null);
   const [keyValues, setKeyValues] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [menu, setMenu] = useState(false);
+  const [confirm, setConfirm] = useState<null | { kind: "disconnect" } | { kind: "account"; identity: string }>(null);
+  const [usage, setUsage] = useState<ConnectorUsage | null>(initialUsage ?? null);
+  const [test, setTest] = useState<Probe | null>(null);
+  const [rowTest, setRowTest] = useState<Record<string, Probe>>({});
+  const [reloadKey, setReloadKey] = useState(0);
+
   const connected = c.status === "connected";
   const keyFields = c.key_fields ?? [];
   const isComposioCard = c.id === "composio";
+  // Google has no key in the Keychain — disconnecting it means dropping every
+  // stored credential file, one per account.
+  const perAccountRemoval = c.id === "google" ? c.accounts.map((a) => a.identity) : [];
+  const canRemove =
+    connected &&
+    (keyFields.length > 0 || !!(c.composio_slug && composioReady) || perAccountRemoval.length > 0);
+  const canBrowserConnect = !connected && !!c.composio_slug && composioReady;
+  const canPasteKey = !connected && (isComposioCard || keyFields.length > 0);
 
   useEffect(() => {
+    let cancelled = false;
     (async () => {
       if (IN_TAURI) {
         try {
-          setAbout(await invoke<{ about: string; provides: string[] }>("connector_about", { id: c.id }));
+          const r = await invoke<{ about: string; provides: string[] }>("connector_about", { id: c.id });
+          if (!cancelled) setAbout(r);
         } catch {
-          setAbout({ about: c.detail, provides: [] });
+          if (!cancelled) setAbout({ about: c.detail, provides: [] });
         }
       } else {
         setAbout({
-          about: c.detail || `${c.name} connected to your system.`,
-          provides: c.id === "google" ? ["Gmail read & send", "Drive files", "Calendar events", "Docs & Sheets"] : ["actions inside " + c.name],
+          about:
+            c.id === "google"
+              ? "Your Google accounts, wired in end to end: mail is read and sent, Drive files are opened and written, calendar events are created and moved, and Docs and Sheets are edited in place. Each account is authorised separately and each token refreshes on its own — removing one leaves the others untouched."
+              : c.id === "telegram"
+                ? "The bridge your system talks through. Messages and voice notes you send arrive as work; briefings and answers come back to the same chat. Each bot is a separate identity with its own token, and forum topics route to different parts of the system."
+                : c.detail ||
+                  (c.status === "connected"
+                    ? `${c.name} is connected to your system.`
+                    : `Connect ${c.name} to let your system read and act inside it.`),
+          provides:
+            c.id === "google"
+              ? ["Gmail read & send", "Drive files", "Calendar events", "Docs & Sheets"]
+              : c.id === "telegram"
+                ? ["Chat messages", "Voice notes", "Briefings", "Forum topic routing"]
+                : c.id === "notion"
+                  ? ["Pages", "Databases", "Blocks & comments"]
+                  : ["actions inside " + c.name],
         });
       }
     })();
-  }, [c]);
+    return () => {
+      cancelled = true;
+    };
+  }, [c, reloadKey]);
+
+  // Connected is not the same as in use — a key nothing consumes is dormant.
+  useEffect(() => {
+    if (c.status !== "connected") {
+      setUsage(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      if (IN_TAURI) {
+        try {
+          const r = await invoke<ConnectorUsage>("connector_usage", { id: c.id });
+          if (!cancelled) setUsage(r);
+        } catch {
+          if (!cancelled) setUsage(null);
+        }
+      } else {
+        await new Promise((res) => setTimeout(res, 300));
+        if (!cancelled) setUsage(DEMO_USAGE[c.id] ?? null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [c.id, c.status, reloadKey]);
+
+  useEffect(() => {
+    if (c.id !== "telegram") return;
+    let cancelled = false;
+    (async () => {
+      if (IN_TAURI) {
+        try {
+          const r = await invoke<{ bots?: TelegramBot[] } | TelegramBot[]>("telegram_bot_info");
+          const list = Array.isArray(r) ? r : (r.bots ?? []);
+          if (!cancelled) setBots(list);
+        } catch {
+          if (!cancelled) setBots([]);
+        }
+      } else {
+        await new Promise((res) => setTimeout(res, 500));
+        if (!cancelled) setBots(DEMO_TELEGRAM_BOTS);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [c.id, reloadKey]);
+
+  /** Live end-to-end probe. With an identity, probes that one account. */
+  const probe = useCallback(
+    async (identity?: string) => {
+      const put = (v: Probe) =>
+        identity ? setRowTest((s) => ({ ...s, [identity]: v })) : setTest(v);
+      put("running");
+      const t0 = Date.now();
+      try {
+        if (IN_TAURI) {
+          const r = await invoke<TestResult>(
+            "test_connector",
+            identity ? { id: c.id, identity } : { id: c.id },
+          );
+          put({ ...r, ms: r.ms ?? Date.now() - t0 });
+        } else {
+          await new Promise((res) => setTimeout(res, 800));
+          put(
+            identity
+              ? { ok: true, message: `Reached Gmail as ${identity}`, ms: 318 }
+              : (DEMO_TESTS[c.id] ?? { ok: true, message: `${c.name} responded`, ms: 214 }),
+          );
+        }
+      } catch (e) {
+        put({ ok: false, message: String(e) });
+      }
+    },
+    [c.id, c.name],
+  );
+
+  const refresh = useCallback(() => {
+    setTest(null);
+    setRowTest({});
+    setReloadKey((k) => k + 1);
+    onChanged();
+  }, [onChanged]);
 
   const saveKeys = useCallback(async () => {
     setBusy(true);
@@ -1189,7 +1556,7 @@ function ConnectorModal({
           }
         }
       } else {
-        await new Promise((r) => setTimeout(r, 700));
+        await new Promise((res) => setTimeout(res, 700));
       }
       setPhase("done");
       onChanged();
@@ -1208,7 +1575,7 @@ function ConnectorModal({
         await invoke("composio_link", { slug: c.composio_slug });
         // Poll until the hosted flow completes (up to ~2 min).
         for (let i = 0; i < 40; i++) {
-          await new Promise((r) => setTimeout(r, 3000));
+          await new Promise((res) => setTimeout(res, 3000));
           const st = await invoke<Record<string, { connected: boolean; pending: boolean }>>(
             "composio_status",
             { slugs: [c.composio_slug] },
@@ -1220,10 +1587,10 @@ function ConnectorModal({
             return;
           }
         }
-        setError("Still waiting on the sign-in — finish it in the browser, then reopen this card.");
+        setError("Still waiting on the sign-in — finish it in the browser, then refresh this page.");
         setPhase("view");
       } else {
-        await new Promise((r) => setTimeout(r, 1800));
+        await new Promise((res) => setTimeout(res, 1800));
         setPhase("done");
         onChanged();
       }
@@ -1245,21 +1612,67 @@ function ConnectorModal({
         for (const f of keyFields) {
           await invoke("delete_secret", { name: f.secret }).catch(() => {});
         }
+        for (const identity of perAccountRemoval) {
+          await invoke("remove_google_account", { identity });
+        }
       } else {
-        await new Promise((r) => setTimeout(r, 600));
+        await new Promise((res) => setTimeout(res, 600));
       }
+      setConfirm(null);
+      setTest(null);
+      setPhase("view");
       onChanged();
-      onClose();
     } catch (e) {
       setError(String(e));
+      setConfirm(null);
     }
     setBusy(false);
-  }, [c, keyFields, composioReady, onChanged, onClose]);
+  }, [c, keyFields, perAccountRemoval, composioReady, onChanged]);
 
-  const canRemove = connected && (keyFields.length > 0 || (c.composio_slug && composioReady));
+  const removeAccount = useCallback(
+    async (identity: string) => {
+      setBusy(true);
+      setError(null);
+      try {
+        if (IN_TAURI) {
+          await invoke("remove_google_account", { identity });
+        } else {
+          await new Promise((res) => setTimeout(res, 600));
+        }
+        setConfirm(null);
+        onChanged();
+      } catch (e) {
+        setError(String(e));
+        setConfirm(null);
+      }
+      setBusy(false);
+    },
+    [onChanged],
+  );
+
+  const liveBots = c.id === "telegram" && bots && bots.length > 0 ? bots : null;
+  const accountRows: AccountRow[] = liveBots
+    ? liveBots.map((b) =>
+        b.ok === false || !b.username
+          ? {
+              identity: b.name ?? `${b.slot} bot`,
+              detail: b.error ?? "Telegram didn't answer for this bot — its token may have been revoked.",
+              badge: b.slot,
+              failed: true,
+            }
+          : {
+              identity: `${b.name ?? b.username} · @${b.username}`,
+              detail: b.detail ?? "bot token in Keychain · tokens don't expire",
+              badge: b.slot,
+            },
+      )
+    : c.accounts.map((a) => ({ identity: a.identity, detail: a.detail }));
+
+  const accountsLabel = c.id === "telegram" ? "Bots" : c.accounts.length > 1 ? "Accounts" : "Account";
+  const manage = manageTarget(c.id);
   const removalNote: Record<string, string> = {
-    oauth: "Access is revoked from your Google account's security settings (Third-party access).",
-    cli: "Run `gh auth logout` in a terminal to sign out.",
+    oauth: "Access can also be revoked from the provider's own security settings.",
+    cli: "To sign out entirely, run `gh auth logout` in a terminal.",
     session: "Unlink this device from WhatsApp on your phone (Settings → Linked devices).",
   };
 
@@ -1267,81 +1680,245 @@ function ConnectorModal({
     "w-full h-10 px-3 rounded-lg bg-zinc-950 border border-zinc-800 text-[13.5px] text-zinc-100 " +
     "placeholder:text-zinc-600 outline-none focus:border-zinc-600 transition font-mono";
 
+  const renderProbe = (p: Probe) =>
+    p === "running" ? (
+      <span className="inline-flex items-center gap-2 text-[12px] text-zinc-300">
+        <span className="w-1.5 h-1.5 rounded-full bg-zinc-100 pulse-dot" /> Testing…
+      </span>
+    ) : p.ok ? (
+      <span className="text-[12px] text-emerald-300/90 select-text">
+        ✓ {p.message}
+        {p.ms !== undefined && <span className="text-zinc-500"> · {p.ms}ms</span>}
+      </span>
+    ) : (
+      <span className="text-[12px] text-red-300 select-text">{p.message}</span>
+    );
+
   return (
-    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-40" onClick={onClose}>
-      <div
-        className="screen w-[460px] max-w-[88vw] max-h-[84vh] overflow-y-auto console rounded-2xl border border-zinc-700 bg-zinc-900 p-6"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center gap-3.5 mb-4">
-          <ConnectorLogo id={c.id} name={c.name} size={42} />
-          <div className="flex-1">
-            <h2 className="text-[16px] font-semibold">{c.name}</h2>
-            <div className="text-[12px] text-zinc-400">{AUTH_LABELS[c.auth_kind] ?? ""}</div>
+    <div className="screen max-w-[720px] mx-auto px-8 pt-14 pb-16">
+      <div className="flex items-center gap-1.5 text-[12.5px] mb-6">
+        <button onClick={onBack} className="text-zinc-400 hover:text-zinc-100 transition">
+          Connectors
+        </button>
+        <span className="text-zinc-700">/</span>
+        <span className="text-zinc-300">{c.name}</span>
+      </div>
+
+      <div className="flex items-start gap-4 mb-5">
+        <ConnectorLogo id={c.id} name={c.name} size={52} domain={domainFor(c.id)} />
+        <div className="flex-1 min-w-0 pt-0.5">
+          <div className="flex items-center gap-2.5">
+            <h1 className="text-[22px] font-semibold tracking-tight truncate">{c.name}</h1>
+            <StatusPill status={c.status} dormant={usage ? !usage.in_use : c.in_use === false} />
           </div>
-          {connected && (
-            <span className="inline-flex items-center gap-1.5 text-[11px] text-zinc-200">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400/90" /> Connected
-            </span>
-          )}
+          <div className="text-[12.5px] text-zinc-400 mt-1">
+            {AUTH_LABELS[c.auth_kind] ?? c.detail}
+          </div>
         </div>
 
-        {about && about.about && (
-          <p className="text-[13px] text-zinc-300 leading-relaxed mb-3">{about.about}</p>
-        )}
-        {about && about.provides.length > 0 && (
-          <div className="flex flex-wrap gap-1.5 mb-4">
-            {about.provides.map((p) => (
-              <span key={p} className="px-2 py-0.5 rounded-md border border-zinc-800 bg-zinc-950/70 text-[11px] text-zinc-400">
-                {p}
-              </span>
-            ))}
+        {connected && (
+          <div className="flex items-center gap-2 shrink-0 relative">
+            <button
+              onClick={() => probe()}
+              disabled={test === "running"}
+              className="px-3.5 h-9 rounded-lg border border-zinc-700 text-[12.5px] text-zinc-200
+                         hover:text-white hover:border-zinc-500 transition disabled:opacity-40"
+            >
+              Test connection
+            </button>
+            {canRemove && (
+              <button
+                onClick={() => setConfirm({ kind: "disconnect" })}
+                className="px-3.5 h-9 rounded-lg border border-zinc-800 text-[12.5px] text-zinc-400
+                           hover:text-red-300 hover:border-red-900/70 transition"
+              >
+                Disconnect
+              </button>
+            )}
+            <button
+              onClick={() => setMenu((v) => !v)}
+              aria-label="More actions"
+              className="w-9 h-9 rounded-lg border border-zinc-800 text-[15px] leading-none text-zinc-400
+                         hover:text-zinc-100 hover:border-zinc-600 transition"
+            >
+              ⋮
+            </button>
+            {menu && (
+              <>
+                <div className="fixed inset-0 z-30" onClick={() => setMenu(false)} />
+                <div className="absolute right-0 top-11 z-40 w-48 rounded-xl border border-zinc-700 bg-zinc-900 py-1 shadow-xl">
+                  <button
+                    onClick={() => {
+                      setMenu(false);
+                      refresh();
+                    }}
+                    className="w-full text-left px-3.5 py-2 text-[12.5px] text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 transition"
+                  >
+                    Refresh status
+                  </button>
+                  {manage && (
+                    <button
+                      onClick={() => {
+                        setMenu(false);
+                        openExternal(manage.url);
+                      }}
+                      className="w-full text-left px-3.5 py-2 text-[12.5px] text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 transition"
+                    >
+                      Open {manage.label}
+                    </button>
+                  )}
+                  {canRemove && (
+                    <button
+                      onClick={() => {
+                        setMenu(false);
+                        setConfirm({ kind: "disconnect" });
+                      }}
+                      className="w-full text-left px-3.5 py-2 text-[12.5px] text-zinc-400 hover:bg-zinc-800 hover:text-red-300 transition"
+                    >
+                      Remove {c.name}
+                    </button>
+                  )}
+                </div>
+              </>
+            )}
           </div>
         )}
+      </div>
 
-        {c.accounts.length > 0 && (
-          <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 px-4 py-1 mb-4">
-            {c.accounts.map((a) => (
-              <div key={a.identity} className="py-2.5 border-b border-zinc-800/60 last:border-0">
-                <div className="text-[13px] text-zinc-100">{a.identity}</div>
-                <div className="text-[11.5px] text-zinc-500 mt-0.5">{a.detail}</div>
+      {test && <div className="mb-5">{renderProbe(test)}</div>}
+
+      {error && (
+        <div className="mb-5 rounded-xl border border-red-900/60 bg-red-950/30 px-4 py-3 text-[12.5px] text-red-300 select-text">
+          {error}
+        </div>
+      )}
+
+      {about && about.about && (
+        <p className="text-[13.5px] text-zinc-300 leading-relaxed mb-3.5">{about.about}</p>
+      )}
+      {about && about.provides.length > 0 && (
+        <div className={"flex flex-wrap gap-1.5 " + (usage ? "mb-4" : "mb-7")}>
+          {about.provides.map((p) => (
+            <span
+              key={p}
+              className="px-2 py-0.5 rounded-md border border-zinc-800 bg-zinc-950/70 text-[11px] text-zinc-400"
+            >
+              {p}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {usage &&
+        (usage.in_use ? (
+          usage.used_by.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5 mb-7">
+              <span className="text-[11.5px] text-zinc-500 mr-0.5">Used by</span>
+              {usage.used_by.map((u) => (
+                <span
+                  key={u}
+                  className="px-2 py-0.5 rounded-md border border-zinc-800 bg-zinc-900 text-[11px] text-zinc-300"
+                >
+                  {u}
+                </span>
+              ))}
+            </div>
+          )
+        ) : (
+          <div className="mb-7 rounded-xl border border-amber-900/40 bg-amber-950/10 px-4 py-3 text-[12.5px] text-amber-200/80 leading-relaxed">
+            Nothing in your system uses this connection yet — the key sits idle. Safe to disconnect.
+          </div>
+        ))}
+
+      {accountRows.length > 0 && (
+        <div className="mb-7">
+          <div className="flex items-baseline justify-between mb-2.5">
+            <div className="text-[11px] uppercase tracking-[0.12em] text-zinc-500">{accountsLabel}</div>
+            {c.id === "telegram" && bots === null && (
+              <span className="text-[11px] text-zinc-600">checking…</span>
+            )}
+          </div>
+          <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 px-4">
+            {accountRows.map((a) => (
+              <div key={a.identity} className="py-3 border-b border-zinc-800/60 last:border-0">
+                <div className="flex items-start gap-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[13px] text-zinc-100 truncate">{a.identity}</span>
+                      {a.badge && (
+                        <span className="px-1.5 py-0.5 rounded-md bg-zinc-900 border border-zinc-800 text-[10px] text-zinc-500 shrink-0">
+                          {a.badge}
+                        </span>
+                      )}
+                    </div>
+                    <div
+                      className={
+                        "text-[11.5px] mt-0.5 " + (a.failed ? "text-amber-300/90" : "text-zinc-500")
+                      }
+                    >
+                      {a.detail}
+                    </div>
+                    {rowTest[a.identity] && <div className="mt-1.5">{renderProbe(rowTest[a.identity])}</div>}
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {c.id === "google" && (
+                      <>
+                        <RowAction onClick={() => probe(a.identity)} disabled={rowTest[a.identity] === "running"}>
+                          Test
+                        </RowAction>
+                        <RowAction onClick={() => openExternal("https://myaccount.google.com/connections")}>
+                          Google security
+                        </RowAction>
+                        <RowAction danger onClick={() => setConfirm({ kind: "account", identity: a.identity })}>
+                          Remove…
+                        </RowAction>
+                      </>
+                    )}
+                    {c.id === "telegram" && (
+                      <RowAction onClick={() => openExternal("https://t.me/BotFather")}>Open BotFather</RowAction>
+                    )}
+                    {c.id === "github" && (
+                      <RowAction onClick={() => openExternal("https://github.com/settings/tokens")}>
+                        Token settings
+                      </RowAction>
+                    )}
+                  </div>
+                </div>
               </div>
             ))}
           </div>
-        )}
+          {connected && removalNote[c.auth_kind] && (
+            <div className="text-[11.5px] text-zinc-600 mt-2 leading-relaxed">{removalNote[c.auth_kind]}</div>
+          )}
+        </div>
+      )}
 
-        {error && (
-          <div className="mb-3 rounded-xl border border-red-900/60 bg-red-950/30 px-4 py-3 text-[12.5px] text-red-300 select-text">
-            {error}
-          </div>
-        )}
+      {!connected && (
+        <div className="mb-7">
+          <div className="text-[11px] uppercase tracking-[0.12em] text-zinc-500 mb-2.5">Connect</div>
 
-        {phase === "done" && (
-          <div className="mb-3 rounded-xl border border-zinc-700 bg-zinc-950/60 px-4 py-3 text-[13px] text-zinc-100">
-            ✓ {isComposioCard ? "Hosted sign-in enabled." : `${c.name} connected.`}
-          </div>
-        )}
+          {phase === "done" && (
+            <div className="rounded-xl border border-zinc-700 bg-zinc-950/60 px-4 py-3 text-[13px] text-zinc-100">
+              ✓ {isComposioCard ? "Hosted sign-in enabled." : `${c.name} connected.`} Refresh to see it live.
+            </div>
+          )}
 
-        {phase === "browser-wait" && (
-          <div className="mb-3 flex items-center gap-3 rounded-xl border border-zinc-700 bg-zinc-950/60 px-4 py-3">
-            <div className="w-2 h-2 rounded-full bg-zinc-100 pulse-dot" />
-            <span className="text-[13px] text-zinc-200">
-              Finish signing in to {c.name} in your browser…
-            </span>
-          </div>
-        )}
+          {phase === "browser-wait" && (
+            <div className="flex items-center gap-3 rounded-xl border border-zinc-700 bg-zinc-950/60 px-4 py-3">
+              <div className="w-2 h-2 rounded-full bg-zinc-100 pulse-dot" />
+              <span className="text-[13px] text-zinc-200">Finish signing in to {c.name} in your browser…</span>
+            </div>
+          )}
 
-        {phase === "keys" && (
-          <div className="mb-3 space-y-3">
-            {(isComposioCard || keyFields.length > 0) &&
-              (isComposioCard ? [c.key_fields![0]] : keyFields).map((f) => (
+          {phase === "keys" && (
+            <div className="space-y-3">
+              {(isComposioCard ? [keyFields[0]] : keyFields).filter(Boolean).map((f) => (
                 <div key={f.secret}>
                   <div className="flex items-baseline justify-between mb-1.5">
                     <label className="text-[12.5px] text-zinc-300">{f.label}</label>
                     {f.get_url && (
                       <button
-                        onClick={() => IN_TAURI && invoke("open_url", { url: f.get_url }).catch(() => window.open(f.get_url))}
-                        onClickCapture={() => !IN_TAURI && window.open(f.get_url)}
+                        onClick={() => openExternal(f.get_url)}
                         className="text-[11.5px] text-zinc-400 hover:text-zinc-100 underline underline-offset-2 transition"
                       >
                         Get your key →
@@ -1357,89 +1934,134 @@ function ConnectorModal({
                   />
                 </div>
               ))}
-          </div>
-        )}
-
-        {phase === "confirm-remove" && (
-          <div className="mb-3 rounded-xl border border-red-900/50 bg-red-950/20 px-4 py-3">
-            <div className="text-[13.5px] text-zinc-100 font-medium mb-1">Disconnect {c.name}?</div>
-            <div className="text-[12.5px] text-zinc-400 leading-relaxed">
-              {c.composio_slug && composioReady
-                ? "Its sign-in is revoked upstream and "
-                : ""}
-              its keys are removed from your Keychain. The system loses access until you reconnect.
+              <div className="flex gap-3 pt-1">
+                <button
+                  onClick={saveKeys}
+                  disabled={busy || !Object.values(keyValues).some((v) => v.trim())}
+                  className="px-5 h-10 rounded-xl bg-zinc-100 text-zinc-950 text-[13.5px] font-medium hover:bg-white transition disabled:opacity-40"
+                >
+                  {busy ? "Saving…" : "Save"}
+                </button>
+                <button
+                  onClick={() => setPhase("view")}
+                  className="px-4 h-10 rounded-xl text-[13.5px] text-zinc-400 hover:text-zinc-100 transition"
+                >
+                  Cancel
+                </button>
+              </div>
             </div>
-          </div>
-        )}
+          )}
 
-        <div className="flex justify-between items-center mt-5">
-          <div>
-            {canRemove && phase === "view" && (
-              <button
-                onClick={() => setPhase("confirm-remove")}
-                className="text-[12.5px] text-zinc-500 hover:text-red-300 transition"
-              >
-                Disconnect…
-              </button>
-            )}
-            {connected && !canRemove && phase === "view" && removalNote[c.auth_kind] && (
-              <span className="text-[11px] text-zinc-600 max-w-[210px] inline-block leading-snug">
-                {removalNote[c.auth_kind]}
-              </span>
-            )}
-          </div>
-          <div className="flex gap-3">
-            <button
-              onClick={onClose}
-              className="px-4 h-10 rounded-xl text-[13.5px] text-zinc-300 hover:text-zinc-100 transition"
-            >
-              Close
-            </button>
-            {phase === "view" && !connected && c.composio_slug && composioReady && (
-              <button
-                onClick={browserConnect}
-                disabled={busy}
-                className="px-5 h-10 rounded-xl bg-zinc-100 text-zinc-950 text-[13.5px] font-medium hover:bg-white transition disabled:opacity-40"
-              >
-                Connect in browser
-              </button>
-            )}
-            {phase === "view" && !connected && (isComposioCard || keyFields.length > 0) && (
-              <button
-                onClick={() => setPhase("keys")}
-                className={
-                  "px-5 h-10 rounded-xl text-[13.5px] font-medium transition " +
-                  (c.composio_slug && composioReady
-                    ? "border border-zinc-700 text-zinc-200 hover:text-white hover:border-zinc-500"
-                    : "bg-zinc-100 text-zinc-950 hover:bg-white")
-                }
-              >
-                {isComposioCard ? "Enable" : "Use a key instead"}
-              </button>
-            )}
-            {phase === "keys" && (
-              <button
-                onClick={saveKeys}
-                disabled={busy || !Object.values(keyValues).some((v) => v.trim())}
-                className="px-5 h-10 rounded-xl bg-zinc-100 text-zinc-950 text-[13.5px] font-medium hover:bg-white transition disabled:opacity-40"
-              >
-                {busy ? "Saving…" : "Save"}
-              </button>
-            )}
-            {phase === "confirm-remove" && (
-              <button
-                onClick={disconnect}
-                disabled={busy}
-                className="px-5 h-10 rounded-xl bg-red-400/90 text-zinc-950 text-[13.5px] font-medium hover:bg-red-300 transition disabled:opacity-40"
-              >
-                {busy ? "Removing…" : "Disconnect"}
-              </button>
-            )}
-          </div>
+          {phase === "view" && (
+            <div className="flex flex-wrap items-center gap-3">
+              {canBrowserConnect && (
+                <button
+                  onClick={browserConnect}
+                  disabled={busy}
+                  className="px-5 h-10 rounded-xl bg-zinc-100 text-zinc-950 text-[13.5px] font-medium hover:bg-white transition disabled:opacity-40"
+                >
+                  Connect in browser
+                </button>
+              )}
+              {canPasteKey && (
+                <button
+                  onClick={() => setPhase("keys")}
+                  className={
+                    "px-5 h-10 rounded-xl text-[13.5px] font-medium transition " +
+                    (canBrowserConnect
+                      ? "border border-zinc-700 text-zinc-200 hover:text-white hover:border-zinc-500"
+                      : "bg-zinc-100 text-zinc-950 hover:bg-white")
+                  }
+                >
+                  {isComposioCard ? "Enable" : "Use a key instead"}
+                </button>
+              )}
+              {!canBrowserConnect && !canPasteKey && (
+                <p className="text-[13px] text-zinc-400">
+                  {c.connect_hint || "Ask your agent to connect it — setup is guided."}
+                </p>
+              )}
+              {canBrowserConnect && (
+                <span className="text-[11.5px] text-zinc-600">
+                  Hosted sign-in — the key never lands on this Mac.
+                </span>
+              )}
+            </div>
+          )}
         </div>
+      )}
+
+      <div className="mt-8 pt-6 border-t border-zinc-800/80 grid grid-cols-2 gap-x-8 gap-y-5">
+        <MetaBlock label="Category">
+          <span className="px-2 py-0.5 rounded-md border border-zinc-800 bg-zinc-950/70 text-[11.5px] text-zinc-400">
+            {CATEGORY_LABELS[c.category] ?? c.category}
+          </span>
+        </MetaBlock>
+        <MetaBlock label="Sign-in">{AUTH_SHORT[c.auth_kind] ?? c.auth_kind}</MetaBlock>
+        <MetaBlock label="Manage at">
+          {manage ? (
+            <button
+              onClick={() => openExternal(manage.url)}
+              className="text-zinc-300 hover:text-zinc-100 underline underline-offset-2 transition"
+            >
+              {manage.label} →
+            </button>
+          ) : (
+            <span className="text-zinc-600">—</span>
+          )}
+        </MetaBlock>
+        <MetaBlock label={c.id === "telegram" ? "Bots" : "Accounts"}>
+          {accountRows.length > 0 ? `${accountRows.length} on this Mac` : connected ? "System-wide" : "None yet"}
+        </MetaBlock>
       </div>
+
+      <p className="mt-5 text-[11.5px] text-zinc-600 leading-relaxed">
+        Keys live in your Mac's Keychain. Hosted sign-ins are held by the connection service and revocable per
+        app.
+      </p>
+
+      {confirm?.kind === "disconnect" && (
+        <ConfirmDialog
+          title={`Disconnect ${c.name}?`}
+          body={
+            perAccountRemoval.length > 0
+              ? `All ${perAccountRemoval.length} accounts are removed from this Mac. The system loses access until you sign in again.`
+              : (c.composio_slug && composioReady ? "Its sign-in is revoked upstream and " : "") +
+                "its keys are removed from your Keychain. The system loses access until you reconnect."
+          }
+          confirmLabel="Disconnect"
+          busy={busy}
+          onCancel={() => setConfirm(null)}
+          onConfirm={disconnect}
+        />
+      )}
+      {confirm?.kind === "account" && (
+        <ConfirmDialog
+          title={`Remove ${confirm.identity}?`}
+          body="Its saved credential is deleted from this Mac. Other accounts on this connector are untouched, and you can re-authorise it any time."
+          confirmLabel="Remove account"
+          busy={busy}
+          onCancel={() => setConfirm(null)}
+          onConfirm={() => removeAccount(confirm.identity)}
+        />
+      )}
     </div>
   );
+}
+
+/** Composio's own logo when it has one, otherwise the three-tier resolution. */
+function ToolkitLogo({ t }: { t: ToolkitCard }) {
+  const [failed, setFailed] = useState(false);
+  if (t.logo && !failed)
+    return (
+      <img
+        src={t.logo}
+        alt=""
+        className="w-[34px] h-[34px] rounded-[10px] border border-zinc-800 bg-white/95 object-contain p-1 shrink-0"
+        onError={() => setFailed(true)}
+      />
+    );
+  return <ConnectorLogo id={t.slug} name={t.label} domain={domainFor(t.slug)} />;
 }
 
 function BrowseDirectory({
@@ -1510,16 +2132,7 @@ function BrowseDirectory({
               key={t.slug}
               className="rounded-2xl border border-zinc-800 bg-zinc-950/60 px-4 py-3.5 flex items-center gap-3.5"
             >
-              {t.logo ? (
-                <img
-                  src={t.logo}
-                  alt=""
-                  className="w-[34px] h-[34px] rounded-[10px] border border-zinc-800 bg-white/95 object-contain p-1"
-                  onError={(e) => ((e.target as HTMLImageElement).style.display = "none")}
-                />
-              ) : (
-                <ConnectorLogo id={t.slug} name={t.label} />
-              )}
+              <ToolkitLogo t={t} />
               <div className="flex-1 min-w-0">
                 <div className="text-[13.5px] font-medium text-zinc-100 truncate">{t.label}</div>
                 <div className="text-[11.5px] text-zinc-500 truncate mt-0.5">{t.blurb}</div>
@@ -1541,29 +2154,79 @@ function BrowseDirectory({
 function ConnectorsPane() {
   const [connectors, setConnectors] = useState<Connector[] | null>(null);
   const [open, setOpen] = useState<Connector | null>(null);
+  const [usage, setUsage] = useState<Record<string, ConnectorUsage>>({});
   const [view, setView] = useState<"list" | "browse">("list");
   const [filter, setFilter] = useState<"all" | "connected" | "available">("all");
   const [q, setQ] = useState("");
 
   const load = useCallback(async () => {
+    let next: Connector[];
     if (IN_TAURI) {
       try {
-        setConnectors(await invoke<Connector[]>("list_connectors"));
+        next = await invoke<Connector[]>("list_connectors");
       } catch {
-        setConnectors([]);
+        next = [];
       }
     } else {
       await new Promise((r) => setTimeout(r, 400));
-      setConnectors(DEMO_CONNECTORS);
+      next = DEMO_CONNECTORS;
     }
+    setConnectors(next);
+    // Keep an open detail page pointed at the freshly-read row.
+    setOpen((cur) => (cur ? (next.find((x) => x.id === cur.id) ?? cur) : cur));
   }, []);
 
   useEffect(() => {
     load();
   }, [load]);
 
+  // Dormancy is read per connected card AFTER the list has painted; results
+  // land as they arrive. Each probe greps the runtime tree, so they run a few
+  // at a time — enough to keep the sweep short without hammering the disk.
+  useEffect(() => {
+    if (!connectors) return;
+    let cancelled = false;
+    const queue = connectors.filter((x) => x.status === "connected");
+    let next = 0;
+    const worker = async () => {
+      while (!cancelled) {
+        const c = queue[next++];
+        if (!c) return;
+        let u: ConnectorUsage | null = null;
+        if (IN_TAURI) {
+          try {
+            u = await invoke<ConnectorUsage>("connector_usage", { id: c.id });
+          } catch {
+            u = null;
+          }
+        } else {
+          await new Promise((r) => setTimeout(r, 120));
+          u = DEMO_USAGE[c.id] ?? null;
+        }
+        if (cancelled || !u) continue;
+        const found = u;
+        setUsage((s) => ({ ...s, [c.id]: found }));
+      }
+    };
+    void Promise.all([worker(), worker(), worker()]);
+    return () => {
+      cancelled = true;
+    };
+  }, [connectors]);
+
   const composioReady =
     connectors?.some((c) => c.id === "composio" && c.status === "connected") ?? false;
+
+  if (open)
+    return (
+      <ConnectorDetail
+        c={open}
+        composioReady={composioReady}
+        initialUsage={usage[open.id]}
+        onBack={() => setOpen(null)}
+        onChanged={load}
+      />
+    );
 
   if (view === "browse")
     return (
@@ -1571,7 +2234,6 @@ function ConnectorsPane() {
         composioReady={composioReady}
         onBack={() => setView("list")}
         onConnect={(slug, label) => {
-          setView("list");
           setOpen({
             id: slug,
             name: label,
@@ -1664,7 +2326,7 @@ function ConnectorsPane() {
               </div>
               <div className="grid grid-cols-2 gap-2.5">
                 {items.map((c) => (
-                  <ConnectorCard key={c.id} c={c} onOpen={setOpen} />
+                  <ConnectorCard key={c.id} c={c} usage={usage[c.id]} onOpen={setOpen} />
                 ))}
               </div>
             </div>
@@ -1672,14 +2334,6 @@ function ConnectorsPane() {
         })
       )}
 
-      {open && (
-        <ConnectorModal
-          c={open}
-          composioReady={composioReady}
-          onClose={() => setOpen(null)}
-          onChanged={load}
-        />
-      )}
     </div>
   );
 }
