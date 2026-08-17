@@ -28,21 +28,18 @@ enabled = true
 
 [[kv_namespaces]]
 binding = "INVITES"
-id = "REPLACE_WITH_INVITES_NAMESPACE_ID"
-preview_id = "REPLACE_WITH_INVITES_PREVIEW_ID"
+id = "f7a19b97f1fa4a21901fe3daadcb011c"
 
 [[kv_namespaces]]
 binding = "SESSIONS"
-id = "REPLACE_WITH_SESSIONS_NAMESPACE_ID"
-preview_id = "REPLACE_WITH_SESSIONS_PREVIEW_ID"
+id = "8d4528c9b4fa4ad3963b5a3470f7cb89"
 
 # Activation records: who claimed which handle, from which machine. Separate
 # from SESSIONS because this is durable identity, not disposable cache — a
 # stray `kv bulk delete` on the cache namespace must not erase it.
 [[kv_namespaces]]
 binding = "MACHINES"
-id = "REPLACE_WITH_MACHINES_NAMESPACE_ID"
-preview_id = "REPLACE_WITH_MACHINES_PREVIEW_ID"
+id = "361e17687179498ca1a90f15354e5f58"
 
 # ── Rate limiting (optional but recommended) ────────────────────────────
 # The worker uses this binding when it is present and falls back to a KV

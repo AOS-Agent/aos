@@ -3423,7 +3423,7 @@ fn run_install(app: tauri::AppHandle, dry_run: bool) -> Result<(), String> {
 /// The invite broker. Update manifests move behind it so that an invite — not
 /// a guessable URL — decides who may install and who may keep up to date.
 #[cfg(not(debug_assertions))]
-const BROKER_URL: &str = "https://aos-connect-broker.workers.dev";
+const BROKER_URL: &str = "https://aos-connect-broker.aoshq.workers.dev";
 
 /// Where manifests were served before the broker existed. Installs that predate
 /// the gate have no invite on file, so they keep updating from here until one
