@@ -1,0 +1,73 @@
+@import "tailwindcss";
+
+/* Zinc-dark language (Buzz / Claude-app family). Neutral, unbranded. */
+:root {
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  background: #09090b; /* zinc-950 */
+  color: #fafafa; /* zinc-50 */
+  overflow: hidden;
+}
+
+* {
+  user-select: none;
+  cursor: default;
+}
+
+input,
+textarea {
+  user-select: text;
+  cursor: text;
+}
+
+::selection {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+/* soft screen transitions */
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.screen {
+  animation: rise 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes pulse-dot {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+.pulse-dot {
+  animation: pulse-dot 1.4s ease-in-out infinite;
+}
+
+/* thin scrollbars for the console */
+.console::-webkit-scrollbar {
+  width: 8px;
+}
+.console::-webkit-scrollbar-thumb {
+  background: #27272a;
+  border-radius: 4px;
+}
+.console::-webkit-scrollbar-track {
+  background: transparent;
+}

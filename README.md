@@ -1,8 +1,7 @@
-# blaxle
+# Tauri + React + Typescript
 
-One line about what this project is.
+This template should help get you started developing with Tauri, React and Typescript in Vite.
 
-## Status
+## Recommended IDE Setup
 
-Tracked by AOS. Declarations live in `.aos/project.yaml`; state is derived, not
-written down here — see `work projects` for what is actually happening.
+- [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
