@@ -1,0 +1,28 @@
+
+WORKSPACE CLIENT (stub) - principal agent:workspace-agent-1
+asking broker at http://127.0.0.1:4110  (contract aos.broker.local/v1)
+==================================================================
+  BROKER STATE : UP
+  BROKER UP
+  trust level 1 (approval) - 0 pending
+  uptime 0.263s | pending 0 | trust level 1 (approval) | fail-closed True
+==================================================================
+
+-- tool call: workspace.chat.post (capability message.send)
+   summary: Post 'standup notes are up' to #general
+   BLOCKED  awaiting human approval - request id 9fdaab6f95d6 (reason: approval_required)
+            approve with: POST /v1/approvals/9fdaab6f95d6/decide
+   DENIED   by broker:timeout (wait_timeout_fail_closed)
+   NOT EXECUTED
+
+-- tool call: workspace.terminal.run (capability shell.exec)  [declared destructive]
+   summary: Run: rm -rf ~/project/scratch/build
+   BLOCKED  awaiting human approval - request id f5f309f77c9d (reason: approval_required)
+            approve with: POST /v1/approvals/f5f309f77c9d/decide
+   DENIED   by broker:timeout (wait_timeout_fail_closed)
+   NOT EXECUTED
+
+EXECUTION LEDGER
+   message.send   refused   wait_timeout_fail_closed
+   shell.exec     refused   wait_timeout_fail_closed
+   executed: 0 of 2
