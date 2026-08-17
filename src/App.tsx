@@ -1131,7 +1131,7 @@ function Arms({
 
       {confirming && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
-          <div className="screen w-[420px] max-w-[86vw] rounded-2xl border border-zinc-700 bg-zinc-900 p-6">
+          <div className="screen w-full max-w-[420px] mx-4 rounded-2xl border border-zinc-700 bg-zinc-900 p-5 sm:p-6">
             <h2 className="text-[16px] font-semibold mb-2">Turn on {confirming.name}?</h2>
             <p className="text-[13px] text-zinc-200 leading-relaxed">
               {confirming.consent ?? confirming.tagline}
