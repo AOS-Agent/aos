@@ -944,12 +944,55 @@ fn keychain_names(home: &str) -> std::collections::HashSet<String> {
 // check against the CLI itself.
 
 #[derive(Default)]
+#[derive(Clone)]
 struct LlmProbe {
     installed: bool,
     version: Option<String>,
     signed_in: bool,
     /// Whoever the sign-in belongs to, when the CLI volunteers it.
     identity: Option<String>,
+}
+
+/// The slow probes behind the connectors and arms panes — CLI version+auth
+/// checks (~300ms each), venv interpreter checks (a python spawn each), and
+/// dead-port TCP timeouts (400ms each) — get short-lived memory. Sign-in and
+/// service state don't flip second-to-second; a two-minute-old answer is
+/// honest, and the panes go from a visible wait to instant.
+static PROBE_CACHE: OnceLock<Mutex<HashMap<String, (Instant, LlmProbe)>>> = OnceLock::new();
+static FLAG_CACHE: OnceLock<Mutex<HashMap<String, (Instant, bool)>>> = OnceLock::new();
+const PROBE_TTL: Duration = Duration::from_secs(120);
+const PORT_TTL: Duration = Duration::from_secs(30);
+
+fn cached_probe(key: &str, fresh: impl FnOnce() -> LlmProbe) -> LlmProbe {
+    let cache = PROBE_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Ok(map) = cache.lock() {
+        if let Some((at, probe)) = map.get(key) {
+            if at.elapsed() < PROBE_TTL {
+                return probe.clone();
+            }
+        }
+    }
+    let value = fresh();
+    if let Ok(mut map) = cache.lock() {
+        map.insert(key.to_string(), (Instant::now(), value.clone()));
+    }
+    value
+}
+
+fn cached_flag(key: &str, ttl: Duration, fresh: impl FnOnce() -> bool) -> bool {
+    let cache = FLAG_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Ok(map) = cache.lock() {
+        if let Some((at, value)) = map.get(key) {
+            if at.elapsed() < ttl {
+                return *value;
+            }
+        }
+    }
+    let value = fresh();
+    if let Ok(mut map) = cache.lock() {
+        map.insert(key.to_string(), (Instant::now(), value));
+    }
+    value
 }
 
 /// CLIs disagree on where the number goes — "2.1.233 (Claude Code)",
@@ -1045,21 +1088,21 @@ fn intelligence_connectors(home: &str) -> Vec<Connector> {
         (
             "claude",
             "Claude Code",
-            probe_claude(home),
+            cached_probe("claude", || probe_claude(home)),
             "Run `claude` in a terminal and follow sign-in.",
             "Claude Code not found",
         ),
         (
             "kimi",
             "Kimi Code",
-            probe_kimi(home),
+            cached_probe("kimi", || probe_kimi(home)),
             "Run `kimi login`.",
             "Kimi Code not found",
         ),
         (
             "codex",
             "Codex (ChatGPT)",
-            probe_codex(home),
+            cached_probe("codex", || probe_codex(home)),
             "Run `codex login`.",
             "Codex not found",
         ),
@@ -2732,6 +2775,10 @@ fn expand_home(value: &str, home: &str) -> String {
 }
 
 fn port_listening(port: u16) -> bool {
+    cached_flag(&format!("port:{port}"), PORT_TTL, move || port_listening_uncached(port))
+}
+
+fn port_listening_uncached(port: u16) -> bool {
     use std::net::{Ipv4Addr, SocketAddr, TcpStream};
     use std::time::Duration;
     let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
@@ -2746,6 +2793,12 @@ fn port_listening(port: u16) -> bool {
 /// service on such a venv looks green everywhere and is frozen forever.
 /// Invisible to launchctl, which is exactly why it is probed here.
 fn venv_broken(venv: &str) -> bool {
+    let key = format!("venv:{venv}");
+    let owned = venv.to_string();
+    cached_flag(&key, PROBE_TTL, move || venv_broken_uncached(&owned))
+}
+
+fn venv_broken_uncached(venv: &str) -> bool {
     let python = format!("{venv}/bin/python");
     if !std::path::Path::new(&python).exists() {
         return false; // nothing to judge
