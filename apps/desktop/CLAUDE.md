@@ -31,5 +31,13 @@ frontend in `src/App.tsx`, logos in `src/logos.tsx`.
 - Verify before claiming done: `bunx tsc --noEmit` and
   `cargo check` in `src-tauri/` must both pass.
 - Commit style: what + why, wrapped at ~72 cols.
-- The framework manifest `config/modules.yaml` lives in `~/project/aos`
-  (dev workspace) with a bundled copy at `src-tauri/modules.yaml` — keep in sync.
+- This app lives INSIDE the framework repo at `apps/desktop/`. A change to the
+  manifest and to the Rust that parses it belong in one commit; they can no
+  longer drift apart across two repositories.
+- `src-tauri/modules.yaml` is still a copy of `config/modules.yaml` because
+  `include_str!` needs a real file at compile time. Once the manifest lands on
+  main it should become a symlink, which removes the last way these can diverge.
+- Releases still ship separately from the framework: `aos update` pulls the
+  system, `scripts/release.sh` builds, signs, notarizes and publishes the app to
+  aos.hish.am. One source of truth, two distribution channels — a notarized
+  macOS bundle cannot be delivered by git pull.
