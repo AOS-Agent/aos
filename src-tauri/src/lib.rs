@@ -1,5 +1,8 @@
+use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Command, Stdio};
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 use tauri::Emitter;
 
 #[derive(serde::Serialize, Default)]
@@ -141,6 +144,55 @@ fn cmd_ok(bin: &str, args: &[&str]) -> Option<String> {
         .ok()
         .filter(|o| o.status.success())
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+}
+
+/// Run a command and keep everything it said: `(succeeded, stdout, stderr)`.
+/// `cmd_ok` throws the exit code and stderr away, which is fine until a CLI
+/// answers on the wrong stream — Codex prints its sign-in state to stderr and
+/// Tailscale prints a version-skew warning there alongside clean JSON.
+fn run_out(bin: &str, args: &[&str]) -> Option<(bool, String, String)> {
+    Command::new(bin)
+        .args(args)
+        .stdin(Stdio::null())
+        .output()
+        .ok()
+        .map(|o| {
+            (
+                o.status.success(),
+                String::from_utf8_lossy(&o.stdout).trim().to_string(),
+                String::from_utf8_lossy(&o.stderr).trim().to_string(),
+            )
+        })
+}
+
+/// Absolute path to a CLI, looked for in the places a windowed app can't see.
+/// A Tauri app launched from the Dock inherits a bare PATH, so trusting
+/// `which` alone would report half the operator's tools as missing. Extra
+/// candidates are full paths, tried first.
+fn resolve_bin(home: &str, name: &str, extra: &[String]) -> Option<String> {
+    for path in extra {
+        if std::path::Path::new(path).exists() {
+            return Some(path.clone());
+        }
+    }
+    let dirs = [
+        "/opt/homebrew/bin",
+        "/usr/local/bin",
+        "/usr/bin",
+        "/bin",
+        &format!("{home}/.local/bin"),
+        &format!("{home}/.bun/bin"),
+        &format!("{home}/.cargo/bin"),
+    ];
+    for dir in dirs {
+        let path = format!("{dir}/{name}");
+        if std::path::Path::new(&path).exists() {
+            return Some(path);
+        }
+    }
+    cmd_ok("which", &[name])
+        .and_then(|out| out.lines().next().map(str::to_string))
+        .filter(|p| !p.is_empty())
 }
 
 // ── Setup config persistence ────────────────────────────────────────
@@ -444,12 +496,39 @@ fn connector_about(id: String) -> serde_json::Value {
     serde_json::json!({ "about": "", "provides": [] })
 }
 
+/// A detail page asks about every connector it draws, and each answer walks
+/// the whole runtime tree with grep. That tree only changes when the system
+/// updates, so remembering an answer for two minutes is honest and turns a
+/// visibly slow page into an instant one.
+static USAGE_CACHE: OnceLock<Mutex<HashMap<String, (Instant, serde_json::Value)>>> =
+    OnceLock::new();
+const USAGE_TTL: Duration = Duration::from_secs(120);
+
+fn usage_cache() -> &'static Mutex<HashMap<String, (Instant, serde_json::Value)>> {
+    USAGE_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
 /// Who in the system ACTUALLY consumes this connector — grep'd from the
 /// runtime tree, not assumed. A key in the Keychain that nothing reads is
 /// dormant, and the UI says so.
 #[tauri::command]
 fn connector_usage(id: String) -> serde_json::Value {
-    let terms: Vec<&str> = match id.as_str() {
+    if let Ok(cache) = usage_cache().lock() {
+        if let Some((at, value)) = cache.get(&id) {
+            if at.elapsed() < USAGE_TTL {
+                return value.clone();
+            }
+        }
+    }
+    let fresh = compute_usage(&id);
+    if let Ok(mut cache) = usage_cache().lock() {
+        cache.insert(id, (Instant::now(), fresh.clone()));
+    }
+    fresh
+}
+
+fn compute_usage(id: &str) -> serde_json::Value {
+    let terms: Vec<&str> = match id {
         "telegram" => vec!["TELEGRAM_BOT_TOKEN"],
         "slack" => vec!["SLACK_BOT_TOKEN"],
         "google" => vec!["GOOGLE_OAUTH_CLIENT_ID", "google_workspace_mcp"],
@@ -469,6 +548,12 @@ fn connector_usage(id: String) -> serde_json::Value {
         "linear" => vec!["LINEAR_API_KEY"],
         "discord" => vec!["DISCORD_BOT_TOKEN"],
         "todoist" => vec!["TODOIST_API_TOKEN"],
+        // The engines and the network aren't keys — they're commands the
+        // system shells out to, so the trace is the invocation itself.
+        "claude" => vec!["claude -p", "claude --print", "cld "],
+        "tailscale" => vec!["tailscale "],
+        "kimi" => vec!["kimi "],
+        "codex" => vec!["codex "],
         _ => vec![],
     };
     let Ok(home) = std::env::var("HOME") else {
@@ -851,6 +936,250 @@ fn keychain_names(home: &str) -> std::collections::HashSet<String> {
     .unwrap_or_default()
 }
 
+// ── Intelligence (the subscription CLIs that do the thinking) ───────
+//
+// These are not integrations the system talks to — they are what the system
+// thinks with. A signed-out engine is byte-identical on disk to a signed-in
+// one, so presence alone would be a lie: every row here is a real sign-in
+// check against the CLI itself.
+
+#[derive(Default)]
+struct LlmProbe {
+    installed: bool,
+    version: Option<String>,
+    signed_in: bool,
+    /// Whoever the sign-in belongs to, when the CLI volunteers it.
+    identity: Option<String>,
+}
+
+/// CLIs disagree on where the number goes — "2.1.233 (Claude Code)",
+/// "codex-cli 0.145.0", plain "0.29.1" — so take the first word that looks
+/// like a version instead of guessing at a position.
+fn version_number(text: &str) -> Option<String> {
+    text.split_whitespace()
+        .find(|w| w.starts_with(|c: char| c.is_ascii_digit()))
+        .map(|w| {
+            w.trim_matches(|c: char| !(c.is_ascii_alphanumeric() || c == '.'))
+                .to_string()
+        })
+        .filter(|v| !v.is_empty())
+}
+
+fn probe_claude(home: &str) -> LlmProbe {
+    let Some(bin) = resolve_bin(
+        home,
+        "claude",
+        &["/opt/homebrew/bin/claude".to_string(), format!("{home}/.local/bin/claude")],
+    ) else {
+        return LlmProbe::default();
+    };
+    let version = run_out(&bin, &["--version"])
+        .filter(|(ok, ..)| *ok)
+        .and_then(|(_, out, _)| version_number(&out));
+
+    // Newer builds answer `auth status` in JSON. Older ones don't have the
+    // subcommand at all, and then a written-out config is the honest fallback:
+    // sign-in is what creates it.
+    let (signed_in, identity) = match run_out(&bin, &["auth", "status"]) {
+        Some((true, out, _)) => match serde_json::from_str::<serde_json::Value>(&out) {
+            Ok(v) => (
+                v["loggedIn"].as_bool().unwrap_or(false),
+                v["email"].as_str().map(str::to_string),
+            ),
+            Err(_) => (out.to_lowercase().contains("logged in"), None),
+        },
+        _ => (
+            std::path::Path::new(&format!("{home}/.claude.json")).exists(),
+            None,
+        ),
+    };
+    LlmProbe { installed: true, version, signed_in, identity }
+}
+
+fn probe_kimi(home: &str) -> LlmProbe {
+    let Some(bin) = resolve_bin(home, "kimi", &[format!("{home}/.kimi-code/bin/kimi")]) else {
+        return LlmProbe::default();
+    };
+    let version = run_out(&bin, &["--version"])
+        .filter(|(ok, ..)| *ok)
+        .and_then(|(_, out, _)| version_number(&out));
+    let signed_in =
+        std::path::Path::new(&format!("{home}/.kimi-code/credentials/kimi-code.json")).exists();
+    LlmProbe { installed: true, version, signed_in, identity: None }
+}
+
+fn probe_codex(home: &str) -> LlmProbe {
+    let has_home = std::path::Path::new(&format!("{home}/.codex")).exists();
+    let Some(bin) = resolve_bin(
+        home,
+        "codex",
+        &[format!("{home}/.local/bin/codex"), "/opt/homebrew/bin/codex".to_string()],
+    ) else {
+        // Settings without the CLI: installed enough to show, not enough to probe.
+        return LlmProbe { installed: has_home, ..Default::default() };
+    };
+    let version = run_out(&bin, &["--version"])
+        .filter(|(ok, ..)| *ok)
+        .and_then(|(_, out, _)| version_number(&out));
+    // Codex answers "Logged in using ChatGPT" on stderr in some builds and
+    // stdout in others, so read whichever one spoke.
+    let (signed_in, identity) = match run_out(&bin, &["login", "status"]) {
+        Some((ok, out, err)) => {
+            let said = if out.is_empty() { err } else { out };
+            let account = said
+                .rsplit_once(" using ")
+                .map(|(_, who)| who.trim().to_string())
+                .filter(|w| !w.is_empty());
+            (ok, account)
+        }
+        None => (false, None),
+    };
+    LlmProbe { installed: true, version, signed_in, identity }
+}
+
+/// The engines, as connector rows. Claude Code is always listed even when it
+/// is missing — it is what runs this system, so its absence is the single most
+/// important thing the panel can say.
+fn intelligence_connectors(home: &str) -> Vec<Connector> {
+    let engines = [
+        (
+            "claude",
+            "Claude Code",
+            probe_claude(home),
+            "Run `claude` in a terminal and follow sign-in.",
+            "Claude Code not found",
+        ),
+        (
+            "kimi",
+            "Kimi Code",
+            probe_kimi(home),
+            "Run `kimi login`.",
+            "Kimi Code not found",
+        ),
+        (
+            "codex",
+            "Codex (ChatGPT)",
+            probe_codex(home),
+            "Run `codex login`.",
+            "Codex not found",
+        ),
+    ];
+
+    let mut out = Vec::new();
+    for (id, name, probe, hint, missing) in engines {
+        if !probe.installed && id != "claude" {
+            continue;
+        }
+        let stamped = |suffix: &str| match &probe.version {
+            Some(v) => format!("v{v} · {suffix}"),
+            None => suffix.to_string(),
+        };
+        let detail = if !probe.installed {
+            missing.to_string()
+        } else if probe.signed_in {
+            stamped("subscription signed in")
+        } else {
+            stamped("installed, not signed in")
+        };
+        out.push(Connector {
+            id: id.into(),
+            name: name.into(),
+            category: "intelligence".into(),
+            auth_kind: "cli".into(),
+            status: if probe.installed && probe.signed_in { "connected" } else { "attention" }
+                .into(),
+            detail,
+            accounts: vec![],
+            connect_hint: hint.into(),
+            key_fields: vec![],
+            composio_slug: None,
+        });
+    }
+    out
+}
+
+// ── Tailscale (the private network the fleet lives on) ──────────────
+
+fn tailscale_bin(home: &str) -> Option<String> {
+    resolve_bin(
+        home,
+        "tailscale",
+        &[
+            "/opt/homebrew/bin/tailscale".to_string(),
+            "/Applications/Tailscale.app/Contents/MacOS/Tailscale".to_string(),
+        ],
+    )
+}
+
+/// `tailscale status --json`, stdout only — the CLI writes a version-skew
+/// warning to stderr that would otherwise corrupt the JSON.
+fn tailscale_status(home: &str) -> Option<serde_json::Value> {
+    let bin = tailscale_bin(home)?;
+    let (ok, out, _) = run_out(&bin, &["status", "--json"])?;
+    if !ok {
+        return None;
+    }
+    serde_json::from_str(&out).ok()
+}
+
+/// Peers as account rows: hostname, platform, and whether they're reachable
+/// right now. Sorted by name so the list doesn't reshuffle between probes.
+fn tailscale_peers(status: &serde_json::Value) -> Vec<ConnectorAccount> {
+    let Some(peers) = status["Peer"].as_object() else {
+        return vec![];
+    };
+    let mut rows: Vec<ConnectorAccount> = peers
+        .values()
+        .map(|p| {
+            let os = p["OS"].as_str().unwrap_or("device");
+            let online = if p["Online"].as_bool().unwrap_or(false) { "online" } else { "offline" };
+            ConnectorAccount {
+                identity: p["HostName"].as_str().unwrap_or("device").to_string(),
+                detail: format!("{os} · {online}"),
+            }
+        })
+        .collect();
+    rows.sort_by(|a, b| a.identity.to_lowercase().cmp(&b.identity.to_lowercase()));
+    rows.truncate(8);
+    rows
+}
+
+fn tailscale_connector(home: &str) -> Option<Connector> {
+    tailscale_bin(home)?;
+    let row = |status: &str, detail: String, accounts: Vec<ConnectorAccount>| Connector {
+        id: "tailscale".into(),
+        name: "Tailscale".into(),
+        category: "network".into(),
+        auth_kind: "session".into(),
+        status: status.into(),
+        detail,
+        accounts,
+        connect_hint: "Run `tailscale up` and sign in to your tailnet.".into(),
+        key_fields: vec![],
+        composio_slug: None,
+    };
+
+    let Some(status) = tailscale_status(home) else {
+        return Some(row("attention", "installed, not running".into(), vec![]));
+    };
+    if status["BackendState"].as_str() != Some("Running") {
+        return Some(row("attention", "installed, not running".into(), vec![]));
+    }
+
+    let host = status["Self"]["HostName"].as_str().unwrap_or("this Mac").to_string();
+    let peers = status["Peer"].as_object().map(|p| p.len()).unwrap_or(0);
+    let tailnet = status["MagicDNSSuffix"]
+        .as_str()
+        .or_else(|| status["CurrentTailnet"]["Name"].as_str())
+        .unwrap_or("the tailnet");
+    // "other devices" because the count is peers — this Mac isn't in it.
+    Some(row(
+        "connected",
+        format!("{host} · {peers} other devices on {tailnet}"),
+        tailscale_peers(&status),
+    ))
+}
+
 #[tauri::command]
 fn list_connectors() -> Result<Vec<Connector>, String> {
     let home = std::env::var("HOME").map_err(|e| e.to_string())?;
@@ -858,6 +1187,14 @@ fn list_connectors() -> Result<Vec<Connector>, String> {
     let has = |n: &str| secrets.contains(n);
     let loaded = loaded_launchd_labels();
     let mut out: Vec<Connector> = Vec::new();
+
+    // Intelligence first — these are what the system thinks with.
+    out.extend(intelligence_connectors(&home));
+
+    // Tailscale — the private network the fleet talks over.
+    if let Some(ts) = tailscale_connector(&home) {
+        out.push(ts);
+    }
 
     // Google Workspace — OAuth, per-account credential files with expiry.
     let mut google_accounts = Vec::new();
@@ -1416,6 +1753,108 @@ fn test_connector(id: String) -> Result<serde_json::Value, String> {
             ),
         },
 
+        "claude" => {
+            let probe = probe_claude(&home);
+            let version = probe.version.clone().unwrap_or_else(|| "?".into());
+            if !probe.installed {
+                (false, "Claude Code isn't installed on this Mac.".to_string(), None)
+            } else if probe.signed_in {
+                (true, format!("Claude Code v{version} · signed in"), probe.identity)
+            } else {
+                (
+                    false,
+                    format!("Claude Code v{version} is installed but signed out — run `claude` in a terminal."),
+                    None,
+                )
+            }
+        }
+
+        "kimi" => {
+            let probe = probe_kimi(&home);
+            let version = probe.version.clone().unwrap_or_else(|| "?".into());
+            if !probe.installed {
+                (false, "Kimi Code isn't installed on this Mac.".to_string(), None)
+            } else if probe.signed_in {
+                (true, format!("Kimi Code v{version} · signed in"), None)
+            } else {
+                (
+                    false,
+                    format!("Kimi Code v{version} is installed but signed out — run `kimi login`."),
+                    None,
+                )
+            }
+        }
+
+        "codex" => {
+            let probe = probe_codex(&home);
+            let version = probe.version.clone().unwrap_or_else(|| "?".into());
+            if !probe.installed {
+                (false, "Codex isn't installed on this Mac.".to_string(), None)
+            } else if probe.signed_in {
+                (true, format!("Codex v{version} · signed in"), probe.identity)
+            } else {
+                (
+                    false,
+                    format!("Codex v{version} is installed but signed out — run `codex login`."),
+                    None,
+                )
+            }
+        }
+
+        "tailscale" => match tailscale_status(&home) {
+            Some(status) if status["BackendState"].as_str() == Some("Running") => {
+                let host = status["Self"]["HostName"].as_str().unwrap_or("this Mac").to_string();
+                let peers = status["Peer"].as_object().map(|p| p.len()).unwrap_or(0);
+                (
+                    true,
+                    format!("Connected to tailnet as {host}, {peers} peers"),
+                    Some(host),
+                )
+            }
+            Some(_) => (
+                false,
+                "Tailscale is installed but not running — run `tailscale up`.".to_string(),
+                None,
+            ),
+            None => (
+                false,
+                "Tailscale isn't answering on this Mac.".to_string(),
+                None,
+            ),
+        },
+
+        "composio" => match composio_key(&home) {
+            None => (
+                false,
+                "No Composio project key is stored on this Mac yet.".to_string(),
+                None,
+            ),
+            Some(key) => match composio_ensure_session(&home, &key) {
+                Err(e) => (false, e, None),
+                Ok(session) => match curl_json(
+                    "GET",
+                    &format!("{COMPOSIO_API}/tool_router/session/{session}"),
+                    &key,
+                    None,
+                ) {
+                    Ok(v) if v.get("session_id").is_some() => (
+                        true,
+                        "Hosted sign-in session healthy".to_string(),
+                        v["user_id"].as_str().map(str::to_string),
+                    ),
+                    Ok(v) => (
+                        false,
+                        v["message"]
+                            .as_str()
+                            .unwrap_or("Composio didn't recognise this session.")
+                            .to_string(),
+                        None,
+                    ),
+                    Err(e) => (false, e, None),
+                },
+            },
+        },
+
         _ => return Err("No test available yet for this connector.".into()),
     };
 
@@ -1457,6 +1896,400 @@ fn remove_google_account(identity: String) -> Result<(), String> {
         .map_err(|e| format!("Couldn't back up the credentials: {e}"))?;
 
     std::fs::remove_file(&path).map_err(|e| format!("Couldn't remove the credentials: {e}"))
+}
+
+// ── Tools & permissions ─────────────────────────────────────────────
+//
+// A connector's tools come from truth, not from a hand-written list: if its
+// MCP server is registered on this Mac we ask the server itself what it can
+// do. Curated catalogs cover the connectors whose servers aren't registered
+// here yet. Either way the per-tool permission is read from the file the
+// agent runtime actually enforces — ~/.claude/settings.json — so what the
+// panel shows and what an agent may do can never drift apart.
+
+struct McpTool {
+    name: String,
+    description: String,
+    read_only: bool,
+}
+
+struct McpServerSpec {
+    command: String,
+    args: Vec<String>,
+    cwd: Option<String>,
+    env: Vec<(String, String)>,
+}
+
+/// Which registered MCP server backs a connector. Deliberately a table:
+/// pointing a connector at a server is one line here, not new plumbing.
+/// Nothing in this Mac's current registry corresponds to a connector, so
+/// today every lookup falls through to the curated catalogs below.
+const MCP_SERVER_FOR_CONNECTOR: &[(&str, &str)] = &[
+    // connector id → key under `mcpServers` in ~/.claude.json
+    ("obsidian", "obsidian"),
+];
+
+/// The stdio MCP servers Claude Code itself is configured with. Remote
+/// entries have no command to run, so they're skipped rather than guessed at.
+fn registered_mcp_server(home: &str, name: &str) -> Option<McpServerSpec> {
+    let text = std::fs::read_to_string(format!("{home}/.claude.json")).ok()?;
+    let registry: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let entry = registry.get("mcpServers")?.get(name)?;
+    if let Some(kind) = entry.get("type").and_then(|t| t.as_str()) {
+        if kind != "stdio" {
+            return None;
+        }
+    }
+    Some(McpServerSpec {
+        command: entry.get("command")?.as_str()?.to_string(),
+        args: entry
+            .get("args")
+            .and_then(|a| a.as_array())
+            .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+            .unwrap_or_default(),
+        cwd: entry.get("cwd").and_then(|c| c.as_str()).map(str::to_string),
+        env: entry
+            .get("env")
+            .and_then(|e| e.as_object())
+            .map(|e| {
+                e.iter()
+                    .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                    .collect()
+            })
+            .unwrap_or_default(),
+    })
+}
+
+/// Ask a stdio MCP server what tools it has, speaking the protocol it already
+/// speaks to Claude Code: initialize → initialized → tools/list.
+///
+/// A tool server that never answers must not freeze the app, so the whole
+/// exchange runs under one deadline and the child is killed either way. The
+/// reply is read on a worker thread because a blocked read cannot be timed out.
+fn mcp_list_tools(spec: &McpServerSpec) -> Result<Vec<McpTool>, String> {
+    let mut cmd = Command::new(&spec.command);
+    cmd.args(&spec.args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    if let Some(dir) = &spec.cwd {
+        cmd.current_dir(dir);
+    }
+    for (k, v) in &spec.env {
+        cmd.env(k, v);
+    }
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("Couldn't start the tool server: {e}"))?;
+
+    let deadline = Instant::now() + Duration::from_secs(6);
+    let stdout = child.stdout.take().ok_or("no stdout")?;
+    // Held open until the read finishes: some servers exit the moment their
+    // input closes, before they've written the reply we're waiting for.
+    let mut stdin = child.stdin.take().ok_or("no stdin")?;
+
+    for message in [
+        serde_json::json!({
+            "jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": { "name": "aos-app", "version": "1" }
+            }
+        }),
+        serde_json::json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }),
+        serde_json::json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {} }),
+    ] {
+        if writeln!(stdin, "{message}").is_err() {
+            break;
+        }
+    }
+    let _ = stdin.flush();
+
+    let (tx, rx) = std::sync::mpsc::channel::<String>();
+    std::thread::spawn(move || {
+        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            if tx.send(line).is_err() {
+                break;
+            }
+        }
+    });
+
+    let mut listed: Option<Vec<McpTool>> = None;
+    while let Some(remaining) = deadline.checked_duration_since(Instant::now()) {
+        let Ok(line) = rx.recv_timeout(remaining) else { break };
+        let Ok(reply) = serde_json::from_str::<serde_json::Value>(&line) else { continue };
+        if reply["id"].as_i64() != Some(2) {
+            continue;
+        }
+        listed = reply["result"]["tools"].as_array().map(|tools| {
+            tools
+                .iter()
+                .map(|t| McpTool {
+                    name: t["name"].as_str().unwrap_or("").to_string(),
+                    description: t["description"]
+                        .as_str()
+                        .unwrap_or("")
+                        .lines()
+                        .next()
+                        .unwrap_or("")
+                        .trim()
+                        .to_string(),
+                    // Unannotated tools are treated as writers — the cautious
+                    // side of the read/write split is the safe default.
+                    read_only: t["annotations"]["readOnlyHint"].as_bool().unwrap_or(false),
+                })
+                .filter(|t| !t.name.is_empty())
+                .collect()
+        });
+        break;
+    }
+
+    let _ = child.kill();
+    let _ = child.wait();
+    drop(stdin);
+    listed.ok_or_else(|| "The tool server didn't answer in time.".to_string())
+}
+
+/// Catalogs for connectors whose MCP servers aren't registered on this Mac —
+/// the inventory the operator gets once the arm is installed. A live
+/// `tools/list` always wins over these when the server is present.
+type ToolGroup = (&'static str, &'static [(&'static str, &'static str)]);
+
+fn curated_tools(id: &str) -> Option<(&'static str, &'static [ToolGroup])> {
+    const GOOGLE: &[ToolGroup] = &[
+        (
+            "Read-only",
+            &[
+                ("search_gmail_messages", "Find mail by sender, subject, or words in the body."),
+                ("read_gmail_thread", "Open one conversation with every reply in it."),
+                ("get_calendar_events", "List what's on a calendar over a date range."),
+                ("list_drive_files", "Browse and search the files in Drive."),
+                ("read_doc", "Read the text of a Google Doc."),
+            ],
+        ),
+        (
+            "Write",
+            &[
+                ("send_gmail_message", "Send mail from your account, as you."),
+                ("create_calendar_event", "Put a new event on a calendar, guests included."),
+                ("upload_drive_file", "Add a new file to Drive."),
+                ("edit_doc", "Change what a Google Doc says."),
+                ("trash_file", "Move a Drive file to the trash."),
+            ],
+        ),
+    ];
+    const TELEGRAM: &[ToolGroup] = &[
+        ("Read-only", &[("get_updates", "Fetch messages that have come in.")]),
+        (
+            "Write",
+            &[
+                ("send_message", "Send a text message to a chat."),
+                ("send_voice", "Send a voice note to a chat."),
+            ],
+        ),
+    ];
+    match id {
+        "google" => Some(("gws", GOOGLE)),
+        "telegram" => Some(("bridge", TELEGRAM)),
+        _ => None,
+    }
+}
+
+fn claude_settings_path(home: &str) -> String {
+    format!("{home}/.claude/settings.json")
+}
+
+fn read_claude_settings(home: &str) -> serde_json::Value {
+    std::fs::read_to_string(claude_settings_path(home))
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_else(|| serde_json::json!({}))
+}
+
+fn permission_list(settings: &serde_json::Value, key: &str) -> Vec<String> {
+    settings["permissions"][key]
+        .as_array()
+        .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+        .unwrap_or_default()
+}
+
+/// `mcp__gws` in a permission list covers every tool on that server;
+/// `mcp__gws__send_gmail_message` covers exactly one. A trailing `*` is
+/// accepted because operators write patterns that way by hand.
+fn permission_matches(pattern: &str, tool_id: &str) -> bool {
+    let prefix = pattern.trim().trim_end_matches('*').trim_end_matches("__");
+    !prefix.is_empty() && (tool_id == prefix || tool_id.starts_with(&format!("{prefix}__")))
+}
+
+/// The three states as the runtime actually resolves them: a denial wins over
+/// everything, an allow grants, and a tool named in neither is asked about
+/// every time it's used.
+fn tool_permission(tool_id: &str, allow: &[String], deny: &[String]) -> &'static str {
+    if deny.iter().any(|p| permission_matches(p, tool_id)) {
+        "deny"
+    } else if allow.iter().any(|p| permission_matches(p, tool_id)) {
+        "allow"
+    } else {
+        "ask"
+    }
+}
+
+fn tool_row(
+    server: &str,
+    name: &str,
+    description: &str,
+    allow: &[String],
+    deny: &[String],
+) -> serde_json::Value {
+    let tool_id = format!("mcp__{server}__{name}");
+    let permission = tool_permission(&tool_id, allow, deny);
+    serde_json::json!({
+        "name": name,
+        "tool_id": tool_id,
+        "description": description,
+        "permission": permission,
+    })
+}
+
+/// What this connector lets agents actually do, and what they're allowed to do
+/// with it today. Live from the connector's MCP server when one is registered
+/// here, curated otherwise; `supported: false` when we'd only be guessing.
+#[tauri::command]
+fn connector_tools(id: String) -> Result<serde_json::Value, String> {
+    let home = std::env::var("HOME").map_err(|e| e.to_string())?;
+    let settings = read_claude_settings(&home);
+    let allow = permission_list(&settings, "allow");
+    let deny = permission_list(&settings, "deny");
+
+    // Live inventory, when this connector's server is registered on this Mac.
+    let mapped = MCP_SERVER_FOR_CONNECTOR
+        .iter()
+        .find(|(connector, _)| *connector == id)
+        .map(|(_, server)| *server);
+    if let Some(server) = mapped {
+        if let Some(spec) = registered_mcp_server(&home, server) {
+            if let Ok(tools) = mcp_list_tools(&spec) {
+                let mut groups = Vec::new();
+                for (label, read_only) in [("Read-only", true), ("Write", false)] {
+                    let rows: Vec<serde_json::Value> = tools
+                        .iter()
+                        .filter(|t| t.read_only == read_only)
+                        .map(|t| tool_row(server, &t.name, &t.description, &allow, &deny))
+                        .collect();
+                    if !rows.is_empty() {
+                        groups.push(serde_json::json!({ "name": label, "tools": rows }));
+                    }
+                }
+                return Ok(serde_json::json!({
+                    "supported": true,
+                    "server": server,
+                    "groups": groups,
+                }));
+            }
+        }
+    }
+
+    // Curated catalog for the connectors whose servers aren't registered here.
+    if let Some((server, catalog)) = curated_tools(&id) {
+        let groups: Vec<serde_json::Value> = catalog
+            .iter()
+            .map(|(label, tools)| {
+                let rows: Vec<serde_json::Value> = tools
+                    .iter()
+                    .map(|(name, description)| tool_row(server, name, description, &allow, &deny))
+                    .collect();
+                serde_json::json!({ "name": label, "tools": rows })
+            })
+            .collect();
+        return Ok(serde_json::json!({
+            "supported": true,
+            "server": server,
+            "groups": groups,
+        }));
+    }
+
+    Ok(serde_json::json!({
+        "supported": false,
+        "server": serde_json::Value::Null,
+        "groups": [],
+    }))
+}
+
+/// `mcp__server` (a whole server) and `mcp__server__tool` (one tool) are the
+/// only shapes the agent runtime understands as permission entries.
+fn valid_tool_id(id: &str) -> bool {
+    match id.strip_prefix("mcp__") {
+        Some(rest) => {
+            !rest.is_empty()
+                && rest
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        }
+        None => false,
+    }
+}
+
+/// One backup per run of the app, taken before the first edit, so the
+/// operator's original hand-written settings survive a session of clicking.
+static SETTINGS_BACKED_UP: OnceLock<()> = OnceLock::new();
+
+/// Grant, revoke, or fall back to asking for one tool — written straight into
+/// the file the agent runtime reads, which is what makes this panel the real
+/// permission editor rather than a picture of one. Unknown settings keys are
+/// carried through untouched.
+#[tauri::command]
+fn set_tool_permission(tool_id: String, state: String) -> Result<(), String> {
+    let tool_id = tool_id.trim().to_string();
+    if !valid_tool_id(&tool_id) {
+        return Err("That isn't a tool this system can grant.".into());
+    }
+    if !matches!(state.as_str(), "allow" | "ask" | "deny") {
+        return Err("A tool is either allowed, asked about, or denied.".into());
+    }
+
+    let home = std::env::var("HOME").map_err(|e| e.to_string())?;
+    let path = claude_settings_path(&home);
+    let mut settings = read_claude_settings(&home);
+    let Some(root) = settings.as_object_mut() else {
+        return Err("The agent settings file isn't in a shape this app can edit.".into());
+    };
+
+    if SETTINGS_BACKED_UP.set(()).is_ok() {
+        let _ = std::fs::copy(&path, format!("{path}.bak"));
+    }
+
+    let permissions = root.entry("permissions").or_insert_with(|| serde_json::json!({}));
+    if !permissions.is_object() {
+        *permissions = serde_json::json!({});
+    }
+    let permissions = permissions
+        .as_object_mut()
+        .ok_or("The permissions section isn't in a shape this app can edit.")?;
+
+    // The tool leaves both lists first: "ask" is simply being in neither, and
+    // a stale entry on the other side would silently outrank the new one.
+    for key in ["allow", "deny"] {
+        let list = permissions.entry(key).or_insert_with(|| serde_json::json!([]));
+        if !list.is_array() {
+            *list = serde_json::json!([]);
+        }
+        if let Some(entries) = list.as_array_mut() {
+            entries.retain(|v| v.as_str() != Some(tool_id.as_str()));
+        }
+    }
+    if state != "ask" {
+        if let Some(entries) = permissions.get_mut(state.as_str()).and_then(|v| v.as_array_mut()) {
+            entries.push(serde_json::Value::String(tool_id));
+        }
+    }
+
+    if let Some(parent) = std::path::Path::new(&path).parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("Couldn't reach the settings folder: {e}"))?;
+    }
+    let text = serde_json::to_string_pretty(&settings).map_err(|e| e.to_string())?;
+    std::fs::write(&path, format!("{text}\n"))
+        .map_err(|e| format!("Couldn't save the permission: {e}"))
 }
 
 // ── Health ──────────────────────────────────────────────────────────
@@ -2090,6 +2923,8 @@ pub fn run() {
             health_check,
             list_connectors,
             connector_usage,
+            connector_tools,
+            set_tool_permission,
             telegram_bot_info,
             test_connector,
             remove_google_account,

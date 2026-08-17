@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { ConnectorLogo, domainFor } from "./logos";
 
 /* ────────────────────────────────────────────────────────────────
@@ -115,8 +116,46 @@ const stripAnsi = (s: string) =>
 
 /* ── shared bits ── */
 
+/**
+ * The window's drag strip. `data-tauri-drag-region` handles it on its own in a
+ * packaged build; the explicit startDragging() call is the belt to that braces —
+ * the attribute silently does nothing when the webview swallows the event.
+ */
 function DragRegion() {
-  return <div data-tauri-drag-region className="fixed top-0 left-0 right-0 h-9 z-50" />;
+  const onMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!IN_TAURI || e.button !== 0 || e.detail > 1) return;
+    try {
+      void getCurrentWindow().startDragging();
+    } catch {
+      /* the drag-region attribute is still in play */
+    }
+  };
+  return (
+    <div
+      data-tauri-drag-region
+      onMouseDown={onMouseDown}
+      className="fixed top-0 left-0 right-0 h-9 z-40"
+    />
+  );
+}
+
+/**
+ * Failures read as failures through copy and weight — never through hue.
+ * Every error surface in the app funnels through this one banner.
+ */
+function ErrorBanner({ children, className = "" }: { children: React.ReactNode; className?: string }) {
+  return (
+    <div
+      className={
+        "rounded-xl border border-zinc-600 bg-zinc-900 px-4 py-3 text-[12.5px] text-zinc-100 " +
+        "leading-relaxed select-text " +
+        className
+      }
+    >
+      <span className="font-semibold">Something went wrong:</span>{" "}
+      <span className="text-zinc-300">{children}</span>
+    </div>
+  );
 }
 
 function Mark({ size = 56 }: { size?: number }) {
@@ -128,6 +167,29 @@ function Mark({ size = 56 }: { size?: number }) {
     >
       <div className="w-2.5 h-2.5 rounded-full bg-zinc-100 pulse-dot" />
     </div>
+  );
+}
+
+/** The one true back affordance: a pill with ← and the DESTINATION name. */
+function BackButton({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className="inline-flex items-center gap-2 h-9 pl-3 pr-4 rounded-full bg-zinc-900 border border-zinc-800
+                 text-[13.5px] text-zinc-200 hover:text-white hover:border-zinc-600 transition active:scale-[0.98]"
+    >
+      <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
+        <path
+          d="M7.5 3.5 3 8l4.5 4.5M3.5 8H13"
+          stroke="currentColor"
+          strokeWidth="1.7"
+          fill="none"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+      {label}
+    </button>
   );
 }
 
@@ -202,17 +264,8 @@ function StatusIcon({ status }: { status: Check["status"] }) {
       </svg>
     );
   if (status === "warn")
-    return <span className="text-amber-400/90 text-[13px] font-semibold leading-none">!</span>;
-  return (
-    <svg width="12" height="12" viewBox="0 0 12 12" className="text-red-400">
-      <path
-        d="M2 2 10 10 M10 2 2 10"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-      />
-    </svg>
-  );
+    return <span className="text-zinc-200 text-[13px] font-semibold leading-none opacity-80">!</span>;
+  return <span className="text-zinc-100 text-[15px] font-bold leading-none">×</span>;
 }
 
 const DEMO_CHECKS: Check[] = [
@@ -293,7 +346,7 @@ function Preflight({
           <p
             className={
               "screen text-[13px] mt-4 " +
-              (hasFail ? "text-red-300" : hasWarn ? "text-zinc-200" : "text-zinc-300")
+              (hasFail ? "text-zinc-100 font-medium" : hasWarn ? "text-zinc-200" : "text-zinc-300")
             }
           >
             {hasFail
@@ -305,12 +358,7 @@ function Preflight({
         )}
 
         <div className="flex justify-between mt-8">
-          <button
-            onClick={onBack}
-            className="px-4 h-11 rounded-xl text-[14px] text-zinc-200 hover:text-zinc-100 transition"
-          >
-            Back
-          </button>
+          <BackButton label="Welcome" onClick={onBack} />
           <div className="flex gap-3">
             <button
               onClick={load}
@@ -374,12 +422,7 @@ function Member({ onBack }: { onBack: () => void }) {
         </div>
       )}
 
-      <button
-        onClick={onBack}
-        className="px-4 h-10 rounded-xl text-[13.5px] text-zinc-300 hover:text-zinc-100 transition"
-      >
-        Back
-      </button>
+      <BackButton label="Welcome" onClick={onBack} />
     </div>
   );
 }
@@ -511,11 +554,7 @@ function Update({ onFinished }: { onFinished: (code: number) => void }) {
           Pulling the latest version and restarting services. Hold on.
         </p>
 
-        {error && (
-          <div className="mb-4 rounded-xl border border-red-900/60 bg-red-950/30 px-4 py-3 text-[13px] text-red-300">
-            {error}
-          </div>
-        )}
+        {error && <ErrorBanner className="mb-4">{error}</ErrorBanner>}
 
         <div
           ref={consoleRef}
@@ -633,11 +672,11 @@ function Home({
 
   return (
     <div className="screen h-full overflow-y-auto console">
-      <div className="max-w-[760px] mx-auto px-8 pt-14 pb-16">
+      <div className="max-w-[760px] mx-auto px-5 sm:px-8 pt-14 pb-16">
         {/* header */}
-        <div className="flex items-center gap-3 mb-8">
+        <div className="flex flex-wrap items-center gap-3 mb-8">
           <Mark size={34} />
-          <div className="flex-1">
+          <div className="flex-1 min-w-[150px]">
             <div className="text-[17px] font-semibold tracking-tight leading-tight">
               {greeting}
               {sys?.operator ? `, ${sys.operator}` : ""}
@@ -694,8 +733,8 @@ function Home({
             <span className="text-[13.5px] text-zinc-200">Reading system state…</span>
           </div>
         ) : (
-          <div className="grid grid-cols-2 gap-4">
-            <Card title="Work" className="col-span-2 sm:col-span-1">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <Card title="Work">
               {data.tasks.length ? (
                 data.tasks.slice(0, 5).map((t) => (
                   <div key={t.id} className="flex items-baseline gap-2.5 py-1.5">
@@ -716,7 +755,7 @@ function Home({
               )}
             </Card>
 
-            <Card title="System" className="col-span-2 sm:col-span-1">
+            <Card title="System">
               {data.services.slice(0, 5).map((s) => (
                 <div key={s.label} className="flex items-center gap-2.5 py-1.5">
                   <div className="w-1.5 h-1.5 rounded-full bg-zinc-100 shrink-0" />
@@ -730,7 +769,7 @@ function Home({
               )}
             </Card>
 
-            <Card title="Arms" className="col-span-2">
+            <Card title="Arms" className="sm:col-span-2">
               <div className="flex flex-wrap gap-2">
                 {arms.map((m) => {
                   const on = m.status === "active";
@@ -756,7 +795,7 @@ function Home({
               </div>
             </Card>
 
-            <Card title="Recent knowledge" className="col-span-2">
+            <Card title="Recent knowledge" className="sm:col-span-2">
               {data.activity.length ? (
                 data.activity.map((a, i) => (
                   <div key={i} className="flex items-baseline gap-3 py-1.5">
@@ -826,7 +865,7 @@ function ModuleRow({
         <div className="flex items-center gap-2">
           <span className="text-[14px] text-zinc-100 font-medium">{m.name}</span>
           {m.consent && (
-            <span className="px-1.5 py-0.5 rounded border border-amber-900/50 bg-amber-950/30 text-[10px] text-amber-400/90">
+            <span className="px-1.5 py-0.5 rounded border border-zinc-600 bg-zinc-900 text-[10px] text-zinc-200 font-semibold">
               sensitive
             </span>
           )}
@@ -941,25 +980,14 @@ function Arms({
           <h1 className="text-[22px] font-semibold tracking-tight">
             {connectors ? "Connectors" : "Arms"}
           </h1>
-          {onBack && (
-            <button
-              onClick={onBack}
-              className="text-[13px] text-zinc-300 hover:text-zinc-100 transition pb-1"
-            >
-              Back
-            </button>
-          )}
+          {onBack && <BackButton label="Home" onClick={onBack} />}
         </div>
         <p className="text-[13px] text-zinc-300 mb-6">
           Capabilities of your system. Turning one on makes real changes to this
           Mac — every item shows what it costs before it runs.
         </p>
 
-        {error && (
-          <div className="mb-4 rounded-xl border border-red-900/60 bg-red-950/30 px-4 py-3 text-[13px] text-red-300 select-text">
-            {error}
-          </div>
-        )}
+        {error && <ErrorBanner className="mb-4">{error}</ErrorBanner>}
 
         {modules === null ? (
           <div className="flex items-center gap-3 py-6">
@@ -983,7 +1011,7 @@ function Arms({
       </div>
 
       {confirming && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-40">
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
           <div className="screen w-[420px] max-w-[86vw] rounded-2xl border border-zinc-700 bg-zinc-900 p-6">
             <h2 className="text-[16px] font-semibold mb-2">Turn on {confirming.name}?</h2>
             <p className="text-[13px] text-zinc-200 leading-relaxed">
@@ -1071,6 +1099,10 @@ interface TelegramBot {
 /** Where the operator manages this connection at the provider. */
 const MANAGE_URLS: Record<string, { label: string; url: string }> = {
   google: { label: "myaccount.google.com", url: "https://myaccount.google.com/connections" },
+  claude: { label: "claude.ai/settings", url: "https://claude.ai/settings/profile" },
+  kimi: { label: "platform.moonshot.ai", url: "https://platform.moonshot.ai/console/api-keys" },
+  codex: { label: "platform.openai.com", url: "https://platform.openai.com/api-keys" },
+  tailscale: { label: "login.tailscale.com", url: "https://login.tailscale.com/admin/machines" },
   github: { label: "github.com/settings", url: "https://github.com/settings/apps" },
   telegram: { label: "@BotFather", url: "https://t.me/BotFather" },
   composio: { label: "app.composio.dev", url: "https://app.composio.dev" },
@@ -1105,6 +1137,15 @@ function openExternal(url: string) {
 }
 
 const DEMO_CONNECTORS: Connector[] = [
+  { id: "claude", name: "Claude Code", category: "intelligence", auth_kind: "cli", status: "connected", detail: "v2.1.233 · subscription signed in", connect_hint: "", accounts: [{ identity: "hishamalhadi@gmail.com", detail: "Max subscription · signed in on this Mac" }] },
+  { id: "kimi", name: "Kimi Code", category: "intelligence", auth_kind: "token", status: "connected", detail: "API key in Keychain", connect_hint: "", accounts: [{ identity: "moonshot account", detail: "API key · pay as you go" }], key_fields: [{ secret: "KIMI_API_KEY", label: "API key (sk-…)", get_url: "https://platform.moonshot.ai/console/api-keys" }], composio_slug: null },
+  { id: "codex", name: "Codex", category: "intelligence", auth_kind: "cli", status: "attention", detail: "installed, not signed in", connect_hint: "Run `codex login` in a terminal, then refresh this page.", accounts: [] },
+  { id: "tailscale", name: "Tailscale", category: "network", auth_kind: "cli", status: "connected", detail: "agents-mac-mini · 4 devices on tailnet", connect_hint: "", accounts: [
+    { identity: "agents-mac-mini", detail: "this Mac · online" },
+    { identity: "hisham-pi5", detail: "Raspberry Pi 5 · online" },
+    { identity: "mhs-macbook-pro-4", detail: "MacBook Pro · offline" },
+    { identity: "hishams-imac", detail: "iMac · offline" },
+  ]},
   { id: "google", name: "Google Workspace", category: "productivity", auth_kind: "oauth", status: "connected", detail: "4 accounts — Gmail, Drive, Calendar, Docs", connect_hint: "", accounts: [
     { identity: "hishamalhadi@gmail.com", detail: "39 permissions · token auto-refreshes" },
     { identity: "hisham@nuchay.com", detail: "39 permissions · token auto-refreshes" },
@@ -1136,6 +1177,9 @@ const DEMO_TELEGRAM_BOTS: TelegramBot[] = [
 ];
 
 const DEMO_USAGE: Record<string, ConnectorUsage> = {
+  claude: { in_use: true, used_by: ["core system", "every agent", "work-runner"] },
+  kimi: { in_use: false, used_by: [] },
+  tailscale: { in_use: true, used_by: ["remote access", "fleet health"] },
   google: { in_use: true, used_by: ["dashboard", "automations", "core system"] },
   telegram: { in_use: true, used_by: ["bridge service", "tracking alerts", "core system"] },
   github: { in_use: true, used_by: ["ship skill", "work-runner"] },
@@ -1150,7 +1194,44 @@ const DEMO_USAGE: Record<string, ConnectorUsage> = {
   plane: { in_use: false, used_by: [] },
 };
 
+const DEMO_ABOUT: Record<string, { about: string; provides: string[] }> = {
+  google: {
+    about:
+      "Your Google accounts, wired in end to end: mail is read and sent, Drive files are opened and written, calendar events are created and moved, and Docs and Sheets are edited in place. Each account is authorised separately and each token refreshes on its own — removing one leaves the others untouched.",
+    provides: ["Gmail read & send", "Drive files", "Calendar events", "Docs & Sheets"],
+  },
+  telegram: {
+    about:
+      "The bridge your system talks through. Messages and voice notes you send arrive as work; briefings and answers come back to the same chat. Each bot is a separate identity with its own token, and forum topics route to different parts of the system.",
+    provides: ["Chat messages", "Voice notes", "Briefings", "Forum topic routing"],
+  },
+  notion: { about: "", provides: ["Pages", "Databases", "Blocks & comments"] },
+  claude: {
+    about:
+      "The model your agents think with. The command-line tool is installed on this Mac and signed in to your subscription, so sessions run against it without an API key of their own.",
+    provides: ["Agent sessions", "Skills & subagents", "Tool use"],
+  },
+  kimi: {
+    about:
+      "A second coding model, held as an API key in your Keychain. Agents reach for it when a run should not spend subscription capacity.",
+    provides: ["Agent sessions", "Long-context runs"],
+  },
+  codex: {
+    about:
+      "OpenAI's coding agent. The binary is on this Mac but no account is signed in yet, so nothing can route work to it.",
+    provides: ["Agent sessions"],
+  },
+  tailscale: {
+    about:
+      "The private network every machine of yours sits on. Your phone and laptop reach this Mac through it without opening a single port to the internet.",
+    provides: ["Device-to-device access", "Remote dashboards", "Fleet health"],
+  },
+};
+
 const DEMO_TESTS: Record<string, TestResult> = {
+  claude: { ok: true, message: "Claude Code answered as the signed-in subscription", ms: 605 },
+  tailscale: { ok: true, message: "Tailnet reachable — 4 devices, 2 online", ms: 143 },
+  kimi: { ok: true, message: "Key accepted by the Kimi API", ms: 388 },
   google: { ok: true, message: "Reached Gmail as hishamalhadi@gmail.com", ms: 412 },
   telegram: { ok: true, message: "Bot @hish_aos_bot is alive", ms: 320 },
   github: { ok: true, message: "Authenticated as @hishamalhadi", ms: 188 },
@@ -1160,6 +1241,8 @@ const DEMO_TESTS: Record<string, TestResult> = {
 };
 
 const CATEGORY_LABELS: Record<string, string> = {
+  intelligence: "Intelligence",
+  network: "Network",
   communication: "Communication",
   productivity: "Productivity",
   development: "Development",
@@ -1170,6 +1253,17 @@ const CATEGORY_LABELS: Record<string, string> = {
   infrastructure: "Infrastructure",
   other: "Other",
 };
+
+/**
+ * Intelligence first — the models are what everything else hangs off. Then the
+ * two categories the operator touches daily; the rest fall in alphabetically.
+ */
+const CATEGORY_ORDER = ["intelligence", "communication", "productivity"];
+
+function categoryRank(cat: string): number {
+  const i = CATEGORY_ORDER.indexOf(cat);
+  return i === -1 ? CATEGORY_ORDER.length : i;
+}
 
 const AUTH_LABELS: Record<string, string> = {
   oauth: "Signs in with the provider — you approve the permissions",
@@ -1228,12 +1322,12 @@ function ConnectorCard({
           </span>
         ) : (
           <span className="inline-flex items-center gap-1.5 text-[11px] text-zinc-200 shrink-0">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400/90" /> Connected
+            <span className="w-1.5 h-1.5 rounded-full bg-zinc-100" /> Connected
           </span>
         )
       ) : attention ? (
-        <span className="inline-flex items-center gap-1.5 text-[11px] text-amber-300 shrink-0">
-          <span className="w-1.5 h-1.5 rounded-full bg-amber-400/90" /> Attention
+        <span className="inline-flex items-center gap-1.5 text-[11px] text-zinc-200 font-medium shrink-0">
+          <span className="text-zinc-200 font-semibold leading-none">!</span> Attention
         </span>
       ) : (
         <span className="text-[12px] px-3 py-1.5 rounded-lg bg-zinc-100 text-zinc-950 font-medium shrink-0">
@@ -1299,7 +1393,7 @@ function ConfirmDialog({
           <button
             onClick={onConfirm}
             disabled={busy}
-            className="px-5 h-10 rounded-xl bg-red-400/90 text-zinc-950 text-[13.5px] font-medium hover:bg-red-300 transition disabled:opacity-40"
+            className="px-5 h-10 rounded-xl bg-zinc-100 text-zinc-950 text-[13.5px] font-medium hover:bg-white transition disabled:opacity-40"
           >
             {busy ? "Working…" : confirmLabel}
           </button>
@@ -1328,7 +1422,7 @@ function RowAction({
       className={
         "px-2.5 h-7 rounded-lg border text-[11.5px] whitespace-nowrap transition disabled:opacity-40 " +
         (danger
-          ? "border-zinc-800 text-zinc-500 hover:text-red-300 hover:border-red-900/70"
+          ? "border-zinc-700 text-zinc-300 font-medium hover:text-zinc-50 hover:border-zinc-500"
           : "border-zinc-800 text-zinc-400 hover:text-zinc-100 hover:border-zinc-600")
       }
     >
@@ -1354,19 +1448,292 @@ function StatusPill({ status, dormant }: { status: string; dormant?: boolean }) 
       </span>
     ) : (
       <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-zinc-800 bg-zinc-950/70 text-[11px] text-zinc-200">
-        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400/90" /> Connected
+        <span className="w-1.5 h-1.5 rounded-full bg-zinc-100" /> Connected
       </span>
     );
   if (status === "attention")
     return (
-      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-amber-900/60 bg-amber-950/20 text-[11px] text-amber-300">
-        <span className="w-1.5 h-1.5 rounded-full bg-amber-400/90" /> Needs attention
+      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-zinc-600 bg-zinc-900 text-[11px] text-zinc-100 font-medium">
+        <span className="text-zinc-200 font-semibold leading-none">!</span> Needs attention
       </span>
     );
   return (
     <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-zinc-800 bg-zinc-950/70 text-[11px] text-zinc-400">
       Not connected
     </span>
+  );
+}
+
+/* ── tool permissions (P2) ── */
+
+type ToolPermission = "allow" | "ask" | "deny";
+
+interface ToolRow {
+  name: string;
+  tool_id: string;
+  description: string;
+  permission: ToolPermission;
+}
+interface ToolGroup {
+  name: string;
+  tools: ToolRow[];
+}
+/** `connector_tools` — the MCP server behind a connector and its inventory. */
+interface ConnectorTools {
+  supported: boolean;
+  server: string | null;
+  groups: ToolGroup[];
+}
+
+const PERM_OPTIONS: { state: ToolPermission; glyph: string; title: string }[] = [
+  { state: "allow", glyph: "✓", title: "Always allow" },
+  { state: "ask", glyph: "ask", title: "Ask before each use" },
+  { state: "deny", glyph: "never", title: "Never allow" },
+];
+
+const DEMO_TOOLS: Record<string, ConnectorTools> = {
+  google: {
+    supported: true,
+    server: "google-workspace",
+    groups: [
+      {
+        name: "Read-only",
+        tools: [
+          { name: "gmail_search_messages", tool_id: "mcp__google-workspace__gmail_search_messages", description: "Search your mail by sender, subject, label or date.", permission: "allow" },
+          { name: "gmail_read_message", tool_id: "mcp__google-workspace__gmail_read_message", description: "Open one message and read its body and attachments.", permission: "allow" },
+          { name: "calendar_list_events", tool_id: "mcp__google-workspace__calendar_list_events", description: "List events across your calendars for a date range.", permission: "allow" },
+          { name: "drive_search_files", tool_id: "mcp__google-workspace__drive_search_files", description: "Find files and folders by name, type or owner.", permission: "allow" },
+          { name: "docs_read_document", tool_id: "mcp__google-workspace__docs_read_document", description: "Read the contents of a Doc or Sheet.", permission: "ask" },
+        ],
+      },
+      {
+        name: "Write",
+        tools: [
+          { name: "gmail_send_message", tool_id: "mcp__google-workspace__gmail_send_message", description: "Send mail from your account.", permission: "ask" },
+          { name: "gmail_modify_labels", tool_id: "mcp__google-workspace__gmail_modify_labels", description: "Archive, label or move messages in your inbox.", permission: "ask" },
+          { name: "calendar_create_event", tool_id: "mcp__google-workspace__calendar_create_event", description: "Create or move events and invite people.", permission: "ask" },
+          { name: "drive_upload_file", tool_id: "mcp__google-workspace__drive_upload_file", description: "Write new files into your Drive.", permission: "ask" },
+          { name: "gmail_delete_message", tool_id: "mcp__google-workspace__gmail_delete_message", description: "Permanently delete messages.", permission: "deny" },
+        ],
+      },
+    ],
+  },
+  telegram: {
+    supported: true,
+    server: "telegram-bridge",
+    groups: [
+      {
+        name: "Messaging",
+        tools: [
+          { name: "telegram_read_updates", tool_id: "mcp__telegram-bridge__telegram_read_updates", description: "Read messages and voice notes sent to your bots.", permission: "allow" },
+          { name: "telegram_send_message", tool_id: "mcp__telegram-bridge__telegram_send_message", description: "Reply in a chat or forum topic.", permission: "allow" },
+          { name: "telegram_send_voice", tool_id: "mcp__telegram-bridge__telegram_send_voice", description: "Send a spoken reply back to the chat.", permission: "ask" },
+        ],
+      },
+    ],
+  },
+};
+
+/** `gmail_search_messages` → `Search messages` — the server prefix is noise. */
+function humanizeTool(name: string): string {
+  const parts = name.split("__").pop()!.split("_");
+  const words = parts.length > 1 ? parts.slice(1) : parts;
+  const s = words.join(" ").trim() || name;
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+function Chevron({ open }: { open: boolean }) {
+  return (
+    <svg
+      width="10"
+      height="10"
+      viewBox="0 0 10 10"
+      className={"text-zinc-500 transition-transform " + (open ? "rotate-90" : "")}
+    >
+      <path d="M3.5 1.5 7 5l-3.5 3.5" stroke="currentColor" strokeWidth="1.4" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+/** Three compact squares — the selected state is the filled one. */
+function PermissionControl({
+  value,
+  disabled,
+  onChange,
+}: {
+  value: ToolPermission;
+  disabled?: boolean;
+  onChange: (next: ToolPermission) => void;
+}) {
+  return (
+    <div className="flex rounded-lg border border-zinc-800 overflow-hidden shrink-0">
+      {PERM_OPTIONS.map((o) => (
+        <button
+          key={o.state}
+          title={o.title}
+          disabled={disabled}
+          onClick={() => onChange(o.state)}
+          className={
+            "h-7 min-w-[38px] px-2 text-[11px] transition disabled:opacity-40 " +
+            (value === o.state
+              ? "bg-zinc-100 text-zinc-950 font-medium"
+              : "bg-zinc-900 text-zinc-500 hover:text-zinc-200")
+          }
+        >
+          {o.glyph}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * The trust ladder at tool granularity: every row here maps to a real
+ * allow/ask/deny entry the agents are held to. Rendered only when the
+ * connector actually has an MCP server behind it.
+ */
+function ToolPermissions({ connectorId }: { connectorId: string }) {
+  const [data, setData] = useState<ConnectorTools | null>(null);
+  const [closed, setClosed] = useState<Record<string, boolean>>({});
+  const [menu, setMenu] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (IN_TAURI) {
+        try {
+          const r = await invoke<ConnectorTools>("connector_tools", { id: connectorId });
+          if (!cancelled) setData(r);
+        } catch {
+          if (!cancelled) setData({ supported: false, server: null, groups: [] });
+        }
+      } else {
+        await new Promise((res) => setTimeout(res, 350));
+        if (!cancelled)
+          setData(DEMO_TOOLS[connectorId] ?? { supported: false, server: null, groups: [] });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [connectorId]);
+
+  /** Optimistic — the row flips first, and rolls back if the write fails. */
+  const apply = useCallback(
+    async (ids: string[], next: ToolPermission) => {
+      const before = data;
+      if (!before) return;
+      setMenu(null);
+      setBusy(true);
+      setError(null);
+      setData({
+        ...before,
+        groups: before.groups.map((g) => ({
+          ...g,
+          tools: g.tools.map((t) => (ids.includes(t.tool_id) ? { ...t, permission: next } : t)),
+        })),
+      });
+      try {
+        if (IN_TAURI) {
+          for (const toolId of ids) await invoke("set_tool_permission", { toolId, state: next });
+        } else {
+          await new Promise((res) => setTimeout(res, 250));
+        }
+      } catch (e) {
+        setData(before);
+        setError(String(e));
+      }
+      setBusy(false);
+    },
+    [data],
+  );
+
+  if (!data || !data.supported || data.groups.length === 0) return null;
+
+  return (
+    <div className="mb-7">
+      <div className="text-[11px] uppercase tracking-[0.12em] text-zinc-500 mb-1">Tool permissions</div>
+      <p className="text-[12.5px] text-zinc-400 mb-3 leading-relaxed">
+        Choose when agents may use these tools.
+        {data.server && <span className="text-zinc-600"> · {data.server}</span>}
+      </p>
+
+      {error && <ErrorBanner className="mb-3">{error}</ErrorBanner>}
+
+      <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 divide-y divide-zinc-800/70">
+        {data.groups.map((g) => {
+          const open = !closed[g.name];
+          const ids = g.tools.map((t) => t.tool_id);
+          return (
+            <div key={g.name}>
+              <div className="flex flex-wrap items-center gap-2 px-4 py-3">
+                <button
+                  onClick={() => setClosed((s) => ({ ...s, [g.name]: open }))}
+                  className="flex items-center gap-2 flex-1 min-w-0 text-left"
+                >
+                  <Chevron open={open} />
+                  <span className="text-[13px] text-zinc-100 font-medium">{g.name}</span>
+                  <span className="px-1.5 py-0.5 rounded-md border border-zinc-800 bg-zinc-900 text-[10.5px] text-zinc-400">
+                    {g.tools.length}
+                  </span>
+                </button>
+                <div className="relative shrink-0">
+                  <button
+                    onClick={() => setMenu((m) => (m === g.name ? null : g.name))}
+                    disabled={busy}
+                    className="px-2.5 h-7 rounded-lg border border-zinc-800 text-[11.5px] text-zinc-400
+                               hover:text-zinc-100 hover:border-zinc-600 transition disabled:opacity-40"
+                  >
+                    Set all ▾
+                  </button>
+                  {menu === g.name && (
+                    <>
+                      <div className="fixed inset-0 z-30" onClick={() => setMenu(null)} />
+                      <div className="absolute right-0 top-9 z-40 w-44 rounded-xl border border-zinc-700 bg-zinc-900 py-1 shadow-xl">
+                        {PERM_OPTIONS.map((o) => (
+                          <button
+                            key={o.state}
+                            onClick={() => apply(ids, o.state)}
+                            className="w-full text-left px-3.5 py-2 text-[12.5px] text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 transition"
+                          >
+                            {o.title}
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {open && (
+                <div className="px-4 pb-2">
+                  {g.tools.map((t) => (
+                    <div
+                      key={t.tool_id}
+                      className="flex flex-wrap items-start gap-3 py-2.5 border-t border-zinc-800/60"
+                    >
+                      <div className="flex-1 min-w-[180px]">
+                        <div className="text-[13px] text-zinc-100">{humanizeTool(t.name)}</div>
+                        <div className="text-[11.5px] text-zinc-500 mt-0.5 leading-relaxed">
+                          {t.description}
+                        </div>
+                      </div>
+                      <PermissionControl
+                        value={t.permission}
+                        disabled={busy}
+                        onChange={(next) => apply([t.tool_id], next)}
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
@@ -1433,24 +1800,15 @@ function ConnectorDetail({
           if (!cancelled) setAbout({ about: c.detail, provides: [] });
         }
       } else {
+        const canned = DEMO_ABOUT[c.id];
         setAbout({
           about:
-            c.id === "google"
-              ? "Your Google accounts, wired in end to end: mail is read and sent, Drive files are opened and written, calendar events are created and moved, and Docs and Sheets are edited in place. Each account is authorised separately and each token refreshes on its own — removing one leaves the others untouched."
-              : c.id === "telegram"
-                ? "The bridge your system talks through. Messages and voice notes you send arrive as work; briefings and answers come back to the same chat. Each bot is a separate identity with its own token, and forum topics route to different parts of the system."
-                : c.detail ||
-                  (c.status === "connected"
-                    ? `${c.name} is connected to your system.`
-                    : `Connect ${c.name} to let your system read and act inside it.`),
-          provides:
-            c.id === "google"
-              ? ["Gmail read & send", "Drive files", "Calendar events", "Docs & Sheets"]
-              : c.id === "telegram"
-                ? ["Chat messages", "Voice notes", "Briefings", "Forum topic routing"]
-                : c.id === "notion"
-                  ? ["Pages", "Databases", "Blocks & comments"]
-                  : ["actions inside " + c.name],
+            canned?.about ||
+            c.detail ||
+            (c.status === "connected"
+              ? `${c.name} is connected to your system.`
+              : `Connect ${c.name} to let your system read and act inside it.`),
+          provides: canned?.provides ?? ["actions inside " + c.name],
         });
       }
     })();
@@ -1670,9 +2028,20 @@ function ConnectorDetail({
 
   const accountsLabel = c.id === "telegram" ? "Bots" : c.accounts.length > 1 ? "Accounts" : "Account";
   const manage = manageTarget(c.id);
+  // Sign-out is per-tool, not per-auth-kind — the wrong command on the wrong
+  // page is worse than none.
+  const SIGN_OUT_CMD: Record<string, string> = {
+    github: "gh auth logout",
+    claude: "claude /logout (inside a session)",
+    kimi: "kimi logout",
+    codex: "codex logout",
+    tailscale: "tailscale logout",
+  };
   const removalNote: Record<string, string> = {
     oauth: "Access can also be revoked from the provider's own security settings.",
-    cli: "To sign out entirely, run `gh auth logout` in a terminal.",
+    cli: SIGN_OUT_CMD[c.id]
+      ? `To sign out entirely, run \`${SIGN_OUT_CMD[c.id]}\` in a terminal.`
+      : "Sign out through the tool's own command line.",
     session: "Unlink this device from WhatsApp on your phone (Settings → Linked devices).",
   };
 
@@ -1686,29 +2055,27 @@ function ConnectorDetail({
         <span className="w-1.5 h-1.5 rounded-full bg-zinc-100 pulse-dot" /> Testing…
       </span>
     ) : p.ok ? (
-      <span className="text-[12px] text-emerald-300/90 select-text">
+      <span className="text-[12px] text-zinc-200 select-text">
         ✓ {p.message}
         {p.ms !== undefined && <span className="text-zinc-500"> · {p.ms}ms</span>}
       </span>
     ) : (
-      <span className="text-[12px] text-red-300 select-text">{p.message}</span>
+      <span className="text-[12px] text-zinc-200 select-text">
+        <span className="font-semibold">×</span> {p.message}
+      </span>
     );
 
   return (
-    <div className="screen max-w-[720px] mx-auto px-8 pt-14 pb-16">
-      <div className="flex items-center gap-1.5 text-[12.5px] mb-6">
-        <button onClick={onBack} className="text-zinc-400 hover:text-zinc-100 transition">
-          Connectors
-        </button>
-        <span className="text-zinc-700">/</span>
-        <span className="text-zinc-300">{c.name}</span>
+    <div className="screen max-w-[720px] mx-auto px-5 sm:px-8 pt-14 pb-16">
+      <div className="mb-6">
+        <BackButton label="Connectors" onClick={onBack} />
       </div>
 
-      <div className="flex items-start gap-4 mb-5">
+      <div className="flex flex-wrap items-start gap-4 mb-5">
         <ConnectorLogo id={c.id} name={c.name} size={52} domain={domainFor(c.id)} />
-        <div className="flex-1 min-w-0 pt-0.5">
-          <div className="flex items-center gap-2.5">
-            <h1 className="text-[22px] font-semibold tracking-tight truncate">{c.name}</h1>
+        <div className="flex-1 min-w-[180px] pt-0.5">
+          <div className="flex flex-wrap items-center gap-2.5">
+            <h1 className="text-[22px] font-semibold tracking-tight">{c.name}</h1>
             <StatusPill status={c.status} dormant={usage ? !usage.in_use : c.in_use === false} />
           </div>
           <div className="text-[12.5px] text-zinc-400 mt-1">
@@ -1717,7 +2084,7 @@ function ConnectorDetail({
         </div>
 
         {connected && (
-          <div className="flex items-center gap-2 shrink-0 relative">
+          <div className="flex flex-wrap items-center gap-2 shrink-0 relative">
             <button
               onClick={() => probe()}
               disabled={test === "running"}
@@ -1729,8 +2096,8 @@ function ConnectorDetail({
             {canRemove && (
               <button
                 onClick={() => setConfirm({ kind: "disconnect" })}
-                className="px-3.5 h-9 rounded-lg border border-zinc-800 text-[12.5px] text-zinc-400
-                           hover:text-red-300 hover:border-red-900/70 transition"
+                className="px-3.5 h-9 rounded-lg border border-zinc-700 text-[12.5px] text-zinc-300
+                           hover:text-zinc-50 hover:border-zinc-500 transition"
               >
                 Disconnect
               </button>
@@ -1773,7 +2140,7 @@ function ConnectorDetail({
                         setMenu(false);
                         setConfirm({ kind: "disconnect" });
                       }}
-                      className="w-full text-left px-3.5 py-2 text-[12.5px] text-zinc-400 hover:bg-zinc-800 hover:text-red-300 transition"
+                      className="w-full text-left px-3.5 py-2 text-[12.5px] text-zinc-300 hover:bg-zinc-800 hover:text-zinc-50 transition"
                     >
                       Remove {c.name}
                     </button>
@@ -1787,11 +2154,7 @@ function ConnectorDetail({
 
       {test && <div className="mb-5">{renderProbe(test)}</div>}
 
-      {error && (
-        <div className="mb-5 rounded-xl border border-red-900/60 bg-red-950/30 px-4 py-3 text-[12.5px] text-red-300 select-text">
-          {error}
-        </div>
-      )}
+      {error && <ErrorBanner className="mb-5">{error}</ErrorBanner>}
 
       {about && about.about && (
         <p className="text-[13.5px] text-zinc-300 leading-relaxed mb-3.5">{about.about}</p>
@@ -1825,7 +2188,8 @@ function ConnectorDetail({
             </div>
           )
         ) : (
-          <div className="mb-7 rounded-xl border border-amber-900/40 bg-amber-950/10 px-4 py-3 text-[12.5px] text-amber-200/80 leading-relaxed">
+          <div className="mb-7 rounded-xl border border-zinc-700 bg-zinc-900/60 px-4 py-3 text-[12.5px] text-zinc-300 leading-relaxed">
+            <span className="text-zinc-200 font-semibold mr-1.5">!</span>
             Nothing in your system uses this connection yet — the key sits idle. Safe to disconnect.
           </div>
         ))}
@@ -1853,7 +2217,8 @@ function ConnectorDetail({
                     </div>
                     <div
                       className={
-                        "text-[11.5px] mt-0.5 " + (a.failed ? "text-amber-300/90" : "text-zinc-500")
+                        "text-[11.5px] mt-0.5 " +
+                        (a.failed ? "text-zinc-200 font-medium" : "text-zinc-500")
                       }
                     >
                       {a.detail}
@@ -1892,6 +2257,8 @@ function ConnectorDetail({
           )}
         </div>
       )}
+
+      <ToolPermissions key={`${c.id}-${reloadKey}`} connectorId={c.id} />
 
       {!connected && (
         <div className="mb-7">
@@ -1991,7 +2358,7 @@ function ConnectorDetail({
         </div>
       )}
 
-      <div className="mt-8 pt-6 border-t border-zinc-800/80 grid grid-cols-2 gap-x-8 gap-y-5">
+      <div className="mt-8 pt-6 border-t border-zinc-800/80 grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-5">
         <MetaBlock label="Category">
           <span className="px-2 py-0.5 rounded-md border border-zinc-800 bg-zinc-950/70 text-[11.5px] text-zinc-400">
             {CATEGORY_LABELS[c.category] ?? c.category}
@@ -2097,12 +2464,10 @@ function BrowseDirectory({
   );
 
   return (
-    <div className="screen max-w-[720px] mx-auto px-8 pt-14 pb-16">
-      <div className="flex items-end justify-between mb-1">
+    <div className="screen max-w-[720px] mx-auto px-5 sm:px-8 pt-14 pb-16">
+      <div className="flex flex-wrap items-end justify-between gap-3 mb-1">
         <h1 className="text-[22px] font-semibold tracking-tight">Browse connectors</h1>
-        <button onClick={onBack} className="text-[13px] text-zinc-400 hover:text-zinc-100 transition pb-1">
-          Back
-        </button>
+        <BackButton label="Connectors" onClick={onBack} />
       </div>
       <p className="text-[13px] text-zinc-400 mb-5">
         {composioReady
@@ -2126,7 +2491,7 @@ function BrowseDirectory({
           <span className="text-[13.5px] text-zinc-200">Loading directory…</span>
         </div>
       ) : (
-        <div className="grid grid-cols-2 gap-2.5">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
           {filtered.slice(0, 60).map((t) => (
             <div
               key={t.slug}
@@ -2256,12 +2621,15 @@ function ConnectorsPane() {
     if (q && !c.name.toLowerCase().includes(q.toLowerCase())) return false;
     return true;
   });
-  const cats = Array.from(new Set(list.map((c) => c.category)));
+  const cats = Array.from(new Set(list.map((c) => c.category))).sort((a, b) => {
+    const d = categoryRank(a) - categoryRank(b);
+    return d !== 0 ? d : (CATEGORY_LABELS[a] ?? a).localeCompare(CATEGORY_LABELS[b] ?? b);
+  });
   const connectedCount = (connectors ?? []).filter((c) => c.status === "connected").length;
 
   return (
-    <div className="screen max-w-[720px] mx-auto px-8 pt-14 pb-16">
-      <div className="flex items-center justify-between mb-1">
+    <div className="screen max-w-[720px] mx-auto px-5 sm:px-8 pt-14 pb-16">
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-1">
         <h1 className="text-[22px] font-semibold tracking-tight">Connectors</h1>
         <button
           onClick={() => setView("browse")}
@@ -2274,8 +2642,8 @@ function ConnectorsPane() {
         {connectedCount} connected. Outside apps and accounts your system can act through.
       </p>
 
-      <div className="flex items-center gap-3 mb-6">
-        <div className="flex rounded-lg border border-zinc-800 overflow-hidden">
+      <div className="flex flex-wrap items-center gap-3 mb-6">
+        <div className="flex flex-wrap w-fit rounded-lg border border-zinc-800 overflow-hidden">
           {(
             [
               ["all", "All"],
@@ -2303,7 +2671,7 @@ function ConnectorsPane() {
           placeholder="Search…"
           autoComplete="off"
           spellCheck={false}
-          className="flex-1 h-9 px-3.5 rounded-lg bg-zinc-900 border border-zinc-800 text-[13px] text-zinc-100
+          className="flex-1 min-w-[150px] h-9 px-3.5 rounded-lg bg-zinc-900 border border-zinc-800 text-[13px] text-zinc-100
                      placeholder:text-zinc-500 outline-none focus:border-zinc-600 transition"
         />
       </div>
@@ -2324,7 +2692,7 @@ function ConnectorsPane() {
               <div className="text-[11px] uppercase tracking-[0.12em] text-zinc-500 mb-2.5">
                 {CATEGORY_LABELS[cat] ?? cat}
               </div>
-              <div className="grid grid-cols-2 gap-2.5">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                 {items.map((c) => (
                   <ConnectorCard key={c.id} c={c} usage={usage[c.id]} onOpen={setOpen} />
                 ))}
@@ -2376,7 +2744,10 @@ function Meter({ pct, label, detail }: { pct: number; label: string; detail: str
       </div>
       <div className="h-1.5 rounded-full bg-zinc-800 overflow-hidden">
         <div
-          className={"h-full rounded-full " + (pct > 75 ? "bg-red-400/80" : pct > 55 ? "bg-amber-400/80" : "bg-zinc-200")}
+          className={
+            "h-full rounded-full " +
+            (pct > 75 ? "bg-zinc-100" : pct > 55 ? "bg-zinc-400" : "bg-zinc-600")
+          }
           style={{ width: `${Math.min(100, Math.max(2, pct))}%` }}
         />
       </div>
@@ -2423,8 +2794,8 @@ function HealthPane() {
   const healthy = report.issues.length === 0;
 
   return (
-    <div className="screen max-w-[680px] mx-auto px-8 pt-14">
-      <div className="flex items-end justify-between mb-1">
+    <div className="screen max-w-[680px] mx-auto px-5 sm:px-8 pt-14">
+      <div className="flex flex-wrap items-end justify-between gap-3 mb-1">
         <h1 className="text-[22px] font-semibold tracking-tight">Health</h1>
         <button
           onClick={load}
@@ -2441,17 +2812,17 @@ function HealthPane() {
       </p>
 
       {report.issues.length > 0 && (
-        <div className="rounded-2xl border border-amber-900/40 bg-amber-950/20 px-5 py-4 mb-4">
+        <div className="rounded-2xl border border-zinc-700 bg-zinc-900/60 px-5 py-4 mb-4">
           {report.issues.map((iss, i) => (
-            <div key={i} className="flex gap-2.5 py-1 text-[13px] text-amber-200/90">
-              <span className="text-amber-400/90 font-semibold shrink-0">!</span>
+            <div key={i} className="flex gap-2.5 py-1 text-[13px] text-zinc-300">
+              <span className="text-zinc-200 font-semibold shrink-0">!</span>
               <span className="select-text">{iss}</span>
             </div>
           ))}
         </div>
       )}
 
-      <div className="grid grid-cols-2 gap-4 mb-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
         {memUsed !== null && (
           <Meter pct={memUsed} label="Memory" detail={`of ${report.mem_total_gb} GB in use`} />
         )}
@@ -2475,10 +2846,10 @@ function HealthPane() {
                   "w-2 h-2 rounded-full shrink-0 " +
                   (s.running
                     ? crashedBefore
-                      ? "bg-amber-400/90"
+                      ? "bg-zinc-400"
                       : "bg-zinc-100"
                     : crashedBefore
-                      ? "bg-red-400/90"
+                      ? "border-2 border-zinc-200"
                       : "border border-zinc-600")
                 }
               />
@@ -2499,10 +2870,15 @@ function HealthPane() {
               key={e.name}
               className={
                 "inline-flex items-center gap-2 px-2.5 py-1.5 rounded-lg border text-[12px] " +
-                (e.ok ? "border-zinc-700 text-zinc-100" : "border-red-900/60 text-red-300")
+                (e.ok ? "border-zinc-700 text-zinc-100" : "border-zinc-600 text-zinc-300")
               }
             >
-              <span className={"w-1.5 h-1.5 rounded-full " + (e.ok ? "bg-zinc-100" : "bg-red-400")} />
+              <span
+                className={
+                  "w-1.5 h-1.5 rounded-full " +
+                  (e.ok ? "bg-zinc-100" : "border-2 border-zinc-200")
+                }
+              />
               {e.name}
               <span className="font-mono text-[10px] text-zinc-500">{e.detail}</span>
             </span>
@@ -2676,24 +3052,20 @@ function ConfigPane() {
   }, [values]);
 
   const inputCls =
-    "w-64 h-10 px-3 rounded-lg bg-zinc-900 border border-zinc-800 text-[14px] text-zinc-100 " +
+    "w-full sm:w-64 h-10 px-3 rounded-lg bg-zinc-900 border border-zinc-800 text-[14px] text-zinc-100 " +
     "placeholder:text-zinc-500 outline-none focus:border-zinc-600 transition";
-  const smallInput = inputCls.replace("w-64", "w-28");
+  const smallInput = inputCls.replace("w-full sm:w-64", "w-28");
 
   const TRUST_LABELS = ["Shadow", "Approval", "Semi-auto", "Full-auto"];
 
   return (
-    <div className="screen max-w-[640px] mx-auto px-8 pt-14 pb-16">
+    <div className="screen max-w-[640px] mx-auto px-5 sm:px-8 pt-14 pb-16">
       <h1 className="text-[22px] font-semibold tracking-tight mb-1">Configuration</h1>
       <p className="text-[13px] text-zinc-300 mb-6">
         Your operator profile — saved straight into the system's configuration.
       </p>
 
-      {error && (
-        <div className="mb-4 rounded-xl border border-red-900/60 bg-red-950/30 px-4 py-3 text-[13px] text-red-300 select-text">
-          {error}
-        </div>
-      )}
+      {error && <ErrorBanner className="mb-4">{error}</ErrorBanner>}
 
       {loaded && (
         <>
@@ -2713,7 +3085,7 @@ function ConfigPane() {
               <input className={inputCls} value={values.timezone ?? ""} onChange={(e) => set("timezone", e.target.value)} />
             </Field>
             <Field label="Communication style">
-              <div className="flex rounded-lg border border-zinc-800 overflow-hidden">
+              <div className="flex flex-wrap w-fit rounded-lg border border-zinc-800 overflow-hidden">
                 {(["concise", "detailed"] as const).map((s) => (
                   <button
                     key={s}
@@ -2748,7 +3120,7 @@ function ConfigPane() {
               />
             </Field>
             <Field label="Trust level">
-              <div className="flex rounded-lg border border-zinc-800 overflow-hidden">
+              <div className="flex flex-wrap w-fit rounded-lg border border-zinc-800 overflow-hidden">
                 {TRUST_LABELS.map((label, i) => (
                   <button
                     key={label}
@@ -2809,7 +3181,7 @@ function UpdatesPane({
   }, []);
 
   return (
-    <div className="screen max-w-[640px] mx-auto px-8 pt-14 pb-16">
+    <div className="screen max-w-[640px] mx-auto px-5 sm:px-8 pt-14 pb-16">
       <h1 className="text-[22px] font-semibold tracking-tight mb-1">Updates</h1>
       <p className="text-[13px] text-zinc-300 mb-6">
         System updates install in place and restart services automatically.
@@ -2909,9 +3281,50 @@ function Shell({
   onUpdate: () => void;
 }) {
   const [pane, setPane] = useState<PaneId>("home");
+  const [navOpen, setNavOpen] = useState(false);
   return (
     <div className="h-full flex">
-      <Sidebar pane={pane} setPane={setPane} sys={sys} />
+      {/* Desktop: the sidebar is simply there. */}
+      <div className="hidden md:flex h-full">
+        <Sidebar pane={pane} setPane={setPane} sys={sys} />
+      </div>
+
+      {/* Narrow: it slides over, and the backdrop dismisses it. */}
+      {navOpen && (
+        <>
+          <div
+            className="fixed inset-0 z-50 bg-black/60 md:hidden"
+            onClick={() => setNavOpen(false)}
+          />
+          <div className="fixed inset-y-0 left-0 z-50 bg-zinc-950 shadow-2xl md:hidden">
+            <Sidebar
+              pane={pane}
+              setPane={(p) => {
+                setPane(p);
+                setNavOpen(false);
+              }}
+              sys={sys}
+            />
+          </div>
+        </>
+      )}
+
+      {/* Sits above the drag strip so it stays clickable. */}
+      <button
+        onClick={() => setNavOpen((v) => !v)}
+        aria-label={navOpen ? "Close menu" : "Open menu"}
+        className="md:hidden fixed top-1.5 left-2.5 z-50 w-10 h-10 rounded-lg flex items-center justify-center
+                   text-zinc-300 hover:text-zinc-50 hover:bg-zinc-900 transition"
+      >
+        <svg width="16" height="16" viewBox="0 0 16 16">
+          {navOpen ? (
+            <path d="M3.5 3.5 12.5 12.5M12.5 3.5 3.5 12.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+          ) : (
+            <path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h11" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+          )}
+        </svg>
+      </button>
+
       <div className="flex-1 min-w-0 overflow-y-auto console pb-14">
         {pane === "home" && <Home sys={sys} onUpdate={onUpdate} />}
         {pane === "health" && <HealthPane />}
@@ -2936,7 +3349,7 @@ function Field({
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex items-center justify-between gap-6 py-4">
+    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-6 py-4">
       <span className="text-[14px] text-zinc-300">{label}</span>
       {children}
     </div>
@@ -2955,7 +3368,7 @@ function Configure({
   onContinue: () => void;
 }) {
   const inputCls =
-    "w-64 h-10 px-3 rounded-lg bg-zinc-900 border border-zinc-800 text-[14px] text-zinc-100 " +
+    "w-full sm:w-64 h-10 px-3 rounded-lg bg-zinc-900 border border-zinc-800 text-[14px] text-zinc-100 " +
     "placeholder:text-zinc-500 outline-none focus:border-zinc-600 transition";
 
   return (
@@ -2984,7 +3397,7 @@ function Configure({
             />
           </Field>
           <Field label="Role">
-            <div className="flex rounded-lg border border-zinc-800 overflow-hidden">
+            <div className="flex flex-wrap w-fit rounded-lg border border-zinc-800 overflow-hidden">
               {(["primary", "worker"] as const).map((r) => (
                 <button
                   key={r}
@@ -3025,12 +3438,7 @@ function Configure({
         </p>
 
         <div className="flex justify-between mt-8">
-          <button
-            onClick={onBack}
-            className="px-4 h-11 rounded-xl text-[14px] text-zinc-200 hover:text-zinc-100 transition"
-          >
-            Back
-          </button>
+          <BackButton label="Welcome" onClick={onBack} />
           <PrimaryButton onClick={onContinue}>
             {config.dryRun ? "Preview installation" : "Install"}
           </PrimaryButton>
@@ -3164,11 +3572,7 @@ function Install({
           ))}
         </div>
 
-        {error && (
-          <div className="mt-4 rounded-xl border border-red-900/60 bg-red-950/30 px-4 py-3 text-[13px] text-red-300">
-            {error}
-          </div>
-        )}
+        {error && <ErrorBanner className="mt-4">{error}</ErrorBanner>}
 
         <button
           onClick={() => setShowConsole((v) => !v)}
@@ -3229,8 +3633,24 @@ function Done({
 
 /* ── root ── */
 
+const ZOOM_MIN = 0.7;
+const ZOOM_MAX = 1.6;
+const ZOOM_STEP = 0.1;
+
+function clampZoom(z: number): number {
+  return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(z * 100) / 100));
+}
+
 export default function App() {
   const [screen, setScreen] = useState<Screen>("welcome");
+  const [zoom, setZoom] = useState<number>(() => {
+    try {
+      const stored = parseFloat(localStorage.getItem("app-zoom") ?? "");
+      return Number.isFinite(stored) ? clampZoom(stored) : 1;
+    } catch {
+      return 1;
+    }
+  });
   const [exitCode, setExitCode] = useState(0);
   const [sys, setSys] = useState<SystemInfo | null>(null);
   const [checking, setChecking] = useState(false);
@@ -3240,6 +3660,34 @@ export default function App() {
     role: "primary",
     dryRun: true,
   });
+
+  // Cmd+= / Cmd+- / Cmd+0 — the shortcuts a Mac window is expected to answer.
+  // Ctrl is honoured too, for anyone driving this from a non-Apple keyboard.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.metaKey && !e.ctrlKey) return;
+      if (e.key === "=" || e.key === "+") {
+        e.preventDefault();
+        setZoom((z) => clampZoom(z + ZOOM_STEP));
+      } else if (e.key === "-" || e.key === "_") {
+        e.preventDefault();
+        setZoom((z) => clampZoom(z - ZOOM_STEP));
+      } else if (e.key === "0") {
+        e.preventDefault();
+        setZoom(1);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("app-zoom", String(zoom));
+    } catch {
+      /* private mode — the zoom just doesn't persist */
+    }
+  }, [zoom]);
 
   // Detect an existing install on launch, then refresh the update check.
   useEffect(() => {
@@ -3331,7 +3779,7 @@ export default function App() {
   const existing = sys?.installed === true;
 
   return (
-    <div className="h-full">
+    <div className="h-full" style={{ "--app-zoom": zoom, zoom } as React.CSSProperties}>
       <DragRegion />
       {screen === "welcome" &&
         (sys === null ? (
