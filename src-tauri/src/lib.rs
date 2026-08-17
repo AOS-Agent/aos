@@ -3119,3 +3119,56 @@ pub fn run() {
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The bundled manifest is the app's fallback on a machine with no runtime
+    /// copy, so a parse failure here is a black screen for every fresh install.
+    /// `cargo check` cannot catch it — serde only runs at runtime.
+    #[test]
+    fn bundled_manifest_parses_as_schema_2() {
+        let m: Manifest = serde_yaml::from_str(BUNDLED_MANIFEST)
+            .expect("bundled modules.yaml must parse");
+        assert!(!m.modules.is_empty(), "manifest has no modules");
+        assert!(!m.foreign.is_empty(), "foreign list should not be empty");
+    }
+
+    /// Every module must declare what it IS. Without `kind`, health is
+    /// unjudgeable: a periodic job idling between ticks looks identical to a
+    /// dead daemon, which is exactly how four healthy jobs were once reported
+    /// BROKEN. Without `tier`, the panel cannot separate spine from extras.
+    #[test]
+    fn every_module_declares_tier_and_kind() {
+        let m: Manifest = serde_yaml::from_str(BUNDLED_MANIFEST).unwrap();
+        for module in &m.modules {
+            let kind = module.kind.as_deref().unwrap_or("");
+            let tier = module.tier.as_deref().unwrap_or("");
+            assert!(
+                matches!(kind, "daemon" | "periodic" | "oneshot" | "resource"),
+                "module '{}' has invalid kind '{kind}'", module.id
+            );
+            assert!(
+                matches!(tier, "core" | "experimental"),
+                "module '{}' has invalid tier '{tier}'", module.id
+            );
+        }
+    }
+
+    /// Regression guard for the schema 1 → 2 migration: `kind` no longer means
+    /// "connector". If any module ever carries kind: connector again, the Arms
+    /// grouping and the health probes both silently misread it.
+    #[test]
+    fn kind_is_never_used_for_connectors() {
+        let m: Manifest = serde_yaml::from_str(BUNDLED_MANIFEST).unwrap();
+        assert!(
+            m.modules.iter().all(|x| x.kind.as_deref() != Some("connector")),
+            "kind: connector is schema 1 — use the `connector` flag instead"
+        );
+        assert!(
+            m.modules.iter().any(|x| x.connector),
+            "no module is flagged as a connector — the Connectors pane would be empty"
+        );
+    }
+}
