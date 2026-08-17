@@ -217,6 +217,90 @@ def _transcriber_notify(message: str, detail: str | None) -> str:
             "bring it back automatically. I've logged the details.")
 
 
+TEMPLATES: dict[str, dict[str, object]] = {
+    "volume_access": {
+        "notify": (
+            "⚠️ I can't reliably read the external drive right now. This usually "
+            "means a Mac permission got reset after an app update. Two-minute fix: "
+            "System Settings → Privacy & Security → Files and Folders → allow your "
+            "terminal, then relaunch it. Until then I'll treat anything from the "
+            "vault or projects as unreliable, not empty."
+        ),
+    },
+    "dead_code": {"notify": _dead_code},
+    "storage_layout": {"notify": _storage_layout},
+    "instance_hygiene": {"notify": _instance_hygiene},
+    "vault_contract": {
+        "notify": ("📝 A batch of vault notes are missing their frontmatter. "
+                   "Not urgent — worth tidying so search stays sharp."),
+        "error": ("📝 I couldn't finish checking the vault notes. "
+                  "Nothing broke, but it's worth a glance — details in the log."),
+    },
+    "disk_smart_health": {
+        "notify": ("🚨 One of the drives is reporting hardware health warnings. "
+                   "Worth backing up soon and keeping an eye on it — details in the log."),
+    },
+    "google_workspace": {"notify": _google_workspace},
+    "deployment_health": {
+        "notify": _deployment_health_notify,
+        "fixed": _deployment_health_fixed,
+    },
+    "dev_backend_plist": {
+        "notify": ("🔧 The Qareen dev service isn't loaded, so the dashboard and dev "
+                   "backend may be offline. Logged for a look."),
+    },
+    "cmux_socket_control": {
+        "notify": ("🖥️ I can't open your terminal for you right now, so starting a "
+                   "session will drop you in the window you're already in. "
+                   "Logged for a look."),
+        "fixed": "🖥️ Fixed your terminal — sessions will open in their own window again.",
+    },
+    "dev_browser": {
+        "notify": ("🌐 The automation browser isn't set up correctly, so some web "
+                   "tasks may not run. Details in the log."),
+    },
+    "launchagent_python_paths": {
+        "notify": ("🔧 A few background services point at a Python that moved and I "
+                   "couldn't fix it automatically. They may not start until it's sorted."),
+        "fixed": "🔧 Pointed a few background services back at the right Python.",
+    },
+    "settings_config": {
+        "notify": ("⚙️ My Claude Code settings drifted from the expected setup and I "
+                   "couldn't fix it automatically. Logged for a look."),
+        "fixed": "⚙️ Tidied up a couple of Claude Code settings that had drifted.",
+    },
+    "bridge_topics_config": {
+        "notify": ("💬 Telegram topics aren't configured yet. Set up the Telegram "
+                   "group first and I'll route messages into the right threads."),
+        "error": ("💬 I couldn't set up the Telegram topics config. "
+                  "Details in the log."),
+    },
+    "bridge_poll_liveness": {
+        "notify": ("📡 The Telegram bridge stopped checking for new messages and I "
+                   "couldn't restart it automatically. Worth a look when you're at the Mac."),
+        "fixed": ("📡 The Telegram bridge had stalled — I restarted it and messages "
+                  "are flowing again."),
+    },
+    "runtime_protection": {
+        "fixed": ("🛡️ The live system had been edited directly — I reset it back to "
+                  "the shipped version. (Changes belong in the dev workspace.)"),
+    },
+    "service_loaded": {"fixed": _service_loaded, "notify": _service_loaded},
+    "transcriber_service": {
+        "notify": _transcriber_notify,
+        "fixed": "🔧 The transcriber was down — I redeployed and restarted it. Healthy again.",
+    },
+    "initiative_directories": {
+        "error": ("📁 I couldn't create some initiative folders in the vault. "
+                  "Usually means the drive wasn't mounted — details in the log."),
+    },
+}
+
+
+# --------------------------------------------------------------------------
+# Public API.
+# --------------------------------------------------------------------------
+
 def humanize_finding(name: str, status: str, message: str,
                      detail: str | None = None) -> str:
     """Translate one reconcile finding into a human, emoji-led Telegram line.

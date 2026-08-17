@@ -1,3 +1,4 @@
+from .arms_coverage import ArmsCoverageCheck
 from .bridge_poll_liveness import BridgePollLivenessCheck
 from .claude_defaults import ClaudeDefaultsCheck
 from .claude_md import GlobalClaudeMdCheck, RootClaudeMdCheck
@@ -14,7 +15,6 @@ from .hooks import HooksPathCheck
 from .initiatives import BridgeTopicsCheck, InitiativeDirectoriesCheck
 from .instance_hygiene import InstanceHygieneCheck
 from .launchagents import LaunchAgentPythonCheck
-from .arms_coverage import ArmsCoverageCheck
 from .launcher_naming import LauncherNamingCheck
 from .log_location import LogLocationCheck
 from .mcp_location import McpLocationCheck
