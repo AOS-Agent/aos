@@ -11,12 +11,21 @@
  * user_id, so machine A can neither see nor revoke machine B's connections,
  * and revoking one machine is a single connected_accounts delete.
  *
+ * The same invite also gates software updates: /v1/updater/latest.json fetches
+ * the release manifest from the static origin and hands it back only to a valid
+ * invite, so the origin can be unlisted and the invite becomes the one thing
+ * that decides who may install and who may update.
+ *
  * Bindings (wrangler.toml):
  *   COMPOSIO_API_KEY  secret   the ak_… project key
+ *   ADMIN_TOKEN       secret   operator credential for the /v1/admin endpoints
  *   INVITES           KV       key = invite token, value = {"status":"active","label":"…"}
  *   SESSIONS          KV       key = "session:<user_id>", value = session id
  *                              key = "catalog:v1", value = cached toolkit catalog
+ *                              key = "updater:latest", value = cached release manifest
  *                              key = "rl:<hash>:<minute>", value = request counter
+ *   MACHINES          KV       key = "machine:<user_id>", value = activation record
+ *                              key = "handle:<handle>",   value = owning user_id
  *
  * No dependencies. ES module format.
  */
@@ -24,6 +33,11 @@
 const COMPOSIO_ORIGIN = "https://backend.composio.dev";
 const API_V31 = `${COMPOSIO_ORIGIN}/api/v3.1`;
 const API_V3 = `${COMPOSIO_ORIGIN}/api/v3`;
+
+/** Where release manifests are published. Only this worker reads it directly. */
+const UPDATER_ORIGIN = "https://aos.hish.am/updater/latest.json";
+const UPDATER_TTL_MS = 60_000;
+const UPDATER_KV_KEY = "updater:latest";
 
 const RATE_LIMIT_PER_MIN = 60;
 const CATALOG_TTL_S = 600; // 10 minutes
@@ -86,6 +100,29 @@ function validMachineId(value) {
 
 function validSlug(value) {
   return typeof value === "string" && /^[a-z0-9][a-z0-9_-]{0,63}$/.test(value.toLowerCase());
+}
+
+/** A handle is a person's public name on the network — short, lowercase, stable. */
+function validHandle(value) {
+  return typeof value === "string" && /^[a-z0-9][a-z0-9_-]{1,31}$/.test(value);
+}
+
+/**
+ * Length-independent equality for credentials. `===` on strings can leak the
+ * length of the shared secret through timing; comparing digests cannot.
+ */
+async function secretEquals(a, b) {
+  if (typeof a !== "string" || typeof b !== "string" || !a || !b) return false;
+  const [da, db] = await Promise.all([sha256Hex(a), sha256Hex(b)]);
+  let diff = 0;
+  for (let i = 0; i < da.length; i++) diff |= da.charCodeAt(i) ^ db.charCodeAt(i);
+  return diff === 0;
+}
+
+function randomHex(bytes) {
+  const buf = new Uint8Array(bytes);
+  crypto.getRandomValues(buf);
+  return [...buf].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 async function readJsonBody(request) {
@@ -484,12 +521,173 @@ async function handleDisconnect(slugRaw, env, auth) {
   return json({ removed: 1 });
 }
 
+// ── endpoint: GET /v1/updater/latest.json ───────────────────────────────
+
+/**
+ * In-isolate manifest cache. Cloudflare keeps an isolate warm across requests
+ * on the same colo, so most update checks are answered without touching KV or
+ * the origin at all. `stale` is kept past its expiry on purpose: if the origin
+ * is down, an old manifest is a far better answer than an error, because a
+ * failed check is indistinguishable to the app from "you are up to date".
+ */
+let updaterMemo = { manifest: null, expires: 0 };
+
+async function readUpdaterOrigin() {
+  let res;
+  try {
+    res = await fetch(UPDATER_ORIGIN, {
+      headers: { accept: "application/json" },
+      signal: AbortSignal.timeout(TIMEOUT_READ_MS),
+    });
+  } catch {
+    return null;
+  }
+  if (!res.ok) {
+    await res.body?.cancel();
+    return null;
+  }
+  try {
+    const manifest = await res.json();
+    return manifest && typeof manifest === "object" ? manifest : null;
+  } catch {
+    return null;
+  }
+}
+
+async function handleUpdater(env) {
+  const now = Date.now();
+  if (updaterMemo.manifest && updaterMemo.expires > now) {
+    return json(updaterMemo.manifest);
+  }
+
+  const cached = await env.SESSIONS?.get(UPDATER_KV_KEY, "json").catch(() => null);
+  if (cached?.manifest && Number(cached.expires) > now) {
+    updaterMemo = { manifest: cached.manifest, expires: Number(cached.expires) };
+    return json(cached.manifest);
+  }
+
+  const fresh = await readUpdaterOrigin();
+  if (fresh) {
+    updaterMemo = { manifest: fresh, expires: now + UPDATER_TTL_MS };
+    await env.SESSIONS?.put(
+      UPDATER_KV_KEY,
+      JSON.stringify({ manifest: fresh, expires: updaterMemo.expires }),
+      { expirationTtl: 300 },
+    ).catch(() => { /* a cache miss next time only costs one origin fetch */ });
+    return json(fresh);
+  }
+
+  // Origin unreachable — serve whatever we last saw rather than nothing.
+  const stale = updaterMemo.manifest ?? cached?.manifest ?? null;
+  if (stale) return json(stale);
+  throw new BrokerError(502, "Could not read the update manifest right now. Try again shortly.");
+}
+
+// ── endpoint: POST /v1/activate, GET /v1/me ─────────────────────────────
+
+const machineKey = (userId) => `machine:${userId}`;
+const handleKey = (handle) => `handle:${handle}`;
+
+function requireMachines(env) {
+  if (!env.MACHINES) throw new BrokerError(503, "Activation is not available yet.");
+  return env.MACHINES;
+}
+
+async function handleActivate(request, env, auth) {
+  const machines = requireMachines(env);
+  const body = await readJsonBody(request);
+  const handle = String(body.handle ?? "").trim().toLowerCase();
+  if (!validHandle(handle)) {
+    throw new BrokerError(400, "Pick a handle of 2–32 letters, numbers, dashes or underscores.");
+  }
+
+  const existing = await machines.get(machineKey(auth.userId), "json").catch(() => null);
+  if (existing?.handle === handle) {
+    // Re-activating the same machine with the same handle is a no-op, so a
+    // reinstall or a retried request never locks the user out of their own name.
+    return json({ ok: true, handle, activated_at: existing.activated_at });
+  }
+
+  const owner = await machines.get(handleKey(handle));
+  if (owner && owner !== auth.userId) {
+    throw new BrokerError(409, "That handle is taken. Pick another one.");
+  }
+
+  const record = {
+    machine_id: auth.machineId,
+    handle,
+    activated_at: new Date().toISOString(),
+    label: auth.label,
+  };
+  // Claim the name first: if the second write fails we are left with a reserved
+  // handle owned by this user, which the branch above heals on the next attempt.
+  await machines.put(handleKey(handle), auth.userId);
+  await machines.put(machineKey(auth.userId), JSON.stringify(record));
+
+  if (existing?.handle && existing.handle !== handle) {
+    await machines.delete(handleKey(existing.handle)).catch(() => { /* stale reservation */ });
+  }
+
+  return json({ ok: true, handle, activated_at: record.activated_at });
+}
+
+async function handleMe(env, auth) {
+  const machines = requireMachines(env);
+  const record = await machines.get(machineKey(auth.userId), "json").catch(() => null);
+  if (!record) return json({ activated: false });
+  return json({
+    activated: true,
+    handle: record.handle,
+    machine_id: record.machine_id,
+    activated_at: record.activated_at,
+  });
+}
+
+// ── endpoints: /v1/admin/invites ────────────────────────────────────────
+
+async function requireAdmin(request, env) {
+  if (!env.ADMIN_TOKEN) throw new BrokerError(503, "Admin access is not configured.");
+
+  // Throttled before the comparison, and on a bucket shared by the whole admin
+  // surface rather than by presented credential — otherwise an attacker escapes
+  // the limit simply by varying the guess.
+  await enforceRateLimit(env, "admin");
+
+  const presented = request.headers.get("x-admin-token") ?? "";
+  if (!(await secretEquals(presented, env.ADMIN_TOKEN))) {
+    throw new BrokerError(401, "Not authorised.");
+  }
+}
+
+async function handleMintInvite(request, env) {
+  const body = await readJsonBody(request);
+  const label = String(body.label ?? "").trim().slice(0, 120);
+  if (!label) throw new BrokerError(400, "Give the invite a label so it can be recognised later.");
+
+  const token = `aos_inv_${randomHex(24)}`;
+  const record = { status: "active", label, created_at: new Date().toISOString() };
+  await env.INVITES.put(token, JSON.stringify(record));
+  return json({ token, label, created_at: record.created_at }, 201);
+}
+
+async function handleRevokeInvite(token, env) {
+  if (!validToken(token)) throw new BrokerError(400, "That is not a valid invite token.");
+  const record = await env.INVITES.get(token, "json");
+  if (!record) throw new BrokerError(404, "No such invite.");
+
+  // Revoked rather than deleted: authenticate() turns a revoked record into a
+  // clear "this invite was turned off", where a missing one reads as a typo.
+  const updated = { ...record, status: "revoked", revoked_at: new Date().toISOString() };
+  await env.INVITES.put(token, JSON.stringify(updated));
+  return json({ ok: true, label: updated.label ?? "", status: "revoked" });
+}
+
 // ── router ──────────────────────────────────────────────────────────────
 
 const CORS_HEADERS = {
   "access-control-allow-origin": "*",
   "access-control-allow-methods": "GET, POST, DELETE, OPTIONS",
-  "access-control-allow-headers": "content-type, x-invite-token, x-machine-id",
+  "access-control-allow-headers": "content-type, x-invite-token, x-machine-id, x-admin-token",
   "access-control-max-age": "86400",
 };
 
@@ -509,11 +707,28 @@ async function route(request, env) {
     return json({ ok: true, service: "aos-connect-broker" });
   }
 
-  if (!env.COMPOSIO_API_KEY) {
-    throw new BrokerError(503, "The connection service is not configured yet.");
+  // Admin lane. Guarded by its own credential and deliberately reachable
+  // without an invite — this is how the first invite ever comes into being.
+  const adminInvite = /^\/v1\/admin\/invites(?:\/([^/]+))?$/.exec(path);
+  if (adminInvite) {
+    await requireAdmin(request, env);
+    const token = adminInvite[1];
+    if (!token && method === "POST") return handleMintInvite(request, env);
+    if (token && method === "DELETE") return handleRevokeInvite(decodeURIComponent(token), env);
+    throw new BrokerError(405, "That request method is not allowed here.");
   }
 
   const auth = await authenticate(request, env);
+
+  // Invite-gated, Composio-independent. These answer even when no Composio key
+  // is configured, because updates and activation are not connector features.
+  if (path === "/v1/updater/latest.json" && method === "GET") return handleUpdater(env);
+  if (path === "/v1/activate" && method === "POST") return handleActivate(request, env, auth);
+  if (path === "/v1/me" && method === "GET") return handleMe(env, auth);
+
+  if (!env.COMPOSIO_API_KEY) {
+    throw new BrokerError(503, "The connection service is not configured yet.");
+  }
 
   if (path === "/v1/session" && method === "POST") return handleSession(env, auth);
   if (path === "/v1/link" && method === "POST") return handleLink(request, env, auth);
@@ -524,7 +739,11 @@ async function route(request, env) {
   if (disconnect && method === "DELETE") {
     return handleDisconnect(decodeURIComponent(disconnect[1]), env, auth);
   }
-  if (disconnect || ["/v1/session", "/v1/link", "/v1/status", "/v1/toolkits"].includes(path)) {
+  const KNOWN_PATHS = [
+    "/v1/session", "/v1/link", "/v1/status", "/v1/toolkits",
+    "/v1/updater/latest.json", "/v1/activate", "/v1/me",
+  ];
+  if (disconnect || KNOWN_PATHS.includes(path)) {
     throw new BrokerError(405, "That request method is not allowed here.");
   }
 

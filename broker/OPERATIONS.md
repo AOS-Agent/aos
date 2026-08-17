@@ -28,12 +28,21 @@ below uses the v4 spellings.
 cd /path/to/broker
 wrangler kv namespace create INVITES
 wrangler kv namespace create SESSIONS
+wrangler kv namespace create MACHINES
 wrangler kv namespace create INVITES  --preview
 wrangler kv namespace create SESSIONS --preview
+wrangler kv namespace create MACHINES --preview
 ```
 
-Each command prints an id. Paste the four ids into the `[[kv_namespaces]]`
+Each command prints an id. Paste the six ids into the `[[kv_namespaces]]`
 blocks in `wrangler.toml`, replacing the `REPLACE_WITH_…` placeholders.
+
+`MACHINES` holds activation records — which handle belongs to which machine.
+Unlike `SESSIONS` it is not a cache, so never bulk-delete it to "clear state".
+
+The API token doing all this needs, at minimum, **Account → Workers Scripts →
+Edit** and **Account → Workers KV Storage → Edit**. A DNS-only zone token gets
+`Authentication error [code: 10000]` on every command in this section.
 
 ## 2. Put the Composio key in as a secret
 
@@ -51,6 +60,17 @@ wrangler secret list        # shows the name only
 
 If the key ever needs rotating, `wrangler secret put COMPOSIO_API_KEY` again
 with the new value and redeploy; the old value is replaced atomically.
+
+The admin credential goes in the same way. It is what stands between the
+internet and the ability to mint invites, so it is generated once and kept in
+the Keychain rather than anywhere on disk:
+
+```bash
+agent-secret get AOS_BROKER_ADMIN_TOKEN | wrangler secret put ADMIN_TOKEN
+```
+
+Until `ADMIN_TOKEN` is set, `/v1/admin/*` answers 503 to everyone — it fails
+closed, never open.
 
 ## 3. Deploy
 
@@ -85,6 +105,19 @@ curl -s $BROKER/v1/session -X POST
 worker is up and auth is on.
 
 ## 4. Mint and seed an invite token
+
+Normally use the CLI, which mints through the worker and never puts the admin
+credential on a command line:
+
+```bash
+./invite mint "hisham macbook"      # prints the token once
+./invite check aos_inv_…            # Active / Revoked / Unknown
+```
+
+Set `AOS_BROKER_URL` if the worker is not at the default hostname.
+
+The rest of this section is the manual path, for when the worker is down or the
+admin token is unavailable.
 
 Generate a token that is unguessable and URL-safe:
 
@@ -125,7 +158,15 @@ not, the SESSIONS binding is wrong or the write failed.
 
 ## 5. Revoke an invite
 
-Flip it rather than deleting it, so the label survives as a record:
+```bash
+./invite revoke aos_inv_…
+```
+
+That flips the record to `revoked` and keeps the label. Revoking now stops
+updates as well as connections: `/v1/updater/latest.json` answers 403, so a
+revoked machine stays on the version it has and never sees another release.
+
+The manual equivalent, if the worker is unreachable:
 
 ```bash
 wrangler kv key put --binding=INVITES --remote "$TOKEN" \

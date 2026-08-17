@@ -1,4 +1,4 @@
-import worker from "/tmp/agents-work2/broker/worker.js";
+import worker from "./worker.js";
 
 // ── mock KV ──────────────────────────────────────────────────────────
 function mkKV(seed = {}) {
@@ -37,8 +37,17 @@ const TOKEN = "itk_" + "a".repeat(40);
 const MACHINE = "3f1c8a20-0000-4000-8000-abcdefabcdef";
 const H = { "x-invite-token": TOKEN, "x-machine-id": MACHINE };
 
-function mkEnv(invites = { [TOKEN]: JSON.stringify({ status: "active", label: "test" }) }, sessions = {}) {
-  return { COMPOSIO_API_KEY: "ak_secret_never_leak", INVITES: mkKV(invites), SESSIONS: mkKV(sessions) };
+const ADMIN = "adm_" + "b".repeat(48);
+const AH = { "x-admin-token": ADMIN };
+
+function mkEnv(invites = { [TOKEN]: JSON.stringify({ status: "active", label: "test" }) }, sessions = {}, machines = {}) {
+  return {
+    COMPOSIO_API_KEY: "ak_secret_never_leak",
+    ADMIN_TOKEN: ADMIN,
+    INVITES: mkKV(invites),
+    SESSIONS: mkKV(sessions),
+    MACHINES: mkKV(machines),
+  };
 }
 
 let pass = 0, fail = 0;
@@ -263,6 +272,237 @@ await t("nothing connected -> removed 0", async () => {
   const r = await run("/v1/connection/gmail", mkEnv(), { method: "DELETE", headers: H });
   eq(r.body, { removed: 0 });
 });
+
+// The manifest cache lives in module scope, so these tests drive a fake clock
+// rather than pretending each call starts from a cold isolate.
+const realNow = Date.now;
+let clock = realNow();
+Date.now = () => clock;
+const advance = (ms) => { clock += ms; };
+
+const MANIFEST = {
+  version: "0.9.0",
+  notes: "test build",
+  pub_date: "2026-08-17T00:00:00Z",
+  platforms: { "darwin-aarch64": { signature: "sig", url: "https://aos.hish.am/updater/x.tar.gz" } },
+};
+
+console.log("\nupdater");
+await t("requires an invite like every other endpoint", async () => {
+  routes = { "aos.hish.am": () => J(MANIFEST) };
+  const r = await run("/v1/updater/latest.json", mkEnv());
+  eq(r.status, 401);
+  if (calls.length) throw new Error("hit the origin before authenticating");
+});
+await t("unknown invite -> 401, origin untouched", async () => {
+  routes = { "aos.hish.am": () => J(MANIFEST) };
+  const r = await run("/v1/updater/latest.json", mkEnv({}), { headers: H });
+  eq(r.status, 401);
+  if (calls.length) throw new Error("hit the origin for a stranger");
+});
+await t("revoked invite -> 403 (an update is a privilege, not a right)", async () => {
+  routes = { "aos.hish.am": () => J(MANIFEST) };
+  const env = mkEnv({ [TOKEN]: JSON.stringify({ status: "revoked", label: "x" }) });
+  const r = await run("/v1/updater/latest.json", env, { headers: H });
+  eq(r.status, 403);
+});
+await t("fetches the manifest from the origin and caches it in KV", async () => {
+  advance(120_000);
+  routes = { "aos.hish.am": () => J(MANIFEST) };
+  const env = mkEnv();
+  const r = await run("/v1/updater/latest.json", env, { headers: H });
+  eq(r.status, 200); eq(r.body, MANIFEST);
+  if (!calls.some((c) => String(c.url).includes("aos.hish.am"))) throw new Error("never asked the origin");
+  const cached = await env.SESSIONS.get("updater:latest", "json");
+  if (!cached?.manifest) throw new Error("not cached in KV");
+});
+await t("second call inside the TTL never re-reads the origin", async () => {
+  routes = { "aos.hish.am": () => J(MANIFEST) };
+  const r = await run("/v1/updater/latest.json", mkEnv(), { headers: H });
+  eq(r.body, MANIFEST);
+  if (calls.some((c) => String(c.url).includes("aos.hish.am"))) throw new Error("cache did nothing");
+});
+await t("a cold isolate warms from KV instead of the origin", async () => {
+  advance(120_000);
+  const fresh = await import("./worker.js?cold=kv");
+  routes = { "aos.hish.am": () => J({ version: "should-not-be-read" }) };
+  const env = mkEnv({}, { "updater:latest": JSON.stringify({ manifest: MANIFEST, expires: Date.now() + 60_000 }) });
+  env.INVITES = mkKV({ [TOKEN]: JSON.stringify({ status: "active", label: "test" }) });
+  const res = await fresh.default.fetch(new Request("https://b.example.com/v1/updater/latest.json", { headers: H }), env);
+  eq(await res.json(), MANIFEST);
+  if (calls.some((c) => String(c.url).includes("aos.hish.am"))) throw new Error("ignored the KV cache");
+});
+await t("origin down -> serves the last good manifest rather than failing", async () => {
+  advance(120_000);
+  routes = { "aos.hish.am": () => new Response("down", { status: 503 }) };
+  const env = mkEnv({}, { "updater:latest": JSON.stringify({ manifest: MANIFEST, expires: Date.now() - 1 }) });
+  env.INVITES = mkKV({ [TOKEN]: JSON.stringify({ status: "active", label: "test" }) });
+  const r = await run("/v1/updater/latest.json", env, { headers: H });
+  eq(r.status, 200); eq(r.body, MANIFEST);
+});
+await t("origin down with nothing cached anywhere -> 502, not a fake manifest", async () => {
+  const cold = await import("./worker.js?cold=502");
+  routes = { "aos.hish.am": () => new Response("down", { status: 503 }) };
+  const res = await cold.default.fetch(new Request("https://b.example.com/v1/updater/latest.json", { headers: H }), mkEnv());
+  eq(res.status, 502);
+});
+await t("works with no Composio key configured", async () => {
+  advance(120_000);
+  routes = { "aos.hish.am": () => J(MANIFEST) };
+  const env = mkEnv(); env.COMPOSIO_API_KEY = "";
+  const r = await run("/v1/updater/latest.json", env, { headers: H });
+  eq(r.status, 200); eq(r.body, MANIFEST);
+});
+await t("wrong method -> 405", async () => {
+  const r = await run("/v1/updater/latest.json", mkEnv(), { method: "POST", headers: H });
+  eq(r.status, 405);
+});
+
+console.log("\nactivate + me");
+await t("claims a handle and records the machine", async () => {
+  const env = mkEnv();
+  const r = await run("/v1/activate", env, { method: "POST", headers: H, body: JSON.stringify({ handle: "hadi" }) });
+  eq(r.status, 200); eq(r.body.ok, true); eq(r.body.handle, "hadi");
+  const uid = [...env.MACHINES._store.keys()].find((k) => k.startsWith("machine:"));
+  if (!uid) throw new Error("no machine record");
+  const rec = JSON.parse(env.MACHINES._store.get(uid));
+  eq(rec.machine_id, MACHINE); eq(rec.handle, "hadi");
+  if (!rec.activated_at) throw new Error("no activated_at");
+  eq(env.MACHINES._store.get("handle:hadi"), uid.slice("machine:".length));
+});
+await t("handles are normalised to lowercase", async () => {
+  const env = mkEnv();
+  const r = await run("/v1/activate", env, { method: "POST", headers: H, body: JSON.stringify({ handle: "HaDi" }) });
+  eq(r.body.handle, "hadi");
+});
+await t("a taken handle is refused with 409", async () => {
+  const env = mkEnv();
+  await run("/v1/activate", env, { method: "POST", headers: H, body: JSON.stringify({ handle: "hadi" }) });
+  const other = { ...H, "x-machine-id": "some-other-machine-id" };
+  const r = await run("/v1/activate", env, { method: "POST", headers: other, body: JSON.stringify({ handle: "hadi" }) });
+  eq(r.status, 409);
+});
+await t("re-activating the same machine with the same handle is a no-op", async () => {
+  const env = mkEnv();
+  const first = await run("/v1/activate", env, { method: "POST", headers: H, body: JSON.stringify({ handle: "hadi" }) });
+  const again = await run("/v1/activate", env, { method: "POST", headers: H, body: JSON.stringify({ handle: "hadi" }) });
+  eq(again.status, 200); eq(again.body.activated_at, first.body.activated_at);
+});
+await t("renaming releases the old handle", async () => {
+  const env = mkEnv();
+  await run("/v1/activate", env, { method: "POST", headers: H, body: JSON.stringify({ handle: "hadi" }) });
+  await run("/v1/activate", env, { method: "POST", headers: H, body: JSON.stringify({ handle: "hisham" }) });
+  if (env.MACHINES._store.has("handle:hadi")) throw new Error("old handle still reserved");
+  eq(JSON.parse(env.MACHINES._store.get([...env.MACHINES._store.keys()].find((k) => k.startsWith("machine:")))).handle, "hisham");
+});
+await t("rejects malformed handles", async () => {
+  for (const bad of ["a", "", "has space", "../etc", "x".repeat(40), "-leading"]) {
+    const r = await run("/v1/activate", mkEnv(), { method: "POST", headers: H, body: JSON.stringify({ handle: bad }) });
+    if (r.status !== 400) throw new Error(`accepted ${JSON.stringify(bad)} (${r.status})`);
+  }
+});
+await t("activate needs an invite", async () => {
+  const r = await run("/v1/activate", mkEnv(), { method: "POST", body: JSON.stringify({ handle: "hadi" }) });
+  eq(r.status, 401);
+});
+await t("me reports not activated before activation", async () => {
+  const r = await run("/v1/me", mkEnv(), { headers: H });
+  eq(r.status, 200); eq(r.body, { activated: false });
+});
+await t("me returns this machine's record", async () => {
+  const env = mkEnv();
+  await run("/v1/activate", env, { method: "POST", headers: H, body: JSON.stringify({ handle: "hadi" }) });
+  const r = await run("/v1/me", env, { headers: H });
+  eq(r.body.activated, true); eq(r.body.handle, "hadi"); eq(r.body.machine_id, MACHINE);
+});
+await t("me is scoped per machine, not per invite", async () => {
+  const env = mkEnv();
+  await run("/v1/activate", env, { method: "POST", headers: H, body: JSON.stringify({ handle: "hadi" }) });
+  const r = await run("/v1/me", env, { headers: { ...H, "x-machine-id": "some-other-machine-id" } });
+  eq(r.body, { activated: false });
+});
+await t("activation degrades cleanly when MACHINES is unbound", async () => {
+  const env = mkEnv(); delete env.MACHINES;
+  const r = await run("/v1/activate", env, { method: "POST", headers: H, body: JSON.stringify({ handle: "hadi" }) });
+  eq(r.status, 503);
+});
+
+console.log("\nadmin invites");
+await t("mint without a credential -> 401", async () => {
+  const r = await run("/v1/admin/invites", mkEnv(), { method: "POST", body: JSON.stringify({ label: "x" }) });
+  eq(r.status, 401);
+});
+await t("an invite token is not an admin token", async () => {
+  const r = await run("/v1/admin/invites", mkEnv(), { method: "POST", headers: { "x-admin-token": TOKEN }, body: JSON.stringify({ label: "x" }) });
+  eq(r.status, 401);
+});
+await t("wrong admin token -> 401, nothing minted", async () => {
+  const env = mkEnv();
+  const before = env.INVITES._store.size;
+  const r = await run("/v1/admin/invites", env, { method: "POST", headers: { "x-admin-token": "adm_" + "c".repeat(48) }, body: JSON.stringify({ label: "x" }) });
+  eq(r.status, 401); eq(env.INVITES._store.size, before);
+});
+await t("no ADMIN_TOKEN configured -> 503, never open", async () => {
+  const env = mkEnv(); env.ADMIN_TOKEN = "";
+  const r = await run("/v1/admin/invites", env, { method: "POST", headers: AH, body: JSON.stringify({ label: "x" }) });
+  eq(r.status, 503);
+});
+await t("mints aos_inv_ token, stored active, usable immediately", async () => {
+  const env = mkEnv({});
+  const r = await run("/v1/admin/invites", env, { method: "POST", headers: AH, body: JSON.stringify({ label: "operator" }) });
+  eq(r.status, 201); eq(r.body.label, "operator");
+  if (!/^aos_inv_[0-9a-f]{48}$/.test(r.body.token)) throw new Error("bad token shape " + r.body.token);
+  eq(JSON.parse(env.INVITES._store.get(r.body.token)).status, "active");
+  const me = await run("/v1/me", env, { headers: { "x-invite-token": r.body.token, "x-machine-id": MACHINE } });
+  eq(me.status, 200);
+});
+await t("two mints never collide", async () => {
+  const env = mkEnv({});
+  const a = await run("/v1/admin/invites", env, { method: "POST", headers: AH, body: JSON.stringify({ label: "a" }) });
+  const b = await run("/v1/admin/invites", env, { method: "POST", headers: AH, body: JSON.stringify({ label: "b" }) });
+  if (a.body.token === b.body.token) throw new Error("collision");
+});
+await t("mint without a label -> 400", async () => {
+  const r = await run("/v1/admin/invites", mkEnv(), { method: "POST", headers: AH, body: JSON.stringify({}) });
+  eq(r.status, 400);
+});
+await t("revoke turns the invite off everywhere", async () => {
+  const env = mkEnv();
+  const r = await run(`/v1/admin/invites/${TOKEN}`, env, { method: "DELETE", headers: AH });
+  eq(r.status, 200); eq(r.body.status, "revoked");
+  eq(JSON.parse(env.INVITES._store.get(TOKEN)).status, "revoked");
+  const after = await run("/v1/updater/latest.json", env, { headers: H });
+  eq(after.status, 403);
+});
+await t("revoke keeps the label for the audit trail", async () => {
+  const env = mkEnv();
+  const r = await run(`/v1/admin/invites/${TOKEN}`, env, { method: "DELETE", headers: AH });
+  eq(r.body.label, "test");
+});
+await t("revoking an unknown invite -> 404", async () => {
+  const r = await run("/v1/admin/invites/aos_inv_deadbeef", mkEnv(), { method: "DELETE", headers: AH });
+  eq(r.status, 404);
+});
+await t("revoke without a credential -> 401", async () => {
+  const env = mkEnv();
+  const r = await run(`/v1/admin/invites/${TOKEN}`, env, { method: "DELETE" });
+  eq(r.status, 401);
+  eq(JSON.parse(env.INVITES._store.get(TOKEN)).status, "active");
+});
+await t("guessing the admin token is throttled", async () => {
+  const env = mkEnv();
+  let last;
+  for (let i = 0; i < 62; i++) {
+    last = await run("/v1/admin/invites", env, { method: "POST", headers: { "x-admin-token": `guess-${i}` }, body: JSON.stringify({ label: "x" }) });
+  }
+  eq(last.status, 429);
+});
+await t("wrong method on the admin collection -> 405", async () => {
+  const r = await run("/v1/admin/invites", mkEnv(), { method: "GET", headers: AH });
+  eq(r.status, 405);
+});
+
+Date.now = realNow;
 
 console.log("\nrouting + leakage");
 await t("unknown path -> 404", async () => {

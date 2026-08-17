@@ -6,11 +6,15 @@ compatibility_date = "2026-08-17"
 # APIs — so no compatibility_flags are needed.
 
 # ── Secrets ─────────────────────────────────────────────────────────────
-# COMPOSIO_API_KEY is NOT declared here. It is set out of band and never
-# committed:
+# Neither COMPOSIO_API_KEY nor ADMIN_TOKEN is declared here. Both are set out
+# of band and never committed:
 #     wrangler secret put COMPOSIO_API_KEY
+#     wrangler secret put ADMIN_TOKEN
 # Anything placed in [vars] lands in the deployed bundle in plaintext and is
-# readable from the dashboard. The project key must never live there.
+# readable from the dashboard. Neither credential may ever live there.
+# ADMIN_TOKEN is the only thing standing between the internet and the ability
+# to mint invites, so it is generated with `openssl rand -hex 24` and kept in
+# the operator's Keychain as AOS_BROKER_ADMIN_TOKEN.
 
 [observability]
 enabled = true
@@ -19,8 +23,8 @@ enabled = true
 # Create these once, then paste the returned ids:
 #     wrangler kv namespace create INVITES
 #     wrangler kv namespace create SESSIONS
-#     wrangler kv namespace create INVITES  --preview
-#     wrangler kv namespace create SESSIONS --preview
+#     wrangler kv namespace create MACHINES
+# (append --preview for each to get the preview ids)
 
 [[kv_namespaces]]
 binding = "INVITES"
@@ -31,6 +35,14 @@ preview_id = "REPLACE_WITH_INVITES_PREVIEW_ID"
 binding = "SESSIONS"
 id = "REPLACE_WITH_SESSIONS_NAMESPACE_ID"
 preview_id = "REPLACE_WITH_SESSIONS_PREVIEW_ID"
+
+# Activation records: who claimed which handle, from which machine. Separate
+# from SESSIONS because this is durable identity, not disposable cache — a
+# stray `kv bulk delete` on the cache namespace must not erase it.
+[[kv_namespaces]]
+binding = "MACHINES"
+id = "REPLACE_WITH_MACHINES_NAMESPACE_ID"
+preview_id = "REPLACE_WITH_MACHINES_PREVIEW_ID"
 
 # ── Rate limiting (optional but recommended) ────────────────────────────
 # The worker uses this binding when it is present and falls back to a KV

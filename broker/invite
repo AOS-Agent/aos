@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+# invite — mint and revoke invites for the AOS broker.
+#
+# The admin credential never appears in argv (ps(1) is readable by every process
+# on the machine), so every request is handed to curl through a config file on
+# stdin instead of -H.
+#
+#   invite mint "hadi's laptop"     mint a new invite and print it
+#   invite revoke aos_inv_…         turn an invite off everywhere
+#   invite check aos_inv_…          see whether an invite still works
+#
+# Broker URL comes from AOS_BROKER_URL, falling back to the deployed worker.
+# The admin token comes from the Keychain (AOS_BROKER_ADMIN_TOKEN) and is never
+# printed, logged, or passed on a command line.
+
+set -euo pipefail
+
+BROKER="${AOS_BROKER_URL:-https://aos-connect-broker.workers.dev}"
+SECRET_CLI="${HOME}/aos/core/bin/cli/agent-secret"
+
+die() { printf '%s\n' "$*" >&2; exit 1; }
+
+admin_token() {
+  local token
+  token="$(bash "$SECRET_CLI" get AOS_BROKER_ADMIN_TOKEN 2>/dev/null || true)"
+  [ -n "$token" ] || die "No admin token on file. Set AOS_BROKER_ADMIN_TOKEN in the Keychain first."
+  printf '%s' "$token"
+}
+
+# Run one admin request. Args: METHOD PATH [JSON_BODY]
+admin_call() {
+  local method="$1" path="$2" body="${3:-}"
+  {
+    printf 'header = "x-admin-token: %s"\n' "$(admin_token)"
+    printf 'url = "%s%s"\n' "$BROKER" "$path"
+    printf 'request = "%s"\n' "$method"
+    printf 'silent\nshow-error\n'
+    if [ -n "$body" ]; then
+      printf 'header = "content-type: application/json"\n'
+      printf 'data = "%s"\n' "${body//\"/\\\"}"
+    fi
+  } | curl -K -
+}
+
+field() { python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('$1',''))"; }
+
+cmd_mint() {
+  local label="${1:-}"
+  [ -n "$label" ] || die "Usage: invite mint \"who this is for\""
+  local out token
+  out="$(admin_call POST /v1/admin/invites "{\\\"label\\\":\\\"${label}\\\"}")"
+  token="$(printf '%s' "$out" | field token)"
+  [ -n "$token" ] || die "Could not mint an invite: $out"
+  printf 'Invite for %s\n\n  %s\n\nSend that to them. It is the only copy.\n' "$label" "$token"
+}
+
+cmd_revoke() {
+  local token="${1:-}"
+  [ -n "$token" ] || die "Usage: invite revoke aos_inv_…"
+  local out
+  out="$(admin_call DELETE "/v1/admin/invites/${token}")"
+  if [ "$(printf '%s' "$out" | field ok)" = "True" ]; then
+    printf 'Revoked. That invite can no longer install or update.\n'
+  else
+    die "Could not revoke: $out"
+  fi
+}
+
+cmd_check() {
+  local token="${1:-}"
+  [ -n "$token" ] || die "Usage: invite check aos_inv_…"
+  local code
+  code="$({
+    printf 'header = "x-invite-token: %s"\n' "$token"
+    printf 'header = "x-machine-id: invite-cli-check"\n'
+    printf 'url = "%s/v1/me"\n' "$BROKER"
+    printf 'silent\noutput = "/dev/null"\nwrite-out = "%%{http_code}"\n'
+  } | curl -K -)"
+  case "$code" in
+    200) printf 'Active.\n' ;;
+    403) printf 'Revoked.\n' ;;
+    401) printf 'Unknown — no such invite.\n' ;;
+    *)   printf 'Could not tell (broker answered %s).\n' "$code" ;;
+  esac
+}
+
+case "${1:-}" in
+  mint)   shift; cmd_mint "$@" ;;
+  revoke) shift; cmd_revoke "$@" ;;
+  check)  shift; cmd_check "$@" ;;
+  *) die "Usage: invite {mint \"label\" | revoke <token> | check <token>}" ;;
+esac
