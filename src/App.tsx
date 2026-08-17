@@ -16,7 +16,10 @@ type Screen =
   | "done"
   | "update"
   | "arms"
-  | "home";
+  | "home"
+  | "shell";
+
+type PaneId = "home" | "arms" | "config" | "updates";
 
 interface TaskRow {
   id: string;
@@ -360,7 +363,9 @@ function Member({ onBack }: { onBack: () => void }) {
 
 /* ── screen 1b: welcome back (existing install) ── */
 
-function WelcomeBack({
+// Kept as the compact returning-user card; currently superseded by Shell.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export function WelcomeBack({
   sys,
   checking,
   onUpdate,
@@ -548,7 +553,7 @@ function Home({
   onUpdate,
 }: {
   sys: SystemInfo | null;
-  onArms: () => void;
+  onArms?: () => void;
   onUpdate: () => void;
 }) {
   const [data, setData] = useState<HomeData | null>(null);
@@ -625,12 +630,14 @@ function Home({
               )}
             </div>
           </div>
-          <button
-            onClick={onArms}
-            className="px-3.5 h-9 rounded-lg border border-zinc-800 text-[12.5px] text-zinc-200 hover:text-white hover:border-zinc-600 transition"
-          >
-            Arms &amp; Connectors
-          </button>
+          {onArms && (
+            <button
+              onClick={onArms}
+              className="px-3.5 h-9 rounded-lg border border-zinc-800 text-[12.5px] text-zinc-200 hover:text-white hover:border-zinc-600 transition"
+            >
+              Arms &amp; Connectors
+            </button>
+          )}
         </div>
 
         {/* search */}
@@ -828,7 +835,7 @@ function ModuleRow({
   );
 }
 
-function Arms({ onBack }: { onBack: () => void }) {
+function Arms({ onBack }: { onBack?: () => void }) {
   const [modules, setModules] = useState<ModuleInfo[] | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<ModuleInfo | null>(null);
@@ -899,12 +906,14 @@ function Arms({ onBack }: { onBack: () => void }) {
       <div className="w-[620px] max-w-[90vw]">
         <div className="flex items-end justify-between mb-1">
           <h1 className="text-[22px] font-semibold tracking-tight">Arms & Connectors</h1>
-          <button
-            onClick={onBack}
-            className="text-[13px] text-zinc-300 hover:text-zinc-100 transition pb-1"
-          >
-            Back
-          </button>
+          {onBack && (
+            <button
+              onClick={onBack}
+              className="text-[13px] text-zinc-300 hover:text-zinc-100 transition pb-1"
+            >
+              Back
+            </button>
+          )}
         </div>
         <p className="text-[13px] text-zinc-300 mb-6">
           Capabilities of your system. Turning one on makes real changes to this
@@ -963,6 +972,290 @@ function Arms({ onBack }: { onBack: () => void }) {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/* ── shell: sidebar + panes ── */
+
+function NavIcon({ id }: { id: PaneId }) {
+  const stroke = { stroke: "currentColor", strokeWidth: 1.5, fill: "none", strokeLinecap: "round" as const, strokeLinejoin: "round" as const };
+  switch (id) {
+    case "home":
+      return (
+        <svg width="15" height="15" viewBox="0 0 16 16">
+          <path d="M2.5 6.5 8 2l5.5 4.5V13a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1z" {...stroke} />
+        </svg>
+      );
+    case "arms":
+      return (
+        <svg width="15" height="15" viewBox="0 0 16 16">
+          <rect x="2" y="2" width="5" height="5" rx="1.2" {...stroke} />
+          <rect x="9" y="2" width="5" height="5" rx="1.2" {...stroke} />
+          <rect x="2" y="9" width="5" height="5" rx="1.2" {...stroke} />
+          <path d="M11.5 9.5v4M9.5 11.5h4" {...stroke} />
+        </svg>
+      );
+    case "config":
+      return (
+        <svg width="15" height="15" viewBox="0 0 16 16">
+          <path d="M2.5 4.5h7M12.5 4.5h1M2.5 11.5h1M6.5 11.5h7" {...stroke} />
+          <circle cx="11" cy="4.5" r="1.7" {...stroke} />
+          <circle cx="5" cy="11.5" r="1.7" {...stroke} />
+        </svg>
+      );
+    case "updates":
+      return (
+        <svg width="15" height="15" viewBox="0 0 16 16">
+          <circle cx="8" cy="8" r="6" {...stroke} />
+          <path d="M8 5v5M5.8 8.2 8 10.4l2.2-2.2" {...stroke} />
+        </svg>
+      );
+  }
+}
+
+function Sidebar({
+  pane,
+  setPane,
+  sys,
+}: {
+  pane: PaneId;
+  setPane: (p: PaneId) => void;
+  sys: SystemInfo | null;
+}) {
+  const items: { id: PaneId; label: string; section: string }[] = [
+    { id: "home", label: "Home", section: "" },
+    { id: "arms", label: "Arms & Connectors", section: "System" },
+    { id: "config", label: "Configuration", section: "System" },
+    { id: "updates", label: "Updates", section: "System" },
+  ];
+  let lastSection = "";
+  const updateAvailable = sys?.update_status === "update_available";
+  return (
+    <div className="w-[220px] shrink-0 h-full border-r border-zinc-800/80 bg-zinc-950/70 flex flex-col pt-12 pb-4 px-3">
+      <div className="flex items-center gap-2.5 px-2 mb-6">
+        <Mark size={26} />
+        <span className="text-[13px] font-medium text-zinc-100">This Mac</span>
+      </div>
+      <nav className="flex-1">
+        {items.map((it) => {
+          const header =
+            it.section && it.section !== lastSection ? (
+              <div key={it.section} className="text-[10.5px] uppercase tracking-[0.12em] text-zinc-500 px-2 mt-5 mb-1.5">
+                {it.section}
+              </div>
+            ) : null;
+          lastSection = it.section;
+          const active = pane === it.id;
+          return (
+            <div key={it.id}>
+              {header}
+              <button
+                onClick={() => setPane(it.id)}
+                className={
+                  "w-full flex items-center gap-2.5 px-2.5 h-9 rounded-lg text-[13px] transition " +
+                  (active
+                    ? "bg-zinc-800/80 text-zinc-50"
+                    : "text-zinc-300 hover:text-zinc-100 hover:bg-zinc-900")
+                }
+              >
+                <span className={active ? "text-zinc-100" : "text-zinc-500"}>
+                  <NavIcon id={it.id} />
+                </span>
+                <span className="flex-1 text-left">{it.label}</span>
+                {it.id === "updates" && updateAvailable && (
+                  <span className="w-1.5 h-1.5 rounded-full bg-zinc-100" />
+                )}
+              </button>
+            </div>
+          );
+        })}
+      </nav>
+      <div className="px-2.5 text-[11px] text-zinc-500 font-mono">{sys?.version ?? ""}</div>
+    </div>
+  );
+}
+
+function ConfigPane() {
+  const [values, setValues] = useState({ operatorName: "", machineName: "", role: "primary" });
+  const [saved, setSaved] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      if (IN_TAURI) {
+        try {
+          const cfg = await invoke<Record<string, string> | null>("load_setup_config");
+          if (cfg)
+            setValues({
+              operatorName: cfg.operator_name ?? "",
+              machineName: cfg.machine_name ?? "",
+              role: cfg.role ?? "primary",
+            });
+        } catch {
+          /* defaults stand */
+        }
+      } else {
+        setValues({ operatorName: "Hadi", machineName: "agents-mac-mini", role: "primary" });
+      }
+      setLoaded(true);
+    })();
+  }, []);
+
+  const save = useCallback(async () => {
+    if (IN_TAURI) {
+      try {
+        await invoke("save_setup_config", {
+          operatorName: values.operatorName,
+          machineName: values.machineName,
+          role: values.role,
+        });
+      } catch {
+        return;
+      }
+    }
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  }, [values]);
+
+  const inputCls =
+    "w-64 h-10 px-3 rounded-lg bg-zinc-900 border border-zinc-800 text-[14px] text-zinc-100 " +
+    "placeholder:text-zinc-500 outline-none focus:border-zinc-600 transition";
+
+  return (
+    <div className="screen max-w-[640px] mx-auto px-8 pt-14">
+      <h1 className="text-[22px] font-semibold tracking-tight mb-1">Configuration</h1>
+      <p className="text-[13px] text-zinc-300 mb-6">The essentials of this machine.</p>
+      {loaded && (
+        <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 px-5 divide-y divide-zinc-800/80">
+          <Field label="Your name">
+            <input
+              className={inputCls}
+              value={values.operatorName}
+              onChange={(e) => setValues({ ...values, operatorName: e.target.value })}
+            />
+          </Field>
+          <Field label="Machine name">
+            <input
+              className={inputCls}
+              value={values.machineName}
+              onChange={(e) => setValues({ ...values, machineName: e.target.value })}
+            />
+          </Field>
+          <Field label="Role">
+            <div className="flex rounded-lg border border-zinc-800 overflow-hidden">
+              {(["primary", "worker"] as const).map((r) => (
+                <button
+                  key={r}
+                  onClick={() => setValues({ ...values, role: r })}
+                  className={
+                    "px-4 h-10 text-[13px] capitalize transition " +
+                    (values.role === r
+                      ? "bg-zinc-100 text-zinc-950 font-medium"
+                      : "bg-zinc-900 text-zinc-300 hover:text-zinc-100")
+                  }
+                >
+                  {r}
+                </button>
+              ))}
+            </div>
+          </Field>
+        </div>
+      )}
+      <div className="flex items-center gap-3 mt-6">
+        <PrimaryButton onClick={save}>Save</PrimaryButton>
+        {saved && <span className="screen text-[13px] text-zinc-300">Saved.</span>}
+      </div>
+    </div>
+  );
+}
+
+function UpdatesPane({
+  sys,
+  checking,
+  onCheck,
+  onUpdate,
+}: {
+  sys: SystemInfo | null;
+  checking: boolean;
+  onCheck: () => void;
+  onUpdate: () => void;
+}) {
+  const updateAvailable = sys?.update_status === "update_available";
+  return (
+    <div className="screen max-w-[640px] mx-auto px-8 pt-14">
+      <h1 className="text-[22px] font-semibold tracking-tight mb-1">Updates</h1>
+      <p className="text-[13px] text-zinc-300 mb-6">
+        System updates install in place and restart services automatically.
+      </p>
+      <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 px-5 py-5">
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <div className="text-[14px] text-zinc-100 font-medium flex items-center gap-2.5">
+              <span className="font-mono text-[13px] px-2 py-0.5 rounded-md border border-zinc-800 bg-zinc-900">
+                {sys?.version ?? "—"}
+              </span>
+              {checking ? (
+                <span className="flex items-center gap-2 text-[13px] text-zinc-300">
+                  <span className="w-1.5 h-1.5 rounded-full bg-zinc-100 pulse-dot" /> checking…
+                </span>
+              ) : updateAvailable ? (
+                <span className="text-[13px] text-zinc-100">update available</span>
+              ) : (
+                <span className="text-[13px] text-zinc-300">up to date</span>
+              )}
+            </div>
+            {sys?.last_check && (
+              <div className="text-[11.5px] text-zinc-500 mt-1.5">
+                Last checked {sys.last_check.replace("T", " ").slice(0, 16)}
+              </div>
+            )}
+          </div>
+          {updateAvailable ? (
+            <button
+              onClick={onUpdate}
+              className="px-4 h-10 rounded-lg bg-zinc-100 text-zinc-950 text-[13.5px] font-medium hover:bg-white transition shrink-0"
+            >
+              Update now
+            </button>
+          ) : (
+            <button
+              onClick={onCheck}
+              disabled={checking}
+              className="px-4 h-10 rounded-lg border border-zinc-700 text-[13.5px] text-zinc-200 hover:text-white hover:border-zinc-500 transition disabled:opacity-40 shrink-0"
+            >
+              Check now
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Shell({
+  sys,
+  checking,
+  onCheck,
+  onUpdate,
+}: {
+  sys: SystemInfo | null;
+  checking: boolean;
+  onCheck: () => void;
+  onUpdate: () => void;
+}) {
+  const [pane, setPane] = useState<PaneId>("home");
+  return (
+    <div className="h-full flex">
+      <Sidebar pane={pane} setPane={setPane} sys={sys} />
+      <div className="flex-1 min-w-0 overflow-y-auto console pb-14">
+        {pane === "home" && <Home sys={sys} onUpdate={onUpdate} />}
+        {pane === "arms" && <Arms />}
+        {pane === "config" && <ConfigPane />}
+        {pane === "updates" && (
+          <UpdatesPane sys={sys} checking={checking} onCheck={onCheck} onUpdate={onUpdate} />
+        )}
+      </div>
     </div>
   );
 }
@@ -1328,6 +1621,21 @@ export default function App() {
     };
   }, []);
 
+  const checkNow = useCallback(async () => {
+    setChecking(true);
+    if (IN_TAURI) {
+      try {
+        setSys(await invoke<SystemInfo>("check_updates"));
+      } catch {
+        /* keep old */
+      }
+    } else {
+      await new Promise((r) => setTimeout(r, 1200));
+      setSys((s) => (s ? { ...s, update_status: "update_available" } : s));
+    }
+    setChecking(false);
+  }, []);
+
   const handleFinished = useCallback((code: number) => {
     setExitCode(code);
     // small beat so the last checkmark lands before transitioning
@@ -1365,11 +1673,11 @@ export default function App() {
             <div className="w-2 h-2 rounded-full bg-zinc-100 pulse-dot" />
           </div>
         ) : existing ? (
-          <WelcomeBack
+          <Shell
             sys={sys}
             checking={checking}
+            onCheck={checkNow}
             onUpdate={() => setScreen("update")}
-            onContinue={() => setScreen("home")}
           />
         ) : (
           <Welcome onSetup={() => setScreen("preflight")} onJoin={() => setScreen("member")} />
@@ -1378,16 +1686,6 @@ export default function App() {
         <Preflight onBack={() => setScreen("welcome")} onContinue={() => setScreen("configure")} />
       )}
       {screen === "member" && <Member onBack={() => setScreen("welcome")} />}
-      {screen === "arms" && (
-        <Arms onBack={() => setScreen(existing ? "home" : "welcome")} />
-      )}
-      {screen === "home" && (
-        <Home
-          sys={sys}
-          onArms={() => setScreen("arms")}
-          onUpdate={() => setScreen("update")}
-        />
-      )}
       {screen === "update" && <Update onFinished={handleUpdateFinished} />}
       {screen === "configure" && (
         <Configure
