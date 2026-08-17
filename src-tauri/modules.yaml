@@ -45,6 +45,7 @@ modules:
       paths: ["$HOME/.aos/work"]
 
   - id: telegram
+    kind: connector
     name: Telegram
     category: arm
     tagline: Talk to your system from your phone — messages, voice notes, briefings.
@@ -56,6 +57,7 @@ modules:
       services: ["com.aos.bridge"]
 
   - id: whatsapp
+    kind: connector
     name: WhatsApp
     category: arm
     tagline: WhatsApp messages flow through your system.
@@ -124,6 +126,7 @@ modules:
       services: ["com.aos.n8n"]
 
   - id: remote-access
+    kind: connector
     name: Remote Access
     category: arm
     tagline: Reach this machine securely from your phone or laptop.

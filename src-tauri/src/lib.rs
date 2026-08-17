@@ -340,6 +340,296 @@ fn search_vault(query: String) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
+// ── Health ──────────────────────────────────────────────────────────
+
+#[derive(serde::Serialize)]
+struct SvcHealth {
+    label: String,
+    name: String,
+    running: bool,
+    last_exit: i64,
+}
+
+#[derive(serde::Serialize)]
+struct EndpointHealth {
+    name: String,
+    ok: bool,
+    detail: String,
+}
+
+#[derive(serde::Serialize)]
+struct HealthReport {
+    mem_total_gb: u64,
+    mem_free_pct: Option<u64>,
+    disk_total_gb: u64,
+    disk_avail_gb: u64,
+    services: Vec<SvcHealth>,
+    endpoints: Vec<EndpointHealth>,
+    issues: Vec<String>,
+}
+
+fn http_probe(url: &str) -> Option<String> {
+    cmd_ok("curl", &["-s", "-m", "2", "-o", "/dev/null", "-w", "%{http_code}", url])
+        .filter(|code| code != "000" && !code.is_empty())
+}
+
+fn signal_name(sig: i64) -> String {
+    match sig {
+        9 => "killed (SIGKILL)".into(),
+        11 => "crashed (segfault)".into(),
+        15 => "terminated (SIGTERM)".into(),
+        6 => "aborted".into(),
+        s => format!("stopped by signal {s}"),
+    }
+}
+
+#[tauri::command]
+fn health_check() -> Result<HealthReport, String> {
+    let home = std::env::var("HOME").map_err(|e| e.to_string())?;
+    let mut issues: Vec<String> = Vec::new();
+
+    // Memory
+    let mem_total_gb = cmd_ok("sysctl", &["-n", "hw.memsize"])
+        .and_then(|s| s.parse::<u64>().ok())
+        .map(|b| b / 1_073_741_824)
+        .unwrap_or(0);
+    let mem_free_pct = cmd_ok("memory_pressure", &["-Q"]).and_then(|out| {
+        out.lines()
+            .find(|l| l.contains("free percentage"))
+            .and_then(|l| l.split(':').nth(1))
+            .and_then(|v| v.trim().trim_end_matches('%').parse::<u64>().ok())
+    });
+    if let Some(pct) = mem_free_pct {
+        if pct < 15 {
+            issues.push(format!("Memory is tight — only {pct}% free. Agent runs may slow down."));
+        }
+    }
+
+    // Disk
+    let (mut disk_total_gb, mut disk_avail_gb) = (0u64, 0u64);
+    if let Some(df) = cmd_ok("df", &["-g", "/"]) {
+        if let Some(row) = df.lines().nth(1) {
+            let cols: Vec<&str> = row.split_whitespace().collect();
+            disk_total_gb = cols.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+            disk_avail_gb = cols.get(3).and_then(|s| s.parse().ok()).unwrap_or(0);
+        }
+    }
+    if disk_avail_gb > 0 && disk_avail_gb < 20 {
+        issues.push(format!("Low disk space — {disk_avail_gb} GB left."));
+    }
+
+    // Services via launchd: "PID\tStatus\tLabel"
+    let mut services: Vec<SvcHealth> = Vec::new();
+    if let Some(list) = cmd_ok("launchctl", &["list"]) {
+        for line in list.lines() {
+            let cols: Vec<&str> = line.split_whitespace().collect();
+            if cols.len() != 3 {
+                continue;
+            }
+            let label = cols[2];
+            if !(label.starts_with("com.aos.") || label.starts_with("com.agent.")) {
+                continue;
+            }
+            let running = cols[0] != "-";
+            let last_exit = cols[1].parse::<i64>().unwrap_or(0);
+            let name = label.rsplit('.').next().unwrap_or(label).replace('-', " ");
+            if last_exit != 0 {
+                let what = if last_exit < 0 {
+                    signal_name(-last_exit)
+                } else {
+                    format!("exited with code {last_exit}")
+                };
+                if running {
+                    issues.push(format!("{name}: {what} on its last run — restarted and running now."));
+                } else {
+                    issues.push(format!("{name}: {what} and is not running."));
+                }
+            }
+            services.push(SvcHealth { label: label.into(), name, running, last_exit });
+        }
+    }
+    services.sort_by(|a, b| a.name.cmp(&b.name));
+
+    // Known local endpoints
+    let mut endpoints = Vec::new();
+    for (name, url) in [
+        ("qareen dashboard", "http://127.0.0.1:4096/"),
+        ("bridge", "http://127.0.0.1:4098/health"),
+        ("transcriber", "http://127.0.0.1:7602/health"),
+        ("n8n", "http://127.0.0.1:5678/"),
+    ] {
+        let code = http_probe(url);
+        let ok = code.is_some();
+        endpoints.push(EndpointHealth {
+            name: name.into(),
+            ok,
+            detail: code.map(|c| format!("HTTP {c}")).unwrap_or_else(|| "no response".into()),
+        });
+    }
+
+    // Recent errors in instance logs (last 24h, tail of each file)
+    let log_dir = format!("{home}/.aos/logs");
+    if let Ok(entries) = std::fs::read_dir(&log_dir) {
+        let now = std::time::SystemTime::now();
+        let mut flagged = 0;
+        for e in entries.flatten() {
+            if flagged >= 4 {
+                break;
+            }
+            let path = e.path();
+            if path.extension().and_then(|x| x.to_str()) != Some("log") {
+                continue;
+            }
+            let fresh = e
+                .metadata()
+                .ok()
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| now.duration_since(t).ok())
+                .map(|d| d.as_secs() < 86_400)
+                .unwrap_or(false);
+            if !fresh {
+                continue;
+            }
+            if let Ok(text) = std::fs::read_to_string(&path) {
+                let tail: String = text.chars().rev().take(16_000).collect::<String>().chars().rev().collect();
+                let count = tail
+                    .lines()
+                    .filter(|l| {
+                        let low = l.to_lowercase();
+                        low.contains("error") || low.contains("traceback") || low.contains("failed")
+                    })
+                    .count();
+                if count > 3 {
+                    let fname = path.file_name().and_then(|f| f.to_str()).unwrap_or("log");
+                    issues.push(format!("{count} recent error lines in {fname}."));
+                    flagged += 1;
+                }
+            }
+        }
+    }
+
+    Ok(HealthReport {
+        mem_total_gb,
+        mem_free_pct,
+        disk_total_gb,
+        disk_avail_gb,
+        services,
+        endpoints,
+        issues,
+    })
+}
+
+// ── Operator config ─────────────────────────────────────────────────
+
+fn operator_yaml_path() -> Result<String, String> {
+    let home = std::env::var("HOME").map_err(|e| e.to_string())?;
+    Ok(format!("{home}/.aos/config/operator.yaml"))
+}
+
+fn yaml_get<'a>(v: &'a serde_yaml::Value, path: &[&str]) -> Option<&'a serde_yaml::Value> {
+    let mut cur = v;
+    for key in path {
+        cur = cur.get(key)?;
+    }
+    Some(cur)
+}
+
+const OPERATOR_FIELDS: &[(&str, &[&str])] = &[
+    ("name", &["name"]),
+    ("agent_name", &["agent_name"]),
+    ("timezone", &["timezone"]),
+    ("style", &["communication", "style"]),
+    ("language", &["communication", "language"]),
+    ("morning_briefing", &["daily_loop", "morning_briefing"]),
+    ("evening_checkin", &["daily_loop", "evening_checkin"]),
+    ("trust_level", &["trust", "default_level"]),
+];
+
+#[tauri::command]
+fn operator_config() -> Result<std::collections::BTreeMap<String, String>, String> {
+    let text = std::fs::read_to_string(operator_yaml_path()?).map_err(|e| e.to_string())?;
+    let value: serde_yaml::Value = serde_yaml::from_str(&text).map_err(|e| e.to_string())?;
+    let mut out = std::collections::BTreeMap::new();
+    for (field, path) in OPERATOR_FIELDS {
+        if let Some(v) = yaml_get(&value, path) {
+            let s = match v {
+                serde_yaml::Value::String(s) => s.clone(),
+                serde_yaml::Value::Number(n) => n.to_string(),
+                other => serde_yaml::to_string(other).unwrap_or_default().trim().to_string(),
+            };
+            out.insert(field.to_string(), s);
+        }
+    }
+    Ok(out)
+}
+
+#[tauri::command]
+fn save_operator_config(
+    fields: std::collections::BTreeMap<String, String>,
+) -> Result<(), String> {
+    let path = operator_yaml_path()?;
+    let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let mut value: serde_yaml::Value = serde_yaml::from_str(&text).map_err(|e| e.to_string())?;
+
+    for (field, keypath) in OPERATOR_FIELDS {
+        let Some(new_val) = fields.get(*field) else { continue };
+        // Walk to the parent mapping, creating intermediate maps as needed.
+        let mut cur = &mut value;
+        for key in &keypath[..keypath.len() - 1] {
+            if cur.get(key).is_none() {
+                if let Some(map) = cur.as_mapping_mut() {
+                    map.insert(
+                        serde_yaml::Value::String(key.to_string()),
+                        serde_yaml::Value::Mapping(Default::default()),
+                    );
+                }
+            }
+            cur = cur.get_mut(key).ok_or("config structure error")?;
+        }
+        let leaf = keypath[keypath.len() - 1];
+        let yaml_val = if *field == "trust_level" {
+            new_val
+                .parse::<i64>()
+                .map(serde_yaml::Value::from)
+                .unwrap_or_else(|_| serde_yaml::Value::String(new_val.clone()))
+        } else {
+            serde_yaml::Value::String(new_val.clone())
+        };
+        if let Some(map) = cur.as_mapping_mut() {
+            map.insert(serde_yaml::Value::String(leaf.to_string()), yaml_val);
+        }
+    }
+
+    // Backup, then atomic-ish write.
+    let _ = std::fs::copy(&path, format!("{path}.bak"));
+    let out = serde_yaml::to_string(&value).map_err(|e| e.to_string())?;
+    std::fs::write(&path, out).map_err(|e| e.to_string())
+}
+
+// ── Release notes ───────────────────────────────────────────────────
+
+/// Latest sections of the system changelog for the Updates pane.
+#[tauri::command]
+fn release_notes() -> Result<String, String> {
+    let home = std::env::var("HOME").map_err(|e| e.to_string())?;
+    let text = std::fs::read_to_string(format!("{home}/aos/CHANGELOG.md"))
+        .map_err(|_| "No changelog found".to_string())?;
+    let mut sections = 0;
+    let mut out: Vec<&str> = Vec::new();
+    for line in text.lines() {
+        if line.starts_with("## ") {
+            sections += 1;
+            if sections > 2 {
+                break;
+            }
+        }
+        if sections >= 1 {
+            out.push(line);
+        }
+    }
+    Ok(out.join("\n").trim().to_string())
+}
+
 // ── Modules (arms & connectors) ─────────────────────────────────────
 
 #[derive(serde::Deserialize)]
@@ -375,6 +665,8 @@ struct ModuleDef {
     secrets: Vec<String>,
     #[serde(default)]
     status_note: Option<String>,
+    #[serde(default)]
+    kind: Option<String>, // connector | arm (default)
     #[serde(default)]
     detect: Option<Detect>,
 }
@@ -676,6 +968,10 @@ pub fn run() {
             save_setup_config,
             load_setup_config,
             home_data,
+            health_check,
+            operator_config,
+            save_operator_config,
+            release_notes,
             search_vault
         ])
         .run(tauri::generate_context!())
