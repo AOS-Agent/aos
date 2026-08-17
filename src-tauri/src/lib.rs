@@ -3202,15 +3202,66 @@ fn set_module_enabled(id: String, enabled: bool) -> Result<(), String> {
         }
     }
 
-    // Record desired state for the system engine (reconciled on update).
-    let intent_path = format!("{home}/.aos/config/app-modules.yaml");
-    let mut state: std::collections::BTreeMap<String, bool> = std::fs::read_to_string(&intent_path)
+    // Record the operator's choice in ~/.aos/config/services.yaml — the file
+    // reconcile ALREADY reads (service_registry::disabled_services). This panel
+    // briefly wrote its own app-modules.yaml instead; two files answering one
+    // question meant reconcile would have honoured one and the panel the other,
+    // and they would disagree the moment either was used. Keys are SERVICE
+    // names, not labels: com.aos.transcriber is recorded as `transcriber`.
+    let names: Vec<String> = module
+        .services
+        .iter()
+        .map(|l| {
+            l.strip_prefix("com.aos.")
+                .or_else(|| l.strip_prefix("com.agent."))
+                .unwrap_or(l)
+                .to_string()
+        })
+        .collect();
+
+    if !names.is_empty() {
+        let path = format!("{home}/.aos/config/services.yaml");
+        let existing = std::fs::read_to_string(&path).unwrap_or_default();
+
+        // Preserve whatever header is there so the file stays self-documenting.
+        let header: String = existing
+            .lines()
+            .take_while(|l| l.starts_with('#') || l.trim().is_empty())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let mut disabled: std::collections::BTreeSet<String> = serde_yaml::from_str::<
+            serde_yaml::Value,
+        >(&existing)
         .ok()
-        .and_then(|t| serde_yaml::from_str(&t).ok())
+        .and_then(|v| v.get("disabled").cloned())
+        .and_then(|v| v.as_sequence().cloned())
+        .map(|seq| {
+            seq.iter()
+                .filter_map(|x| x.as_str().map(|s| s.trim().to_string()))
+                .filter(|s| !s.is_empty())
+                .collect()
+        })
         .unwrap_or_default();
-    state.insert(id, enabled);
-    if let Ok(text) = serde_yaml::to_string(&state) {
-        let _ = std::fs::write(&intent_path, text);
+
+        for n in &names {
+            if enabled {
+                disabled.remove(n);
+            } else {
+                disabled.insert(n.clone());
+            }
+        }
+
+        let body = disabled
+            .iter()
+            .map(|n| format!("- {n}\n"))
+            .collect::<String>();
+        let text = if header.trim().is_empty() {
+            format!("# Operator service preferences for THIS machine.\n#\n# Services listed under `disabled:` are switched off by your choice.\n# Instance data — never committed, never shared between machines.\n\ndisabled:\n{body}")
+        } else {
+            format!("{header}\n\ndisabled:\n{body}")
+        };
+        let _ = std::fs::write(&path, text);
     }
 
     if errors.is_empty() {
