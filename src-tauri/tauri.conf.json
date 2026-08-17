@@ -13,11 +13,12 @@
     "windows": [
       {
         "title": "",
-        "width": 980,
-        "height": 640,
-        "minWidth": 760,
-        "minHeight": 540,
+        "width": 1360,
+        "height": 860,
+        "minWidth": 900,
+        "minHeight": 600,
         "center": true,
+        "maximized": true,
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
         "backgroundColor": "#09090b"
