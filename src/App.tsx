@@ -236,6 +236,59 @@ function PrimaryButton({
   );
 }
 
+/**
+ * Every pane in the shell is this shape: one scroll container, a header that
+ * stays put, a body that moves under it.
+ *
+ * The header's top padding belongs to the window-drag strip. The strip is a
+ * fixed 36px band at z-40 that must stay grabbable, so the header keeps its
+ * content below it and lets its own background run underneath — nothing ever
+ * scrolls through the strip, and the strip is never covered by a button.
+ */
+function PaneShell({
+  title,
+  note,
+  actions,
+  backButton,
+  container = "max-w-[720px] mx-auto px-5 sm:px-8",
+  children,
+}: {
+  /** A string becomes the page h1; anything else is rendered as given. */
+  title?: React.ReactNode;
+  /** Sits beside the title — status that belongs to the page, not an action. */
+  note?: React.ReactNode;
+  actions?: React.ReactNode;
+  backButton?: React.ReactNode;
+  container?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="screen h-full overflow-y-auto console">
+      <div className="sticky top-0 z-20 border-b border-zinc-800/60 bg-zinc-950/95 backdrop-blur-sm">
+        <div className={container + " pt-14 pb-3.5"}>
+          {backButton && <div className={title ? "mb-3.5" : ""}>{backButton}</div>}
+          {(title || actions) && (
+            <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+              <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                {typeof title === "string" ? (
+                  <h1 className="text-[22px] font-semibold tracking-tight truncate">{title}</h1>
+                ) : (
+                  title
+                )}
+                {note}
+              </div>
+              {actions && (
+                <div className="flex flex-wrap items-center gap-2 shrink-0">{actions}</div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+      <div className={container + " pt-5 pb-16"}>{children}</div>
+    </div>
+  );
+}
+
 /* ── screen 1: welcome ── */
 
 function Welcome({
@@ -692,13 +745,13 @@ function Home({
   const greeting = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
 
   return (
-    <div className="screen h-full overflow-y-auto console">
-      <div className="max-w-[760px] mx-auto px-5 sm:px-8 pt-14 pb-16">
-        {/* header */}
-        <div className="flex flex-wrap items-center gap-3 mb-8">
-          <Mark size={34} />
-          <div className="flex-1 min-w-[150px]">
-            <div className="text-[17px] font-semibold tracking-tight leading-tight">
+    <PaneShell
+      container="max-w-[760px] mx-auto px-5 sm:px-8"
+      title={
+        <>
+          <Mark size={30} />
+          <div className="min-w-0">
+            <div className="text-[17px] font-semibold tracking-tight leading-tight truncate">
               {greeting}
               {sys?.operator ? `, ${sys.operator}` : ""}
             </div>
@@ -713,125 +766,127 @@ function Home({
               )}
             </div>
           </div>
-          {onArms && (
-            <button
-              onClick={onArms}
-              className="px-3.5 h-9 rounded-lg border border-zinc-800 text-[12.5px] text-zinc-200 hover:text-white hover:border-zinc-600 transition"
-            >
-              Arms &amp; Connectors
-            </button>
-          )}
+        </>
+      }
+      actions={
+        onArms ? (
+          <button
+            onClick={onArms}
+            className="px-3.5 h-9 rounded-lg border border-zinc-800 text-[12.5px] text-zinc-200 hover:text-white hover:border-zinc-600 transition"
+          >
+            Arms &amp; Connectors
+          </button>
+        ) : undefined
+      }
+    >
+      {/* search */}
+      <div className="mb-4">
+        <div className="flex items-center gap-2 rounded-xl border border-zinc-800 bg-zinc-900 px-4 h-12 focus-within:border-zinc-600 transition">
+          <svg width="14" height="14" viewBox="0 0 14 14" className="text-zinc-500 shrink-0">
+            <circle cx="6" cy="6" r="4.2" stroke="currentColor" strokeWidth="1.6" fill="none" />
+            <path d="M9.2 9.2 12.5 12.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+          </svg>
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && runSearch()}
+            placeholder="Search everything the system knows…"
+            autoComplete="off"
+            spellCheck={false}
+            className="flex-1 bg-transparent outline-none text-[14px] text-zinc-100 placeholder:text-zinc-500"
+          />
+          {searching && <div className="w-2 h-2 rounded-full bg-zinc-100 pulse-dot shrink-0" />}
         </div>
-
-        {/* search */}
-        <div className="mb-4">
-          <div className="flex items-center gap-2 rounded-xl border border-zinc-800 bg-zinc-900 px-4 h-12 focus-within:border-zinc-600 transition">
-            <svg width="14" height="14" viewBox="0 0 14 14" className="text-zinc-500 shrink-0">
-              <circle cx="6" cy="6" r="4.2" stroke="currentColor" strokeWidth="1.6" fill="none" />
-              <path d="M9.2 9.2 12.5 12.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-            </svg>
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && runSearch()}
-              placeholder="Search everything the system knows…"
-              autoComplete="off"
-              spellCheck={false}
-              className="flex-1 bg-transparent outline-none text-[14px] text-zinc-100 placeholder:text-zinc-500"
-            />
-            {searching && <div className="w-2 h-2 rounded-full bg-zinc-100 pulse-dot shrink-0" />}
-          </div>
-          {results !== null && (
-            <div className="screen mt-2 rounded-xl border border-zinc-800 bg-black/50 px-4 py-3 font-mono text-[11.5px] leading-relaxed text-zinc-300 whitespace-pre-wrap select-text max-h-48 overflow-y-auto console">
-              {results || "No results."}
-            </div>
-          )}
-        </div>
-
-        {data === null ? (
-          <div className="flex items-center gap-3 py-8">
-            <div className="w-2 h-2 rounded-full bg-zinc-100 pulse-dot" />
-            <span className="text-[13.5px] text-zinc-200">Reading system state…</span>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <Card title="Work">
-              {data.tasks.length ? (
-                data.tasks.slice(0, 5).map((t) => (
-                  <div key={t.id} className="flex items-baseline gap-2.5 py-1.5">
-                    <div
-                      className={
-                        "w-1.5 h-1.5 rounded-full shrink-0 translate-y-[-1px] " +
-                        (t.urgent ? "bg-zinc-100" : "border border-zinc-600")
-                      }
-                    />
-                    <span className="text-[13px] text-zinc-100 leading-snug flex-1 min-w-0 truncate">
-                      {t.title}
-                    </span>
-                    <span className="font-mono text-[10.5px] text-zinc-500 shrink-0">{t.id}</span>
-                  </div>
-                ))
-              ) : (
-                <div className="text-[13px] text-zinc-500">Nothing queued today.</div>
-              )}
-            </Card>
-
-            <Card title="System">
-              {data.services.slice(0, 5).map((s) => (
-                <div key={s.label} className="flex items-center gap-2.5 py-1.5">
-                  <div className="w-1.5 h-1.5 rounded-full bg-zinc-100 shrink-0" />
-                  <span className="text-[13px] text-zinc-100">{s.name}</span>
-                </div>
-              ))}
-              {data.services.length > 5 && (
-                <div className="text-[11.5px] text-zinc-500 mt-1.5 pl-4">
-                  + {data.services.length - 5} more running
-                </div>
-              )}
-            </Card>
-
-            <Card title="Arms" className="sm:col-span-2">
-              <div className="flex flex-wrap gap-2">
-                {arms.map((m) => {
-                  const on = m.status === "active";
-                  return (
-                    <span
-                      key={m.id}
-                      className={
-                        "inline-flex items-center gap-2 px-2.5 py-1.5 rounded-lg border text-[12px] " +
-                        (on
-                          ? "border-zinc-700 text-zinc-100"
-                          : "border-zinc-800 text-zinc-500")
-                      }
-                    >
-                      <span
-                        className={
-                          "w-1.5 h-1.5 rounded-full " + (on ? "bg-zinc-100" : "border border-zinc-600")
-                        }
-                      />
-                      {m.name}
-                    </span>
-                  );
-                })}
-              </div>
-            </Card>
-
-            <Card title="Recent knowledge" className="sm:col-span-2">
-              {data.activity.length ? (
-                data.activity.map((a, i) => (
-                  <div key={i} className="flex items-baseline gap-3 py-1.5">
-                    <span className="text-[13px] text-zinc-100 flex-1 min-w-0 truncate">{a.title}</span>
-                    <span className="font-mono text-[10.5px] text-zinc-500 shrink-0">{a.when}</span>
-                  </div>
-                ))
-              ) : (
-                <div className="text-[13px] text-zinc-500">Nothing yet.</div>
-              )}
-            </Card>
+        {results !== null && (
+          <div className="screen mt-2 rounded-xl border border-zinc-800 bg-black/50 px-4 py-3 font-mono text-[11.5px] leading-relaxed text-zinc-300 whitespace-pre-wrap select-text max-h-48 overflow-y-auto console">
+            {results || "No results."}
           </div>
         )}
       </div>
-    </div>
+
+      {data === null ? (
+        <div className="flex items-center gap-3 py-8">
+          <div className="w-2 h-2 rounded-full bg-zinc-100 pulse-dot" />
+          <span className="text-[13.5px] text-zinc-200">Reading system state…</span>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <Card title="Work">
+            {data.tasks.length ? (
+              data.tasks.slice(0, 5).map((t) => (
+                <div key={t.id} className="flex items-baseline gap-2.5 py-1.5">
+                  <div
+                    className={
+                      "w-1.5 h-1.5 rounded-full shrink-0 translate-y-[-1px] " +
+                      (t.urgent ? "bg-zinc-100" : "border border-zinc-600")
+                    }
+                  />
+                  <span className="text-[13px] text-zinc-100 leading-snug flex-1 min-w-0 truncate">
+                    {t.title}
+                  </span>
+                  <span className="font-mono text-[10.5px] text-zinc-500 shrink-0">{t.id}</span>
+                </div>
+              ))
+            ) : (
+              <div className="text-[13px] text-zinc-500">Nothing queued today.</div>
+            )}
+          </Card>
+
+          <Card title="System">
+            {data.services.slice(0, 5).map((s) => (
+              <div key={s.label} className="flex items-center gap-2.5 py-1.5">
+                <div className="w-1.5 h-1.5 rounded-full bg-zinc-100 shrink-0" />
+                <span className="text-[13px] text-zinc-100">{s.name}</span>
+              </div>
+            ))}
+            {data.services.length > 5 && (
+              <div className="text-[11.5px] text-zinc-500 mt-1.5 pl-4">
+                + {data.services.length - 5} more running
+              </div>
+            )}
+          </Card>
+
+          <Card title="Arms" className="sm:col-span-2">
+            <div className="flex flex-wrap gap-2">
+              {arms.map((m) => {
+                const on = m.status === "active";
+                return (
+                  <span
+                    key={m.id}
+                    className={
+                      "inline-flex items-center gap-2 px-2.5 py-1.5 rounded-lg border text-[12px] " +
+                      (on
+                        ? "border-zinc-700 text-zinc-100"
+                        : "border-zinc-800 text-zinc-500")
+                    }
+                  >
+                    <span
+                      className={
+                        "w-1.5 h-1.5 rounded-full " + (on ? "bg-zinc-100" : "border border-zinc-600")
+                      }
+                    />
+                    {m.name}
+                  </span>
+                );
+              })}
+            </div>
+          </Card>
+
+          <Card title="Recent knowledge" className="sm:col-span-2">
+            {data.activity.length ? (
+              data.activity.map((a, i) => (
+                <div key={i} className="flex items-baseline gap-3 py-1.5">
+                  <span className="text-[13px] text-zinc-100 flex-1 min-w-0 truncate">{a.title}</span>
+                  <span className="font-mono text-[10.5px] text-zinc-500 shrink-0">{a.when}</span>
+                </div>
+              ))
+            ) : (
+              <div className="text-[13px] text-zinc-500">Nothing yet.</div>
+            )}
+          </Card>
+        </div>
+      )}
+    </PaneShell>
   );
 }
 
@@ -1063,71 +1118,67 @@ function Arms({
   const degraded = (modules ?? []).filter((m) => m.status === "degraded" || m.status === "broken");
 
   return (
-    <div className="screen h-full flex flex-col items-center py-8 sm:py-14 overflow-y-auto console">
-      <div className="w-full max-w-[620px] px-4 sm:px-0">
-        <div className="flex items-end justify-between mb-1">
-          <h1 className="text-[22px] font-semibold tracking-tight">
-            {connectors ? "Connectors" : "Arms"}
-          </h1>
-          {onBack && <BackButton label="Home" onClick={onBack} />}
+    <PaneShell
+      container="w-full max-w-[620px] px-4 sm:px-0 mx-auto"
+      title={connectors ? "Connectors" : "Arms"}
+      backButton={onBack ? <BackButton label="Home" onClick={onBack} /> : undefined}
+    >
+      <p className="text-[13px] text-zinc-300 mb-5">
+        Capabilities of your system. Turning one on makes real changes to this
+        Mac — every item shows what it costs before it runs.
+      </p>
+
+      {error && <ErrorBanner className="mb-4">{error}</ErrorBanner>}
+
+      {/* Anything not working is stated up front rather than left to be found
+          by scrolling. A service can be running and still be unable to work. */}
+      {degraded.length > 0 && (
+        <div className="mb-5 rounded-xl border border-zinc-700 bg-zinc-900/70 px-4 py-3">
+          <div className="text-[12.5px] text-zinc-100 font-medium">
+            {degraded.length} {degraded.length === 1 ? "capability needs" : "capabilities need"} attention
+          </div>
+          <div className="text-[12px] text-zinc-400 mt-0.5">
+            {degraded.map((m) => m.name).join(" · ")}
+          </div>
         </div>
-        <p className="text-[13px] text-zinc-300 mb-5">
-          Capabilities of your system. Turning one on makes real changes to this
-          Mac — every item shows what it costs before it runs.
-        </p>
+      )}
 
-        {error && <ErrorBanner className="mb-4">{error}</ErrorBanner>}
-
-        {/* Anything not working is stated up front rather than left to be found
-            by scrolling. A service can be running and still be unable to work. */}
-        {degraded.length > 0 && (
-          <div className="mb-5 rounded-xl border border-zinc-700 bg-zinc-900/70 px-4 py-3">
-            <div className="text-[12.5px] text-zinc-100 font-medium">
-              {degraded.length} {degraded.length === 1 ? "capability needs" : "capabilities need"} attention
-            </div>
-            <div className="text-[12px] text-zinc-400 mt-0.5">
-              {degraded.map((m) => m.name).join(" · ")}
-            </div>
-          </div>
-        )}
-
-        {modules === null ? (
-          <div className="flex items-center gap-3 py-6">
-            <div className="w-2 h-2 rounded-full bg-zinc-100 pulse-dot" />
-            <span className="text-[13.5px] text-zinc-200">Reading system state…</span>
-          </div>
-        ) : (
-          <>
-            {groups.map(([title, blurb, mods]) =>
-              mods.length ? (
-                <div key={title} className="mb-6">
-                  <div className="text-[11px] uppercase tracking-[0.12em] text-zinc-500 mb-2">{title}</div>
-                  {blurb && <div className="text-[12px] text-zinc-500 -mt-1 mb-2">{blurb}</div>}
-                  <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 divide-y divide-zinc-800/70">
-                    {mods.map((m) => (
-                      <ModuleRow key={m.id} m={m} busy={busyId === m.id} onToggle={requestToggle} />
-                    ))}
-                  </div>
-                </div>
-              ) : null,
-            )}
-
-            {!connectors && foreign.length > 0 && (
-              <div className="mb-6">
-                <div className="text-[11px] uppercase tracking-[0.12em] text-zinc-500 mb-2">Unmanaged</div>
-                <div className="text-[12px] text-zinc-500 -mt-1 mb-2">
-                  Running on this Mac, not part of AOS. Shown so nothing is hidden — never touched.
-                </div>
-                <div className="rounded-2xl border border-zinc-800/70 bg-zinc-950/40 divide-y divide-zinc-800/50">
-                  {foreign.map((f) => (
-                    <ForeignRow key={f.label} f={f} />
+      {modules === null ? (
+        <div className="flex items-center gap-3 py-6">
+          <div className="w-2 h-2 rounded-full bg-zinc-100 pulse-dot" />
+          <span className="text-[13.5px] text-zinc-200">Reading system state…</span>
+        </div>
+      ) : (
+        <>
+          {groups.map(([title, blurb, mods]) =>
+            mods.length ? (
+              <div key={title} className="mb-6">
+                <div className="text-[11px] uppercase tracking-[0.12em] text-zinc-500 mb-2">{title}</div>
+                {blurb && <div className="text-[12px] text-zinc-500 -mt-1 mb-2">{blurb}</div>}
+                <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 divide-y divide-zinc-800/70">
+                  {mods.map((m) => (
+                    <ModuleRow key={m.id} m={m} busy={busyId === m.id} onToggle={requestToggle} />
                   ))}
                 </div>
               </div>
-            )}
-          </>
-        )}
-      </div>
+            ) : null,
+          )}
+
+          {!connectors && foreign.length > 0 && (
+            <div className="mb-6">
+              <div className="text-[11px] uppercase tracking-[0.12em] text-zinc-500 mb-2">Unmanaged</div>
+              <div className="text-[12px] text-zinc-500 -mt-1 mb-2">
+                Running on this Mac, not part of AOS. Shown so nothing is hidden — never touched.
+              </div>
+              <div className="rounded-2xl border border-zinc-800/70 bg-zinc-950/40 divide-y divide-zinc-800/50">
+                {foreign.map((f) => (
+                  <ForeignRow key={f.label} f={f} />
+                ))}
+              </div>
+            </div>
+          )}
+        </>
+      )}
 
       {confirming && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
@@ -1154,7 +1205,7 @@ function Arms({
           </div>
         </div>
       )}
-    </div>
+    </PaneShell>
   );
 }
 
@@ -1256,7 +1307,8 @@ function openExternal(url: string) {
 }
 
 const DEMO_CONNECTORS: Connector[] = [
-  { id: "claude", name: "Claude Code", category: "intelligence", auth_kind: "cli", status: "connected", detail: "v2.1.233 · subscription signed in", connect_hint: "", accounts: [{ identity: "hishamalhadi@gmail.com", detail: "Max subscription · signed in on this Mac" }] },
+  { id: "claude", name: "Claude Code", category: "intelligence", auth_kind: "cli", status: "connected", detail: "v2.1.233 · subscription signed in", connect_hint: "", accounts: [{ identity: "hishamalhadi@gmail.com", detail: "Max subscription · session auto-renews · valid until Sep 14, 2026" }] },
+  { id: "claude-chrome", name: "Claude in Chrome", category: "intelligence", auth_kind: "cli", status: "connected", detail: "enabled for every session", connect_hint: "", accounts: [] },
   { id: "kimi", name: "Kimi Code", category: "intelligence", auth_kind: "token", status: "connected", detail: "API key in Keychain", connect_hint: "", accounts: [{ identity: "moonshot account", detail: "API key · pay as you go" }], key_fields: [{ secret: "KIMI_API_KEY", label: "API key (sk-…)", get_url: "https://platform.moonshot.ai/console/api-keys" }], composio_slug: null },
   { id: "codex", name: "Codex", category: "intelligence", auth_kind: "cli", status: "attention", detail: "installed, not signed in", connect_hint: "Run `codex login` in a terminal, then refresh this page.", accounts: [] },
   { id: "tailscale", name: "Tailscale", category: "network", auth_kind: "cli", status: "connected", detail: "agents-mac-mini · 4 devices on tailnet", connect_hint: "", accounts: [
@@ -2185,11 +2237,7 @@ function ConnectorDetail({
     );
 
   return (
-    <div className="screen max-w-[720px] mx-auto px-5 sm:px-8 pt-14 pb-16">
-      <div className="mb-6">
-        <BackButton label="Connectors" onClick={onBack} />
-      </div>
-
+    <PaneShell backButton={<BackButton label="Connectors" onClick={onBack} />}>
       <div className="flex flex-wrap items-start gap-4 mb-5">
         <ConnectorLogo id={c.id} name={c.name} size={52} domain={domainFor(c.id)} />
         <div className="flex-1 min-w-[180px] pt-0.5">
@@ -2531,7 +2579,7 @@ function ConnectorDetail({
           onConfirm={() => removeAccount(confirm.identity)}
         />
       )}
-    </div>
+    </PaneShell>
   );
 }
 
@@ -2583,13 +2631,10 @@ function BrowseDirectory({
   );
 
   return (
-    <div className="screen max-w-[720px] mx-auto px-5 sm:px-8 pt-14 pb-16">
-      <div className="mb-6">
-        <BackButton label="Connectors" onClick={onBack} />
-      </div>
-      <div className="flex flex-wrap items-end justify-between gap-3 mb-1">
-        <h1 className="text-[22px] font-semibold tracking-tight">Browse connectors</h1>
-      </div>
+    <PaneShell
+      title="Browse connectors"
+      backButton={<BackButton label="Connectors" onClick={onBack} />}
+    >
       <p className="text-[13px] text-zinc-400 mb-5">
         {composioReady
           ? "One-click sign-in via hosted OAuth — nothing stored on this Mac."
@@ -2633,33 +2678,112 @@ function BrowseDirectory({
           ))}
         </div>
       )}
-    </div>
+    </PaneShell>
   );
 }
 
+/* ── instant paint ──
+ * `list_connectors` walks the machine and takes seconds. The last answer it
+ * gave is kept in localStorage so the pane paints the moment it opens, with
+ * the live read running underneath and replacing it when it lands.
+ *
+ * A snapshot is a cache, never a source of truth: anything that doesn't parse
+ * back into the shape the list renders is dropped rather than trusted, and a
+ * failed live read never overwrites a good one.
+ */
+const CONNECTORS_SNAPSHOT = "connectors-snapshot";
+const USAGE_SNAPSHOT = "connectors-usage-snapshot";
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null;
+}
+
+function readSnapshot<T>(key: string, revive: (raw: unknown) => T | null): T | null {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    return revive(JSON.parse(raw) as unknown);
+  } catch {
+    return null;
+  }
+}
+
+function writeSnapshot(key: string, value: unknown) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    /* private mode or quota — the pane just opens the slow way next time */
+  }
+}
+
+function reviveConnectors(raw: unknown): Connector[] | null {
+  if (!Array.isArray(raw)) return null;
+  const rows = raw.filter(
+    (r): r is Connector =>
+      isRecord(r) &&
+      typeof r.id === "string" &&
+      typeof r.name === "string" &&
+      typeof r.category === "string" &&
+      typeof r.status === "string" &&
+      typeof r.detail === "string" &&
+      typeof r.auth_kind === "string" &&
+      typeof r.connect_hint === "string" &&
+      Array.isArray(r.accounts),
+  );
+  return rows.length ? rows : null;
+}
+
+function reviveUsage(raw: unknown): Record<string, ConnectorUsage> | null {
+  if (!isRecord(raw)) return null;
+  const out: Record<string, ConnectorUsage> = {};
+  for (const [id, v] of Object.entries(raw)) {
+    if (isRecord(v) && typeof v.in_use === "boolean" && Array.isArray(v.used_by)) {
+      out[id] = {
+        in_use: v.in_use,
+        used_by: v.used_by.filter((u): u is string => typeof u === "string"),
+      };
+    }
+  }
+  return Object.keys(out).length ? out : null;
+}
+
 function ConnectorsPane() {
-  const [connectors, setConnectors] = useState<Connector[] | null>(null);
+  const [connectors, setConnectors] = useState<Connector[] | null>(() =>
+    readSnapshot(CONNECTORS_SNAPSHOT, reviveConnectors),
+  );
+  const [refreshing, setRefreshing] = useState(false);
   const [open, setOpen] = useState<Connector | null>(null);
-  const [usage, setUsage] = useState<Record<string, ConnectorUsage>>({});
+  const [usage, setUsage] = useState<Record<string, ConnectorUsage>>(
+    () => readSnapshot(USAGE_SNAPSHOT, reviveUsage) ?? {},
+  );
   const [view, setView] = useState<"list" | "browse">("list");
   const [filter, setFilter] = useState<"all" | "connected" | "available">("all");
   const [q, setQ] = useState("");
 
   const load = useCallback(async () => {
-    let next: Connector[];
+    setRefreshing(true);
+    let next: Connector[] | null;
     if (IN_TAURI) {
       try {
         next = await invoke<Connector[]>("list_connectors");
       } catch {
-        next = [];
+        next = null;
       }
     } else {
       await new Promise((r) => setTimeout(r, 400));
       next = DEMO_CONNECTORS;
     }
-    setConnectors(next);
-    // Keep an open detail page pointed at the freshly-read row.
-    setOpen((cur) => (cur ? (next.find((x) => x.id === cur.id) ?? cur) : cur));
+    if (next) {
+      const rows = next;
+      setConnectors(rows);
+      if (rows.length) writeSnapshot(CONNECTORS_SNAPSHOT, rows);
+      // Keep an open detail page pointed at the freshly-read row.
+      setOpen((cur) => (cur ? (rows.find((x) => x.id === cur.id) ?? cur) : cur));
+    } else {
+      // The read failed. A painted snapshot is better than an empty page.
+      setConnectors((cur) => cur ?? []);
+    }
+    setRefreshing(false);
   }, []);
 
   useEffect(() => {
@@ -2674,6 +2798,7 @@ function ConnectorsPane() {
     let cancelled = false;
     const queue = connectors.filter((x) => x.status === "connected");
     let next = 0;
+    const swept: Record<string, ConnectorUsage> = {};
     const worker = async () => {
       while (!cancelled) {
         const c = queue[next++];
@@ -2691,10 +2816,15 @@ function ConnectorsPane() {
         }
         if (cancelled || !u) continue;
         const found = u;
+        swept[c.id] = found;
         setUsage((s) => ({ ...s, [c.id]: found }));
       }
     };
-    void Promise.all([worker(), worker(), worker()]);
+    // Only a complete sweep is worth keeping — a partial one would leave the
+    // next open painting cards as dormant that were never actually probed.
+    void Promise.all([worker(), worker(), worker()]).then(() => {
+      if (!cancelled && Object.keys(swept).length) writeSnapshot(USAGE_SNAPSHOT, swept);
+    });
     return () => {
       cancelled = true;
     };
@@ -2749,16 +2879,25 @@ function ConnectorsPane() {
   const connectedCount = (connectors ?? []).filter((c) => c.status === "connected").length;
 
   return (
-    <div className="screen max-w-[720px] mx-auto px-5 sm:px-8 pt-14 pb-16">
-      <div className="flex flex-wrap items-center justify-between gap-3 mb-1">
-        <h1 className="text-[22px] font-semibold tracking-tight">Connectors</h1>
+    <PaneShell
+      title="Connectors"
+      note={
+        refreshing && connectors !== null ? (
+          <span className="inline-flex items-center gap-1.5 text-[11.5px] text-zinc-500 shrink-0">
+            <span className="w-1.5 h-1.5 rounded-full bg-zinc-500 pulse-dot" />
+            refreshing…
+          </span>
+        ) : undefined
+      }
+      actions={
         <button
           onClick={() => setView("browse")}
           className="px-3.5 h-9 rounded-lg bg-zinc-100 text-zinc-950 text-[12.5px] font-medium hover:bg-white transition"
         >
           Add connector
         </button>
-      </div>
+      }
+    >
       <p className="text-[13px] text-zinc-300 mb-5">
         {connectedCount} connected. Outside apps and accounts your system can act through.
       </p>
@@ -2822,8 +2961,7 @@ function ConnectorsPane() {
           );
         })
       )}
-
-    </div>
+    </PaneShell>
   );
 }
 
@@ -2901,10 +3039,12 @@ function HealthPane() {
 
   if (report === null)
     return (
-      <div className="flex items-center gap-3 px-10 pt-16">
-        <div className="w-2 h-2 rounded-full bg-zinc-100 pulse-dot" />
-        <span className="text-[13.5px] text-zinc-200">Inspecting the system…</span>
-      </div>
+      <PaneShell container="max-w-[680px] mx-auto px-5 sm:px-8" title="Health">
+        <div className="flex items-center gap-3 py-6">
+          <div className="w-2 h-2 rounded-full bg-zinc-100 pulse-dot" />
+          <span className="text-[13.5px] text-zinc-200">Inspecting the system…</span>
+        </div>
+      </PaneShell>
     );
 
   const memUsed = report.mem_free_pct !== null ? 100 - report.mem_free_pct : null;
@@ -2915,17 +3055,19 @@ function HealthPane() {
   const healthy = report.issues.length === 0;
 
   return (
-    <div className="screen max-w-[680px] mx-auto px-5 sm:px-8 pt-14">
-      <div className="flex flex-wrap items-end justify-between gap-3 mb-1">
-        <h1 className="text-[22px] font-semibold tracking-tight">Health</h1>
+    <PaneShell
+      container="max-w-[680px] mx-auto px-5 sm:px-8"
+      title="Health"
+      actions={
         <button
           onClick={load}
           disabled={refreshing}
-          className="text-[13px] text-zinc-300 hover:text-zinc-100 transition pb-1 disabled:opacity-40"
+          className="text-[13px] text-zinc-300 hover:text-zinc-100 transition disabled:opacity-40"
         >
           {refreshing ? "Checking…" : "Refresh"}
         </button>
-      </div>
+      }
+    >
       <p className="text-[13px] text-zinc-300 mb-6">
         {healthy
           ? "Everything looks good."
@@ -3006,7 +3148,7 @@ function HealthPane() {
           ))}
         </div>
       </div>
-    </div>
+    </PaneShell>
   );
 }
 
@@ -3064,10 +3206,13 @@ function Sidebar({
   pane,
   setPane,
   sys,
+  width,
 }: {
   pane: PaneId;
   setPane: (p: PaneId) => void;
   sys: SystemInfo | null;
+  /** Set by the shell — the operator can drag this. */
+  width: number;
 }) {
   const items: { id: PaneId; label: string; section: string }[] = [
     { id: "home", label: "Home", section: "" },
@@ -3080,7 +3225,10 @@ function Sidebar({
   let lastSection = "";
   const updateAvailable = sys?.update_status === "update_available";
   return (
-    <div className="w-[220px] shrink-0 h-full border-r border-zinc-800/80 bg-zinc-950/70 flex flex-col pt-12 pb-4 px-3">
+    <div
+      style={{ width }}
+      className="shrink-0 h-full border-r border-zinc-800/80 bg-zinc-950/70 flex flex-col pt-12 pb-4 px-3"
+    >
       <div className="flex items-center gap-2.5 px-2 mb-6">
         <Mark size={26} />
         <span className="text-[13px] font-medium text-zinc-100">This Mac</span>
@@ -3180,8 +3328,7 @@ function ConfigPane() {
   const TRUST_LABELS = ["Shadow", "Approval", "Semi-auto", "Full-auto"];
 
   return (
-    <div className="screen max-w-[640px] mx-auto px-5 sm:px-8 pt-14 pb-16">
-      <h1 className="text-[22px] font-semibold tracking-tight mb-1">Configuration</h1>
+    <PaneShell container="max-w-[640px] mx-auto px-5 sm:px-8" title="Configuration">
       <p className="text-[13px] text-zinc-300 mb-6">
         Your operator profile — saved straight into the system's configuration.
       </p>
@@ -3267,7 +3414,7 @@ function ConfigPane() {
         <PrimaryButton onClick={save}>Save</PrimaryButton>
         {saved && <span className="screen text-[13px] text-zinc-300">Saved to operator.yaml</span>}
       </div>
-    </div>
+    </PaneShell>
   );
 }
 
@@ -3302,8 +3449,7 @@ function UpdatesPane({
   }, []);
 
   return (
-    <div className="screen max-w-[640px] mx-auto px-5 sm:px-8 pt-14 pb-16">
-      <h1 className="text-[22px] font-semibold tracking-tight mb-1">Updates</h1>
+    <PaneShell container="max-w-[640px] mx-auto px-5 sm:px-8" title="Updates">
       <p className="text-[13px] text-zinc-300 mb-6">
         System updates install in place and restart services automatically.
       </p>
@@ -3386,8 +3532,31 @@ function UpdatesPane({
           </div>
         </div>
       )}
-    </div>
+    </PaneShell>
   );
+}
+
+const SIDEBAR_MIN = 180;
+const SIDEBAR_MAX = 320;
+const SIDEBAR_DEFAULT = 220;
+
+function clampSidebar(w: number): number {
+  return Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, Math.round(w)));
+}
+
+/** md+ — the breakpoint the sidebar's two behaviours split on. */
+function useDesktop(): boolean {
+  const [desktop, setDesktop] = useState(
+    () => typeof window !== "undefined" && window.matchMedia("(min-width: 768px)").matches,
+  );
+  useEffect(() => {
+    const mq = window.matchMedia("(min-width: 768px)");
+    const onChange = (e: MediaQueryListEvent) => setDesktop(e.matches);
+    setDesktop(mq.matches);
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, []);
+  return desktop;
 }
 
 function Shell({
@@ -3403,12 +3572,89 @@ function Shell({
 }) {
   const [pane, setPane] = useState<PaneId>("home");
   const [navOpen, setNavOpen] = useState(false);
+  const desktop = useDesktop();
+  const [collapsed, setCollapsed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("sidebar-collapsed") === "1";
+    } catch {
+      return false;
+    }
+  });
+  const [width, setWidth] = useState<number>(() => {
+    try {
+      const stored = parseFloat(localStorage.getItem("sidebar-width") ?? "");
+      return Number.isFinite(stored) ? clampSidebar(stored) : SIDEBAR_DEFAULT;
+    } catch {
+      return SIDEBAR_DEFAULT;
+    }
+  });
+  const railRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("sidebar-collapsed", collapsed ? "1" : "0");
+    } catch {
+      /* private mode — the choice just doesn't survive a restart */
+    }
+  }, [collapsed]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("sidebar-width", String(width));
+    } catch {
+      /* same */
+    }
+  }, [width]);
+
+  // Widening past the breakpoint retires the slide-over; the rail takes over.
+  useEffect(() => {
+    if (desktop) setNavOpen(false);
+  }, [desktop]);
+
+  /**
+   * The window is zoomable, so the rail's rendered width and its layout width
+   * are different numbers. Measuring the rail at pointerdown gives the ratio
+   * between them, which keeps the drag tracking the cursor at any zoom.
+   */
+  const startResize = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      const startX = e.clientX;
+      const startWidth = width;
+      const rendered = railRef.current?.getBoundingClientRect().width ?? width;
+      const scale = width > 0 && rendered > 0 ? rendered / width : 1;
+      const onMove = (ev: PointerEvent) =>
+        setWidth(clampSidebar(startWidth + (ev.clientX - startX) / scale));
+      const onUp = () => {
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+        window.removeEventListener("pointercancel", onUp);
+      };
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+      window.addEventListener("pointercancel", onUp);
+    },
+    [width],
+  );
+
+  // One button, two jobs: below md it opens the slide-over, on md+ it collapses
+  // the rail. Same coordinates either way, so it never appears to move.
+  const navShown = desktop ? !collapsed : navOpen;
+
   return (
     <div className="h-full flex">
-      {/* Desktop: the sidebar is simply there. */}
-      <div className="hidden md:flex h-full">
-        <Sidebar pane={pane} setPane={setPane} sys={sys} />
-      </div>
+      {/* Desktop: the rail is there unless collapsed, and drags to resize. */}
+      {!collapsed && (
+        <div ref={railRef} className="hidden md:flex h-full relative shrink-0">
+          <Sidebar pane={pane} setPane={setPane} sys={sys} width={width} />
+          <div
+            onPointerDown={startResize}
+            onDoubleClick={() => setWidth(SIDEBAR_DEFAULT)}
+            title="Drag to resize · double-click to reset"
+            className="absolute inset-y-0 right-0 w-1 cursor-col-resize hover:bg-zinc-700 transition-colors"
+          />
+        </div>
+      )}
 
       {/* Narrow: it slides over, and the backdrop dismisses it. */}
       {navOpen && (
@@ -3425,6 +3671,7 @@ function Shell({
                 setNavOpen(false);
               }}
               sys={sys}
+              width={width}
             />
           </div>
         </>
@@ -3432,21 +3679,35 @@ function Shell({
 
       {/* Sits above the drag strip so it stays clickable. */}
       <button
-        onClick={() => setNavOpen((v) => !v)}
-        aria-label={navOpen ? "Close menu" : "Open menu"}
-        className="md:hidden fixed top-1.5 left-2.5 z-50 w-10 h-10 rounded-lg flex items-center justify-center
+        onClick={() => (desktop ? setCollapsed((v) => !v) : setNavOpen((v) => !v))}
+        aria-label={navShown ? "Hide navigation" : "Show navigation"}
+        className="fixed top-1.5 left-2.5 z-50 w-10 h-10 rounded-lg flex items-center justify-center
                    text-zinc-300 hover:text-zinc-50 hover:bg-zinc-900 transition"
       >
         <svg width="16" height="16" viewBox="0 0 16 16">
           {navOpen ? (
             <path d="M3.5 3.5 12.5 12.5M12.5 3.5 3.5 12.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+          ) : navShown ? (
+            <>
+              <rect
+                x="2.25"
+                y="3.25"
+                width="11.5"
+                height="9.5"
+                rx="2"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                fill="none"
+              />
+              <path d="M6.25 3.25v9.5" stroke="currentColor" strokeWidth="1.5" />
+            </>
           ) : (
             <path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h11" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
           )}
         </svg>
       </button>
 
-      <div className="flex-1 min-w-0 overflow-y-auto console pb-14">
+      <div className="flex-1 min-w-0 h-full">
         {pane === "home" && <Home sys={sys} onUpdate={onUpdate} />}
         {pane === "health" && <HealthPane />}
         {pane === "arms" && <Arms />}
