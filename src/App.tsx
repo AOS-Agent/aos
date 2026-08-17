@@ -7,7 +7,21 @@ import { listen } from "@tauri-apps/api/event";
    Unbranded shell — the name is intentionally not fixed yet.
    ──────────────────────────────────────────────────────────────── */
 
-type Screen = "welcome" | "configure" | "install" | "done" | "update";
+type Screen =
+  | "welcome"
+  | "preflight"
+  | "member"
+  | "configure"
+  | "install"
+  | "done"
+  | "update";
+
+interface Check {
+  id: string;
+  label: string;
+  status: "ok" | "warn" | "fail";
+  detail: string;
+}
 
 interface SetupConfig {
   operatorName: string;
@@ -81,18 +95,231 @@ function PrimaryButton({
 
 /* ── screen 1: welcome ── */
 
-function Welcome({ onContinue }: { onContinue: () => void }) {
+function Welcome({
+  onSetup,
+  onJoin,
+}: {
+  onSetup: () => void;
+  onJoin: () => void;
+}) {
   return (
     <div className="screen h-full flex flex-col items-center justify-center gap-10">
       <Mark />
       <div className="text-center space-y-2">
         <h1 className="text-[26px] font-semibold tracking-tight text-zinc-50">Welcome</h1>
         <p className="text-[14px] text-zinc-400 max-w-sm leading-relaxed">
-          This will set up your agentic operating system on this Mac — dependencies,
-          services, and workspace, all in the right places.
+          Run your own agentic operating system on this Mac, or join a workspace
+          that's already running one.
         </p>
       </div>
-      <PrimaryButton onClick={onContinue}>Continue</PrimaryButton>
+      <div className="flex flex-col items-center gap-3">
+        <PrimaryButton onClick={onSetup}>Set up this Mac</PrimaryButton>
+        <button
+          onClick={onJoin}
+          className="px-4 h-10 rounded-xl text-[13.5px] text-zinc-400 hover:text-zinc-100 transition"
+        >
+          Join a workspace instead
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ── screen: preflight ── */
+
+function StatusIcon({ status }: { status: Check["status"] }) {
+  if (status === "ok")
+    return (
+      <svg width="14" height="14" viewBox="0 0 14 14" className="text-zinc-200">
+        <path
+          d="M2.5 7.5 5.5 10.5 11.5 3.5"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          fill="none"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    );
+  if (status === "warn")
+    return <span className="text-amber-400/90 text-[13px] font-semibold leading-none">!</span>;
+  return (
+    <svg width="12" height="12" viewBox="0 0 12 12" className="text-red-400">
+      <path
+        d="M2 2 10 10 M10 2 2 10"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+const DEMO_CHECKS: Check[] = [
+  { id: "chip", label: "Apple Silicon", status: "ok", detail: "Full support, including local voice models" },
+  { id: "macos", label: "macOS version", status: "ok", detail: "macOS 26.2" },
+  { id: "ram", label: "Memory", status: "ok", detail: "16 GB — Comfortable headroom for agent runs" },
+  { id: "disk", label: "Free disk space", status: "ok", detail: "184 GB available — Plenty of room" },
+  { id: "clt", label: "Developer tools", status: "warn", detail: "Missing — installed automatically during setup" },
+  { id: "git", label: "Git", status: "warn", detail: "Missing — comes with developer tools during setup" },
+  { id: "brew", label: "Package manager", status: "ok", detail: "Homebrew present" },
+  { id: "net", label: "Internet connection", status: "ok", detail: "Reachable" },
+];
+
+function Preflight({
+  onBack,
+  onContinue,
+}: {
+  onBack: () => void;
+  onContinue: () => void;
+}) {
+  const [checks, setChecks] = useState<Check[] | null>(null);
+  const [revealed, setRevealed] = useState(0);
+
+  const load = useCallback(async () => {
+    setChecks(null);
+    setRevealed(0);
+    let result: Check[];
+    if (IN_TAURI) {
+      try {
+        result = await invoke<Check[]>("run_preflight");
+      } catch {
+        result = [];
+      }
+    } else {
+      await new Promise((r) => setTimeout(r, 500));
+      result = DEMO_CHECKS;
+    }
+    setChecks(result);
+    result.forEach((_, i) => setTimeout(() => setRevealed(i + 1), 120 * (i + 1)));
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const done = checks !== null && revealed >= checks.length;
+  const hasFail = (checks ?? []).some((c) => c.status === "fail");
+  const hasWarn = (checks ?? []).some((c) => c.status === "warn");
+
+  return (
+    <div className="screen h-full flex flex-col items-center justify-center">
+      <div className="w-[560px] max-w-[86vw]">
+        <h1 className="text-[22px] font-semibold tracking-tight mb-1">Checking your system</h1>
+        <p className="text-[13px] text-zinc-500 mb-6">
+          Making sure this Mac is ready before anything is installed.
+        </p>
+
+        <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 px-5 py-1 min-h-[120px]">
+          {checks === null ? (
+            <div className="flex items-center gap-3 py-4">
+              <div className="w-2 h-2 rounded-full bg-zinc-100 pulse-dot" />
+              <span className="text-[13.5px] text-zinc-400">Inspecting…</span>
+            </div>
+          ) : (
+            checks.slice(0, revealed).map((c) => (
+              <div key={c.id} className="screen flex items-center gap-3 py-2.5">
+                <div className="w-5 flex justify-center">
+                  <StatusIcon status={c.status} />
+                </div>
+                <span className="text-[14px] text-zinc-200 w-40 shrink-0">{c.label}</span>
+                <span className="text-[12.5px] text-zinc-500 truncate">{c.detail}</span>
+              </div>
+            ))
+          )}
+        </div>
+
+        {done && (
+          <p
+            className={
+              "screen text-[13px] mt-4 " +
+              (hasFail ? "text-red-300" : hasWarn ? "text-zinc-400" : "text-zinc-300")
+            }
+          >
+            {hasFail
+              ? "Something needs fixing before setup can continue."
+              : hasWarn
+                ? "Your system is ready — the flagged items are handled automatically during setup."
+                : "Your system is ready."}
+          </p>
+        )}
+
+        <div className="flex justify-between mt-8">
+          <button
+            onClick={onBack}
+            className="px-4 h-11 rounded-xl text-[14px] text-zinc-400 hover:text-zinc-100 transition"
+          >
+            Back
+          </button>
+          <div className="flex gap-3">
+            <button
+              onClick={load}
+              className="px-4 h-11 rounded-xl text-[14px] text-zinc-400 hover:text-zinc-100 transition"
+            >
+              Check again
+            </button>
+            <PrimaryButton onClick={onContinue} disabled={!done || hasFail}>
+              Continue
+            </PrimaryButton>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── screen: member (join a workspace) ── */
+
+function Member({ onBack }: { onBack: () => void }) {
+  const [code, setCode] = useState("");
+  const [submitted, setSubmitted] = useState(false);
+
+  return (
+    <div className="screen h-full flex flex-col items-center justify-center gap-9">
+      <Mark />
+      <div className="text-center space-y-2">
+        <h1 className="text-[24px] font-semibold tracking-tight">Join a workspace</h1>
+        <p className="text-[14px] text-zinc-400 max-w-sm leading-relaxed">
+          Nothing is installed on this Mac — you'll be connected to a workspace
+          that's already running.
+        </p>
+      </div>
+
+      {submitted ? (
+        <div className="w-[380px] max-w-[80vw] rounded-2xl border border-zinc-800 bg-zinc-950/60 px-5 py-4 text-center">
+          <div className="text-[13.5px] text-zinc-100 font-medium">Invite saved</div>
+          <div className="text-[12.5px] text-zinc-500 mt-1 leading-relaxed">
+            Workspaces arrive with the next major update. This invite will work
+            here the moment they do.
+          </div>
+        </div>
+      ) : (
+        <div className="flex flex-col items-center gap-4">
+          <input
+            autoFocus
+            autoComplete="off"
+            autoCorrect="off"
+            spellCheck={false}
+            name="invite-code-field"
+            value={code}
+            onChange={(e) => setCode(e.target.value.toUpperCase())}
+            placeholder="INVITE CODE"
+            className="w-64 h-12 px-4 text-center tracking-[0.2em] rounded-xl bg-zinc-900 border border-zinc-800
+                       font-mono text-[15px] text-zinc-100 placeholder:text-zinc-600 placeholder:tracking-normal
+                       outline-none focus:border-zinc-600 transition"
+          />
+          <PrimaryButton onClick={() => setSubmitted(true)} disabled={code.trim().length < 6}>
+            Join
+          </PrimaryButton>
+        </div>
+      )}
+
+      <button
+        onClick={onBack}
+        className="px-4 h-10 rounded-xl text-[13.5px] text-zinc-500 hover:text-zinc-100 transition"
+      >
+        Back
+      </button>
     </div>
   );
 }
@@ -577,6 +804,9 @@ export default function App() {
         } catch {
           if (!cancelled) setSys({ installed: false });
         }
+      } else if (window.location.search.includes("fresh")) {
+        // Browser demo of the fresh-machine flow: ?fresh
+        setSys({ installed: false });
       } else {
         // Browser demo: pretend we're an existing install and find an update.
         setSys({ installed: true, version: "v0.7.5", operator: "Hadi" });
@@ -642,8 +872,12 @@ export default function App() {
             onContinue={() => setScreen("configure")}
           />
         ) : (
-          <Welcome onContinue={() => setScreen("configure")} />
+          <Welcome onSetup={() => setScreen("preflight")} onJoin={() => setScreen("member")} />
         ))}
+      {screen === "preflight" && (
+        <Preflight onBack={() => setScreen("welcome")} onContinue={() => setScreen("configure")} />
+      )}
+      {screen === "member" && <Member onBack={() => setScreen("welcome")} />}
       {screen === "update" && <Update onFinished={handleUpdateFinished} />}
       {screen === "configure" && (
         <Configure
