@@ -24,7 +24,7 @@ import threading
 import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import parse_qs, urlparse
 
 CONTRACT = "aos.broker.local/v1"
 BIND_HOST = "127.0.0.1"
