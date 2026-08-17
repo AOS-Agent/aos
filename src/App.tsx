@@ -21,7 +21,14 @@ type Screen =
   | "home"
   | "shell";
 
-type PaneId = "home" | "health" | "arms" | "connectors" | "config" | "updates";
+type PaneId =
+  | "home"
+  | "health"
+  | "workspaces"
+  | "arms"
+  | "connectors"
+  | "config"
+  | "updates";
 
 interface SvcHealth {
   label: string;
@@ -3396,6 +3403,189 @@ function HealthPane() {
   );
 }
 
+/* ── pane: workspaces ── */
+
+/**
+ * Address the engine by name, never by loopback literal.
+ *
+ * The engine is multi-tenant by Host header: it resolves the request host to a
+ * community and fails closed when nothing matches. `localhost` and `127.0.0.1`
+ * are different strings to that resolver, and only `localhost:3000` is mapped
+ * here — the literal answers `_liveness` but returns "no community is
+ * configured for this host" for the client itself. Both the probe and the frame
+ * must therefore use the name.
+ */
+const WORKSPACE_ORIGIN = "http://localhost:3000";
+
+/**
+ * Reachability, not a readable answer.
+ *
+ * The engine allowlists CORS to its own origin, so this app can never read a
+ * response from it. A `no-cors` request resolves opaque when something answered
+ * and throws when nothing was listening, which is the whole question. It
+ * behaves identically in the packaged app and in a browser at :1420, so the
+ * demo path here is the real one — no fixture stands in for it, and the
+ * off-state below is what a reviewer sees when the engine is genuinely down.
+ */
+async function probeWorkspaceEngine(timeoutMs = 1500): Promise<boolean> {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), timeoutMs);
+  try {
+    await fetch(WORKSPACE_ORIGIN + "/_liveness", {
+      mode: "no-cors",
+      cache: "no-store",
+      signal: ctl.signal,
+    });
+    return true;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function WorkspacesPane() {
+  const [engine, setEngine] = useState<"probing" | "alive" | "off">("probing");
+  const [frame, setFrame] = useState<"loading" | "ready" | "failed">("loading");
+  /** Bumped on every probe so the frame remounts instead of showing a stale page. */
+  const [attempt, setAttempt] = useState(0);
+
+  const probe = useCallback(async () => {
+    setEngine("probing");
+    setFrame("loading");
+    const alive = await probeWorkspaceEngine();
+    setAttempt((n) => n + 1);
+    setEngine(alive ? "alive" : "off");
+  }, []);
+
+  useEffect(() => {
+    probe();
+  }, [probe]);
+
+  // A cross-origin frame reports almost nothing: `onError` rarely fires, and a
+  // frame that never paints looks the same as one still loading. Give it a
+  // deadline so a wedged engine surfaces as a fallback rather than a blank pane.
+  useEffect(() => {
+    if (engine !== "alive" || frame !== "loading") return;
+    const t = setTimeout(() => setFrame((s) => (s === "loading" ? "failed" : s)), 10000);
+    return () => clearTimeout(t);
+  }, [engine, frame, attempt]);
+
+  if (engine === "probing")
+    return (
+      <PaneShell container="max-w-[680px] mx-auto px-5 sm:px-8" title="Workspaces">
+        <div className="flex items-center gap-3 py-6">
+          <div className="w-2 h-2 rounded-full bg-zinc-100 pulse-dot" />
+          <span className="text-[13.5px] text-zinc-200">Looking for the workspace engine…</span>
+        </div>
+      </PaneShell>
+    );
+
+  if (engine === "off")
+    return (
+      <PaneShell
+        container="max-w-[680px] mx-auto px-5 sm:px-8"
+        title="Workspaces"
+        actions={
+          <button
+            onClick={probe}
+            className="text-[13px] text-zinc-300 hover:text-zinc-100 transition"
+          >
+            Check again
+          </button>
+        }
+      >
+        <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 px-5 py-5">
+          <div className="flex items-center gap-2.5 mb-3">
+            <span className="w-1.5 h-1.5 rounded-full bg-zinc-600" />
+            <span className="text-[12px] uppercase tracking-[0.12em] text-zinc-500">
+              Not running
+            </span>
+          </div>
+          <p className="text-[13.5px] text-zinc-200 leading-relaxed">
+            The workspace engine isn't running. It powers shared channels where you and your agents
+            work together.
+          </p>
+          <div className="mt-5">
+            <PrimaryButton disabled>Turn on — coming with the arm</PrimaryButton>
+          </div>
+          <p className="mt-3 text-[12px] text-zinc-500 leading-relaxed">
+            Turning it on from here arrives with the Workspaces arm. Until then it starts outside
+            this app, and this pane picks it up on the next check.
+          </p>
+        </div>
+      </PaneShell>
+    );
+
+  // Alive: the engine's own client owns the pane. PaneShell is a scroll
+  // container and would trap the frame inside a padded, width-capped column, so
+  // this state uses PaneShell's header treatment on a flex column instead —
+  // the frame then takes exactly the height the header leaves behind.
+  return (
+    <div className="screen h-full flex flex-col console">
+      <div className="shrink-0 border-b border-zinc-800/60 bg-zinc-950/95">
+        <div className="w-full px-5 sm:px-8 pt-14 pb-3.5">
+          <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+            <h1 className="text-[22px] font-semibold tracking-tight truncate min-w-0 flex-1">
+              Workspaces
+            </h1>
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              <span className="inline-flex items-center gap-1.5 text-[11.5px] text-zinc-400">
+                <span className="w-1.5 h-1.5 rounded-full bg-zinc-100" />
+                workspace engine · running
+              </span>
+              <button
+                onClick={probe}
+                className="text-[13px] text-zinc-300 hover:text-zinc-100 transition"
+              >
+                Reload
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {frame === "failed" ? (
+        <div className="flex-1 min-h-0 overflow-y-auto px-5 sm:px-8 pt-5 pb-16">
+          <div className="max-w-[680px] mx-auto rounded-2xl border border-zinc-800 bg-zinc-950/60 px-5 py-5">
+            <p className="text-[13.5px] text-zinc-200 leading-relaxed">
+              The workspace engine answered, but its screen didn't load.
+            </p>
+            <p className="mt-2 text-[12.5px] text-zinc-400 leading-relaxed">
+              It is usually still starting up. Give it a moment and try again.
+            </p>
+            <div className="mt-4">
+              <button
+                onClick={probe}
+                className="px-3.5 h-10 rounded-lg bg-zinc-100 text-zinc-950 text-[12.5px] font-medium hover:bg-white transition"
+              >
+                Try again
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="relative flex-1 min-h-0">
+          {frame === "loading" && (
+            <div className="absolute inset-0 flex items-center gap-3 justify-center bg-zinc-950">
+              <div className="w-2 h-2 rounded-full bg-zinc-100 pulse-dot" />
+              <span className="text-[13.5px] text-zinc-200">Opening your workspaces…</span>
+            </div>
+          )}
+          <iframe
+            key={attempt}
+            src={WORKSPACE_ORIGIN + "/"}
+            title="Workspaces"
+            onLoad={() => setFrame("ready")}
+            onError={() => setFrame("failed")}
+            className="w-full h-full border-0 bg-zinc-950"
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ── shell: sidebar + panes ── */
 
 function NavIcon({ id }: { id: PaneId }) {
@@ -3443,6 +3633,14 @@ function NavIcon({ id }: { id: PaneId }) {
           <path d="M5.5 2.5v3M10.5 2.5v3M4 5.5h8v2.5a4 4 0 0 1-8 0zM8 12v2" {...stroke} />
         </svg>
       );
+    case "workspaces":
+      return (
+        <svg width="15" height="15" viewBox="0 0 16 16">
+          <circle cx="5.9" cy="6.1" r="3.3" {...stroke} />
+          <circle cx="10.1" cy="6.1" r="3.3" {...stroke} />
+          <circle cx="8" cy="9.9" r="3.3" {...stroke} />
+        </svg>
+      );
   }
 }
 
@@ -3461,6 +3659,8 @@ function Sidebar({
   const items: { id: PaneId; label: string; section: string }[] = [
     { id: "home", label: "Home", section: "" },
     { id: "health", label: "Health", section: "" },
+    // A place the operator works, not a setting — it sits above System.
+    { id: "workspaces", label: "Workspaces", section: "" },
     { id: "arms", label: "Arms", section: "System" },
     { id: "connectors", label: "Connectors", section: "System" },
     { id: "config", label: "Configuration", section: "System" },
@@ -3951,6 +4151,7 @@ function Shell({
       <div className="flex-1 min-w-0 h-full">
         {pane === "home" && <Home sys={sys} onUpdate={onUpdate} />}
         {pane === "health" && <HealthPane />}
+        {pane === "workspaces" && <WorkspacesPane />}
         {pane === "arms" && <Arms />}
         {pane === "connectors" && <ConnectorsPane />}
         {pane === "config" && <ConfigPane />}
