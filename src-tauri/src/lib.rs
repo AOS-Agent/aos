@@ -143,6 +143,181 @@ fn cmd_ok(bin: &str, args: &[&str]) -> Option<String> {
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
 }
 
+// ── Setup config persistence ────────────────────────────────────────
+
+/// Persist the Configuration screen's answers where the installer and
+/// onboarding can consume them.
+#[tauri::command]
+fn save_setup_config(
+    operator_name: String,
+    machine_name: String,
+    role: String,
+) -> Result<(), String> {
+    let home = std::env::var("HOME").map_err(|e| e.to_string())?;
+    let dir = format!("{home}/.aos/config");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let yaml = format!(
+        "# Written by the desktop app's Configuration screen.\n\
+         # Consumed by install.sh scaffolding and onboarding.\n\
+         schema: 1\n\
+         operator_name: {}\n\
+         machine_name: {}\n\
+         role: {}\n",
+        serde_yaml::to_string(&operator_name).map_err(|e| e.to_string())?.trim(),
+        serde_yaml::to_string(&machine_name).map_err(|e| e.to_string())?.trim(),
+        serde_yaml::to_string(&role).map_err(|e| e.to_string())?.trim(),
+    );
+    std::fs::write(format!("{dir}/app-setup.yaml"), yaml).map_err(|e| e.to_string())
+}
+
+// ── Home data ───────────────────────────────────────────────────────
+
+#[derive(serde::Serialize)]
+struct TaskRow {
+    id: String,
+    title: String,
+    urgent: bool,
+}
+
+#[derive(serde::Serialize)]
+struct ServiceRow {
+    name: String,
+    label: String,
+}
+
+#[derive(serde::Serialize)]
+struct ActivityRow {
+    title: String,
+    when: String,
+}
+
+#[derive(serde::Serialize)]
+struct HomeData {
+    tasks: Vec<TaskRow>,
+    services: Vec<ServiceRow>,
+    activity: Vec<ActivityRow>,
+}
+
+fn parse_task_line(line: &str) -> Option<TaskRow> {
+    let trimmed = line.trim();
+    // lines look like: "!! quran-garden#78  Title text [project] [707s] *"
+    let urgent = trimmed.starts_with('!');
+    let rest = trimmed.trim_start_matches('!').trim();
+    let (id, title_part) = rest.split_once(char::is_whitespace)?;
+    if !id.contains('#') {
+        return None;
+    }
+    // strip trailing "[...]" annotations and "*"
+    let mut title = title_part.trim().to_string();
+    while let Some(idx) = title.rfind('[') {
+        if title[idx..].contains(']') && idx > 0 {
+            title.truncate(idx);
+            title = title.trim().trim_end_matches('*').trim().to_string();
+        } else {
+            break;
+        }
+    }
+    let title = title.trim_end_matches('*').trim().trim_end_matches(':').to_string();
+    Some(TaskRow { id: id.trim_end_matches(':').to_string(), title, urgent })
+}
+
+#[tauri::command]
+fn home_data() -> Result<HomeData, String> {
+    let home = std::env::var("HOME").map_err(|e| e.to_string())?;
+
+    // Tasks — the work engine's own "today" view.
+    let tasks = cmd_ok(
+        "python3",
+        &[&format!("{home}/aos/core/engine/work/cli.py"), "today"],
+    )
+    .map(|out| {
+        out.lines()
+            .filter_map(parse_task_line)
+            .take(6)
+            .collect::<Vec<_>>()
+    })
+    .unwrap_or_default();
+
+    // Services — loaded launchd agents in the system's namespaces.
+    let services = loaded_launchd_labels()
+        .into_iter()
+        .filter(|l| l.starts_with("com.aos.") || l.starts_with("com.agent."))
+        .map(|label| ServiceRow {
+            name: label
+                .rsplit('.')
+                .next()
+                .unwrap_or(&label)
+                .replace('-', " "),
+            label,
+        })
+        .collect::<Vec<_>>();
+
+    // Activity — newest knowledge documents in the vault.
+    let mut docs: Vec<(std::time::SystemTime, String)> = Vec::new();
+    for sub in ["specs", "captures", "research", "synthesis", "decisions", "references"] {
+        let dir = format!("{home}/vault/knowledge/{sub}");
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for e in entries.flatten() {
+                if let Ok(meta) = e.metadata() {
+                    if meta.is_file() {
+                        if let Ok(modified) = meta.modified() {
+                            let title = std::fs::read_to_string(e.path())
+                                .ok()
+                                .and_then(|t| {
+                                    t.lines()
+                                        .take(12)
+                                        .find(|l| l.starts_with("title:"))
+                                        .map(|l| {
+                                            l.trim_start_matches("title:")
+                                                .trim()
+                                                .trim_matches('"')
+                                                .to_string()
+                                        })
+                                })
+                                .unwrap_or_else(|| {
+                                    e.file_name().to_string_lossy().trim_end_matches(".md").to_string()
+                                });
+                            docs.push((modified, title));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    docs.sort_by(|a, b| b.0.cmp(&a.0));
+    let now = std::time::SystemTime::now();
+    let activity = docs
+        .into_iter()
+        .take(4)
+        .map(|(t, title)| {
+            let secs = now.duration_since(t).map(|d| d.as_secs()).unwrap_or(0);
+            let when = if secs < 3600 {
+                format!("{}m ago", secs / 60)
+            } else if secs < 86_400 {
+                format!("{}h ago", secs / 3600)
+            } else {
+                format!("{}d ago", secs / 86_400)
+            };
+            ActivityRow { title, when }
+        })
+        .collect();
+
+    Ok(HomeData { tasks, services, activity })
+}
+
+/// Fast vault search (BM25, no LLM) — returns qmd's raw output text.
+#[tauri::command]
+fn search_vault(query: String) -> Result<String, String> {
+    let home = std::env::var("HOME").map_err(|e| e.to_string())?;
+    let qmd = format!("{home}/.bun/bin/qmd");
+    let out = Command::new(&qmd)
+        .args(["search", &query, "-n", "5"])
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| format!("search failed: {e}"))?;
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
 // ── Modules (arms & connectors) ─────────────────────────────────────
 
 #[derive(serde::Deserialize)]
@@ -475,7 +650,10 @@ pub fn run() {
             run_update,
             run_preflight,
             list_modules,
-            set_module_enabled
+            set_module_enabled,
+            save_setup_config,
+            home_data,
+            search_vault
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
