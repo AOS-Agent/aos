@@ -1124,21 +1124,165 @@ fn intelligence_connectors(home: &str) -> Vec<Connector> {
         } else {
             stamped("installed, not signed in")
         };
+        let (accounts, token_warning) = llm_token_life(id, home, &probe);
         out.push(Connector {
             id: id.into(),
             name: name.into(),
             category: "intelligence".into(),
             auth_kind: "cli".into(),
-            status: if probe.installed && probe.signed_in { "connected" } else { "attention" }
-                .into(),
+            status: if !(probe.installed && probe.signed_in) {
+                "attention"
+            } else if token_warning {
+                "attention"
+            } else {
+                "connected"
+            }
+            .into(),
             detail,
-            accounts: vec![],
+            accounts,
             connect_hint: hint.into(),
             key_fields: vec![],
             composio_slug: None,
         });
     }
+
+    // Claude in Chrome — the browser hands Claude Code drives. Enabled per
+    // session via the harness config; probed, not assumed.
+    let chrome_installed = std::path::Path::new("/Applications/Google Chrome.app").exists();
+    let enabled = std::fs::read_to_string(format!("{home}/.claude.json"))
+        .ok()
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+        .and_then(|v| v["claudeInChromeDefaultEnabled"].as_bool())
+        .unwrap_or(false);
+    if chrome_installed {
+        out.push(Connector {
+            id: "claude-chrome".into(),
+            name: "Claude in Chrome".into(),
+            category: "intelligence".into(),
+            auth_kind: "cli".into(),
+            status: if enabled { "connected" } else { "attention" }.into(),
+            detail: if enabled {
+                "enabled for every session".into()
+            } else {
+                "Chrome installed — extension disabled".into()
+            },
+            accounts: vec![],
+            connect_hint: "Enable Chrome in Claude Code settings (/config → Claude in Chrome).".into(),
+            key_fields: vec![],
+            composio_slug: None,
+        });
+    }
     out
+}
+
+/// Epoch seconds → "Mon D, YYYY" without pulling a date crate for one label.
+fn epoch_to_date(secs: i64) -> String {
+    // Howard Hinnant's civil-from-days, the standard closed-form conversion.
+    let days = secs.div_euclid(86_400);
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    format!("{} {}, {}", MONTHS[(m - 1) as usize], d, y)
+}
+
+fn now_epoch() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+/// The session-lifetime story per engine: when the sign-in would actually cut
+/// off, so the operator can re-login BEFORE losing the model mid-work.
+/// Returns account rows + whether the cutoff is close enough to warrant an
+/// attention state (within 14 days).
+fn llm_token_life(id: &str, home: &str, probe: &LlmProbe) -> (Vec<ConnectorAccount>, bool) {
+    if !probe.signed_in {
+        return (vec![], false);
+    }
+    let identity = probe.identity.clone().unwrap_or_else(|| "signed in".into());
+    let warn_window: i64 = 14 * 86_400;
+
+    match id {
+        "claude" => {
+            // Keychain item owned by Claude Code itself; read locally, expose
+            // only dates and tier — never token material.
+            let json = cmd_ok("security", &["find-generic-password", "-s", "Claude Code-credentials", "-w"])
+                .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok());
+            let oauth = json.as_ref().map(|v| v["claudeAiOauth"].clone());
+            let tier = oauth
+                .as_ref()
+                .and_then(|o| o["subscriptionType"].as_str().map(str::to_string))
+                .map(|t| format!("{} subscription", capitalize(&t)))
+                .unwrap_or_else(|| "subscription".into());
+            let refresh_exp = oauth
+                .as_ref()
+                .and_then(|o| o["refreshTokenExpiresAt"].as_i64())
+                .map(|ms| ms / 1000);
+            let (life, warn) = match refresh_exp {
+                Some(exp) if exp - now_epoch() < warn_window => (
+                    format!("re-login by {} to avoid cutoff", epoch_to_date(exp)),
+                    true,
+                ),
+                Some(exp) => (format!("session auto-renews · valid until {}", epoch_to_date(exp)), false),
+                None => ("session auto-renews".into(), false),
+            };
+            (
+                vec![ConnectorAccount { identity, detail: format!("{tier} · {life}") }],
+                warn,
+            )
+        }
+        "kimi" => {
+            let json = std::fs::read_to_string(format!("{home}/.kimi-code/credentials/kimi-code.json"))
+                .ok()
+                .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok());
+            let has_refresh = json
+                .as_ref()
+                .and_then(|v| v["refresh_token"].as_str())
+                .is_some();
+            let exp = json.as_ref().and_then(|v| v["expires_at"].as_i64());
+            let (life, warn) = if has_refresh {
+                ("session auto-renews".into(), false)
+            } else {
+                match exp {
+                    Some(e) if e - now_epoch() < warn_window => {
+                        (format!("expires {} — re-login soon", epoch_to_date(e)), true)
+                    }
+                    Some(e) => (format!("valid until {}", epoch_to_date(e)), false),
+                    None => ("signed in".into(), false),
+                }
+            };
+            (vec![ConnectorAccount { identity, detail: format!("subscription · {life}") }], warn)
+        }
+        "codex" => {
+            let last = std::fs::read_to_string(format!("{home}/.codex/auth.json"))
+                .ok()
+                .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+                .and_then(|v| v["last_refresh"].as_str().map(str::to_string));
+            let life = match last {
+                Some(ts) => format!("auto-renews · last refreshed {}", ts.split('T').next().unwrap_or(&ts)),
+                None => "session auto-renews".into(),
+            };
+            (vec![ConnectorAccount { identity, detail: format!("subscription · {life}") }], false)
+        }
+        _ => (vec![ConnectorAccount { identity, detail: "signed in".into() }], false),
+    }
+}
+
+fn capitalize(s: &str) -> String {
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+        None => String::new(),
+    }
 }
 
 // ── Tailscale (the private network the fleet lives on) ──────────────
@@ -3135,6 +3279,21 @@ fn run_install(app: tauri::AppHandle, dry_run: bool) -> Result<(), String> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .setup(|app| {
+            // Open at 70% of the screen, centered — big enough to feel like a
+            // home, small enough to stay a window.
+            use tauri::Manager as _;
+            if let Some(window) = app.get_webview_window("main") {
+                if let Ok(Some(monitor)) = window.current_monitor() {
+                    let size = monitor.size();
+                    let w = (size.width as f64 * 0.7) as u32;
+                    let h = (size.height as f64 * 0.7) as u32;
+                    let _ = window.set_size(tauri::PhysicalSize::new(w, h));
+                    let _ = window.center();
+                }
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             run_install,
             detect_system,
