@@ -1,4 +1,4 @@
-# AOS project manifest — declarations for 'blaxle'.
+# AOS project manifest — declarations for 'aos-app'.
 #
 # This file is COMMITTED TO GIT with the project, so it holds no secrets,
 # no absolute paths, and no personal detail — only a one-line description
@@ -8,9 +8,9 @@
 # progress or last-updated field: those are derived by brief.py from tasks,
 # git and sessions, and a hand-written copy would start rotting today.
 schema: 1
-id: blaxle
+id: aos-app
 kind: mixed                 # ios | web | python | content | mixed
-title: blaxle
+title: aos-app
 description: null   # ONE line; detail goes in the vault docs below
 done_when: null
 appetite: null
