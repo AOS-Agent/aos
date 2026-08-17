@@ -939,10 +939,12 @@ function ModuleRow({
   m,
   busy,
   onToggle,
+  onOpen,
 }: {
   m: ModuleInfo;
   busy: boolean;
   onToggle: (m: ModuleInfo, enable: boolean) => void;
+  onOpen?: (m: ModuleInfo) => void;
 }) {
   // Monochrome by design law: state is carried by dot WEIGHT and by the words,
   // never by hue. The `why` string does the work an amber pill used to fake.
@@ -958,7 +960,25 @@ function ModuleRow({
   const absent = m.status === "absent";
 
   return (
-    <div className="flex items-start gap-3 sm:gap-3.5 px-4 sm:px-5 py-4">
+    <div
+      role={onOpen ? "button" : undefined}
+      tabIndex={onOpen ? 0 : undefined}
+      onClick={onOpen ? () => onOpen(m) : undefined}
+      onKeyDown={
+        onOpen
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onOpen(m);
+              }
+            }
+          : undefined
+      }
+      className={
+        "flex items-start gap-3 sm:gap-3.5 px-4 sm:px-5 py-4 " +
+        (onOpen ? "cursor-pointer hover:bg-zinc-900/50 transition-colors" : "")
+      }
+    >
       <div className="mt-1.5 w-2 flex justify-center shrink-0">
         <div className={"w-2 h-2 rounded-full " + dot} />
       </div>
@@ -990,7 +1010,10 @@ function ModuleRow({
         {m.can_toggle ? (
           <button
             disabled={busy}
-            onClick={() => onToggle(m, !running)}
+            onClick={(e) => {
+              e.stopPropagation();   // the row opens the detail page; this button must not
+              onToggle(m, !running);
+            }}
             className={
               "px-3.5 h-10 min-w-[88px] rounded-lg text-[12.5px] font-medium transition active:scale-[0.97] disabled:opacity-40 " +
               (running
@@ -1014,6 +1037,206 @@ function ModuleRow({
 
 /** Observed on this machine, owned by someone else. Deliberately inert: no dot,
  *  no controls, recessed text — visibly not ours, but never invisible. */
+interface ServiceFact {
+  label: string;
+  plist_exists: boolean;
+  loaded: boolean;
+  running: boolean;
+  pid?: string | null;
+  last_exit?: string | null;
+}
+interface ModuleFacts {
+  id: string;
+  services: ServiceFact[];
+  port?: number | null;
+  port_listening?: boolean | null;
+  venv?: string | null;
+  venv_usable?: boolean | null;
+  log?: string | null;
+  log_age_seconds?: number | null;
+}
+
+/** Plain-language answer to "what does this actually mean for me", keyed by
+ *  kind. The list view shows a tagline; this explains the MACHINERY, because
+ *  the whole complaint about the old panel was getting data without knowing
+ *  what it was doing. */
+const KIND_EXPLAINER: Record<string, string> = {
+  daemon:
+    "Runs continuously in the background. If its process stops, this capability is down — so an idle process means something is wrong.",
+  periodic:
+    "Wakes up on a schedule, does its work, and exits. Being idle between runs is normal and healthy — it is judged by whether it ran recently, not by whether it is running now.",
+  oneshot:
+    "Sits installed and starts only when something asks for it. It is not supposed to be running at rest.",
+  resource:
+    "Not a running program — files, an index, or a tool on disk. It is judged by whether it is present.",
+};
+
+function Fact({ label, value, note }: { label: string; value: React.ReactNode; note?: string }) {
+  return (
+    <div className="flex items-baseline justify-between gap-4 py-2.5 border-b border-zinc-800/60 last:border-0">
+      <div className="text-[12.5px] text-zinc-400 shrink-0">{label}</div>
+      <div className="text-[12.5px] text-zinc-100 text-right min-w-0">
+        <div className="truncate">{value}</div>
+        {note && <div className="text-[11.5px] text-zinc-500 mt-0.5">{note}</div>}
+      </div>
+    </div>
+  );
+}
+
+function ModuleDetail({
+  m,
+  busy,
+  onToggle,
+  onBack,
+}: {
+  m: ModuleInfo;
+  busy: boolean;
+  onToggle: (m: ModuleInfo, enable: boolean) => void;
+  onBack: () => void;
+}) {
+  const [facts, setFacts] = useState<ModuleFacts | null>(null);
+  const [factsError, setFactsError] = useState<string | null>(null);
+  const running = m.status === "active" || m.status === "degraded";
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!IN_TAURI) {
+        setFacts({
+          id: m.id,
+          services: m.services.map((label) => ({
+            label, plist_exists: true, loaded: running, running,
+            pid: running ? "38922" : null, last_exit: "0",
+          })),
+          port: m.id === "telegram" ? 4098 : m.id === "qareen" ? 4096 : null,
+          port_listening: m.status !== "broken",
+          venv: m.id === "qareen" ? "~/.aos/services/qareen/.venv" : null,
+          venv_usable: m.status === "degraded" ? false : null,
+        });
+        return;
+      }
+      try {
+        const f = await invoke<ModuleFacts>("module_facts", { id: m.id });
+        if (!cancelled) setFacts(f);
+      } catch (e) {
+        if (!cancelled) setFactsError(String(e));
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [m.id, m.status, running, m.services]);
+
+  const statusWord =
+    m.status === "active" ? "Working"
+    : m.status === "degraded" ? "Running, but not fully working"
+    : m.status === "broken" ? "Not running"
+    : "Not installed";
+
+  return (
+    <PaneShell
+      container="w-full max-w-[620px] px-4 sm:px-0 mx-auto"
+      title={m.name}
+      backButton={<BackButton label="Arms" onClick={onBack} />}
+      actions={
+        m.can_toggle ? (
+          <button
+            disabled={busy}
+            onClick={() => onToggle(m, !running)}
+            className={
+              "px-4 h-10 min-w-[96px] rounded-lg text-[12.5px] font-medium transition active:scale-[0.97] disabled:opacity-40 " +
+              (running
+                ? "border border-zinc-700 text-zinc-300 hover:text-zinc-100 hover:border-zinc-500"
+                : "bg-zinc-100 text-zinc-950 hover:bg-white")
+            }
+          >
+            {busy ? "…" : running ? "Turn off" : "Turn on"}
+          </button>
+        ) : undefined
+      }
+    >
+      {/* State, in words, before any machinery. */}
+      <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 px-4 py-3.5 mb-5">
+        <div className="text-[14px] text-zinc-100 font-medium">{statusWord}</div>
+        {m.why && <div className="text-[12.5px] text-zinc-300 mt-1 leading-relaxed">{m.why}</div>}
+        {!m.why && m.status === "absent" && m.status_note && (
+          <div className="text-[12.5px] text-zinc-400 mt-1">{m.status_note}</div>
+        )}
+      </div>
+
+      <Card className="mb-4" title="What this does">
+        <p className="text-[13px] text-zinc-200 leading-relaxed">{m.tagline}</p>
+        {m.kind && KIND_EXPLAINER[m.kind] && (
+          <p className="text-[12.5px] text-zinc-400 leading-relaxed mt-2">{KIND_EXPLAINER[m.kind]}</p>
+        )}
+        {m.consent && (
+          <p className="text-[12.5px] text-zinc-200 leading-relaxed mt-3 border-l-2 border-zinc-600 pl-3">
+            {m.consent}
+          </p>
+        )}
+      </Card>
+
+      <Card className="mb-4" title="Right now">
+        {factsError && <ErrorBanner className="mb-3">{factsError}</ErrorBanner>}
+        {facts === null && !factsError ? (
+          <div className="text-[12.5px] text-zinc-400 py-2">Checking…</div>
+        ) : (
+          <>
+            <Fact label="Type" value={m.kind ?? "—"} />
+            <Fact label="Tier" value={m.tier === "core" ? "Core — always on" : "Experimental"} />
+            {facts?.services.map((s) => (
+              <Fact
+                key={s.label}
+                label="Service"
+                value={
+                  s.running ? `running · pid ${s.pid}`
+                  : s.loaded ? (m.kind === "periodic" ? "idle between runs" : "loaded, not running")
+                  : s.plist_exists ? "installed, not loaded"
+                  : "not installed"
+                }
+                note={s.label}
+              />
+            ))}
+            {facts?.port != null && (
+              <Fact
+                label="Port"
+                value={facts.port_listening ? `${facts.port} — accepting connections` : `${facts.port} — nothing listening`}
+              />
+            )}
+            {facts?.venv && (
+              <Fact
+                label="Can be updated"
+                value={facts.venv_usable ? "yes" : "no — interpreter is broken"}
+                note={facts.venv.replace(/^\/Users\/[^/]+/, "~")}
+              />
+            )}
+            {facts?.log_age_seconds != null && (
+              <Fact
+                label="Last run"
+                value={
+                  facts.log_age_seconds < 90
+                    ? "moments ago"
+                    : `${Math.round(facts.log_age_seconds / 60)} min ago`
+                }
+              />
+            )}
+          </>
+        )}
+      </Card>
+
+      {Object.keys(m.costs).length > 0 && (
+        <Card className="mb-4" title="What it costs">
+          <CostChips costs={m.costs} />
+        </Card>
+      )}
+
+      {m.tier === "core" && (
+        <p className="text-[12px] text-zinc-500 mt-6 leading-relaxed">
+          This is part of the core system, so it cannot be removed here.
+        </p>
+      )}
+    </PaneShell>
+  );
+}
+
 function ForeignRow({ f }: { f: ForeignInfo }) {
   return (
     <div className="flex items-start gap-3 sm:gap-3.5 px-4 sm:px-5 py-3.5">
@@ -1038,6 +1261,7 @@ function Arms({
 }) {
   const [modules, setModules] = useState<ModuleInfo[] | null>(null);
   const [foreign, setForeign] = useState<ForeignInfo[]>([]);
+  const [openId, setOpenId] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<ModuleInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -1117,6 +1341,20 @@ function Arms({
 
   const degraded = (modules ?? []).filter((m) => m.status === "degraded" || m.status === "broken");
 
+  // Detail page reads from the same list state, so a toggle there refreshes
+  // both views at once and the two can never disagree.
+  const open = openId ? (modules ?? []).find((m) => m.id === openId) : undefined;
+  if (open) {
+    return (
+      <ModuleDetail
+        m={open}
+        busy={busyId === open.id}
+        onToggle={requestToggle}
+        onBack={() => setOpenId(null)}
+      />
+    );
+  }
+
   return (
     <PaneShell
       container="w-full max-w-[620px] px-4 sm:px-0 mx-auto"
@@ -1157,7 +1395,13 @@ function Arms({
                 {blurb && <div className="text-[12px] text-zinc-500 -mt-1 mb-2">{blurb}</div>}
                 <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 divide-y divide-zinc-800/70">
                   {mods.map((m) => (
-                    <ModuleRow key={m.id} m={m} busy={busyId === m.id} onToggle={requestToggle} />
+                    <ModuleRow
+                      key={m.id}
+                      m={m}
+                      busy={busyId === m.id}
+                      onToggle={requestToggle}
+                      onOpen={(x) => setOpenId(x.id)}
+                    />
                   ))}
                 </div>
               </div>

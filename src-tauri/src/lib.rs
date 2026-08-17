@@ -3054,6 +3054,98 @@ fn list_modules() -> Result<Vec<ModuleStatus>, String> {
         .collect())
 }
 
+#[derive(serde::Serialize)]
+struct ServiceFact {
+    label: String,
+    plist_exists: bool,
+    loaded: bool,
+    running: bool,
+    pid: Option<String>,
+    last_exit: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+struct ModuleFacts {
+    id: String,
+    services: Vec<ServiceFact>,
+    port: Option<u16>,
+    port_listening: Option<bool>,
+    venv: Option<String>,
+    venv_usable: Option<bool>,
+    log: Option<String>,
+    log_age_seconds: Option<u64>,
+}
+
+/// Per-module live facts for the detail page.
+///
+/// Everything here is probed on demand rather than declared, because the point
+/// of the detail page is to answer "what is this actually doing right now".
+/// The list view deliberately shows less; this is where you come to find out
+/// WHY something says degraded.
+#[tauri::command]
+fn module_facts(id: String) -> Result<ModuleFacts, String> {
+    let home = std::env::var("HOME").map_err(|e| e.to_string())?;
+    let manifest = load_manifest()?;
+    let m = manifest
+        .modules
+        .into_iter()
+        .find(|m| m.id == id)
+        .ok_or_else(|| format!("unknown module {id}"))?;
+
+    // One launchctl call, parsed for both loadedness and liveness.
+    let mut table: std::collections::HashMap<String, (String, String)> = std::collections::HashMap::new();
+    if let Some(out) = cmd_ok("launchctl", &["list"]) {
+        for line in out.lines().skip(1) {
+            let cols: Vec<&str> = line.split_whitespace().collect();
+            if cols.len() >= 3 {
+                table.insert(cols[2].to_string(), (cols[0].to_string(), cols[1].to_string()));
+            }
+        }
+    }
+
+    let services = m
+        .services
+        .iter()
+        .map(|label| {
+            let entry = table.get(label);
+            let pid = entry.map(|(p, _)| p.clone());
+            let running = pid.as_deref().map(|p| p != "-").unwrap_or(false);
+            ServiceFact {
+                plist_exists: std::path::Path::new(&format!(
+                    "{home}/Library/LaunchAgents/{label}.plist"
+                ))
+                .exists(),
+                loaded: entry.is_some(),
+                running,
+                pid: pid.filter(|p| p != "-"),
+                last_exit: entry.map(|(_, e)| e.clone()),
+                label: label.clone(),
+            }
+        })
+        .collect();
+
+    let health = m.health.clone().unwrap_or_default();
+    let venv_path = health.venv.as_ref().map(|v| expand_home(v, &home));
+    let log_age = health.log.as_ref().and_then(|l| {
+        std::fs::metadata(expand_home(l, &home))
+            .and_then(|md| md.modified())
+            .ok()
+            .and_then(|t| t.elapsed().ok())
+            .map(|d| d.as_secs())
+    });
+
+    Ok(ModuleFacts {
+        id: m.id.clone(),
+        services,
+        port: health.port,
+        port_listening: health.port.map(port_listening),
+        venv_usable: venv_path.as_ref().map(|p| !venv_broken(p)),
+        venv: venv_path,
+        log: health.log.clone(),
+        log_age_seconds: log_age,
+    })
+}
+
 /// Foreign agents: observed, never owned. Read-only in the UI.
 #[tauri::command]
 fn list_foreign() -> Result<Vec<ForeignStatus>, String> {
@@ -3302,6 +3394,7 @@ pub fn run() {
             run_preflight,
             list_modules,
             list_foreign,
+            module_facts,
             set_module_enabled,
             save_setup_config,
             load_setup_config,
