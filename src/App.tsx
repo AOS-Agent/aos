@@ -14,7 +14,21 @@ type Screen =
   | "configure"
   | "install"
   | "done"
-  | "update";
+  | "update"
+  | "arms";
+
+interface ModuleInfo {
+  id: string;
+  name: string;
+  category: string;
+  tagline: string;
+  consent?: string | null;
+  costs: Record<string, string>;
+  services: string[];
+  status_note?: string | null;
+  status: "active" | "available";
+  can_toggle: boolean;
+}
 
 interface Check {
   id: string;
@@ -467,6 +481,228 @@ function Update({ onFinished }: { onFinished: (code: number) => void }) {
   );
 }
 
+/* ── screen: arms & connectors ── */
+
+const DEMO_MODULES: ModuleInfo[] = [
+  { id: "vault", name: "Knowledge Vault", category: "standard", tagline: "A private knowledge base the system reads and writes.", costs: { resident_ram: "0" }, services: [], status: "active", can_toggle: false },
+  { id: "memory-search", name: "Memory & Search", category: "standard", tagline: "The system remembers and finds anything it has seen.", costs: { resident_ram: "0 (index jobs only)" }, services: [], status: "active", can_toggle: false },
+  { id: "telegram", name: "Telegram", category: "arm", tagline: "Talk to your system from your phone — messages, voice notes, briefings.", costs: { resident_ram: "~60 MB (bridge)" }, services: ["com.aos.bridge"], status: "active", can_toggle: true },
+  { id: "voice-dictation", name: "Voice — Dictation", category: "arm", tagline: "On-device speech to text with a model that learns your vocabulary.", costs: { resident_ram: "~20 MB at rest", download: "1.6 GB" }, services: ["com.aos.transcriber"], status: "active", can_toggle: true },
+  { id: "voice-meetings", name: "Voice — Meetings", category: "arm", tagline: "Meeting notes with named speakers, recognized by voice.", costs: { download: "~1 GB" }, services: [], status: "available", can_toggle: false, status_note: "arrives with a system update" },
+  { id: "automations", name: "Automations (n8n)", category: "arm", tagline: "A visual engine for scheduled routines and triggers.", costs: { resident_ram: "~300 MB resident" }, services: ["com.aos.n8n"], status: "active", can_toggle: true },
+  { id: "sentinel", name: "Sentinel (iMessage)", category: "arm", tagline: "Watches iMessage for commitments you make and drafts follow-through.", consent: "Reads your Messages database (requires Full Disk Access).", costs: { resident_ram: "~30 MB", access: "Full Disk Access" }, services: ["com.aos.sentinel"], status: "available", can_toggle: true },
+];
+
+function CostChips({ costs }: { costs: Record<string, string> }) {
+  const entries = Object.entries(costs).filter(([, v]) => v && v !== "0");
+  if (!entries.length) return null;
+  return (
+    <div className="flex flex-wrap gap-1.5 mt-1.5">
+      {entries.map(([k, v]) => (
+        <span
+          key={k}
+          className="px-1.5 py-0.5 rounded border border-zinc-800 bg-zinc-900/80 text-[10.5px] text-zinc-500"
+        >
+          {k === "resident_ram" ? "RAM " : k === "download" ? "↓ " : k === "disk" ? "disk " : ""}
+          {v}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function ModuleRow({
+  m,
+  busy,
+  onToggle,
+}: {
+  m: ModuleInfo;
+  busy: boolean;
+  onToggle: (m: ModuleInfo, enable: boolean) => void;
+}) {
+  const active = m.status === "active";
+  return (
+    <div className="flex items-start gap-3.5 px-5 py-4">
+      <div className="mt-1.5 w-2 flex justify-center shrink-0">
+        <div className={"w-2 h-2 rounded-full " + (active ? "bg-zinc-100" : "border border-zinc-600")} />
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2">
+          <span className="text-[14px] text-zinc-100 font-medium">{m.name}</span>
+          {m.consent && (
+            <span className="px-1.5 py-0.5 rounded border border-amber-900/50 bg-amber-950/30 text-[10px] text-amber-400/90">
+              sensitive
+            </span>
+          )}
+        </div>
+        <div className="text-[12.5px] text-zinc-500 mt-0.5 leading-relaxed">{m.tagline}</div>
+        <CostChips costs={m.costs} />
+      </div>
+      <div className="shrink-0 pt-1">
+        {m.can_toggle ? (
+          <button
+            disabled={busy}
+            onClick={() => onToggle(m, !active)}
+            className={
+              "px-3.5 h-8 rounded-lg text-[12.5px] font-medium transition active:scale-[0.97] disabled:opacity-40 " +
+              (active
+                ? "border border-zinc-700 text-zinc-300 hover:text-zinc-100 hover:border-zinc-500"
+                : "bg-zinc-100 text-zinc-950 hover:bg-white")
+            }
+          >
+            {busy ? "…" : active ? "Turn off" : "Turn on"}
+          </button>
+        ) : active ? (
+          <span className="text-[11.5px] text-zinc-600 pt-1.5 inline-block">built in</span>
+        ) : (
+          <span className="text-[11.5px] text-zinc-600 pt-1.5 inline-block">
+            {m.status_note ?? "via system update"}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Arms({ onBack }: { onBack: () => void }) {
+  const [modules, setModules] = useState<ModuleInfo[] | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState<ModuleInfo | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    if (IN_TAURI) {
+      try {
+        setModules(await invoke<ModuleInfo[]>("list_modules"));
+      } catch (e) {
+        setError(String(e));
+        setModules([]);
+      }
+    } else {
+      await new Promise((r) => setTimeout(r, 400));
+      setModules(DEMO_MODULES);
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const applyToggle = useCallback(
+    async (m: ModuleInfo, enable: boolean) => {
+      setConfirming(null);
+      setBusyId(m.id);
+      setError(null);
+      if (IN_TAURI) {
+        try {
+          await invoke("set_module_enabled", { id: m.id, enabled: enable });
+        } catch (e) {
+          setError(String(e));
+        }
+        await load();
+      } else {
+        await new Promise((r) => setTimeout(r, 600));
+        setModules(
+          (mods) =>
+            mods?.map((x) =>
+              x.id === m.id ? { ...x, status: enable ? "active" : "available" } : x,
+            ) ?? null,
+        );
+      }
+      setBusyId(null);
+    },
+    [load],
+  );
+
+  const requestToggle = useCallback(
+    (m: ModuleInfo, enable: boolean) => {
+      // Anything sensitive, or any activation with a real cost, confirms first.
+      if (enable && (m.consent || m.costs.download)) setConfirming(m);
+      else applyToggle(m, enable);
+    },
+    [applyToggle],
+  );
+
+  const groups: [string, ModuleInfo[]][] = modules
+    ? [
+        ["Arms", modules.filter((m) => m.category === "arm")],
+        ["Built-in", modules.filter((m) => m.category !== "arm")],
+      ]
+    : [];
+
+  return (
+    <div className="screen h-full flex flex-col items-center py-14 overflow-y-auto console">
+      <div className="w-[620px] max-w-[90vw]">
+        <div className="flex items-end justify-between mb-1">
+          <h1 className="text-[22px] font-semibold tracking-tight">Arms & Connectors</h1>
+          <button
+            onClick={onBack}
+            className="text-[13px] text-zinc-500 hover:text-zinc-100 transition pb-1"
+          >
+            Back
+          </button>
+        </div>
+        <p className="text-[13px] text-zinc-500 mb-6">
+          Capabilities of your system. Turning one on makes real changes to this
+          Mac — every item shows what it costs before it runs.
+        </p>
+
+        {error && (
+          <div className="mb-4 rounded-xl border border-red-900/60 bg-red-950/30 px-4 py-3 text-[13px] text-red-300 select-text">
+            {error}
+          </div>
+        )}
+
+        {modules === null ? (
+          <div className="flex items-center gap-3 py-6">
+            <div className="w-2 h-2 rounded-full bg-zinc-100 pulse-dot" />
+            <span className="text-[13.5px] text-zinc-400">Reading system state…</span>
+          </div>
+        ) : (
+          groups.map(([title, mods]) =>
+            mods.length ? (
+              <div key={title} className="mb-6">
+                <div className="text-[11px] uppercase tracking-[0.12em] text-zinc-600 mb-2">{title}</div>
+                <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 divide-y divide-zinc-800/70">
+                  {mods.map((m) => (
+                    <ModuleRow key={m.id} m={m} busy={busyId === m.id} onToggle={requestToggle} />
+                  ))}
+                </div>
+              </div>
+            ) : null,
+          )
+        )}
+      </div>
+
+      {confirming && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-40">
+          <div className="screen w-[420px] max-w-[86vw] rounded-2xl border border-zinc-700 bg-zinc-900 p-6">
+            <h2 className="text-[16px] font-semibold mb-2">Turn on {confirming.name}?</h2>
+            <p className="text-[13px] text-zinc-400 leading-relaxed">
+              {confirming.consent ?? confirming.tagline}
+            </p>
+            <CostChips costs={confirming.costs} />
+            <div className="flex justify-end gap-3 mt-6">
+              <button
+                onClick={() => setConfirming(null)}
+                className="px-4 h-10 rounded-xl text-[13.5px] text-zinc-400 hover:text-zinc-100 transition"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => applyToggle(confirming, true)}
+                className="px-5 h-10 rounded-xl bg-zinc-100 text-zinc-950 text-[13.5px] font-medium hover:bg-white transition"
+              >
+                Turn on
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ── screen 2: configure ── */
 
 function Field({
@@ -869,7 +1105,7 @@ export default function App() {
             sys={sys}
             checking={checking}
             onUpdate={() => setScreen("update")}
-            onContinue={() => setScreen("configure")}
+            onContinue={() => setScreen("arms")}
           />
         ) : (
           <Welcome onSetup={() => setScreen("preflight")} onJoin={() => setScreen("member")} />
@@ -878,6 +1114,7 @@ export default function App() {
         <Preflight onBack={() => setScreen("welcome")} onContinue={() => setScreen("configure")} />
       )}
       {screen === "member" && <Member onBack={() => setScreen("welcome")} />}
+      {screen === "arms" && <Arms onBack={() => setScreen("welcome")} />}
       {screen === "update" && <Update onFinished={handleUpdateFinished} />}
       {screen === "configure" && (
         <Configure
