@@ -21,6 +21,8 @@ APPLE_SIGNING_IDENTITY="$IDENTITY" \
 APPLE_API_ISSUER="$ISSUER" \
 APPLE_API_KEY="$KEY_ID" \
 APPLE_API_KEY_PATH="$KEY_PATH" \
+TAURI_SIGNING_PRIVATE_KEY_PATH="$HOME/.tauri/aos-updater.key" \
+TAURI_SIGNING_PRIVATE_KEY_PASSWORD="" \
 bunx tauri build
 
 DMG=$(ls -t src-tauri/target/release/bundle/dmg/AOS_*.dmg | head -1)
