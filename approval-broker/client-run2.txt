@@ -1,0 +1,21 @@
+
+WORKSPACE CLIENT (stub) - principal agent:workspace-agent-1
+asking broker at http://127.0.0.1:4110  (contract aos.broker.local/v1)
+==================================================================
+  BROKER STATE : DOWN
+  BROKER DOWN - nothing executes
+  cannot reach the broker on 127.0.0.1:4110 - <urlopen error [Errno 61] Connection refused>
+==================================================================
+
+The broker is not answering. This client has no local fallback,
+no cached grant, and no bypass. Both tool calls are refused now.
+
+   REFUSED  workspace.chat.post (message.send) - broker down, nothing executes
+   REFUSED  workspace.terminal.run (shell.exec) - broker down, nothing executes
+
+EXECUTION LEDGER
+   message.send   refused   broker_down_precheck
+   shell.exec     refused   broker_down_precheck
+   executed: 0 of 2
+
+FAIL-CLOSED PROOF: HELD - broker down, 0 of 2 calls executed

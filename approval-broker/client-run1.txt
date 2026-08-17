@@ -1,0 +1,26 @@
+
+WORKSPACE CLIENT (stub) - principal agent:workspace-agent-1
+asking broker at http://127.0.0.1:4110  (contract aos.broker.local/v1)
+==================================================================
+  BROKER STATE : UP
+  BROKER UP
+  trust level 2 (semi-auto) - 0 pending
+  uptime 0.493s | pending 0 | trust level 2 (semi-auto) | fail-closed True
+==================================================================
+
+-- tool call: workspace.chat.post (capability message.send)
+   summary: Post 'standup notes are up' to #general
+   ALLOWED  by broker:policy (semi_auto_allow)
+   EXECUTED (no-op stub): workspace.chat.post
+
+-- tool call: workspace.terminal.run (capability shell.exec)  [declared destructive]
+   summary: Run: rm -rf ~/project/scratch/build
+   BLOCKED  awaiting human approval - request id cebf725fa792 (reason: destructive_flag)
+            approve with: POST /v1/approvals/cebf725fa792/decide
+   ALLOWED  by operator:hisham (human_decision)
+   EXECUTED (no-op stub): workspace.terminal.run
+
+EXECUTION LEDGER
+   message.send   executed  semi_auto_allow
+   shell.exec     executed  human_decision
+   executed: 2 of 2
