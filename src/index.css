@@ -60,14 +60,26 @@ textarea {
   animation: pulse-dot 1.4s ease-in-out infinite;
 }
 
-/* thin scrollbars for the console */
-.console::-webkit-scrollbar {
-  width: 8px;
+/* Quiet, overlay-feeling scrollbars everywhere — thumb only, no track,
+   invisible until you're actually scrolling something that scrolls. */
+::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
 }
-.console::-webkit-scrollbar-thumb {
-  background: #27272a;
-  border-radius: 4px;
+::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 5px;
+  border: 2px solid transparent;
+  background-clip: content-box;
 }
-.console::-webkit-scrollbar-track {
+*:hover::-webkit-scrollbar-thumb,
+*:focus-within::-webkit-scrollbar-thumb {
+  background-color: #2c2c31;
+}
+::-webkit-scrollbar-thumb:hover {
+  background-color: #3f3f46;
+}
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
   background: transparent;
 }
