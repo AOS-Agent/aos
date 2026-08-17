@@ -340,12 +340,373 @@ fn search_vault(query: String) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
+// ── Secrets (paste-a-key lane) ──────────────────────────────────────
+
+fn agent_secret(home: &str, args: &[&str]) -> Result<String, String> {
+    let cli = format!("{home}/aos/core/bin/cli/agent-secret");
+    let out = Command::new("bash")
+        .arg(&cli)
+        .args(args)
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| e.to_string())?;
+    if out.status.success() {
+        Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+    }
+}
+
+/// Store a secret in the macOS Keychain via the system's own secret CLI.
+#[tauri::command]
+fn save_secret(name: String, value: String) -> Result<(), String> {
+    if name.trim().is_empty() || value.trim().is_empty() {
+        return Err("Both a name and a value are required.".into());
+    }
+    let home = std::env::var("HOME").map_err(|e| e.to_string())?;
+    agent_secret(&home, &["set", name.trim(), value.trim()]).map(|_| ())
+}
+
+/// Open an https URL in the default browser (key-provider pages, auth links).
+#[tauri::command]
+fn open_url(url: String) -> Result<(), String> {
+    if !url.starts_with("https://") {
+        return Err("only https links".into());
+    }
+    Command::new("open").arg(&url).spawn().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Remove a secret from the Keychain (the disconnect flow for token connectors).
+#[tauri::command]
+fn delete_secret(name: String) -> Result<(), String> {
+    let home = std::env::var("HOME").map_err(|e| e.to_string())?;
+    agent_secret(&home, &["delete", name.trim()]).map(|_| ())
+}
+
+/// What a connector does and provides — from the integrations registry,
+/// with hand-written entries for the probed core connectors.
+#[tauri::command]
+fn connector_about(id: String) -> serde_json::Value {
+    let builtin: Option<(&str, Vec<&str>)> = match id.as_str() {
+        "google" => Some((
+            "Gives your system hands inside your Google accounts — reading and sending mail, managing Drive files, calendars, and documents on your behalf.",
+            vec!["Gmail read & send", "Drive files", "Calendar events", "Docs & Sheets"],
+        )),
+        "github" => Some((
+            "Lets agents work with your repositories — issues, pull requests, code review, and releases — as you.",
+            vec!["repos & code", "issues", "pull requests", "workflows"],
+        )),
+        "composio" => Some((
+            "A hosted sign-in service: it holds the OAuth connections to 500+ apps so this Mac never stores those providers' tokens. Powers the one-click Connect buttons.",
+            vec!["hosted OAuth for 500+ apps", "no provider tokens on this Mac", "revocable per app"],
+        )),
+        "cloudflare" => Some((
+            "DNS, domains, tunnels, and hosting control for your web properties.",
+            vec!["DNS records", "tunnels", "R2 storage", "page deployments"],
+        )),
+        _ => None,
+    };
+    if let Some((about, provides)) = builtin {
+        return serde_json::json!({ "about": about, "provides": provides });
+    }
+    // Registry lookup (both `telegram` and `google_suite` style keys).
+    if let Ok(home) = std::env::var("HOME") {
+        if let Ok(text) =
+            std::fs::read_to_string(format!("{home}/aos/core/infra/integrations/registry.yaml"))
+        {
+            if let Ok(reg) = serde_yaml::from_str::<serde_yaml::Value>(&text) {
+                for section in ["apple_native", "builtin", "catalog"] {
+                    if let Some(map) = reg.get(section).and_then(|v| v.as_mapping()) {
+                        for (k, v) in map {
+                            let key = k.as_str().unwrap_or("");
+                            if key == id || key.replace('_', "-") == id {
+                                let provides: Vec<String> = v
+                                    .get("provides")
+                                    .and_then(|p| p.as_sequence())
+                                    .map(|s| {
+                                        s.iter()
+                                            .filter_map(|x| x.as_str().map(str::to_string))
+                                            .collect()
+                                    })
+                                    .unwrap_or_default();
+                                return serde_json::json!({
+                                    "about": v.get("description").and_then(|d| d.as_str()).unwrap_or(""),
+                                    "provides": provides,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    serde_json::json!({ "about": "", "provides": [] })
+}
+
+// ── Composio (hosted OAuth broker — ported from OpenMausBot, MIT) ───
+//
+// A project key (ak_…) owns one reusable Session. The Session mints
+// per-service browser auth links; Composio's hosted page handles the
+// provider OAuth, so no callback endpoint and no provider tokens ever
+// live on this machine.
+
+const COMPOSIO_API: &str = "https://backend.composio.dev/api/v3.1";
+
+fn curl_json(
+    method: &str,
+    url: &str,
+    api_key: &str,
+    body: Option<serde_json::Value>,
+) -> Result<serde_json::Value, String> {
+    let mut cmd = Command::new("curl");
+    cmd.args(["-s", "-m", "25", "-X", method, url, "-H"]);
+    cmd.arg(format!("x-api-key: {api_key}"));
+    if let Some(b) = body {
+        cmd.args(["-H", "content-type: application/json", "--data-binary"]);
+        cmd.arg(b.to_string());
+    }
+    let out = cmd.stdin(Stdio::null()).output().map_err(|e| e.to_string())?;
+    let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if text.is_empty() {
+        return Err("No response from Composio — check your internet connection.".into());
+    }
+    serde_json::from_str(&text).map_err(|_| format!("Unexpected reply: {}", &text[..text.len().min(200)]))
+}
+
+fn composio_state_path(home: &str) -> String {
+    format!("{home}/.aos/config/app-composio.yaml")
+}
+
+fn composio_key(home: &str) -> Option<String> {
+    agent_secret(home, &["get", "COMPOSIO_API_KEY"]).ok().filter(|v| !v.is_empty())
+}
+
+fn composio_saved_session(home: &str) -> Option<(String, String)> {
+    let text = std::fs::read_to_string(composio_state_path(home)).ok()?;
+    let v: serde_yaml::Value = serde_yaml::from_str(&text).ok()?;
+    Some((
+        v.get("user_id")?.as_str()?.to_string(),
+        v.get("session_id")?.as_str()?.to_string(),
+    ))
+}
+
+fn composio_ensure_session(home: &str, api_key: &str) -> Result<String, String> {
+    if let Some((_, session_id)) = composio_saved_session(home) {
+        let check = curl_json("GET", &format!("{COMPOSIO_API}/tool_router/session/{session_id}"), api_key, None);
+        if let Ok(v) = check {
+            if v.get("session_id").is_some() {
+                return Ok(session_id);
+            }
+        }
+    }
+    let user_id = composio_saved_session(home)
+        .map(|(u, _)| u)
+        .or_else(|| cmd_ok("uuidgen", &[]).map(|u| format!("aos_{}", u.to_lowercase())))
+        .ok_or("could not generate a user id")?;
+    let created = curl_json(
+        "POST",
+        &format!("{COMPOSIO_API}/tool_router/session"),
+        api_key,
+        Some(serde_json::json!({ "user_id": user_id })),
+    )?;
+    let session_id = created["session_id"]
+        .as_str()
+        .ok_or_else(|| {
+            created["message"]
+                .as_str()
+                .map(str::to_string)
+                .unwrap_or_else(|| "Composio rejected this key.".into())
+        })?
+        .to_string();
+    let _ = std::fs::write(
+        composio_state_path(home),
+        format!("# Non-secret Composio session identifiers (key lives in Keychain).\nuser_id: {user_id}\nsession_id: {session_id}\n"),
+    );
+    Ok(session_id)
+}
+
+/// Validate + store a Composio project key, creating the reusable session.
+#[tauri::command]
+fn composio_setup(api_key: String) -> Result<(), String> {
+    let key = api_key.trim().to_string();
+    if !key.starts_with("ak_") {
+        return Err("Composio project keys start with ak_".into());
+    }
+    let home = std::env::var("HOME").map_err(|e| e.to_string())?;
+    // Validate by creating/reusing a session BEFORE persisting the key.
+    agent_secret(&home, &["set", "COMPOSIO_API_KEY", &key])?;
+    match composio_ensure_session(&home, &key) {
+        Ok(_) => Ok(()),
+        Err(e) => Err(e),
+    }
+}
+
+/// Mint a hosted sign-in link for a service and open it in the browser.
+#[tauri::command]
+fn composio_link(slug: String) -> Result<String, String> {
+    let home = std::env::var("HOME").map_err(|e| e.to_string())?;
+    let key = composio_key(&home).ok_or("Connect Composio first — paste your project key.")?;
+    let session = composio_ensure_session(&home, &key)?;
+    let v = curl_json(
+        "POST",
+        &format!("{COMPOSIO_API}/tool_router/session/{session}/link"),
+        &key,
+        Some(serde_json::json!({ "toolkit": slug })),
+    )?;
+    let url = v["redirect_url"]
+        .as_str()
+        .ok_or_else(|| {
+            v["message"]
+                .as_str()
+                .map(str::to_string)
+                .unwrap_or_else(|| format!("No sign-in link returned for {slug}."))
+        })?
+        .to_string();
+    let _ = Command::new("open").arg(&url).spawn();
+    Ok(url)
+}
+
+/// Connection status for a set of service slugs: slug → connected/pending.
+#[tauri::command]
+fn composio_status(slugs: Vec<String>) -> Result<serde_json::Value, String> {
+    let home = std::env::var("HOME").map_err(|e| e.to_string())?;
+    let key = composio_key(&home).ok_or("no Composio key")?;
+    let session = composio_ensure_session(&home, &key)?;
+    let list = slugs.join(",");
+    let v = curl_json(
+        "GET",
+        &format!("{COMPOSIO_API}/tool_router/session/{session}/toolkits?limit=50&toolkits={list}"),
+        &key,
+        None,
+    )?;
+    let mut out = serde_json::Map::new();
+    let empty = vec![];
+    let items = v["items"].as_array().unwrap_or(&empty);
+    for slug in &slugs {
+        let item = items
+            .iter()
+            .find(|i| i["slug"].as_str().map(str::to_lowercase) == Some(slug.to_lowercase()));
+        let state = item
+            .and_then(|i| i["connected_account"]["status"].as_str())
+            .unwrap_or(if item.and_then(|i| i["is_no_auth"].as_bool()).unwrap_or(false) {
+                "ACTIVE"
+            } else {
+                "not_connected"
+            });
+        out.insert(
+            slug.clone(),
+            serde_json::json!({
+                "connected": state.eq_ignore_ascii_case("active"),
+                "pending": matches!(state.to_lowercase().as_str(), "initiated" | "initializing" | "pending"),
+            }),
+        );
+    }
+    Ok(serde_json::Value::Object(out))
+}
+
+/// Marketplace catalog: official names, blurbs, logos from Composio's
+/// toolkit directory; curated fallback when no key / offline.
+#[tauri::command]
+fn composio_toolkits() -> Result<serde_json::Value, String> {
+    let curated = serde_json::json!([
+        { "slug": "gmail", "label": "Gmail", "blurb": "Read and send email", "logo": null },
+        { "slug": "googlecalendar", "label": "Google Calendar", "blurb": "Read and create events", "logo": null },
+        { "slug": "googledrive", "label": "Google Drive", "blurb": "Browse and manage files", "logo": null },
+        { "slug": "notion", "label": "Notion", "blurb": "Pages and databases", "logo": null },
+        { "slug": "slack", "label": "Slack", "blurb": "Post updates and read channels", "logo": null },
+        { "slug": "github", "label": "GitHub", "blurb": "Issues, pull requests, and code", "logo": null },
+        { "slug": "linear", "label": "Linear", "blurb": "Issues and project tracking", "logo": null },
+        { "slug": "discord", "label": "Discord", "blurb": "Messages and channels", "logo": null },
+        { "slug": "x", "label": "X (Twitter)", "blurb": "Post and read on X", "logo": null },
+        { "slug": "reddit", "label": "Reddit", "blurb": "Browse and post", "logo": null },
+        { "slug": "hubspot", "label": "HubSpot", "blurb": "CRM search & updates", "logo": null },
+        { "slug": "jira", "label": "Jira", "blurb": "Issues and sprints", "logo": null },
+        { "slug": "asana", "label": "Asana", "blurb": "Tasks and projects", "logo": null },
+        { "slug": "trello", "label": "Trello", "blurb": "Boards and cards", "logo": null },
+        { "slug": "dropbox", "label": "Dropbox", "blurb": "Files and folders", "logo": null },
+        { "slug": "airtable", "label": "Airtable", "blurb": "Bases and records", "logo": null },
+        { "slug": "figma", "label": "Figma", "blurb": "Files and comments", "logo": null },
+        { "slug": "stripe", "label": "Stripe", "blurb": "Payments and customers", "logo": null },
+        { "slug": "shopify", "label": "Shopify", "blurb": "Products, orders, customers", "logo": null },
+        { "slug": "todoist", "label": "Todoist", "blurb": "Tasks and projects", "logo": null }
+    ]);
+    let home = std::env::var("HOME").map_err(|e| e.to_string())?;
+    let Some(key) = composio_key(&home) else {
+        return Ok(serde_json::json!({ "cards": curated, "source": "curated" }));
+    };
+    match curl_json(
+        "GET",
+        "https://backend.composio.dev/api/v3/toolkits?limit=500&sort_by=usage",
+        &key,
+        None,
+    ) {
+        Ok(v) => {
+            let empty = vec![];
+            let items = v["items"].as_array().or_else(|| v["data"].as_array()).unwrap_or(&empty);
+            if items.is_empty() {
+                return Ok(serde_json::json!({ "cards": curated, "source": "curated" }));
+            }
+            let cards: Vec<serde_json::Value> = items
+                .iter()
+                .map(|t| {
+                    serde_json::json!({
+                        "slug": t["slug"].as_str().or(t["key"].as_str()).unwrap_or("").to_lowercase(),
+                        "label": t["name"].as_str().or(t["slug"].as_str()).unwrap_or(""),
+                        "blurb": t["meta"]["description"].as_str().or(t["description"].as_str()).unwrap_or("").chars().take(90).collect::<String>(),
+                        "logo": t["meta"]["logo"].as_str().or(t["logo"].as_str()),
+                    })
+                })
+                .collect();
+            Ok(serde_json::json!({ "cards": cards, "source": "api" }))
+        }
+        Err(_) => Ok(serde_json::json!({ "cards": curated, "source": "curated" })),
+    }
+}
+
+/// Disconnect a Composio-connected service, revoking its account upstream.
+#[tauri::command]
+fn composio_disconnect(slug: String) -> Result<(), String> {
+    let home = std::env::var("HOME").map_err(|e| e.to_string())?;
+    let key = composio_key(&home).ok_or("no Composio key")?;
+    let session = composio_ensure_session(&home, &key)?;
+    let list = curl_json(
+        "GET",
+        &format!("{COMPOSIO_API}/tool_router/session/{session}/toolkits?limit=50&toolkits={slug}"),
+        &key,
+        None,
+    )?;
+    let empty = vec![];
+    let id = list["items"]
+        .as_array()
+        .unwrap_or(&empty)
+        .iter()
+        .find(|i| i["slug"].as_str().map(str::to_lowercase) == Some(slug.to_lowercase()))
+        .and_then(|i| i["connected_account"]["id"].as_str())
+        .map(str::to_string);
+    let Some(id) = id else { return Ok(()) };
+    curl_json(
+        "DELETE",
+        &format!("{COMPOSIO_API}/connected_accounts/{id}?revoke_on_delete=true"),
+        &key,
+        None,
+    )?;
+    Ok(())
+}
+
 // ── Connectors ──────────────────────────────────────────────────────
 
 #[derive(serde::Serialize)]
 struct ConnectorAccount {
     identity: String,
     detail: String,
+}
+
+#[derive(serde::Serialize, Clone)]
+struct KeyField {
+    secret: String,
+    label: String,
+    get_url: String,
 }
 
 #[derive(serde::Serialize)]
@@ -358,6 +719,38 @@ struct Connector {
     detail: String,
     accounts: Vec<ConnectorAccount>,
     connect_hint: String,
+    key_fields: Vec<KeyField>,
+    composio_slug: Option<String>,
+}
+
+/// The two seamless connect lanes for a not-yet-connected service:
+/// paste-a-key fields, and/or a Composio hosted-OAuth slug.
+fn connector_lanes(id: &str) -> (Vec<KeyField>, Option<String>) {
+    let kf = |secret: &str, label: &str, url: &str| KeyField {
+        secret: secret.into(),
+        label: label.into(),
+        get_url: url.into(),
+    };
+    match id {
+        "notion" => (
+            vec![kf("NOTION_API_KEY", "Internal integration secret", "https://www.notion.so/my-integrations")],
+            Some("notion".into()),
+        ),
+        "linear" => (
+            vec![kf("LINEAR_API_KEY", "Personal API key", "https://linear.app/settings/api")],
+            Some("linear".into()),
+        ),
+        "discord" => (
+            vec![kf("DISCORD_BOT_TOKEN", "Bot token", "https://discord.com/developers/applications")],
+            Some("discord".into()),
+        ),
+        "todoist" => (
+            vec![kf("TODOIST_API_TOKEN", "API token", "https://todoist.com/app/settings/integrations/developer")],
+            Some("todoist".into()),
+        ),
+        "slack" => (vec![], Some("slack".into())),
+        _ => (vec![], None),
+    }
 }
 
 fn keychain_names(home: &str) -> std::collections::HashSet<String> {
@@ -411,6 +804,8 @@ fn list_connectors() -> Result<Vec<Connector>, String> {
             detail: format!("{} accounts — Gmail, Drive, Calendar, Docs", google_accounts.len()),
             accounts: google_accounts,
             connect_hint: "Add another account through the onboarding assistant — it walks the Google sign-in and stores only the refresh token.".into(),
+                key_fields: vec![],
+                composio_slug: None,
         });
     }
 
@@ -439,6 +834,8 @@ fn list_connectors() -> Result<Vec<Connector>, String> {
                 detail: format!("permissions: {scopes}"),
             }],
             connect_hint: "gh auth login --web".into(),
+                key_fields: vec![],
+                composio_slug: None,
         });
     }
 
@@ -467,6 +864,8 @@ fn list_connectors() -> Result<Vec<Connector>, String> {
             },
             accounts,
             connect_hint: "The onboarding assistant creates the bot with you and stores its token in the Keychain.".into(),
+                key_fields: ["TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"].iter().map(|s| KeyField { secret: (*s).into(), label: "bot credential".into(), get_url: String::new() }).collect(),
+                composio_slug: None,
         });
     }
 
@@ -485,6 +884,8 @@ fn list_connectors() -> Result<Vec<Connector>, String> {
                 detail: "QR session · re-pair if your phone unlinks it".into(),
             }],
             connect_hint: "Pair by scanning a QR code from WhatsApp on your phone.".into(),
+                key_fields: vec![],
+                composio_slug: None,
         });
     }
 
@@ -499,6 +900,8 @@ fn list_connectors() -> Result<Vec<Connector>, String> {
             detail: "bot + app tokens in Keychain".into(),
             accounts: vec![],
             connect_hint: "Create a Slack app, install it to the workspace, store its tokens.".into(),
+                key_fields: ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN", "SLACK_ALLOWED_USER_ID"].iter().map(|s| KeyField { secret: (*s).into(), label: "app credential".into(), get_url: String::new() }).collect(),
+                composio_slug: None,
         });
     }
 
@@ -512,6 +915,10 @@ fn list_connectors() -> Result<Vec<Connector>, String> {
         ("paypal", "PayPal", "business", &["PAYPAL_CLIENT_ID"], "client credentials"),
         ("wave", "Wave", "business", &["WAVE_ACCESS_TOKEN"], "access token"),
         ("chitchats", "Chit Chats", "business", &["CHITCHATS_API_KEY"], "API key"),
+        ("notion", "Notion", "knowledge", &["NOTION_API_KEY"], "integration secret"),
+        ("linear", "Linear", "development", &["LINEAR_API_KEY"], "API key"),
+        ("discord", "Discord", "communication", &["DISCORD_BOT_TOKEN"], "bot token"),
+        ("todoist", "Todoist", "productivity", &["TODOIST_API_TOKEN"], "API token"),
     ];
     for (id, name, category, needed, kind) in token_connectors {
         if needed.iter().all(|s| has(s)) {
@@ -524,6 +931,15 @@ fn list_connectors() -> Result<Vec<Connector>, String> {
                 detail: format!("{kind} in Keychain"),
                 accounts: vec![],
                 connect_hint: String::new(),
+                key_fields: needed
+                    .iter()
+                    .map(|s| KeyField {
+                        secret: (*s).to_string(),
+                        label: (*kind).to_string(),
+                        get_url: String::new(),
+                    })
+                    .collect(),
+                composio_slug: None,
             });
         }
     }
@@ -546,8 +962,33 @@ fn list_connectors() -> Result<Vec<Connector>, String> {
             detail: format!("{} accounts", accounts.len().max(1)),
             accounts,
             connect_hint: String::new(),
+                key_fields: vec![],
+                composio_slug: None,
         });
     }
+
+    // Composio — the hosted OAuth broker that powers one-click connects.
+    let composio_connected = has("COMPOSIO_API_KEY");
+    out.push(Connector {
+        id: "composio".into(),
+        name: "Composio".into(),
+        category: "infrastructure".into(),
+        auth_kind: "token".into(),
+        status: if composio_connected { "connected" } else { "available" }.into(),
+        detail: if composio_connected {
+            "hosted sign-in enabled — powers one-click connects".into()
+        } else {
+            "Enable one-click sign-in for 500+ apps".into()
+        },
+        accounts: vec![],
+        connect_hint: String::new(),
+        key_fields: vec![KeyField {
+            secret: "COMPOSIO_API_KEY".into(),
+            label: "Project API key (ak_…)".into(),
+            get_url: "https://app.composio.dev/developers".into(),
+        }],
+        composio_slug: None,
+    });
 
     // Available (not yet connected) — from the integrations registry catalog.
     if let Ok(text) =
@@ -567,15 +1008,18 @@ fn list_connectors() -> Result<Vec<Connector>, String> {
                     {
                         continue;
                     }
+                    let (key_fields, composio_slug) = connector_lanes(&id);
                     out.push(Connector {
                         id: id.clone(),
                         name: v.get("name").and_then(|x| x.as_str()).unwrap_or(plain).to_string(),
                         category: v.get("category").and_then(|x| x.as_str()).unwrap_or("other").to_string(),
-                        auth_kind: "token".into(),
+                        auth_kind: if composio_slug.is_some() { "oauth" } else { "token" }.into(),
                         status: "available".into(),
                         detail: v.get("description").and_then(|x| x.as_str()).unwrap_or("").to_string(),
                         accounts: vec![],
-                        connect_hint: "Ask your agent to connect it — setup is guided.".into(),
+                        connect_hint: String::new(),
+                        key_fields,
+                        composio_slug,
                     });
                 }
             }
@@ -1215,6 +1659,15 @@ pub fn run() {
             home_data,
             health_check,
             list_connectors,
+            save_secret,
+            delete_secret,
+            open_url,
+            connector_about,
+            composio_disconnect,
+            composio_setup,
+            composio_link,
+            composio_status,
+            composio_toolkits,
             operator_config,
             save_operator_config,
             release_notes,

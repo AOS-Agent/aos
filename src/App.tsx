@@ -1017,6 +1017,11 @@ interface ConnectorAccount {
   identity: string;
   detail: string;
 }
+interface KeyField {
+  secret: string;
+  label: string;
+  get_url: string;
+}
 interface Connector {
   id: string;
   name: string;
@@ -1026,6 +1031,14 @@ interface Connector {
   detail: string;
   accounts: ConnectorAccount[];
   connect_hint: string;
+  key_fields?: KeyField[];
+  composio_slug?: string | null;
+}
+interface ToolkitCard {
+  slug: string;
+  label: string;
+  blurb: string;
+  logo?: string | null;
 }
 
 const DEMO_CONNECTORS: Connector[] = [
@@ -1038,14 +1051,15 @@ const DEMO_CONNECTORS: Connector[] = [
   { id: "github", name: "GitHub", category: "development", auth_kind: "cli", status: "connected", detail: "@hishamalhadi", connect_hint: "gh auth login --web", accounts: [{ identity: "@hishamalhadi", detail: "permissions: gist, read:org, repo, workflow" }] },
   { id: "telegram", name: "Telegram", category: "communication", auth_kind: "token", status: "connected", detail: "bridge running", connect_hint: "", accounts: [{ identity: "primary bot", detail: "bot token in Keychain · tokens don't expire" }, { identity: "tabib bot", detail: "bot token in Keychain" }] },
   { id: "whatsapp", name: "WhatsApp", category: "communication", auth_kind: "session", status: "connected", detail: "phone-paired session", connect_hint: "", accounts: [{ identity: "paired device", detail: "QR session · re-pair if your phone unlinks it" }] },
-  { id: "slack", name: "Slack", category: "communication", auth_kind: "token", status: "connected", detail: "bot + app tokens in Keychain", connect_hint: "", accounts: [] },
+  { id: "slack", name: "Slack", category: "communication", auth_kind: "token", status: "connected", detail: "bot + app tokens in Keychain", connect_hint: "", accounts: [], key_fields: [], composio_slug: null },
   { id: "cloudflare", name: "Cloudflare", category: "infrastructure", auth_kind: "token", status: "connected", detail: "2 accounts", connect_hint: "", accounts: [{ identity: "personal (hish.am)", detail: "API token" }, { identity: "Elora Greens", detail: "API token" }] },
-  { id: "clickup", name: "ClickUp", category: "productivity", auth_kind: "token", status: "connected", detail: "API token in Keychain", connect_hint: "", accounts: [] },
-  { id: "obsidian", name: "Obsidian", category: "knowledge", auth_kind: "token", status: "connected", detail: "local REST API", connect_hint: "", accounts: [] },
-  { id: "notion", name: "Notion", category: "knowledge", auth_kind: "token", status: "available", detail: "Pages and databases as agent workspace.", connect_hint: "Ask your agent to connect it — setup is guided.", accounts: [] },
-  { id: "linear", name: "Linear", category: "development", auth_kind: "token", status: "available", detail: "Issues and cycles.", connect_hint: "Ask your agent to connect it — setup is guided.", accounts: [] },
-  { id: "discord", name: "Discord", category: "communication", auth_kind: "token", status: "available", detail: "Bot presence in your servers.", connect_hint: "Ask your agent to connect it — setup is guided.", accounts: [] },
-  { id: "todoist", name: "Todoist", category: "productivity", auth_kind: "token", status: "available", detail: "Tasks and projects.", connect_hint: "Ask your agent to connect it — setup is guided.", accounts: [] },
+  { id: "clickup", name: "ClickUp", category: "productivity", auth_kind: "token", status: "connected", detail: "API token in Keychain", connect_hint: "", accounts: [], key_fields: [], composio_slug: null },
+  { id: "obsidian", name: "Obsidian", category: "knowledge", auth_kind: "token", status: "connected", detail: "local REST API", connect_hint: "", accounts: [], key_fields: [], composio_slug: null },
+  { id: "composio", name: "Composio", category: "infrastructure", auth_kind: "token", status: "available", detail: "Enable one-click sign-in for 500+ apps", connect_hint: "", accounts: [], key_fields: [{ secret: "COMPOSIO_API_KEY", label: "Project API key (ak_…)", get_url: "https://app.composio.dev/developers" }], composio_slug: null },
+  { id: "notion", name: "Notion", category: "knowledge", auth_kind: "oauth", status: "available", detail: "Pages and databases as agent workspace.", connect_hint: "", accounts: [], key_fields: [{ secret: "NOTION_API_KEY", label: "Internal integration secret", get_url: "https://www.notion.so/my-integrations" }], composio_slug: "notion" },
+  { id: "linear", name: "Linear", category: "development", auth_kind: "token", status: "available", detail: "Issues and cycles.", connect_hint: "Ask your agent to connect it — setup is guided.", accounts: [], key_fields: [], composio_slug: null },
+  { id: "discord", name: "Discord", category: "communication", auth_kind: "token", status: "available", detail: "Bot presence in your servers.", connect_hint: "Ask your agent to connect it — setup is guided.", accounts: [], key_fields: [], composio_slug: null },
+  { id: "todoist", name: "Todoist", category: "productivity", auth_kind: "token", status: "available", detail: "Tasks and projects.", connect_hint: "Ask your agent to connect it — setup is guided.", accounts: [], key_fields: [], composio_slug: null },
 ];
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -1103,108 +1117,568 @@ function ConnectorCard({ c, onOpen }: { c: Connector; onOpen: (c: Connector) => 
   );
 }
 
-function ConnectorsPane() {
-  const [connectors, setConnectors] = useState<Connector[] | null>(null);
-  const [open, setOpen] = useState<Connector | null>(null);
+const DEMO_TOOLKITS: ToolkitCard[] = [
+  { slug: "gmail", label: "Gmail", blurb: "Read and send email" },
+  { slug: "googlecalendar", label: "Google Calendar", blurb: "Read and create events" },
+  { slug: "notion", label: "Notion", blurb: "Pages and databases" },
+  { slug: "slack", label: "Slack", blurb: "Post updates and read channels" },
+  { slug: "linear", label: "Linear", blurb: "Issues and project tracking" },
+  { slug: "discord", label: "Discord", blurb: "Messages and channels" },
+  { slug: "x", label: "X (Twitter)", blurb: "Post and read on X" },
+  { slug: "reddit", label: "Reddit", blurb: "Browse and post" },
+  { slug: "jira", label: "Jira", blurb: "Issues and sprints" },
+  { slug: "asana", label: "Asana", blurb: "Tasks and projects" },
+  { slug: "dropbox", label: "Dropbox", blurb: "Files and folders" },
+  { slug: "airtable", label: "Airtable", blurb: "Bases and records" },
+  { slug: "figma", label: "Figma", blurb: "Files and comments" },
+  { slug: "stripe", label: "Stripe", blurb: "Payments and customers" },
+  { slug: "shopify", label: "Shopify", blurb: "Products, orders, customers" },
+  { slug: "todoist", label: "Todoist", blurb: "Tasks and projects" },
+];
+
+type ModalPhase = "view" | "keys" | "browser-wait" | "confirm-remove" | "done";
+
+function ConnectorModal({
+  c,
+  composioReady,
+  onClose,
+  onChanged,
+}: {
+  c: Connector;
+  composioReady: boolean;
+  onClose: () => void;
+  onChanged: () => void;
+}) {
+  const [phase, setPhase] = useState<ModalPhase>("view");
+  const [about, setAbout] = useState<{ about: string; provides: string[] } | null>(null);
+  const [keyValues, setKeyValues] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const connected = c.status === "connected";
+  const keyFields = c.key_fields ?? [];
+  const isComposioCard = c.id === "composio";
 
   useEffect(() => {
     (async () => {
       if (IN_TAURI) {
         try {
-          setConnectors(await invoke<Connector[]>("list_connectors"));
+          setAbout(await invoke<{ about: string; provides: string[] }>("connector_about", { id: c.id }));
         } catch {
-          setConnectors([]);
+          setAbout({ about: c.detail, provides: [] });
+        }
+      } else {
+        setAbout({
+          about: c.detail || `${c.name} connected to your system.`,
+          provides: c.id === "google" ? ["Gmail read & send", "Drive files", "Calendar events", "Docs & Sheets"] : ["actions inside " + c.name],
+        });
+      }
+    })();
+  }, [c]);
+
+  const saveKeys = useCallback(async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      if (IN_TAURI) {
+        if (isComposioCard) {
+          await invoke("composio_setup", { apiKey: keyValues["COMPOSIO_API_KEY"] ?? "" });
+        } else {
+          for (const f of keyFields) {
+            const v = keyValues[f.secret];
+            if (v?.trim()) await invoke("save_secret", { name: f.secret, value: v.trim() });
+          }
+        }
+      } else {
+        await new Promise((r) => setTimeout(r, 700));
+      }
+      setPhase("done");
+      onChanged();
+    } catch (e) {
+      setError(String(e));
+    }
+    setBusy(false);
+  }, [keyValues, keyFields, isComposioCard, onChanged]);
+
+  const browserConnect = useCallback(async () => {
+    setBusy(true);
+    setError(null);
+    setPhase("browser-wait");
+    try {
+      if (IN_TAURI) {
+        await invoke("composio_link", { slug: c.composio_slug });
+        // Poll until the hosted flow completes (up to ~2 min).
+        for (let i = 0; i < 40; i++) {
+          await new Promise((r) => setTimeout(r, 3000));
+          const st = await invoke<Record<string, { connected: boolean; pending: boolean }>>(
+            "composio_status",
+            { slugs: [c.composio_slug] },
+          );
+          if (st[c.composio_slug!]?.connected) {
+            setPhase("done");
+            onChanged();
+            setBusy(false);
+            return;
+          }
+        }
+        setError("Still waiting on the sign-in — finish it in the browser, then reopen this card.");
+        setPhase("view");
+      } else {
+        await new Promise((r) => setTimeout(r, 1800));
+        setPhase("done");
+        onChanged();
+      }
+    } catch (e) {
+      setError(String(e));
+      setPhase("view");
+    }
+    setBusy(false);
+  }, [c, onChanged]);
+
+  const disconnect = useCallback(async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      if (IN_TAURI) {
+        if (c.composio_slug && composioReady) {
+          await invoke("composio_disconnect", { slug: c.composio_slug }).catch(() => {});
+        }
+        for (const f of keyFields) {
+          await invoke("delete_secret", { name: f.secret }).catch(() => {});
+        }
+      } else {
+        await new Promise((r) => setTimeout(r, 600));
+      }
+      onChanged();
+      onClose();
+    } catch (e) {
+      setError(String(e));
+    }
+    setBusy(false);
+  }, [c, keyFields, composioReady, onChanged, onClose]);
+
+  const canRemove = connected && (keyFields.length > 0 || (c.composio_slug && composioReady));
+  const removalNote: Record<string, string> = {
+    oauth: "Access is revoked from your Google account's security settings (Third-party access).",
+    cli: "Run `gh auth logout` in a terminal to sign out.",
+    session: "Unlink this device from WhatsApp on your phone (Settings → Linked devices).",
+  };
+
+  const inputCls =
+    "w-full h-10 px-3 rounded-lg bg-zinc-950 border border-zinc-800 text-[13.5px] text-zinc-100 " +
+    "placeholder:text-zinc-600 outline-none focus:border-zinc-600 transition font-mono";
+
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-40" onClick={onClose}>
+      <div
+        className="screen w-[460px] max-w-[88vw] max-h-[84vh] overflow-y-auto console rounded-2xl border border-zinc-700 bg-zinc-900 p-6"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center gap-3.5 mb-4">
+          <ConnectorLogo id={c.id} name={c.name} size={42} />
+          <div className="flex-1">
+            <h2 className="text-[16px] font-semibold">{c.name}</h2>
+            <div className="text-[12px] text-zinc-400">{AUTH_LABELS[c.auth_kind] ?? ""}</div>
+          </div>
+          {connected && (
+            <span className="inline-flex items-center gap-1.5 text-[11px] text-zinc-200">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400/90" /> Connected
+            </span>
+          )}
+        </div>
+
+        {about && about.about && (
+          <p className="text-[13px] text-zinc-300 leading-relaxed mb-3">{about.about}</p>
+        )}
+        {about && about.provides.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 mb-4">
+            {about.provides.map((p) => (
+              <span key={p} className="px-2 py-0.5 rounded-md border border-zinc-800 bg-zinc-950/70 text-[11px] text-zinc-400">
+                {p}
+              </span>
+            ))}
+          </div>
+        )}
+
+        {c.accounts.length > 0 && (
+          <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 px-4 py-1 mb-4">
+            {c.accounts.map((a) => (
+              <div key={a.identity} className="py-2.5 border-b border-zinc-800/60 last:border-0">
+                <div className="text-[13px] text-zinc-100">{a.identity}</div>
+                <div className="text-[11.5px] text-zinc-500 mt-0.5">{a.detail}</div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {error && (
+          <div className="mb-3 rounded-xl border border-red-900/60 bg-red-950/30 px-4 py-3 text-[12.5px] text-red-300 select-text">
+            {error}
+          </div>
+        )}
+
+        {phase === "done" && (
+          <div className="mb-3 rounded-xl border border-zinc-700 bg-zinc-950/60 px-4 py-3 text-[13px] text-zinc-100">
+            ✓ {isComposioCard ? "Hosted sign-in enabled." : `${c.name} connected.`}
+          </div>
+        )}
+
+        {phase === "browser-wait" && (
+          <div className="mb-3 flex items-center gap-3 rounded-xl border border-zinc-700 bg-zinc-950/60 px-4 py-3">
+            <div className="w-2 h-2 rounded-full bg-zinc-100 pulse-dot" />
+            <span className="text-[13px] text-zinc-200">
+              Finish signing in to {c.name} in your browser…
+            </span>
+          </div>
+        )}
+
+        {phase === "keys" && (
+          <div className="mb-3 space-y-3">
+            {(isComposioCard || keyFields.length > 0) &&
+              (isComposioCard ? [c.key_fields![0]] : keyFields).map((f) => (
+                <div key={f.secret}>
+                  <div className="flex items-baseline justify-between mb-1.5">
+                    <label className="text-[12.5px] text-zinc-300">{f.label}</label>
+                    {f.get_url && (
+                      <button
+                        onClick={() => IN_TAURI && invoke("open_url", { url: f.get_url }).catch(() => window.open(f.get_url))}
+                        onClickCapture={() => !IN_TAURI && window.open(f.get_url)}
+                        className="text-[11.5px] text-zinc-400 hover:text-zinc-100 underline underline-offset-2 transition"
+                      >
+                        Get your key →
+                      </button>
+                    )}
+                  </div>
+                  <input
+                    autoFocus
+                    className={inputCls}
+                    placeholder="Paste it here — goes straight to your Keychain"
+                    value={keyValues[f.secret] ?? ""}
+                    onChange={(e) => setKeyValues((s) => ({ ...s, [f.secret]: e.target.value }))}
+                  />
+                </div>
+              ))}
+          </div>
+        )}
+
+        {phase === "confirm-remove" && (
+          <div className="mb-3 rounded-xl border border-red-900/50 bg-red-950/20 px-4 py-3">
+            <div className="text-[13.5px] text-zinc-100 font-medium mb-1">Disconnect {c.name}?</div>
+            <div className="text-[12.5px] text-zinc-400 leading-relaxed">
+              {c.composio_slug && composioReady
+                ? "Its sign-in is revoked upstream and "
+                : ""}
+              its keys are removed from your Keychain. The system loses access until you reconnect.
+            </div>
+          </div>
+        )}
+
+        <div className="flex justify-between items-center mt-5">
+          <div>
+            {canRemove && phase === "view" && (
+              <button
+                onClick={() => setPhase("confirm-remove")}
+                className="text-[12.5px] text-zinc-500 hover:text-red-300 transition"
+              >
+                Disconnect…
+              </button>
+            )}
+            {connected && !canRemove && phase === "view" && removalNote[c.auth_kind] && (
+              <span className="text-[11px] text-zinc-600 max-w-[210px] inline-block leading-snug">
+                {removalNote[c.auth_kind]}
+              </span>
+            )}
+          </div>
+          <div className="flex gap-3">
+            <button
+              onClick={onClose}
+              className="px-4 h-10 rounded-xl text-[13.5px] text-zinc-300 hover:text-zinc-100 transition"
+            >
+              Close
+            </button>
+            {phase === "view" && !connected && c.composio_slug && composioReady && (
+              <button
+                onClick={browserConnect}
+                disabled={busy}
+                className="px-5 h-10 rounded-xl bg-zinc-100 text-zinc-950 text-[13.5px] font-medium hover:bg-white transition disabled:opacity-40"
+              >
+                Connect in browser
+              </button>
+            )}
+            {phase === "view" && !connected && (isComposioCard || keyFields.length > 0) && (
+              <button
+                onClick={() => setPhase("keys")}
+                className={
+                  "px-5 h-10 rounded-xl text-[13.5px] font-medium transition " +
+                  (c.composio_slug && composioReady
+                    ? "border border-zinc-700 text-zinc-200 hover:text-white hover:border-zinc-500"
+                    : "bg-zinc-100 text-zinc-950 hover:bg-white")
+                }
+              >
+                {isComposioCard ? "Enable" : "Use a key instead"}
+              </button>
+            )}
+            {phase === "keys" && (
+              <button
+                onClick={saveKeys}
+                disabled={busy || !Object.values(keyValues).some((v) => v.trim())}
+                className="px-5 h-10 rounded-xl bg-zinc-100 text-zinc-950 text-[13.5px] font-medium hover:bg-white transition disabled:opacity-40"
+              >
+                {busy ? "Saving…" : "Save"}
+              </button>
+            )}
+            {phase === "confirm-remove" && (
+              <button
+                onClick={disconnect}
+                disabled={busy}
+                className="px-5 h-10 rounded-xl bg-red-400/90 text-zinc-950 text-[13.5px] font-medium hover:bg-red-300 transition disabled:opacity-40"
+              >
+                {busy ? "Removing…" : "Disconnect"}
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function BrowseDirectory({
+  composioReady,
+  onConnect,
+  onBack,
+}: {
+  composioReady: boolean;
+  onConnect: (slug: string, label: string) => void;
+  onBack: () => void;
+}) {
+  const [cards, setCards] = useState<ToolkitCard[] | null>(null);
+  const [q, setQ] = useState("");
+
+  useEffect(() => {
+    (async () => {
+      if (IN_TAURI) {
+        try {
+          const r = await invoke<{ cards: ToolkitCard[] }>("composio_toolkits");
+          setCards(r.cards.filter((c) => c.slug && c.label));
+        } catch {
+          setCards(DEMO_TOOLKITS);
         }
       } else {
         await new Promise((r) => setTimeout(r, 400));
-        setConnectors(DEMO_CONNECTORS);
+        setCards(DEMO_TOOLKITS);
       }
     })();
   }, []);
 
-  if (connectors === null)
-    return (
-      <div className="flex items-center gap-3 px-10 pt-16">
-        <div className="w-2 h-2 rounded-full bg-zinc-100 pulse-dot" />
-        <span className="text-[13.5px] text-zinc-200">Reading connections…</span>
-      </div>
-    );
-
-  const cats = Array.from(new Set(connectors.map((c) => c.category)));
-  const connectedCount = connectors.filter((c) => c.status === "connected").length;
+  const filtered = (cards ?? []).filter(
+    (c) => !q || c.label.toLowerCase().includes(q.toLowerCase()) || c.blurb.toLowerCase().includes(q.toLowerCase()),
+  );
 
   return (
     <div className="screen max-w-[720px] mx-auto px-8 pt-14 pb-16">
-      <h1 className="text-[22px] font-semibold tracking-tight mb-1">Connectors</h1>
-      <p className="text-[13px] text-zinc-300 mb-7">
+      <div className="flex items-end justify-between mb-1">
+        <h1 className="text-[22px] font-semibold tracking-tight">Browse connectors</h1>
+        <button onClick={onBack} className="text-[13px] text-zinc-400 hover:text-zinc-100 transition pb-1">
+          Back
+        </button>
+      </div>
+      <p className="text-[13px] text-zinc-400 mb-5">
+        {composioReady
+          ? "One-click sign-in via hosted OAuth — nothing stored on this Mac."
+          : "Enable Composio on the Connectors page to make these one-click."}
+      </p>
+
+      <input
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+        placeholder="Search connectors…"
+        autoComplete="off"
+        spellCheck={false}
+        className="w-full h-11 px-4 mb-5 rounded-xl bg-zinc-900 border border-zinc-800 text-[14px] text-zinc-100
+                   placeholder:text-zinc-500 outline-none focus:border-zinc-600 transition"
+      />
+
+      {cards === null ? (
+        <div className="flex items-center gap-3 py-6">
+          <div className="w-2 h-2 rounded-full bg-zinc-100 pulse-dot" />
+          <span className="text-[13.5px] text-zinc-200">Loading directory…</span>
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 gap-2.5">
+          {filtered.slice(0, 60).map((t) => (
+            <div
+              key={t.slug}
+              className="rounded-2xl border border-zinc-800 bg-zinc-950/60 px-4 py-3.5 flex items-center gap-3.5"
+            >
+              {t.logo ? (
+                <img
+                  src={t.logo}
+                  alt=""
+                  className="w-[34px] h-[34px] rounded-[10px] border border-zinc-800 bg-white/95 object-contain p-1"
+                  onError={(e) => ((e.target as HTMLImageElement).style.display = "none")}
+                />
+              ) : (
+                <ConnectorLogo id={t.slug} name={t.label} />
+              )}
+              <div className="flex-1 min-w-0">
+                <div className="text-[13.5px] font-medium text-zinc-100 truncate">{t.label}</div>
+                <div className="text-[11.5px] text-zinc-500 truncate mt-0.5">{t.blurb}</div>
+              </div>
+              <button
+                onClick={() => onConnect(t.slug, t.label)}
+                className="text-[12px] px-3 py-1.5 rounded-lg bg-zinc-100 text-zinc-950 font-medium shrink-0 hover:bg-white transition"
+              >
+                Connect
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ConnectorsPane() {
+  const [connectors, setConnectors] = useState<Connector[] | null>(null);
+  const [open, setOpen] = useState<Connector | null>(null);
+  const [view, setView] = useState<"list" | "browse">("list");
+  const [filter, setFilter] = useState<"all" | "connected" | "available">("all");
+  const [q, setQ] = useState("");
+
+  const load = useCallback(async () => {
+    if (IN_TAURI) {
+      try {
+        setConnectors(await invoke<Connector[]>("list_connectors"));
+      } catch {
+        setConnectors([]);
+      }
+    } else {
+      await new Promise((r) => setTimeout(r, 400));
+      setConnectors(DEMO_CONNECTORS);
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const composioReady =
+    connectors?.some((c) => c.id === "composio" && c.status === "connected") ?? false;
+
+  if (view === "browse")
+    return (
+      <BrowseDirectory
+        composioReady={composioReady}
+        onBack={() => setView("list")}
+        onConnect={(slug, label) => {
+          setView("list");
+          setOpen({
+            id: slug,
+            name: label,
+            category: "other",
+            auth_kind: "oauth",
+            status: "available",
+            detail: "",
+            accounts: [],
+            connect_hint: "",
+            key_fields: [],
+            composio_slug: slug,
+          });
+        }}
+      />
+    );
+
+  const list = (connectors ?? []).filter((c) => {
+    if (filter === "connected" && c.status !== "connected") return false;
+    if (filter === "available" && c.status === "connected") return false;
+    if (q && !c.name.toLowerCase().includes(q.toLowerCase())) return false;
+    return true;
+  });
+  const cats = Array.from(new Set(list.map((c) => c.category)));
+  const connectedCount = (connectors ?? []).filter((c) => c.status === "connected").length;
+
+  return (
+    <div className="screen max-w-[720px] mx-auto px-8 pt-14 pb-16">
+      <div className="flex items-center justify-between mb-1">
+        <h1 className="text-[22px] font-semibold tracking-tight">Connectors</h1>
+        <button
+          onClick={() => setView("browse")}
+          className="px-3.5 h-9 rounded-lg bg-zinc-100 text-zinc-950 text-[12.5px] font-medium hover:bg-white transition"
+        >
+          Add connector
+        </button>
+      </div>
+      <p className="text-[13px] text-zinc-300 mb-5">
         {connectedCount} connected. Outside apps and accounts your system can act through.
       </p>
 
-      {cats.map((cat) => {
-        const items = connectors
-          .filter((c) => c.category === cat)
-          .sort((a, b) => (a.status === "connected" ? -1 : 1) - (b.status === "connected" ? -1 : 1));
-        return (
-          <div key={cat} className="mb-7">
-            <div className="text-[11px] uppercase tracking-[0.12em] text-zinc-500 mb-2.5">
-              {CATEGORY_LABELS[cat] ?? cat}
-            </div>
-            <div className="grid grid-cols-2 gap-2.5">
-              {items.map((c) => (
-                <ConnectorCard key={c.id} c={c} onOpen={setOpen} />
-              ))}
-            </div>
-          </div>
-        );
-      })}
+      <div className="flex items-center gap-3 mb-6">
+        <div className="flex rounded-lg border border-zinc-800 overflow-hidden">
+          {(
+            [
+              ["all", "All"],
+              ["connected", "Connected"],
+              ["available", "Not connected"],
+            ] as const
+          ).map(([id, label]) => (
+            <button
+              key={id}
+              onClick={() => setFilter(id)}
+              className={
+                "px-3.5 h-9 text-[12.5px] transition " +
+                (filter === id
+                  ? "bg-zinc-100 text-zinc-950 font-medium"
+                  : "bg-zinc-900 text-zinc-300 hover:text-zinc-100")
+              }
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Search…"
+          autoComplete="off"
+          spellCheck={false}
+          className="flex-1 h-9 px-3.5 rounded-lg bg-zinc-900 border border-zinc-800 text-[13px] text-zinc-100
+                     placeholder:text-zinc-500 outline-none focus:border-zinc-600 transition"
+        />
+      </div>
 
-      {open && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-40" onClick={() => setOpen(null)}>
-          <div
-            className="screen w-[440px] max-w-[88vw] rounded-2xl border border-zinc-700 bg-zinc-900 p-6"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center gap-3.5 mb-4">
-              <ConnectorLogo id={open.id} name={open.name} size={42} />
-              <div>
-                <h2 className="text-[16px] font-semibold">{open.name}</h2>
-                <div className="text-[12px] text-zinc-400">{AUTH_LABELS[open.auth_kind] ?? ""}</div>
+      {connectors === null ? (
+        <div className="flex items-center gap-3 py-6">
+          <div className="w-2 h-2 rounded-full bg-zinc-100 pulse-dot" />
+          <span className="text-[13.5px] text-zinc-200">Reading connections…</span>
+        </div>
+      ) : (
+        cats.map((cat) => {
+          const items = list
+            .filter((c) => c.category === cat)
+            .sort((a, b) => (a.status === "connected" ? -1 : 1) - (b.status === "connected" ? -1 : 1));
+          if (!items.length) return null;
+          return (
+            <div key={cat} className="mb-7">
+              <div className="text-[11px] uppercase tracking-[0.12em] text-zinc-500 mb-2.5">
+                {CATEGORY_LABELS[cat] ?? cat}
               </div>
-            </div>
-
-            {open.accounts.length > 0 && (
-              <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 px-4 py-1 mb-4">
-                {open.accounts.map((a) => (
-                  <div key={a.identity} className="py-2.5 border-b border-zinc-800/60 last:border-0">
-                    <div className="text-[13px] text-zinc-100">{a.identity}</div>
-                    <div className="text-[11.5px] text-zinc-500 mt-0.5">{a.detail}</div>
-                  </div>
+              <div className="grid grid-cols-2 gap-2.5">
+                {items.map((c) => (
+                  <ConnectorCard key={c.id} c={c} onOpen={setOpen} />
                 ))}
               </div>
-            )}
-
-            {open.status !== "connected" && (
-              <p className="text-[13px] text-zinc-300 leading-relaxed mb-2">{open.detail}</p>
-            )}
-            {open.connect_hint && (
-              <p className="text-[12.5px] text-zinc-400 leading-relaxed">{open.connect_hint}</p>
-            )}
-
-            <div className="flex justify-end gap-3 mt-5">
-              <button
-                onClick={() => setOpen(null)}
-                className="px-4 h-10 rounded-xl text-[13.5px] text-zinc-300 hover:text-zinc-100 transition"
-              >
-                Close
-              </button>
-              {open.status !== "connected" && (
-                <button className="px-5 h-10 rounded-xl bg-zinc-100 text-zinc-950 text-[13.5px] font-medium hover:bg-white transition">
-                  Connect
-                </button>
-              )}
             </div>
-          </div>
-        </div>
+          );
+        })
+      )}
+
+      {open && (
+        <ConnectorModal
+          c={open}
+          composioReady={composioReady}
+          onClose={() => setOpen(null)}
+          onChanged={load}
+        />
       )}
     </div>
   );
