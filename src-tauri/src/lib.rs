@@ -170,6 +170,28 @@ fn save_setup_config(
     std::fs::write(format!("{dir}/app-setup.yaml"), yaml).map_err(|e| e.to_string())
 }
 
+/// Read back the saved setup answers for the Configuration pane.
+#[tauri::command]
+fn load_setup_config() -> Option<std::collections::BTreeMap<String, String>> {
+    let home = std::env::var("HOME").ok()?;
+    let text = std::fs::read_to_string(format!("{home}/.aos/config/app-setup.yaml")).ok()?;
+    let value: serde_yaml::Value = serde_yaml::from_str(&text).ok()?;
+    let map = value.as_mapping()?;
+    Some(
+        map.iter()
+            .filter_map(|(k, v)| {
+                Some((
+                    k.as_str()?.to_string(),
+                    match v {
+                        serde_yaml::Value::String(s) => s.clone(),
+                        other => serde_yaml::to_string(other).ok()?.trim().to_string(),
+                    },
+                ))
+            })
+            .collect(),
+    )
+}
+
 // ── Home data ───────────────────────────────────────────────────────
 
 #[derive(serde::Serialize)]
@@ -652,6 +674,7 @@ pub fn run() {
             list_modules,
             set_module_enabled,
             save_setup_config,
+            load_setup_config,
             home_data,
             search_vault
         ])
