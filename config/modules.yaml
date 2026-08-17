@@ -249,24 +249,6 @@ modules:
     detect:
       paths: ["$HOME/.aos/data/tracking.db"]
 
-  - id: automations
-    name: Automations (n8n)
-    tier: experimental
-    kind: daemon
-    category: arm
-    tagline: A visual engine for scheduled routines and triggers.
-    ask: "Install the n8n automation engine? It stays running and uses real memory."
-    costs: { resident_ram: "~300 MB resident", disk: "~500 MB" }
-    services: ["com.aos.n8n"]
-    # The plist step runs last, by design: n8n once had a LaunchAgent deployed
-    # while its binary never was, giving a crash loop nobody owned.
-    install:
-      brew: ["n8n"]
-    detect:
-      services: ["com.aos.n8n"]
-    health:
-      port: 5678
-
   - id: remote-access
     kind: resource
     tier: experimental

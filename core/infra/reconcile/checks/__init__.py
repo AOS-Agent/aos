@@ -18,7 +18,6 @@ from .arms_coverage import ArmsCoverageCheck
 from .launcher_naming import LauncherNamingCheck
 from .log_location import LogLocationCheck
 from .mcp_location import McpLocationCheck
-from .n8n import N8nServiceCheck
 from .network_binding import NetworkBindingCheck
 from .power_autorestart import PowerAutorestartCheck
 from .push_guard import PushGuardCheck
@@ -86,8 +85,6 @@ ALL_CHECKS = [
     # Services — transcriber running and healthy
     TranscriberServiceCheck,
 
-    # Services — n8n automation engine running and healthy
-    N8nServiceCheck,
 
     # Tooling — dev-browser binary for Chrome automation (blueprint,
     # clone-website, dissect, frontend-craft, harvest skills; reverser agent)

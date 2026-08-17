@@ -32,7 +32,6 @@ function getPageContext(pathname: string, searchParams: URLSearchParams): { labe
   if (pathname === '/people') return { label: 'People', detail: null }
   if (pathname === '/system') return { label: 'System', detail: null }
   if (pathname === '/agents') return { label: 'Agents', detail: null }
-  if (pathname === '/automations') return { label: 'Automations', detail: null }
   if (pathname === '/chat') return { label: 'Chat', detail: null }
   if (pathname === '/') return { label: 'Companion', detail: null }
   return null

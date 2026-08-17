@@ -12,7 +12,6 @@ Shape, fixed by service_registry and migration 105:
 
     disabled:
       - transcriber
-      - n8n
 
 Names are SERVICE names, not launchd labels and not module ids:
 `com.aos.transcriber` is recorded as `transcriber`.
