@@ -1,0 +1,173 @@
+# modules.yaml — the single source of truth for AOS arms & connectors.
+#
+# Read by three consumers, which must never drift apart:
+#   1. install.sh        — core path installs only category: core/standard
+#   2. onboarding        — asks the operator per `ask:` text, arm by arm
+#   3. the desktop app   — renders the Arms & Connectors panel from this file
+#
+# Every module pays rent: costs are declared honestly and shown to the
+# operator BEFORE activation. Nothing invasive activates without `consent`.
+#
+# detect probes (any one class may be present; first present class decides):
+#   services:  [launchd labels]  — active iff any label is loaded
+#   paths:     [file/dir paths]  — active iff any exists ($HOME expanded)
+#   commands:  [binary names]    — active iff any resolves on PATH or listed dirs
+#
+# Spec: ~/vault/knowledge/specs/installer-modularization.md
+schema: 1
+
+modules:
+  - id: vault
+    name: Knowledge Vault
+    category: standard
+    tagline: A private knowledge base the system reads and writes.
+    ask: "Keep a knowledge vault — notes, research, decisions the system can use?"
+    costs: { resident_ram: "0", disk: "grows with use" }
+    detect:
+      paths: ["$HOME/vault"]
+
+  - id: memory-search
+    name: Memory & Search
+    category: standard
+    tagline: The system remembers and finds anything it has seen.
+    ask: "Index your vault and logs so everything is searchable?"
+    costs: { resident_ram: "0 (index jobs only)", disk: "index ~100 MB" }
+    detect:
+      commands: ["qmd"]
+
+  - id: work
+    name: Work
+    category: standard
+    tagline: Tasks, projects, and goals tracked with you.
+    ask: "Track tasks and projects together?"
+    costs: { resident_ram: "0", disk: "minimal" }
+    detect:
+      paths: ["$HOME/.aos/work"]
+
+  - id: telegram
+    name: Telegram
+    category: arm
+    tagline: Talk to your system from your phone — messages, voice notes, briefings.
+    ask: "Connect Telegram so you can reach the system from anywhere?"
+    costs: { resident_ram: "~60 MB (bridge)", disk: "minimal" }
+    services: ["com.aos.bridge"]
+    secrets: ["TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"]
+    detect:
+      services: ["com.aos.bridge"]
+
+  - id: whatsapp
+    name: WhatsApp
+    category: arm
+    tagline: WhatsApp messages flow through your system.
+    ask: "Connect WhatsApp (QR pairing with your phone)?"
+    costs: { resident_ram: "~40 MB", disk: "Go toolchain ~500 MB" }
+    services: ["com.aos.whatsmeow"]
+    detect:
+      services: ["com.aos.whatsmeow", "com.agent.whatsmeow"]
+
+  - id: comms-intelligence
+    name: Comms Intelligence
+    category: arm
+    tagline: Nightly analysis of your communications — contacts, patterns, follow-ups.
+    ask: "Let the system study your communications overnight and surface what matters?"
+    costs: { resident_ram: "0 (nightly jobs)", tokens: "nightly Claude usage" }
+    detect:
+      paths: ["$HOME/.aos/data/comms.db"]
+
+  - id: voice-dictation
+    name: Voice — Dictation
+    category: arm
+    tagline: On-device speech to text with a model that learns your vocabulary.
+    ask: "Enable on-device dictation? Downloads a 1.6 GB speech model once."
+    costs: { resident_ram: "~20 MB at rest, ~2 GB while transcribing", disk: "1.6 GB model", download: "1.6 GB" }
+    services: ["com.aos.transcriber"]
+    requires: { arch: arm64 }
+    detect:
+      services: ["com.aos.transcriber"]
+
+  - id: voice-meetings
+    name: Voice — Meetings
+    category: arm
+    tagline: Meeting notes with named speakers, recognized by voice.
+    ask: "Enable meeting transcription with speaker recognition?"
+    costs: { resident_ram: "0 (batch jobs)", disk: "~1 GB models", download: "~1 GB" }
+    status_note: "arrives with a system update"
+    detect:
+      paths: ["$HOME/.aos/models/diarization"]
+
+  - id: content-extraction
+    name: Content Extraction
+    category: arm
+    tagline: Pull transcripts and content out of YouTube, X, Instagram, TikTok.
+    ask: "Extract and archive content from social links you share?"
+    costs: { resident_ram: "0", disk: "several GB (OCR models)", download: "multi-GB" }
+    detect:
+      commands: ["yt-dlp"]
+
+  - id: shipment-tracking
+    name: Shipment Tracking
+    category: arm
+    tagline: Watches carriers and tells you where packages are.
+    ask: "Track shipments automatically?"
+    costs: { resident_ram: "0 (polling jobs)", network: "carrier APIs every 30 min" }
+    detect:
+      paths: ["$HOME/.aos/data/tracking.db"]
+
+  - id: automations
+    name: Automations (n8n)
+    category: arm
+    tagline: A visual engine for scheduled routines and triggers.
+    ask: "Install the n8n automation engine? It stays running and uses real memory."
+    costs: { resident_ram: "~300 MB resident", disk: "~500 MB" }
+    services: ["com.aos.n8n"]
+    detect:
+      services: ["com.aos.n8n"]
+
+  - id: remote-access
+    name: Remote Access
+    category: arm
+    tagline: Reach this machine securely from your phone or laptop.
+    ask: "Set up secure remote access (Tailscale + SSH)?"
+    costs: { resident_ram: "~50 MB (tailscaled)" }
+    detect:
+      commands: ["tailscale"]
+
+  - id: appliance-mode
+    name: Appliance Mode
+    category: arm
+    tagline: Headless always-on tuning — never sleeps, boots after power loss.
+    ask: "Is this a dedicated always-on machine? (Never choose this on a laptop.)"
+    consent: "Changes power, login, and screen-lock behavior. Meant only for a dedicated Mac that stays plugged in."
+    costs: { resident_ram: "0" }
+    detect:
+      paths: ["$HOME/.aos/config/appliance-mode"]
+
+  - id: sentinel
+    name: Sentinel (iMessage)
+    category: arm
+    tagline: Watches iMessage for commitments you make and drafts follow-through.
+    ask: "Allow the system to read iMessage and act on commitments? Off unless you say yes."
+    consent: "Reads your Messages database (requires Full Disk Access) and can draft outbound replies for your approval. Private by design, but this is the most personal arm there is."
+    costs: { resident_ram: "~30 MB", access: "Full Disk Access" }
+    services: ["com.aos.sentinel"]
+    detect:
+      services: ["com.aos.sentinel"]
+
+  - id: observability
+    name: Observability
+    category: standard
+    tagline: See what's running, what's healthy, and what the system did.
+    ask: null   # default on; viewable, not asked
+    costs: { resident_ram: "~0 (scheduler)" }
+    services: ["com.aos.scheduler"]
+    detect:
+      services: ["com.aos.scheduler"]
+
+  - id: orchestration
+    name: Orchestration
+    category: standard
+    tagline: Big jobs run as coordinated agent fleets — the graph engine.
+    ask: null   # capability of the agent layer; nothing extra to install
+    costs: { resident_ram: "0 at rest; agents while running" }
+    detect:
+      paths: ["$HOME/aos/core"]

@@ -143,6 +143,180 @@ fn cmd_ok(bin: &str, args: &[&str]) -> Option<String> {
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
 }
 
+// ── Modules (arms & connectors) ─────────────────────────────────────
+
+#[derive(serde::Deserialize)]
+struct Manifest {
+    modules: Vec<ModuleDef>,
+}
+
+#[derive(serde::Deserialize, serde::Serialize, Clone, Default)]
+struct Detect {
+    #[serde(default)]
+    services: Vec<String>,
+    #[serde(default)]
+    paths: Vec<String>,
+    #[serde(default)]
+    commands: Vec<String>,
+}
+
+#[derive(serde::Deserialize, serde::Serialize, Clone)]
+struct ModuleDef {
+    id: String,
+    name: String,
+    category: String,
+    tagline: String,
+    #[serde(default)]
+    ask: Option<String>,
+    #[serde(default)]
+    consent: Option<String>,
+    #[serde(default)]
+    costs: std::collections::BTreeMap<String, String>,
+    #[serde(default)]
+    services: Vec<String>,
+    #[serde(default)]
+    secrets: Vec<String>,
+    #[serde(default)]
+    status_note: Option<String>,
+    #[serde(default)]
+    detect: Option<Detect>,
+}
+
+#[derive(serde::Serialize)]
+struct ModuleStatus {
+    #[serde(flatten)]
+    def: ModuleDef,
+    status: String,     // active | available
+    can_toggle: bool,   // service-backed and plist present on disk
+}
+
+const BUNDLED_MANIFEST: &str = include_str!("../modules.yaml");
+
+fn load_manifest() -> Result<Manifest, String> {
+    let home = std::env::var("HOME").unwrap_or_default();
+    let runtime = format!("{home}/aos/config/modules.yaml");
+    let text = std::fs::read_to_string(&runtime).unwrap_or_else(|_| BUNDLED_MANIFEST.to_string());
+    serde_yaml::from_str(&text).map_err(|e| format!("modules.yaml parse error: {e}"))
+}
+
+fn loaded_launchd_labels() -> std::collections::HashSet<String> {
+    cmd_ok("launchctl", &["list"])
+        .map(|out| {
+            out.lines()
+                .filter_map(|l| l.split_whitespace().nth(2).map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn command_exists(name: &str, home: &str) -> bool {
+    let dirs = [
+        "/opt/homebrew/bin",
+        "/usr/local/bin",
+        "/usr/bin",
+        &format!("{home}/.bun/bin"),
+        &format!("{home}/.local/bin"),
+        &format!("{home}/.cargo/bin"),
+    ];
+    dirs.iter()
+        .any(|d| std::path::Path::new(&format!("{d}/{name}")).exists())
+        || cmd_ok("which", &[name]).is_some()
+}
+
+/// The Arms & Connectors panel data: manifest merged with live system state.
+#[tauri::command]
+fn list_modules() -> Result<Vec<ModuleStatus>, String> {
+    let home = std::env::var("HOME").map_err(|e| e.to_string())?;
+    let manifest = load_manifest()?;
+    let loaded = loaded_launchd_labels();
+
+    Ok(manifest
+        .modules
+        .into_iter()
+        .map(|m| {
+            let active = match &m.detect {
+                Some(d) if !d.services.is_empty() => d.services.iter().any(|s| loaded.contains(s)),
+                Some(d) if !d.paths.is_empty() => d
+                    .paths
+                    .iter()
+                    .any(|p| std::path::Path::new(&p.replace("$HOME", &home)).exists()),
+                Some(d) if !d.commands.is_empty() => d.commands.iter().any(|c| command_exists(c, &home)),
+                _ => false,
+            };
+            let can_toggle = m.services.iter().any(|label| {
+                std::path::Path::new(&format!("{home}/Library/LaunchAgents/{label}.plist")).exists()
+            });
+            ModuleStatus {
+                def: m,
+                status: if active { "active" } else { "available" }.into(),
+                can_toggle,
+            }
+        })
+        .collect())
+}
+
+/// Start or stop a service-backed module NOW (launchctl), and record the
+/// desired state for the system engine to reconcile.
+#[tauri::command]
+fn set_module_enabled(id: String, enabled: bool) -> Result<(), String> {
+    let home = std::env::var("HOME").map_err(|e| e.to_string())?;
+    let manifest = load_manifest()?;
+    let module = manifest
+        .modules
+        .into_iter()
+        .find(|m| m.id == id)
+        .ok_or_else(|| format!("unknown module {id}"))?;
+    if module.services.is_empty() {
+        return Err("This module isn't service-backed — it's managed by the system engine.".into());
+    }
+    let uid = cmd_ok("id", &["-u"]).ok_or("cannot resolve uid")?;
+
+    let mut errors = Vec::new();
+    for label in &module.services {
+        let plist = format!("{home}/Library/LaunchAgents/{label}.plist");
+        if !std::path::Path::new(&plist).exists() {
+            continue;
+        }
+        let result = if enabled {
+            Command::new("launchctl")
+                .args(["bootstrap", &format!("gui/{uid}"), &plist])
+                .output()
+        } else {
+            Command::new("launchctl")
+                .args(["bootout", &format!("gui/{uid}/{label}")])
+                .output()
+        };
+        match result {
+            Ok(o) if o.status.success() => {}
+            Ok(o) => {
+                let msg = String::from_utf8_lossy(&o.stderr).trim().to_string();
+                // bootout on an already-stopped service returns an error we can ignore
+                if !(enabled == false && msg.contains("No such process")) {
+                    errors.push(format!("{label}: {msg}"));
+                }
+            }
+            Err(e) => errors.push(format!("{label}: {e}")),
+        }
+    }
+
+    // Record desired state for the system engine (reconciled on update).
+    let intent_path = format!("{home}/.aos/config/app-modules.yaml");
+    let mut state: std::collections::BTreeMap<String, bool> = std::fs::read_to_string(&intent_path)
+        .ok()
+        .and_then(|t| serde_yaml::from_str(&t).ok())
+        .unwrap_or_default();
+    state.insert(id, enabled);
+    if let Ok(text) = serde_yaml::to_string(&state) {
+        let _ = std::fs::write(&intent_path, text);
+    }
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("; "))
+    }
+}
+
 /// Machine-readiness checks, run before install and before adding any arm.
 /// Missing-but-installable tools are warnings (the installer handles them);
 /// only conditions the installer cannot fix are failures.
@@ -299,7 +473,9 @@ pub fn run() {
             detect_system,
             check_updates,
             run_update,
-            run_preflight
+            run_preflight,
+            list_modules,
+            set_module_enabled
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
