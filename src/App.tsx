@@ -15,7 +15,27 @@ type Screen =
   | "install"
   | "done"
   | "update"
-  | "arms";
+  | "arms"
+  | "home";
+
+interface TaskRow {
+  id: string;
+  title: string;
+  urgent: boolean;
+}
+interface ServiceRow {
+  name: string;
+  label: string;
+}
+interface ActivityRow {
+  title: string;
+  when: string;
+}
+interface HomeData {
+  tasks: TaskRow[];
+  services: ServiceRow[];
+  activity: ActivityRow[];
+}
 
 interface ModuleInfo {
   id: string;
@@ -121,7 +141,7 @@ function Welcome({
       <Mark />
       <div className="text-center space-y-2">
         <h1 className="text-[26px] font-semibold tracking-tight text-zinc-50">Welcome</h1>
-        <p className="text-[14px] text-zinc-400 max-w-sm leading-relaxed">
+        <p className="text-[14px] text-zinc-200 max-w-sm leading-relaxed">
           Run your own agentic operating system on this Mac, or join a workspace
           that's already running one.
         </p>
@@ -130,7 +150,7 @@ function Welcome({
         <PrimaryButton onClick={onSetup}>Set up this Mac</PrimaryButton>
         <button
           onClick={onJoin}
-          className="px-4 h-10 rounded-xl text-[13.5px] text-zinc-400 hover:text-zinc-100 transition"
+          className="px-4 h-10 rounded-xl text-[13.5px] text-zinc-200 hover:text-zinc-100 transition"
         >
           Join a workspace instead
         </button>
@@ -220,7 +240,7 @@ function Preflight({
     <div className="screen h-full flex flex-col items-center justify-center">
       <div className="w-[560px] max-w-[86vw]">
         <h1 className="text-[22px] font-semibold tracking-tight mb-1">Checking your system</h1>
-        <p className="text-[13px] text-zinc-500 mb-6">
+        <p className="text-[13px] text-zinc-300 mb-6">
           Making sure this Mac is ready before anything is installed.
         </p>
 
@@ -228,7 +248,7 @@ function Preflight({
           {checks === null ? (
             <div className="flex items-center gap-3 py-4">
               <div className="w-2 h-2 rounded-full bg-zinc-100 pulse-dot" />
-              <span className="text-[13.5px] text-zinc-400">Inspecting…</span>
+              <span className="text-[13.5px] text-zinc-200">Inspecting…</span>
             </div>
           ) : (
             checks.slice(0, revealed).map((c) => (
@@ -237,7 +257,7 @@ function Preflight({
                   <StatusIcon status={c.status} />
                 </div>
                 <span className="text-[14px] text-zinc-200 w-40 shrink-0">{c.label}</span>
-                <span className="text-[12.5px] text-zinc-500 truncate">{c.detail}</span>
+                <span className="text-[12.5px] text-zinc-300 truncate">{c.detail}</span>
               </div>
             ))
           )}
@@ -247,7 +267,7 @@ function Preflight({
           <p
             className={
               "screen text-[13px] mt-4 " +
-              (hasFail ? "text-red-300" : hasWarn ? "text-zinc-400" : "text-zinc-300")
+              (hasFail ? "text-red-300" : hasWarn ? "text-zinc-200" : "text-zinc-300")
             }
           >
             {hasFail
@@ -261,14 +281,14 @@ function Preflight({
         <div className="flex justify-between mt-8">
           <button
             onClick={onBack}
-            className="px-4 h-11 rounded-xl text-[14px] text-zinc-400 hover:text-zinc-100 transition"
+            className="px-4 h-11 rounded-xl text-[14px] text-zinc-200 hover:text-zinc-100 transition"
           >
             Back
           </button>
           <div className="flex gap-3">
             <button
               onClick={load}
-              className="px-4 h-11 rounded-xl text-[14px] text-zinc-400 hover:text-zinc-100 transition"
+              className="px-4 h-11 rounded-xl text-[14px] text-zinc-200 hover:text-zinc-100 transition"
             >
               Check again
             </button>
@@ -293,7 +313,7 @@ function Member({ onBack }: { onBack: () => void }) {
       <Mark />
       <div className="text-center space-y-2">
         <h1 className="text-[24px] font-semibold tracking-tight">Join a workspace</h1>
-        <p className="text-[14px] text-zinc-400 max-w-sm leading-relaxed">
+        <p className="text-[14px] text-zinc-200 max-w-sm leading-relaxed">
           Nothing is installed on this Mac — you'll be connected to a workspace
           that's already running.
         </p>
@@ -302,7 +322,7 @@ function Member({ onBack }: { onBack: () => void }) {
       {submitted ? (
         <div className="w-[380px] max-w-[80vw] rounded-2xl border border-zinc-800 bg-zinc-950/60 px-5 py-4 text-center">
           <div className="text-[13.5px] text-zinc-100 font-medium">Invite saved</div>
-          <div className="text-[12.5px] text-zinc-500 mt-1 leading-relaxed">
+          <div className="text-[12.5px] text-zinc-300 mt-1 leading-relaxed">
             Workspaces arrive with the next major update. This invite will work
             here the moment they do.
           </div>
@@ -319,7 +339,7 @@ function Member({ onBack }: { onBack: () => void }) {
             onChange={(e) => setCode(e.target.value.toUpperCase())}
             placeholder="INVITE CODE"
             className="w-64 h-12 px-4 text-center tracking-[0.2em] rounded-xl bg-zinc-900 border border-zinc-800
-                       font-mono text-[15px] text-zinc-100 placeholder:text-zinc-600 placeholder:tracking-normal
+                       font-mono text-[15px] text-zinc-100 placeholder:text-zinc-500 placeholder:tracking-normal
                        outline-none focus:border-zinc-600 transition"
           />
           <PrimaryButton onClick={() => setSubmitted(true)} disabled={code.trim().length < 6}>
@@ -330,7 +350,7 @@ function Member({ onBack }: { onBack: () => void }) {
 
       <button
         onClick={onBack}
-        className="px-4 h-10 rounded-xl text-[13.5px] text-zinc-500 hover:text-zinc-100 transition"
+        className="px-4 h-10 rounded-xl text-[13.5px] text-zinc-300 hover:text-zinc-100 transition"
       >
         Back
       </button>
@@ -359,7 +379,7 @@ function WelcomeBack({
         <h1 className="text-[26px] font-semibold tracking-tight text-zinc-50">
           Welcome back{sys.operator ? `, ${sys.operator}` : ""}
         </h1>
-        <div className="flex items-center justify-center gap-2 text-[13px] text-zinc-500">
+        <div className="flex items-center justify-center gap-2 text-[13px] text-zinc-300">
           <span className="px-2 py-0.5 rounded-md border border-zinc-800 bg-zinc-900 font-mono text-[12px] text-zinc-300">
             {sys.version ?? "unknown"}
           </span>
@@ -371,13 +391,13 @@ function WelcomeBack({
         {checking ? (
           <div className="flex items-center gap-3">
             <div className="w-2 h-2 rounded-full bg-zinc-100 pulse-dot" />
-            <span className="text-[13.5px] text-zinc-400">Checking for updates…</span>
+            <span className="text-[13.5px] text-zinc-200">Checking for updates…</span>
           </div>
         ) : updateAvailable ? (
           <div className="flex items-center justify-between gap-4">
             <div>
               <div className="text-[13.5px] text-zinc-100 font-medium">Update available</div>
-              <div className="text-[12px] text-zinc-500 mt-0.5">
+              <div className="text-[12px] text-zinc-300 mt-0.5">
                 A newer version is ready to install.
               </div>
             </div>
@@ -391,7 +411,7 @@ function WelcomeBack({
           </div>
         ) : (
           <div className="flex items-center gap-3">
-            <svg width="14" height="14" viewBox="0 0 14 14" className="text-zinc-400">
+            <svg width="14" height="14" viewBox="0 0 14 14" className="text-zinc-200">
               <path
                 d="M2.5 7.5 5.5 10.5 11.5 3.5"
                 stroke="currentColor"
@@ -401,7 +421,7 @@ function WelcomeBack({
                 strokeLinejoin="round"
               />
             </svg>
-            <span className="text-[13.5px] text-zinc-400">You're up to date</span>
+            <span className="text-[13.5px] text-zinc-200">You're up to date</span>
           </div>
         )}
       </div>
@@ -459,7 +479,7 @@ function Update({ onFinished }: { onFinished: (code: number) => void }) {
           <div className="w-2 h-2 rounded-full bg-zinc-100 pulse-dot" />
           <h1 className="text-[22px] font-semibold tracking-tight">Updating</h1>
         </div>
-        <p className="text-[13px] text-zinc-500 mb-6">
+        <p className="text-[13px] text-zinc-300 mb-6">
           Pulling the latest version and restarting services. Hold on.
         </p>
 
@@ -472,10 +492,254 @@ function Update({ onFinished }: { onFinished: (code: number) => void }) {
         <div
           ref={consoleRef}
           className="console h-56 overflow-y-auto rounded-xl border border-zinc-800 bg-black/60 px-4 py-3
-                     font-mono text-[11.5px] leading-relaxed text-zinc-500 whitespace-pre-wrap select-text"
+                     font-mono text-[11.5px] leading-relaxed text-zinc-300 whitespace-pre-wrap select-text"
         >
           {lines.join("\n") || "Starting…"}
         </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── screen: home ── */
+
+const DEMO_HOME: HomeData = {
+  tasks: [
+    { id: "t#906", title: "Blaxle P0: name decision + churn analysis", urgent: true },
+    { id: "aos#155", title: "Kanban Phase 0", urgent: false },
+    { id: "t#881", title: "Verb derivation trace engine", urgent: true },
+    { id: "aos#75.4", title: "Speaker diarization", urgent: false },
+  ],
+  services: [
+    { name: "bridge", label: "com.aos.bridge" },
+    { name: "qareen", label: "com.aos.qareen" },
+    { name: "transcriber", label: "com.aos.transcriber" },
+    { name: "scheduler", label: "com.aos.scheduler" },
+    { name: "sentinel", label: "com.aos.sentinel" },
+    { name: "n8n", label: "com.aos.n8n" },
+  ],
+  activity: [
+    { title: "Installer Modularization — Core vs Arms", when: "1h ago" },
+    { title: "Blaxle — Architecture Synthesis", when: "3h ago" },
+    { title: "Graph Engineering explained", when: "7h ago" },
+  ],
+};
+
+function Card({
+  title,
+  children,
+  className = "",
+}: {
+  title: string;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <div className={"rounded-2xl border border-zinc-800 bg-zinc-950/60 px-5 py-4 " + className}>
+      <div className="text-[11px] uppercase tracking-[0.12em] text-zinc-500 mb-3">{title}</div>
+      {children}
+    </div>
+  );
+}
+
+function Home({
+  sys,
+  onArms,
+  onUpdate,
+}: {
+  sys: SystemInfo | null;
+  onArms: () => void;
+  onUpdate: () => void;
+}) {
+  const [data, setData] = useState<HomeData | null>(null);
+  const [modules, setModules] = useState<ModuleInfo[] | null>(null);
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<string | null>(null);
+  const [searching, setSearching] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      if (IN_TAURI) {
+        try {
+          setData(await invoke<HomeData>("home_data"));
+        } catch {
+          setData({ tasks: [], services: [], activity: [] });
+        }
+        try {
+          setModules(await invoke<ModuleInfo[]>("list_modules"));
+        } catch {
+          setModules([]);
+        }
+      } else {
+        await new Promise((r) => setTimeout(r, 400));
+        setData(DEMO_HOME);
+        setModules(DEMO_MODULES);
+      }
+    })();
+  }, []);
+
+  const runSearch = useCallback(async () => {
+    const q = query.trim();
+    if (!q) return;
+    setSearching(true);
+    setResults(null);
+    if (IN_TAURI) {
+      try {
+        setResults(await invoke<string>("search_vault", { query: q }));
+      } catch (e) {
+        setResults(String(e));
+      }
+    } else {
+      await new Promise((r) => setTimeout(r, 500));
+      setResults(
+        "1. knowledge/specs/blaxle-architecture.md — Blaxle — Architecture Synthesis\n2. knowledge/specs/installer-modularization.md — Installer Modularization",
+      );
+    }
+    setSearching(false);
+  }, [query]);
+
+  const updateAvailable = sys?.update_status === "update_available";
+  const arms = (modules ?? []).filter((m) => m.category === "arm");
+  const hour = new Date().getHours();
+  const greeting = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
+
+  return (
+    <div className="screen h-full overflow-y-auto console">
+      <div className="max-w-[760px] mx-auto px-8 pt-14 pb-16">
+        {/* header */}
+        <div className="flex items-center gap-3 mb-8">
+          <Mark size={34} />
+          <div className="flex-1">
+            <div className="text-[17px] font-semibold tracking-tight leading-tight">
+              {greeting}
+              {sys?.operator ? `, ${sys.operator}` : ""}
+            </div>
+            <div className="flex items-center gap-2 text-[11.5px] text-zinc-500 mt-0.5">
+              <span className="font-mono">{sys?.version ?? ""}</span>
+              {updateAvailable ? (
+                <button onClick={onUpdate} className="text-zinc-200 hover:text-white transition underline underline-offset-2">
+                  update available
+                </button>
+              ) : (
+                <span>up to date</span>
+              )}
+            </div>
+          </div>
+          <button
+            onClick={onArms}
+            className="px-3.5 h-9 rounded-lg border border-zinc-800 text-[12.5px] text-zinc-200 hover:text-white hover:border-zinc-600 transition"
+          >
+            Arms &amp; Connectors
+          </button>
+        </div>
+
+        {/* search */}
+        <div className="mb-4">
+          <div className="flex items-center gap-2 rounded-xl border border-zinc-800 bg-zinc-900 px-4 h-12 focus-within:border-zinc-600 transition">
+            <svg width="14" height="14" viewBox="0 0 14 14" className="text-zinc-500 shrink-0">
+              <circle cx="6" cy="6" r="4.2" stroke="currentColor" strokeWidth="1.6" fill="none" />
+              <path d="M9.2 9.2 12.5 12.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+            </svg>
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && runSearch()}
+              placeholder="Search everything the system knows…"
+              autoComplete="off"
+              spellCheck={false}
+              className="flex-1 bg-transparent outline-none text-[14px] text-zinc-100 placeholder:text-zinc-500"
+            />
+            {searching && <div className="w-2 h-2 rounded-full bg-zinc-100 pulse-dot shrink-0" />}
+          </div>
+          {results !== null && (
+            <div className="screen mt-2 rounded-xl border border-zinc-800 bg-black/50 px-4 py-3 font-mono text-[11.5px] leading-relaxed text-zinc-300 whitespace-pre-wrap select-text max-h-48 overflow-y-auto console">
+              {results || "No results."}
+            </div>
+          )}
+        </div>
+
+        {data === null ? (
+          <div className="flex items-center gap-3 py-8">
+            <div className="w-2 h-2 rounded-full bg-zinc-100 pulse-dot" />
+            <span className="text-[13.5px] text-zinc-200">Reading system state…</span>
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 gap-4">
+            <Card title="Work" className="col-span-2 sm:col-span-1">
+              {data.tasks.length ? (
+                data.tasks.slice(0, 5).map((t) => (
+                  <div key={t.id} className="flex items-baseline gap-2.5 py-1.5">
+                    <div
+                      className={
+                        "w-1.5 h-1.5 rounded-full shrink-0 translate-y-[-1px] " +
+                        (t.urgent ? "bg-zinc-100" : "border border-zinc-600")
+                      }
+                    />
+                    <span className="text-[13px] text-zinc-100 leading-snug flex-1 min-w-0 truncate">
+                      {t.title}
+                    </span>
+                    <span className="font-mono text-[10.5px] text-zinc-500 shrink-0">{t.id}</span>
+                  </div>
+                ))
+              ) : (
+                <div className="text-[13px] text-zinc-500">Nothing queued today.</div>
+              )}
+            </Card>
+
+            <Card title="System" className="col-span-2 sm:col-span-1">
+              {data.services.slice(0, 5).map((s) => (
+                <div key={s.label} className="flex items-center gap-2.5 py-1.5">
+                  <div className="w-1.5 h-1.5 rounded-full bg-zinc-100 shrink-0" />
+                  <span className="text-[13px] text-zinc-100">{s.name}</span>
+                </div>
+              ))}
+              {data.services.length > 5 && (
+                <div className="text-[11.5px] text-zinc-500 mt-1.5 pl-4">
+                  + {data.services.length - 5} more running
+                </div>
+              )}
+            </Card>
+
+            <Card title="Arms" className="col-span-2">
+              <div className="flex flex-wrap gap-2">
+                {arms.map((m) => {
+                  const on = m.status === "active";
+                  return (
+                    <span
+                      key={m.id}
+                      className={
+                        "inline-flex items-center gap-2 px-2.5 py-1.5 rounded-lg border text-[12px] " +
+                        (on
+                          ? "border-zinc-700 text-zinc-100"
+                          : "border-zinc-800 text-zinc-500")
+                      }
+                    >
+                      <span
+                        className={
+                          "w-1.5 h-1.5 rounded-full " + (on ? "bg-zinc-100" : "border border-zinc-600")
+                        }
+                      />
+                      {m.name}
+                    </span>
+                  );
+                })}
+              </div>
+            </Card>
+
+            <Card title="Recent knowledge" className="col-span-2">
+              {data.activity.length ? (
+                data.activity.map((a, i) => (
+                  <div key={i} className="flex items-baseline gap-3 py-1.5">
+                    <span className="text-[13px] text-zinc-100 flex-1 min-w-0 truncate">{a.title}</span>
+                    <span className="font-mono text-[10.5px] text-zinc-500 shrink-0">{a.when}</span>
+                  </div>
+                ))
+              ) : (
+                <div className="text-[13px] text-zinc-500">Nothing yet.</div>
+              )}
+            </Card>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -501,7 +765,7 @@ function CostChips({ costs }: { costs: Record<string, string> }) {
       {entries.map(([k, v]) => (
         <span
           key={k}
-          className="px-1.5 py-0.5 rounded border border-zinc-800 bg-zinc-900/80 text-[10.5px] text-zinc-500"
+          className="px-1.5 py-0.5 rounded border border-zinc-800 bg-zinc-900/80 text-[10.5px] text-zinc-300"
         >
           {k === "resident_ram" ? "RAM " : k === "download" ? "↓ " : k === "disk" ? "disk " : ""}
           {v}
@@ -535,7 +799,7 @@ function ModuleRow({
             </span>
           )}
         </div>
-        <div className="text-[12.5px] text-zinc-500 mt-0.5 leading-relaxed">{m.tagline}</div>
+        <div className="text-[12.5px] text-zinc-300 mt-0.5 leading-relaxed">{m.tagline}</div>
         <CostChips costs={m.costs} />
       </div>
       <div className="shrink-0 pt-1">
@@ -553,9 +817,9 @@ function ModuleRow({
             {busy ? "…" : active ? "Turn off" : "Turn on"}
           </button>
         ) : active ? (
-          <span className="text-[11.5px] text-zinc-600 pt-1.5 inline-block">built in</span>
+          <span className="text-[11.5px] text-zinc-500 pt-1.5 inline-block">built in</span>
         ) : (
-          <span className="text-[11.5px] text-zinc-600 pt-1.5 inline-block">
+          <span className="text-[11.5px] text-zinc-500 pt-1.5 inline-block">
             {m.status_note ?? "via system update"}
           </span>
         )}
@@ -637,12 +901,12 @@ function Arms({ onBack }: { onBack: () => void }) {
           <h1 className="text-[22px] font-semibold tracking-tight">Arms & Connectors</h1>
           <button
             onClick={onBack}
-            className="text-[13px] text-zinc-500 hover:text-zinc-100 transition pb-1"
+            className="text-[13px] text-zinc-300 hover:text-zinc-100 transition pb-1"
           >
             Back
           </button>
         </div>
-        <p className="text-[13px] text-zinc-500 mb-6">
+        <p className="text-[13px] text-zinc-300 mb-6">
           Capabilities of your system. Turning one on makes real changes to this
           Mac — every item shows what it costs before it runs.
         </p>
@@ -656,13 +920,13 @@ function Arms({ onBack }: { onBack: () => void }) {
         {modules === null ? (
           <div className="flex items-center gap-3 py-6">
             <div className="w-2 h-2 rounded-full bg-zinc-100 pulse-dot" />
-            <span className="text-[13.5px] text-zinc-400">Reading system state…</span>
+            <span className="text-[13.5px] text-zinc-200">Reading system state…</span>
           </div>
         ) : (
           groups.map(([title, mods]) =>
             mods.length ? (
               <div key={title} className="mb-6">
-                <div className="text-[11px] uppercase tracking-[0.12em] text-zinc-600 mb-2">{title}</div>
+                <div className="text-[11px] uppercase tracking-[0.12em] text-zinc-500 mb-2">{title}</div>
                 <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 divide-y divide-zinc-800/70">
                   {mods.map((m) => (
                     <ModuleRow key={m.id} m={m} busy={busyId === m.id} onToggle={requestToggle} />
@@ -678,14 +942,14 @@ function Arms({ onBack }: { onBack: () => void }) {
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-40">
           <div className="screen w-[420px] max-w-[86vw] rounded-2xl border border-zinc-700 bg-zinc-900 p-6">
             <h2 className="text-[16px] font-semibold mb-2">Turn on {confirming.name}?</h2>
-            <p className="text-[13px] text-zinc-400 leading-relaxed">
+            <p className="text-[13px] text-zinc-200 leading-relaxed">
               {confirming.consent ?? confirming.tagline}
             </p>
             <CostChips costs={confirming.costs} />
             <div className="flex justify-end gap-3 mt-6">
               <button
                 onClick={() => setConfirming(null)}
-                className="px-4 h-10 rounded-xl text-[13.5px] text-zinc-400 hover:text-zinc-100 transition"
+                className="px-4 h-10 rounded-xl text-[13.5px] text-zinc-200 hover:text-zinc-100 transition"
               >
                 Cancel
               </button>
@@ -733,13 +997,13 @@ function Configure({
 }) {
   const inputCls =
     "w-64 h-10 px-3 rounded-lg bg-zinc-900 border border-zinc-800 text-[14px] text-zinc-100 " +
-    "placeholder:text-zinc-600 outline-none focus:border-zinc-600 transition";
+    "placeholder:text-zinc-500 outline-none focus:border-zinc-600 transition";
 
   return (
     <div className="screen h-full flex flex-col items-center justify-center">
       <div className="w-[560px] max-w-[86vw]">
         <h1 className="text-[22px] font-semibold tracking-tight mb-1">Configuration</h1>
-        <p className="text-[13px] text-zinc-500 mb-6">
+        <p className="text-[13px] text-zinc-300 mb-6">
           The essentials. Everything else can be changed later in Settings.
         </p>
 
@@ -770,7 +1034,7 @@ function Configure({
                     "px-4 h-10 text-[13px] capitalize transition " +
                     (config.role === r
                       ? "bg-zinc-100 text-zinc-950 font-medium"
-                      : "bg-zinc-900 text-zinc-400 hover:text-zinc-200")
+                      : "bg-zinc-900 text-zinc-200 hover:text-zinc-200")
                   }
                 >
                   {r}
@@ -797,14 +1061,14 @@ function Configure({
           </Field>
         </div>
 
-        <p className="text-[12px] text-zinc-600 mt-3">
+        <p className="text-[12px] text-zinc-500 mt-3">
           Safe preview walks the full installation without changing anything.
         </p>
 
         <div className="flex justify-between mt-8">
           <button
             onClick={onBack}
-            className="px-4 h-11 rounded-xl text-[14px] text-zinc-400 hover:text-zinc-100 transition"
+            className="px-4 h-11 rounded-xl text-[14px] text-zinc-200 hover:text-zinc-100 transition"
           >
             Back
           </button>
@@ -850,10 +1114,10 @@ function StageRow({
         className={
           "text-[14px] transition " +
           (state === "done"
-            ? "text-zinc-500"
+            ? "text-zinc-300"
             : state === "active"
               ? "text-zinc-100"
-              : "text-zinc-600")
+              : "text-zinc-500")
         }
       >
         {name}
@@ -925,7 +1189,7 @@ function Install({
         <h1 className="text-[22px] font-semibold tracking-tight mb-1">
           {config.dryRun ? "Previewing installation" : "Installing"}
         </h1>
-        <p className="text-[13px] text-zinc-500 mb-6">
+        <p className="text-[13px] text-zinc-300 mb-6">
           {config.dryRun
             ? "Walking every step without changing this Mac."
             : "This can take a while. You can keep using your Mac."}
@@ -949,7 +1213,7 @@ function Install({
 
         <button
           onClick={() => setShowConsole((v) => !v)}
-          className="mt-4 text-[12px] text-zinc-600 hover:text-zinc-300 transition"
+          className="mt-4 text-[12px] text-zinc-500 hover:text-zinc-300 transition"
         >
           {showConsole ? "Hide details" : "Show details"}
         </button>
@@ -958,7 +1222,7 @@ function Install({
           <div
             ref={consoleRef}
             className="console mt-2 h-40 overflow-y-auto rounded-xl border border-zinc-800 bg-black/60 px-4 py-3
-                       font-mono text-[11.5px] leading-relaxed text-zinc-500 whitespace-pre-wrap select-text"
+                       font-mono text-[11.5px] leading-relaxed text-zinc-300 whitespace-pre-wrap select-text"
           >
             {lines.join("\n")}
           </div>
@@ -991,7 +1255,7 @@ function Done({
               : `All set${config.operatorName ? ", " + config.operatorName : ""}`
             : "Something needs attention"}
         </h1>
-        <p className="text-[14px] text-zinc-400 max-w-sm leading-relaxed">
+        <p className="text-[14px] text-zinc-200 max-w-sm leading-relaxed">
           {ok
             ? config.dryRun
               ? "Every step walked clean. Run it for real when you're ready."
@@ -1105,7 +1369,7 @@ export default function App() {
             sys={sys}
             checking={checking}
             onUpdate={() => setScreen("update")}
-            onContinue={() => setScreen("arms")}
+            onContinue={() => setScreen("home")}
           />
         ) : (
           <Welcome onSetup={() => setScreen("preflight")} onJoin={() => setScreen("member")} />
@@ -1114,14 +1378,33 @@ export default function App() {
         <Preflight onBack={() => setScreen("welcome")} onContinue={() => setScreen("configure")} />
       )}
       {screen === "member" && <Member onBack={() => setScreen("welcome")} />}
-      {screen === "arms" && <Arms onBack={() => setScreen("welcome")} />}
+      {screen === "arms" && (
+        <Arms onBack={() => setScreen(existing ? "home" : "welcome")} />
+      )}
+      {screen === "home" && (
+        <Home
+          sys={sys}
+          onArms={() => setScreen("arms")}
+          onUpdate={() => setScreen("update")}
+        />
+      )}
       {screen === "update" && <Update onFinished={handleUpdateFinished} />}
       {screen === "configure" && (
         <Configure
           config={config}
           setConfig={setConfig}
           onBack={() => setScreen("welcome")}
-          onContinue={() => setScreen("install")}
+          onContinue={() => {
+            // Persist the answers where installer + onboarding read them.
+            if (IN_TAURI) {
+              invoke("save_setup_config", {
+                operatorName: config.operatorName,
+                machineName: config.machineName,
+                role: config.role,
+              }).catch(() => {});
+            }
+            setScreen("install");
+          }}
         />
       )}
       {screen === "install" && <Install config={config} onFinished={handleFinished} />}
