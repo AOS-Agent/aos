@@ -13,6 +13,7 @@
 #   aos self-test       Validate system health
 #   aos deploy [svc]    Deploy service venv (all or specific)
 #   aos track           Auto Tracker: shipments + carrier onboarding
+#   aos arm             Arms: status / list / plan / remove
 
 set -euo pipefail
 
@@ -592,12 +593,27 @@ if errors:
         svc="${2:-}"
 
         # Find best python for venvs (3.11+, prefer homebrew)
+        # A version number is not health. Homebrew's python@3.14 reports 3.14
+        # but ships a pyexpat linked against an expat newer than macOS provides,
+        # and returns an empty platform.mac_ver() — which makes BOTH pip and uv
+        # refuse to install into any venv built on it. Seven service venvs were
+        # silently deployed onto it (2026-08-17) and could not take a package
+        # update; the bridge lost its :4098 API that way, with no error surfaced.
+        # So: prefer the pinned AOS interpreter, and probe every candidate.
+        _python_ok() {
+            [[ -x "$1" ]] || return 1
+            "$1" -c 'import platform, pyexpat, sys; sys.exit(0 if platform.mac_ver()[0] else 1)' 2>/dev/null
+        }
         _find_python() {
-            for p in /opt/homebrew/bin/python3.13 /opt/homebrew/bin/python3 "$HOME/.local/bin/python3"; do
-                if [[ -f "$p" ]]; then
+            for p in "$HOME/.aos/python/bin/python3" \
+                     /opt/homebrew/bin/python3.13 \
+                     /opt/homebrew/bin/python3.12 \
+                     /opt/homebrew/bin/python3 \
+                     "$HOME/.local/bin/python3"; do
+                if [[ -x "$p" ]]; then
                     local minor
                     minor=$("$p" --version 2>&1 | awk '{print $2}' | cut -d. -f2)
-                    if [[ "$minor" -ge 11 ]]; then
+                    if [[ "${minor:-0}" -ge 11 ]] && _python_ok "$p"; then
                         echo "$p"
                         return
                     fi
@@ -622,12 +638,17 @@ if errors:
             local py_bin
             py_bin=$(_find_python)
 
-            # Always rebuild venv if python version is wrong
+            # Always rebuild venv if its interpreter is too old OR unhealthy.
+            # The health probe is the point: a venv on a broken interpreter looks
+            # fine to `--version` and to launchctl, but can never be updated again.
             if [[ -d "$dst/.venv" ]]; then
                 local venv_ver
                 venv_ver=$("$dst/.venv/bin/python" --version 2>&1 | awk '{print $2}' | cut -d. -f2 || echo "0")
-                if [[ "$venv_ver" -lt 11 ]]; then
+                if [[ "${venv_ver:-0}" -lt 11 ]]; then
                     echo "    Venv has Python 3.$venv_ver — rebuilding with 3.11+"
+                    rm -rf "$dst/.venv"
+                elif ! _python_ok "$dst/.venv/bin/python"; then
+                    echo "    Venv interpreter is broken (pyexpat/mac_ver probe failed) — rebuilding with $py_bin"
                     rm -rf "$dst/.venv"
                 fi
             fi
@@ -647,9 +668,54 @@ if errors:
             local lockfile="$src/requirements.lock"
             local lock_ok=false
             if [[ -f "$lockfile" ]]; then
+                # A lock that has silently fallen behind pyproject is worse than no
+                # lock: deploy prefers it, so a newly declared dependency is never
+                # installed and the service degrades with no error. The bridge lost
+                # its :4098 API this way — aiohttp was declared for weeks and the
+                # lock never carried it. Compare the two before trusting the lock.
+                local missing_deps
+                missing_deps=$("$py_bin" - "$src/pyproject.toml" "$lockfile" <<'PYEOF' 2>/dev/null
+import re, sys
+try:
+    import tomllib
+except ImportError:
+    tomllib = None
+pyproject, lock = sys.argv[1], sys.argv[2]
+if tomllib:
+    with open(pyproject, "rb") as f:
+        deps = tomllib.load(f).get("project", {}).get("dependencies", [])
+else:
+    deps, on = [], False
+    for line in open(pyproject):
+        s = line.strip()
+        if s == "dependencies = [": on = True; continue
+        if on and s == "]": break
+        if on:
+            m = re.search(r'"(.+?)"', line)
+            if m: deps.append(m.group(1))
+norm = lambda s: re.split(r"[<>=!~\[; ]", s.strip())[0].lower().replace("_", "-")
+locked = {norm(l) for l in open(lock) if l.strip() and not l.startswith("#")}
+print(" ".join(sorted({norm(d) for d in deps} - locked)))
+PYEOF
+)
+                if [[ -n "$missing_deps" ]]; then
+                    echo "    ⚠️  LOCK DRIFT — declared in pyproject.toml but absent from requirements.lock:"
+                    echo "        $missing_deps"
+                    echo "        Installing them explicitly; regenerate the lock to make this permanent."
+                fi
                 echo "    Installing from requirements.lock (pinned versions)..."
                 if uv pip install -p "$dst/.venv/bin/python" -r "$lockfile" 2>&1 | tail -5; then
                     lock_ok=true
+                    # Close the drift now so the service is not left degraded.
+                    if [[ -n "$missing_deps" ]]; then
+                        # shellcheck disable=SC2086
+                        if uv pip install -p "$dst/.venv/bin/python" $missing_deps 2>&1 | tail -3; then
+                            echo "    Installed $(echo "$missing_deps" | wc -w | tr -d ' ') dep(s) missing from the lock."
+                        else
+                            echo "  ✗ $name: could not install lock-drift deps: $missing_deps"
+                            return 1
+                        fi
+                    fi
                 else
                     echo "    WARN: lock file install failed — falling back to pyproject.toml"
                 fi
@@ -1079,11 +1145,28 @@ PYEOF
         echo "  telemetry        Anonymous usage telemetry (opt-in/out/report)"
         echo "  sessions         View recorded onboarding/setup sessions"
         echo "  track            Auto Tracker: shipments + carrier onboarding (aos track help)"
+        echo "  arm              Arms: what is installed, what works, what to remove"
         echo "  snapshot        What this system consists of, read live (--json)"
         echo "  discover        Scan machine for existing setup"
         echo "  hygiene         Find orphaned instance artifacts (services, plists, caches)"
         echo "  version         Show current version"
         echo ""
+        ;;
+
+    arm|arms)
+        # Arms — what capabilities exist on this machine and whether they work.
+        # The engine is the single authority on module state; the desktop app
+        # shells out to `aos arm status --json` rather than reimplementing it.
+        # NOTE: aos-python, not bare python3. On a machine where Homebrew's
+        # python3 is the broken 3.14 (no pyexpat), `import plistlib` explodes
+        # and the subcommand dies before it can report anything.
+        shift
+        exec "$AOS_DIR/core/bin/internal/aos-python" -c "
+import sys
+sys.path.insert(0, '$AOS_DIR/core/engine')
+from arms.cli import main
+raise SystemExit(main(sys.argv[1:]))
+" "$@"
         ;;
 
     hygiene)

@@ -14,6 +14,7 @@ from .hooks import HooksPathCheck
 from .initiatives import BridgeTopicsCheck, InitiativeDirectoriesCheck
 from .instance_hygiene import InstanceHygieneCheck
 from .launchagents import LaunchAgentPythonCheck
+from .arms_coverage import ArmsCoverageCheck
 from .launcher_naming import LauncherNamingCheck
 from .log_location import LogLocationCheck
 from .mcp_location import McpLocationCheck
@@ -64,6 +65,7 @@ ALL_CHECKS = [
     # any AOS plist exec'ing a bare interpreter gets wrapped so System
     # Settings shows "AOS Bridge", not "python3"
     LauncherNamingCheck,
+    ArmsCoverageCheck,
 
     # Services — deployed Sentinel plist matches its framework template
     # (catches drift back to hardcoded operator paths after a manual edit
