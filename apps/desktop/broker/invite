@@ -48,7 +48,7 @@ cmd_mint() {
   local label="${1:-}"
   [ -n "$label" ] || die "Usage: invite mint \"who this is for\""
   local out token
-  out="$(admin_call POST /v1/admin/invites "{\\\"label\\\":\\\"${label}\\\"}")"
+  out="$(admin_call POST /v1/admin/invites "{\"label\":\"${label}\"}")"
   token="$(printf '%s' "$out" | field token)"
   [ -n "$token" ] || die "Could not mint an invite: $out"
   printf 'Invite for %s\n\n  %s\n\nSend that to them. It is the only copy.\n' "$label" "$token"
