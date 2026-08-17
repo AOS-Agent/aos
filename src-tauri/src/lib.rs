@@ -2587,6 +2587,44 @@ fn release_notes() -> Result<String, String> {
 #[derive(serde::Deserialize)]
 struct Manifest {
     modules: Vec<ModuleDef>,
+    /// Things running on this machine that AOS observes but does not own.
+    /// Shown read-only so nothing on the Mac is invisible. Never touched.
+    #[serde(default)]
+    foreign: Vec<ForeignDef>,
+}
+
+#[derive(serde::Deserialize, serde::Serialize, Clone)]
+struct ForeignDef {
+    label: String,
+    name: String,
+    #[serde(default)]
+    note: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+struct ForeignStatus {
+    #[serde(flatten)]
+    def: ForeignDef,
+    loaded: bool,
+}
+
+/// What a module IS, which decides what "healthy" means for it.
+/// Judging a periodic job by daemon rules produced four false BROKEN reports
+/// in the 2026-08-17 audit — hence this is explicit, never inferred.
+#[derive(serde::Deserialize, serde::Serialize, Clone, Default)]
+struct Health {
+    /// TCP port that must be LISTENing on 127.0.0.1.
+    #[serde(default)]
+    port: Option<u16>,
+    /// A venv whose interpreter must still be able to install packages.
+    #[serde(default)]
+    venv: Option<String>,
+    /// File whose mtime proves a periodic job is still firing.
+    #[serde(default)]
+    log: Option<String>,
+    /// Seconds; log older than this ⇒ degraded.
+    #[serde(default)]
+    max_silence: Option<u64>,
 }
 
 #[derive(serde::Deserialize, serde::Serialize, Clone, Default)]
@@ -2617,8 +2655,18 @@ struct ModuleDef {
     secrets: Vec<String>,
     #[serde(default)]
     status_note: Option<String>,
+    /// schema 2: daemon | periodic | oneshot | resource.
+    /// (In schema 1 this field meant "connector" — that moved to `connector`.)
     #[serde(default)]
-    kind: Option<String>, // connector | arm (default)
+    kind: Option<String>,
+    /// schema 2: core | experimental. Drives grouping and install defaults.
+    #[serde(default)]
+    tier: Option<String>,
+    /// schema 2: surfaces in the Connectors pane.
+    #[serde(default)]
+    connector: bool,
+    #[serde(default)]
+    health: Option<Health>,
     #[serde(default)]
     detect: Option<Detect>,
 }
@@ -2627,7 +2675,12 @@ struct ModuleDef {
 struct ModuleStatus {
     #[serde(flatten)]
     def: ModuleDef,
-    status: String,     // active | available
+    /// active | degraded | broken | absent — COMPUTED, never declared.
+    status: String,
+    /// Why it is degraded/broken, straight from the probe that found it.
+    /// Lives here rather than in the UI so the reason can never drift from
+    /// the check that produced it.
+    why: String,
     can_toggle: bool,   // service-backed and plist present on disk
 }
 
@@ -2650,6 +2703,60 @@ fn loaded_launchd_labels() -> std::collections::HashSet<String> {
         .unwrap_or_default()
 }
 
+/// Labels with a LIVE process, as opposed to merely loaded.
+///
+/// `launchctl list` prints "-" in the PID column for a job that is loaded but
+/// not currently executing. For a StartInterval/StartCalendarInterval job that
+/// is the normal resting state; for a daemon it means the thing is down. The
+/// 2026-08-17 audit conflated the two and reported four healthy periodic jobs
+/// as BROKEN, which is why liveness and loadedness are separate sets here.
+fn running_launchd_labels() -> std::collections::HashSet<String> {
+    cmd_ok("launchctl", &["list"])
+        .map(|out| {
+            out.lines()
+                .skip(1)
+                .filter_map(|l| {
+                    let mut cols = l.split_whitespace();
+                    let pid = cols.next()?;
+                    let _status = cols.next()?;
+                    let label = cols.next()?;
+                    (pid != "-").then(|| label.to_string())
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn expand_home(value: &str, home: &str) -> String {
+    value.replace("$HOME", home)
+}
+
+fn port_listening(port: u16) -> bool {
+    use std::net::{Ipv4Addr, SocketAddr, TcpStream};
+    use std::time::Duration;
+    let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
+    TcpStream::connect_timeout(&addr, Duration::from_millis(400)).is_ok()
+}
+
+/// True when a venv's interpreter can no longer install packages.
+///
+/// Homebrew's python@3.14 reports a perfectly good version string but its
+/// pyexpat is linked against a newer expat than macOS ships, and
+/// platform.mac_ver() comes back empty — so pip and uv both refuse it. A
+/// service on such a venv looks green everywhere and is frozen forever.
+/// Invisible to launchctl, which is exactly why it is probed here.
+fn venv_broken(venv: &str) -> bool {
+    let python = format!("{venv}/bin/python");
+    if !std::path::Path::new(&python).exists() {
+        return false; // nothing to judge
+    }
+    cmd_ok(
+        &python,
+        &["-c", "import platform, pyexpat, sys; sys.exit(0 if platform.mac_ver()[0] else 1)"],
+    )
+    .is_none()
+}
+
 fn command_exists(name: &str, home: &str) -> bool {
     let dirs = [
         "/opt/homebrew/bin",
@@ -2670,29 +2777,95 @@ fn list_modules() -> Result<Vec<ModuleStatus>, String> {
     let home = std::env::var("HOME").map_err(|e| e.to_string())?;
     let manifest = load_manifest()?;
     let loaded = loaded_launchd_labels();
+    let running = running_launchd_labels();
 
     Ok(manifest
         .modules
         .into_iter()
         .map(|m| {
-            let active = match &m.detect {
+            // 1. Is it INSTALLED at all?
+            let installed = match &m.detect {
                 Some(d) if !d.services.is_empty() => d.services.iter().any(|s| loaded.contains(s)),
                 Some(d) if !d.paths.is_empty() => d
                     .paths
                     .iter()
-                    .any(|p| std::path::Path::new(&p.replace("$HOME", &home)).exists()),
+                    .any(|p| std::path::Path::new(&expand_home(p, &home)).exists()),
                 Some(d) if !d.commands.is_empty() => d.commands.iter().any(|c| command_exists(c, &home)),
                 _ => false,
             };
+
             let can_toggle = m.services.iter().any(|label| {
                 std::path::Path::new(&format!("{home}/Library/LaunchAgents/{label}.plist")).exists()
             });
+
+            if !installed {
+                return ModuleStatus { def: m, status: "absent".into(), why: String::new(), can_toggle };
+            }
+
+            // 2. Does it WORK? Judged by kind — a periodic job idling between
+            //    ticks is healthy; a daemon with no process is not.
+            let kind = m.kind.clone().unwrap_or_else(|| "resource".into());
+            let health = m.health.clone().unwrap_or_default();
+            let mut why: Vec<String> = Vec::new();
+
+            if kind == "daemon" {
+                if let Some(dead) = m.services.iter().find(|s| !running.contains(*s)) {
+                    let label = dead.clone();
+                    return ModuleStatus {
+                        def: m,
+                        status: "broken".into(),
+                        why: format!("{label} is not running"),
+                        can_toggle,
+                    };
+                }
+                if let Some(p) = health.port {
+                    if !port_listening(p) {
+                        why.push(format!("port {p} not listening"));
+                    }
+                }
+            }
+
+            if kind == "periodic" {
+                if let (Some(log), Some(max)) = (health.log.as_ref(), health.max_silence) {
+                    let path = expand_home(log, &home);
+                    if let Ok(age) = std::fs::metadata(&path)
+                        .and_then(|md| md.modified())
+                        .and_then(|t| t.elapsed().map_err(std::io::Error::other))
+                    {
+                        if age.as_secs() > max {
+                            why.push(format!("last ran {} min ago", age.as_secs() / 60));
+                        }
+                    }
+                }
+            }
+
+            // Applies to every kind: a venv on a broken interpreter looks green
+            // and can never take an update again. This is invisible to launchctl.
+            if let Some(v) = health.venv.as_ref() {
+                if venv_broken(&expand_home(v, &home)) {
+                    why.push("venv interpreter broken — cannot update".into());
+                }
+            }
+
             ModuleStatus {
                 def: m,
-                status: if active { "active" } else { "available" }.into(),
+                status: if why.is_empty() { "active" } else { "degraded" }.into(),
+                why: why.join("; "),
                 can_toggle,
             }
         })
+        .collect())
+}
+
+/// Foreign agents: observed, never owned. Read-only in the UI.
+#[tauri::command]
+fn list_foreign() -> Result<Vec<ForeignStatus>, String> {
+    let manifest = load_manifest()?;
+    let loaded = loaded_launchd_labels();
+    Ok(manifest
+        .foreign
+        .into_iter()
+        .map(|f| ForeignStatus { loaded: loaded.contains(&f.label), def: f })
         .collect())
 }
 
@@ -2916,6 +3089,7 @@ pub fn run() {
             run_update,
             run_preflight,
             list_modules,
+            list_foreign,
             set_module_enabled,
             save_setup_config,
             load_setup_config,

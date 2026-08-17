@@ -63,18 +63,39 @@ interface HomeData {
   activity: ActivityRow[];
 }
 
+/** modules.yaml schema 2. `kind` used to mean "connector"; that moved to the
+ *  `connector` flag so kind can say what a module IS — which is what decides
+ *  whether "not running" means broken or perfectly normal. */
+type ModuleKind = "daemon" | "periodic" | "oneshot" | "resource";
+type ModuleTier = "core" | "experimental";
+/** Computed by the backend, never declared. `degraded` is the one that earns
+ *  its keep: a service can be running and still be unable to do its job. */
+type ModuleStatus = "active" | "degraded" | "broken" | "absent";
+
 interface ModuleInfo {
   id: string;
   name: string;
   category: string;
-  kind?: string | null;
+  kind?: ModuleKind | null;
+  tier?: ModuleTier | null;
+  connector?: boolean;
   tagline: string;
   consent?: string | null;
   costs: Record<string, string>;
   services: string[];
   status_note?: string | null;
-  status: "active" | "available";
+  status: ModuleStatus;
+  /** Why it is degraded/broken, from the probe that found it. Never composed
+   *  in the UI — a reason invented here would drift from the actual check. */
+  why?: string;
   can_toggle: boolean;
+}
+
+interface ForeignInfo {
+  label: string;
+  name: string;
+  note?: string | null;
+  loaded: boolean;
 }
 
 interface Check {
@@ -816,16 +837,29 @@ function Home({
 
 /* ── screen: arms & connectors ── */
 
+// Demo data mirrors modules.yaml schema 2 and deliberately exercises every
+// state — including `degraded`, which is the one that only exists because a
+// running service can still be unable to do its job.
 const DEMO_MODULES: ModuleInfo[] = [
-  { id: "vault", name: "Knowledge Vault", category: "standard", tagline: "A private knowledge base the system reads and writes.", costs: { resident_ram: "0" }, services: [], status: "active", can_toggle: false },
-  { id: "memory-search", name: "Memory & Search", category: "standard", tagline: "The system remembers and finds anything it has seen.", costs: { resident_ram: "0 (index jobs only)" }, services: [], status: "active", can_toggle: false },
-  { id: "telegram", kind: "connector", name: "Telegram", category: "arm", tagline: "Talk to your system from your phone — messages, voice notes, briefings.", costs: { resident_ram: "~60 MB (bridge)" }, services: ["com.aos.bridge"], status: "active", can_toggle: true },
-  { id: "whatsapp", kind: "connector", name: "WhatsApp", category: "arm", tagline: "WhatsApp messages flow through your system.", costs: { resident_ram: "~40 MB" }, services: ["com.aos.whatsmeow"], status: "active", can_toggle: true },
-  { id: "remote-access", kind: "connector", name: "Remote Access", category: "arm", tagline: "Reach this machine securely from your phone or laptop.", costs: { resident_ram: "~50 MB (tailscaled)" }, services: [], status: "active", can_toggle: false },
-  { id: "voice-dictation", name: "Voice — Dictation", category: "arm", tagline: "On-device speech to text with a model that learns your vocabulary.", costs: { resident_ram: "~20 MB at rest", download: "1.6 GB" }, services: ["com.aos.transcriber"], status: "active", can_toggle: true },
-  { id: "voice-meetings", name: "Voice — Meetings", category: "arm", tagline: "Meeting notes with named speakers, recognized by voice.", costs: { download: "~1 GB" }, services: [], status: "available", can_toggle: false, status_note: "arrives with a system update" },
-  { id: "automations", name: "Automations (n8n)", category: "arm", tagline: "A visual engine for scheduled routines and triggers.", costs: { resident_ram: "~300 MB resident" }, services: ["com.aos.n8n"], status: "active", can_toggle: true },
-  { id: "sentinel", name: "Sentinel (iMessage)", category: "arm", tagline: "Watches iMessage for commitments you make and drafts follow-through.", consent: "Reads your Messages database (requires Full Disk Access).", costs: { resident_ram: "~30 MB", access: "Full Disk Access" }, services: ["com.aos.sentinel"], status: "available", can_toggle: true },
+  { id: "vault", name: "Knowledge Vault", tier: "core", kind: "resource", category: "standard", tagline: "A private knowledge base the system reads and writes.", costs: { resident_ram: "0" }, services: [], status: "active", can_toggle: false },
+  { id: "memory-search", name: "Memory & Search", tier: "core", kind: "resource", category: "standard", tagline: "The system remembers and finds anything it has seen.", costs: { resident_ram: "0 (index jobs only)" }, services: [], status: "active", can_toggle: false },
+  { id: "observability", name: "Observability", tier: "core", kind: "periodic", category: "standard", tagline: "See what's running, what's healthy, and what the system did.", costs: { resident_ram: "~0 (scheduler)" }, services: ["com.aos.scheduler"], status: "active", can_toggle: false },
+  { id: "qareen", name: "Qareen", tier: "core", kind: "daemon", category: "standard", tagline: "The always-on companion service the agent layer talks to.", costs: { resident_ram: "~120 MB" }, services: ["com.aos.qareen"], status: "degraded", why: "venv interpreter broken — cannot update", can_toggle: false },
+  { id: "telegram", connector: true, name: "Telegram", tier: "core", kind: "daemon", category: "arm", tagline: "Talk to your system from your phone — messages, voice notes, briefings.", costs: { resident_ram: "~60 MB (bridge)" }, services: ["com.aos.bridge"], status: "active", can_toggle: true },
+  { id: "whatsapp", connector: true, name: "WhatsApp", tier: "experimental", kind: "daemon", category: "arm", tagline: "WhatsApp messages flow through your system.", costs: { resident_ram: "~40 MB" }, services: ["com.aos.whatsmeow"], status: "active", can_toggle: true },
+  { id: "remote-access", connector: true, name: "Remote Access", tier: "experimental", kind: "resource", category: "arm", tagline: "Reach this machine securely from your phone or laptop.", costs: { resident_ram: "~50 MB (tailscaled)" }, services: [], status: "active", can_toggle: false },
+  { id: "voice-dictation", name: "Voice — Dictation", tier: "experimental", kind: "daemon", category: "arm", tagline: "On-device speech to text with a model that learns your vocabulary.", costs: { resident_ram: "~20 MB at rest", download: "1.6 GB" }, services: ["com.aos.transcriber"], status: "active", can_toggle: true },
+  { id: "envoy", name: "Envoy", tier: "experimental", kind: "periodic", category: "arm", tagline: "Runs delegated outbound conversations on your behalf.", consent: "Sends messages to third parties introducing itself as your agent.", costs: { resident_ram: "0 (runs every 5 min)" }, services: ["com.aos.envoy"], status: "active", can_toggle: true },
+  { id: "converse", name: "Converse", tier: "experimental", kind: "oneshot", category: "arm", tagline: "Live back-and-forth voice conversation with the system.", costs: { resident_ram: "~80 MB when loaded" }, services: ["com.aos.converse"], status: "active", status_note: "installed, starts on demand", can_toggle: false },
+  { id: "automations", name: "Automations (n8n)", tier: "experimental", kind: "daemon", category: "arm", tagline: "A visual engine for scheduled routines and triggers.", costs: { resident_ram: "~300 MB resident" }, services: ["com.aos.n8n"], status: "broken", why: "com.aos.n8n is not running", can_toggle: true },
+  { id: "voice-meetings", name: "Voice — Meetings", tier: "experimental", kind: "resource", category: "arm", tagline: "Meeting notes with named speakers, recognized by voice.", costs: { download: "~1 GB" }, services: [], status: "absent", can_toggle: false, status_note: "arrives with a system update" },
+  { id: "sentinel", name: "Sentinel (iMessage)", tier: "experimental", kind: "daemon", category: "arm", tagline: "Watches iMessage for commitments you make and drafts follow-through.", consent: "Reads your Messages database (requires Full Disk Access).", costs: { resident_ram: "~30 MB", access: "Full Disk Access" }, services: ["com.aos.sentinel"], status: "absent", can_toggle: true },
+];
+
+const DEMO_FOREIGN: ForeignInfo[] = [
+  { label: "am.hish.adhan.audio", name: "Adhan — audio server", note: "Prayer-audio system. Sonos playback. Not AOS.", loaded: true },
+  { label: "am.hish.adhan.scheduler", name: "Adhan — scheduler", note: "Triggers prayer-time playback. Not AOS.", loaded: true },
+  { label: "am.hish.superwhisper-launcher", name: "SuperWhisper launcher", note: "Third-party dictation. Not AOS.", loaded: false },
 ];
 
 function CostChips({ costs }: { costs: Record<string, string> }) {
@@ -855,46 +889,87 @@ function ModuleRow({
   busy: boolean;
   onToggle: (m: ModuleInfo, enable: boolean) => void;
 }) {
-  const active = m.status === "active";
+  // Monochrome by design law: state is carried by dot WEIGHT and by the words,
+  // never by hue. The `why` string does the work an amber pill used to fake.
+  const running = m.status === "active" || m.status === "degraded";
+  const dot =
+    m.status === "active"
+      ? "bg-zinc-100"                                  // solid: fine
+      : m.status === "degraded"
+        ? "border-2 border-zinc-100"                   // hollow: up, but not right
+        : m.status === "broken"
+          ? "bg-zinc-500"                              // dimmed: should be up, isn't
+          : "border border-zinc-700";                  // faint: cleanly absent
+  const absent = m.status === "absent";
+
   return (
-    <div className="flex items-start gap-3.5 px-5 py-4">
+    <div className="flex items-start gap-3 sm:gap-3.5 px-4 sm:px-5 py-4">
       <div className="mt-1.5 w-2 flex justify-center shrink-0">
-        <div className={"w-2 h-2 rounded-full " + (active ? "bg-zinc-100" : "border border-zinc-600")} />
+        <div className={"w-2 h-2 rounded-full " + dot} />
       </div>
       <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2">
-          <span className="text-[14px] text-zinc-100 font-medium">{m.name}</span>
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className={"text-[14px] font-medium " + (absent ? "text-zinc-400" : "text-zinc-100")}>
+            {m.name}
+          </span>
+          {m.status === "broken" && (
+            <span className="text-[11.5px] text-zinc-100 font-medium">not running</span>
+          )}
           {m.consent && (
             <span className="px-1.5 py-0.5 rounded border border-zinc-600 bg-zinc-900 text-[10px] text-zinc-200 font-semibold">
               sensitive
             </span>
           )}
         </div>
-        <div className="text-[12.5px] text-zinc-300 mt-0.5 leading-relaxed">{m.tagline}</div>
+        <div className={"text-[12.5px] mt-0.5 leading-relaxed " + (absent ? "text-zinc-500" : "text-zinc-300")}>
+          {m.tagline}
+        </div>
+        {m.why && (
+          <div className="text-[12px] text-zinc-200 mt-1 leading-relaxed border-l-2 border-zinc-700 pl-2">
+            {m.why}
+          </div>
+        )}
         <CostChips costs={m.costs} />
       </div>
-      <div className="shrink-0 pt-1">
+      <div className="shrink-0 pt-0.5">
         {m.can_toggle ? (
           <button
             disabled={busy}
-            onClick={() => onToggle(m, !active)}
+            onClick={() => onToggle(m, !running)}
             className={
-              "px-3.5 h-8 rounded-lg text-[12.5px] font-medium transition active:scale-[0.97] disabled:opacity-40 " +
-              (active
+              "px-3.5 h-10 min-w-[88px] rounded-lg text-[12.5px] font-medium transition active:scale-[0.97] disabled:opacity-40 " +
+              (running
                 ? "border border-zinc-700 text-zinc-300 hover:text-zinc-100 hover:border-zinc-500"
                 : "bg-zinc-100 text-zinc-950 hover:bg-white")
             }
           >
-            {busy ? "…" : active ? "Turn off" : "Turn on"}
+            {busy ? "…" : running ? "Turn off" : "Turn on"}
           </button>
-        ) : active ? (
-          <span className="text-[11.5px] text-zinc-500 pt-1.5 inline-block">built in</span>
+        ) : running ? (
+          <span className="text-[11.5px] text-zinc-500 pt-2.5 inline-block">built in</span>
         ) : (
-          <span className="text-[11.5px] text-zinc-500 pt-1.5 inline-block">
+          <span className="text-[11.5px] text-zinc-500 pt-2.5 inline-block">
             {m.status_note ?? "via system update"}
           </span>
         )}
       </div>
+    </div>
+  );
+}
+
+/** Observed on this machine, owned by someone else. Deliberately inert: no dot,
+ *  no controls, recessed text — visibly not ours, but never invisible. */
+function ForeignRow({ f }: { f: ForeignInfo }) {
+  return (
+    <div className="flex items-start gap-3 sm:gap-3.5 px-4 sm:px-5 py-3.5">
+      <div className="mt-1.5 w-2 shrink-0" />
+      <div className="flex-1 min-w-0">
+        <div className="text-[13.5px] text-zinc-400">{f.name}</div>
+        {f.note && <div className="text-[12px] text-zinc-600 mt-0.5 leading-relaxed">{f.note}</div>}
+      </div>
+      <span className="shrink-0 text-[11px] text-zinc-600 pt-1">
+        {f.loaded ? "running" : "idle"}
+      </span>
     </div>
   );
 }
@@ -907,6 +982,7 @@ function Arms({
   connectors?: boolean;
 }) {
   const [modules, setModules] = useState<ModuleInfo[] | null>(null);
+  const [foreign, setForeign] = useState<ForeignInfo[]>([]);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<ModuleInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -919,9 +995,16 @@ function Arms({
         setError(String(e));
         setModules([]);
       }
+      // Foreign agents are informational — never let their absence break the pane.
+      try {
+        setForeign(await invoke<ForeignInfo[]>("list_foreign"));
+      } catch {
+        setForeign([]);
+      }
     } else {
       await new Promise((r) => setTimeout(r, 400));
       setModules(DEMO_MODULES);
+      setForeign(DEMO_FOREIGN);
     }
   }, []);
 
@@ -946,7 +1029,7 @@ function Arms({
         setModules(
           (mods) =>
             mods?.map((x) =>
-              x.id === m.id ? { ...x, status: enable ? "active" : "available" } : x,
+              x.id === m.id ? { ...x, status: enable ? "active" : "absent", why: "" } : x,
             ) ?? null,
         );
       }
@@ -964,30 +1047,49 @@ function Arms({
     [applyToggle],
   );
 
-  const groups: [string, ModuleInfo[]][] = modules
+  // schema 2: group by TIER, not category. `connector` is its own flag now —
+  // `kind` says daemon/periodic/oneshot/resource and must never be used here.
+  const groups: [string, string, ModuleInfo[]][] = modules
     ? connectors
-      ? [["Connectors", modules.filter((m) => m.kind === "connector")]]
+      ? [["Connectors", "", modules.filter((m) => m.connector)]]
       : [
-          ["Arms", modules.filter((m) => m.category === "arm" && m.kind !== "connector")],
-          ["Built-in", modules.filter((m) => m.category !== "arm" && m.kind !== "connector")],
+          ["Core", "The spine. Always on, not removable.",
+            modules.filter((m) => (m.tier ?? "experimental") === "core")],
+          ["Experimental", "Everything additional. Opt in, opt out.",
+            modules.filter((m) => (m.tier ?? "experimental") !== "core")],
         ]
     : [];
 
+  const degraded = (modules ?? []).filter((m) => m.status === "degraded" || m.status === "broken");
+
   return (
-    <div className="screen h-full flex flex-col items-center py-14 overflow-y-auto console">
-      <div className="w-[620px] max-w-[90vw]">
+    <div className="screen h-full flex flex-col items-center py-8 sm:py-14 overflow-y-auto console">
+      <div className="w-full max-w-[620px] px-4 sm:px-0">
         <div className="flex items-end justify-between mb-1">
           <h1 className="text-[22px] font-semibold tracking-tight">
             {connectors ? "Connectors" : "Arms"}
           </h1>
           {onBack && <BackButton label="Home" onClick={onBack} />}
         </div>
-        <p className="text-[13px] text-zinc-300 mb-6">
+        <p className="text-[13px] text-zinc-300 mb-5">
           Capabilities of your system. Turning one on makes real changes to this
           Mac — every item shows what it costs before it runs.
         </p>
 
         {error && <ErrorBanner className="mb-4">{error}</ErrorBanner>}
+
+        {/* Anything not working is stated up front rather than left to be found
+            by scrolling. A service can be running and still be unable to work. */}
+        {degraded.length > 0 && (
+          <div className="mb-5 rounded-xl border border-zinc-700 bg-zinc-900/70 px-4 py-3">
+            <div className="text-[12.5px] text-zinc-100 font-medium">
+              {degraded.length} {degraded.length === 1 ? "capability needs" : "capabilities need"} attention
+            </div>
+            <div className="text-[12px] text-zinc-400 mt-0.5">
+              {degraded.map((m) => m.name).join(" · ")}
+            </div>
+          </div>
+        )}
 
         {modules === null ? (
           <div className="flex items-center gap-3 py-6">
@@ -995,18 +1097,35 @@ function Arms({
             <span className="text-[13.5px] text-zinc-200">Reading system state…</span>
           </div>
         ) : (
-          groups.map(([title, mods]) =>
-            mods.length ? (
-              <div key={title} className="mb-6">
-                <div className="text-[11px] uppercase tracking-[0.12em] text-zinc-500 mb-2">{title}</div>
-                <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 divide-y divide-zinc-800/70">
-                  {mods.map((m) => (
-                    <ModuleRow key={m.id} m={m} busy={busyId === m.id} onToggle={requestToggle} />
+          <>
+            {groups.map(([title, blurb, mods]) =>
+              mods.length ? (
+                <div key={title} className="mb-6">
+                  <div className="text-[11px] uppercase tracking-[0.12em] text-zinc-500 mb-2">{title}</div>
+                  {blurb && <div className="text-[12px] text-zinc-500 -mt-1 mb-2">{blurb}</div>}
+                  <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 divide-y divide-zinc-800/70">
+                    {mods.map((m) => (
+                      <ModuleRow key={m.id} m={m} busy={busyId === m.id} onToggle={requestToggle} />
+                    ))}
+                  </div>
+                </div>
+              ) : null,
+            )}
+
+            {!connectors && foreign.length > 0 && (
+              <div className="mb-6">
+                <div className="text-[11px] uppercase tracking-[0.12em] text-zinc-500 mb-2">Unmanaged</div>
+                <div className="text-[12px] text-zinc-500 -mt-1 mb-2">
+                  Running on this Mac, not part of AOS. Shown so nothing is hidden — never touched.
+                </div>
+                <div className="rounded-2xl border border-zinc-800/70 bg-zinc-950/40 divide-y divide-zinc-800/50">
+                  {foreign.map((f) => (
+                    <ForeignRow key={f.label} f={f} />
                   ))}
                 </div>
               </div>
-            ) : null,
-          )
+            )}
+          </>
         )}
       </div>
 
@@ -2465,9 +2584,11 @@ function BrowseDirectory({
 
   return (
     <div className="screen max-w-[720px] mx-auto px-5 sm:px-8 pt-14 pb-16">
+      <div className="mb-6">
+        <BackButton label="Connectors" onClick={onBack} />
+      </div>
       <div className="flex flex-wrap items-end justify-between gap-3 mb-1">
         <h1 className="text-[22px] font-semibold tracking-tight">Browse connectors</h1>
-        <BackButton label="Connectors" onClick={onBack} />
       </div>
       <p className="text-[13px] text-zinc-400 mb-5">
         {composioReady
