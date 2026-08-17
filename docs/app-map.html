@@ -1,0 +1,268 @@
+<title>From Download to Home</title>
+<style>
+  :root {
+    --bg: #0b0b0c;
+    --panel: #141417;
+    --panel2: #1b1b1f;
+    --border: #28282e;
+    --border-soft: #202025;
+    --text: #f4f4f5;
+    --muted: #8b8b94;
+    --dim: #5e5e66;
+    --future: #d2a24c;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    -webkit-font-smoothing: antialiased;
+    line-height: 1.55;
+    padding: 64px 24px 96px;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; }
+
+  h1 { font-size: 30px; font-weight: 650; letter-spacing: -0.02em; text-wrap: balance; }
+  .sub { color: var(--muted); font-size: 15px; max-width: 62ch; margin-top: 10px; }
+  .legend { display: flex; gap: 18px; margin-top: 22px; font-size: 12px; color: var(--muted); }
+  .legend span { display: inline-flex; align-items: center; gap: 7px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .dot.built { background: var(--text); }
+  .dot.next { border: 1.5px solid var(--future); }
+
+  h2 {
+    font-size: 12px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--dim); margin: 64px 0 20px;
+  }
+
+  /* ── flow map ── */
+  .lanes { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 18px; }
+  @media (max-width: 760px) { .lanes { grid-template-columns: 1fr; } }
+  .lane {
+    background: var(--panel); border: 1px solid var(--border-soft); border-radius: 16px;
+    padding: 20px 18px 22px;
+  }
+  .lane-title { font-size: 14px; font-weight: 600; }
+  .lane-sub { font-size: 12px; color: var(--muted); margin-top: 2px; margin-bottom: 18px; }
+  .node {
+    border: 1px solid var(--border); background: var(--panel2); border-radius: 10px;
+    padding: 9px 12px; font-size: 13px; position: relative;
+  }
+  .node small { display: block; color: var(--muted); font-size: 11.5px; margin-top: 1px; }
+  .node.future { border-style: dashed; border-color: #3d3423; color: var(--muted); }
+  .node.future::after {
+    content: "next"; position: absolute; top: 8px; right: 10px;
+    font-size: 10px; color: var(--future); letter-spacing: 0.06em;
+  }
+  .down { display: flex; justify-content: center; padding: 4px 0; color: var(--dim); font-size: 12px; }
+  .stage-list { margin-top: 6px; padding-left: 0; list-style: none; }
+  .stage-list li { font-size: 11.5px; color: var(--muted); padding: 2px 0 2px 16px; position: relative; }
+  .stage-list li::before { content: ""; position: absolute; left: 4px; top: 9px; width: 5px; height: 5px; border-radius: 50%; background: var(--dim); }
+
+  /* ── dashboard mock ── */
+  .mockframe {
+    border: 1px solid var(--border); border-radius: 18px; overflow: hidden;
+    background: #0e0e10;
+  }
+  .mocktop {
+    display: flex; align-items: center; gap: 8px; padding: 12px 16px;
+    border-bottom: 1px solid var(--border-soft);
+  }
+  .mocktop .winbtn { width: 10px; height: 10px; border-radius: 50%; background: #2c2c31; }
+  .mockbar {
+    margin-left: auto; display: flex; align-items: center; gap: 10px; font-size: 11.5px; color: var(--muted);
+  }
+  .chip {
+    font-family: var(--mono); font-size: 10.5px; padding: 2px 7px; border-radius: 6px;
+    border: 1px solid var(--border); background: var(--panel2); color: #c9c9cf;
+  }
+  .mockbody { padding: 22px; display: grid; grid-template-columns: 1.4fr 1fr; gap: 14px; }
+  @media (max-width: 760px) { .mockbody { grid-template-columns: 1fr; } }
+  .card {
+    background: var(--panel); border: 1px solid var(--border-soft); border-radius: 14px;
+    padding: 14px 16px; position: relative;
+  }
+  .card h3 { font-size: 11px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--dim); margin-bottom: 10px; }
+  .key {
+    position: absolute; top: 12px; right: 12px; width: 18px; height: 18px; border-radius: 6px;
+    background: var(--panel2); border: 1px solid var(--border); color: var(--muted);
+    font-size: 10.5px; display: flex; align-items: center; justify-content: center; font-family: var(--mono);
+  }
+  .row { display: flex; align-items: center; gap: 10px; padding: 5px 0; font-size: 13px; }
+  .row .dot { flex-shrink: 0; }
+  .row .meta { margin-left: auto; color: var(--dim); font-size: 11.5px; font-family: var(--mono); }
+  .briefing { font-size: 13.5px; color: #cfcfd6; }
+  .briefing b { color: var(--text); font-weight: 600; }
+  .searchbox {
+    display: flex; align-items: center; gap: 8px; border: 1px solid var(--border);
+    background: var(--panel2); border-radius: 10px; padding: 8px 12px; color: var(--dim);
+    font-size: 13px;
+  }
+  .span2 { grid-column: 1 / -1; }
+  .armchips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .armchip {
+    font-size: 11.5px; padding: 4px 9px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--panel2); color: #c9c9cf; display: inline-flex; align-items: center; gap: 6px;
+  }
+  .armchip .dot { width: 6px; height: 6px; }
+  .armchip.off { color: var(--dim); }
+  .armchip.off .dot { background: none; border: 1px solid var(--dim); }
+
+  /* ── key table ── */
+  .keys { margin-top: 26px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px 28px; }
+  @media (max-width: 760px) { .keys { grid-template-columns: 1fr; } }
+  .keyrow { display: flex; gap: 12px; font-size: 13px; align-items: baseline; }
+  .keyrow .key { position: static; flex-shrink: 0; transform: translateY(2px); }
+  .keyrow .src { font-family: var(--mono); font-size: 11.5px; color: var(--muted); display: block; margin-top: 1px; }
+  .keyrow.future-row .k-title::after { content: " — next"; color: var(--future); font-size: 11.5px; }
+
+  .foot { margin-top: 70px; color: var(--dim); font-size: 12px; border-top: 1px solid var(--border-soft); padding-top: 18px; }
+</style>
+
+<div class="wrap">
+  <h1>From Download to Home</h1>
+  <p class="sub">The app's full journey as it exists today — every path from first launch,
+  and what the home screen shows the moment setup ends, built only from data the system
+  already produces.</p>
+  <div class="legend">
+    <span><span class="dot built"></span> built &amp; working</span>
+    <span><span class="dot next"></span> next up</span>
+  </div>
+
+  <h2>The three paths</h2>
+  <div class="lanes">
+    <div class="lane">
+      <div class="lane-title">Fresh Mac</div>
+      <div class="lane-sub">nothing installed — the host path</div>
+      <div class="node">Welcome<small>“Set up this Mac”</small></div>
+      <div class="down">↓</div>
+      <div class="node">Checking your system<small>8 preflight checks · warn = auto-fixed, fail = blocks</small></div>
+      <div class="down">↓</div>
+      <div class="node">Configuration<small>name · machine · role · safe preview</small></div>
+      <div class="down">↓</div>
+      <div class="node">Install<small>runs the real installer, live progress</small>
+        <ul class="stage-list">
+          <li>Checking your Mac</li>
+          <li>Installing the system</li>
+          <li>Knowledge vault &amp; memory</li>
+          <li>Waking the agents</li>
+          <li>Making it yours</li>
+          <li>Final checks</li>
+        </ul>
+      </div>
+      <div class="down">↓</div>
+      <div class="node future">Onboarding<small>module menu asked arm-by-arm, in-app</small></div>
+      <div class="down">↓</div>
+      <div class="node future">Home</div>
+    </div>
+
+    <div class="lane">
+      <div class="lane-title">Existing install</div>
+      <div class="lane-sub">this Mac already runs the system</div>
+      <div class="node">Welcome back<small>name + version detected from disk</small></div>
+      <div class="down">↓</div>
+      <div class="node">Update check<small>same engine the fleet uses · “Update now” streams the real updater</small></div>
+      <div class="down">↓</div>
+      <div class="node">Arms &amp; Connectors<small>live status · cost chips · consent sheet · working on/off</small></div>
+      <div class="down">↓</div>
+      <div class="node future">Home</div>
+    </div>
+
+    <div class="lane">
+      <div class="lane-title">Member</div>
+      <div class="lane-sub">their company runs the system — nothing installs</div>
+      <div class="node">Welcome<small>“Join a workspace instead”</small></div>
+      <div class="down">↓</div>
+      <div class="node">Invite code<small>saved locally</small></div>
+      <div class="down">↓</div>
+      <div class="node future">Workspace<small>the forked client — chat, agents, docs, approvals</small></div>
+    </div>
+  </div>
+
+  <h2>Home — the basic dashboard, from what already exists</h2>
+  <div class="mockframe">
+    <div class="mocktop">
+      <span class="winbtn"></span><span class="winbtn"></span><span class="winbtn"></span>
+      <div class="mockbar">
+        <span class="chip">v0.7.5</span>
+        <span>up to date</span>
+        <span class="dot built"></span>
+      </div>
+    </div>
+    <div class="mockbody">
+      <div class="card span2">
+        <span class="key">1</span>
+        <h3>Today</h3>
+        <p class="briefing">Good morning, <b>Hisham</b>. <b>2 tasks</b> queued for today,
+        <b>Blaxle P0</b> is the priority. All services healthy overnight. Fajr briefing
+        sent at 07:00 · next: evening check-in 21:00.</p>
+      </div>
+
+      <div class="card">
+        <span class="key">2</span>
+        <h3>Work</h3>
+        <div class="row"><span class="dot next"></span> Blaxle P0: name + churn analysis <span class="meta">t#906</span></div>
+        <div class="row"><span class="dot built"></span> Dissect Buzz + OpenMausBot <span class="meta">done</span></div>
+        <div class="row"><span class="dot next"></span> Module manifest → installer <span class="meta">queued</span></div>
+      </div>
+
+      <div class="card">
+        <span class="key">3</span>
+        <h3>System</h3>
+        <div class="row"><span class="dot built"></span> bridge <span class="meta">:4098</span></div>
+        <div class="row"><span class="dot built"></span> qareen <span class="meta">:4096</span></div>
+        <div class="row"><span class="dot built"></span> transcriber <span class="meta">:7602 · 20 MB</span></div>
+        <div class="row"><span class="dot built"></span> scheduler <span class="meta">34 routines</span></div>
+        <div class="row"><span class="dot built"></span> 10 more <span class="meta">all healthy</span></div>
+      </div>
+
+      <div class="card">
+        <span class="key">4</span>
+        <h3>Arms</h3>
+        <div class="armchips">
+          <span class="armchip"><span class="dot built"></span>Telegram</span>
+          <span class="armchip"><span class="dot built"></span>Voice</span>
+          <span class="armchip"><span class="dot built"></span>Automations</span>
+          <span class="armchip"><span class="dot built"></span>WhatsApp</span>
+          <span class="armchip off"><span class="dot"></span>Sentinel</span>
+          <span class="armchip off"><span class="dot"></span>Meetings</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <span class="key">5</span>
+        <h3>Ask the system</h3>
+        <div class="searchbox">Search everything the system knows…</div>
+      </div>
+
+      <div class="card span2">
+        <span class="key">6</span>
+        <h3>Recent activity</h3>
+        <div class="row">Dissected Buzz &amp; OpenMausBot — architecture doc in vault <span class="meta">16:40</span></div>
+        <div class="row">Installer audit: core vs arms classified, 12 fixes flagged <span class="meta">16:37</span></div>
+        <div class="row">Arms panel shipped in the app <span class="meta">17:55</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="keys">
+    <div class="keyrow"><span class="key">1</span><div><span class="k-title">Briefing</span><span class="src">work engine · cli.py briefing — runs today, feeds Telegram every morning</span></div></div>
+    <div class="keyrow"><span class="key">2</span><div><span class="k-title">Tasks</span><span class="src">work.db · cli.py today / next — live now</span></div></div>
+    <div class="keyrow"><span class="key">3</span><div><span class="k-title">Service health</span><span class="src">launchctl + /health endpoints — same probes the Arms panel uses</span></div></div>
+    <div class="keyrow"><span class="key">4</span><div><span class="k-title">Arms summary</span><span class="src">config/modules.yaml + live probes — shipped today</span></div></div>
+    <div class="keyrow future-row"><span class="key">5</span><div><span class="k-title">Search</span><span class="src">qmd query — engine live, needs the input wired</span></div></div>
+    <div class="keyrow future-row"><span class="key">6</span><div><span class="k-title">Activity</span><span class="src">vault log/ + session records — data exists, feed needs assembling</span></div></div>
+  </div>
+
+  <h2>What stands between here and Home</h2>
+  <div class="lanes" style="grid-template-columns: 1fr 1fr 1fr;">
+    <div class="lane"><div class="lane-title">1 · Persist Configuration</div><div class="lane-sub" style="margin-bottom:0">the setup answers write real <span style="font-family:var(--mono)">~/.aos</span> config</div></div>
+    <div class="lane"><div class="lane-title">2 · Home screen</div><div class="lane-sub" style="margin-bottom:0">the six widgets above — every source already speaks</div></div>
+    <div class="lane"><div class="lane-title">3 · Signed DMG</div><div class="lane-sub" style="margin-bottom:0">download from the website, updates itself</div></div>
+  </div>
+
+  <p class="foot">Sources: app code at ~/project/aos-app · installer audit &amp; module spec in vault
+  (knowledge/specs/installer-modularization.md) · service state probed live on this machine, 2026-08-17.</p>
+</div>
