@@ -11,7 +11,7 @@ Build frontend interfaces that feel designed, not assembled. This skill replaces
 
 When the user asks to build, design, or enhance any UI — pages, components, layouts, apps.
 
-**AOS context** (`core/qareen/`, `apps/mission-control/`): DESIGN.md is law for tokens (colors, fonts, spacing). This skill governs *composition* — how those tokens are arranged into something with personality.
+**AOS context** (`core/qareen/`, `apps/desktop/`): DESIGN.md is law for tokens (colors, fonts, spacing). This skill governs *composition* — how those tokens are arranged into something with personality.
 
 **External context** (standalone apps, client work, new projects): This skill governs everything — palette, type, layout, composition. You MUST anchor to a concrete aesthetic world (see Step 1).
 
