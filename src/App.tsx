@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { ConnectorLogo } from "./logos";
 
 /* ────────────────────────────────────────────────────────────────
    Screens: welcome → configure → install → done
@@ -1010,6 +1011,205 @@ function Arms({
   );
 }
 
+/* ── pane: connectors ── */
+
+interface ConnectorAccount {
+  identity: string;
+  detail: string;
+}
+interface Connector {
+  id: string;
+  name: string;
+  category: string;
+  auth_kind: string;
+  status: string; // connected | attention | available
+  detail: string;
+  accounts: ConnectorAccount[];
+  connect_hint: string;
+}
+
+const DEMO_CONNECTORS: Connector[] = [
+  { id: "google", name: "Google Workspace", category: "productivity", auth_kind: "oauth", status: "connected", detail: "4 accounts — Gmail, Drive, Calendar, Docs", connect_hint: "", accounts: [
+    { identity: "hishamalhadi@gmail.com", detail: "39 permissions · token auto-refreshes" },
+    { identity: "hisham@nuchay.com", detail: "39 permissions · token auto-refreshes" },
+    { identity: "mail@hishamalhadi.com", detail: "39 permissions · token auto-refreshes" },
+    { identity: "hisham.alhadi@alhudaelementary.ca", detail: "39 permissions · token auto-refreshes" },
+  ]},
+  { id: "github", name: "GitHub", category: "development", auth_kind: "cli", status: "connected", detail: "@hishamalhadi", connect_hint: "gh auth login --web", accounts: [{ identity: "@hishamalhadi", detail: "permissions: gist, read:org, repo, workflow" }] },
+  { id: "telegram", name: "Telegram", category: "communication", auth_kind: "token", status: "connected", detail: "bridge running", connect_hint: "", accounts: [{ identity: "primary bot", detail: "bot token in Keychain · tokens don't expire" }, { identity: "tabib bot", detail: "bot token in Keychain" }] },
+  { id: "whatsapp", name: "WhatsApp", category: "communication", auth_kind: "session", status: "connected", detail: "phone-paired session", connect_hint: "", accounts: [{ identity: "paired device", detail: "QR session · re-pair if your phone unlinks it" }] },
+  { id: "slack", name: "Slack", category: "communication", auth_kind: "token", status: "connected", detail: "bot + app tokens in Keychain", connect_hint: "", accounts: [] },
+  { id: "cloudflare", name: "Cloudflare", category: "infrastructure", auth_kind: "token", status: "connected", detail: "2 accounts", connect_hint: "", accounts: [{ identity: "personal (hish.am)", detail: "API token" }, { identity: "Elora Greens", detail: "API token" }] },
+  { id: "clickup", name: "ClickUp", category: "productivity", auth_kind: "token", status: "connected", detail: "API token in Keychain", connect_hint: "", accounts: [] },
+  { id: "obsidian", name: "Obsidian", category: "knowledge", auth_kind: "token", status: "connected", detail: "local REST API", connect_hint: "", accounts: [] },
+  { id: "notion", name: "Notion", category: "knowledge", auth_kind: "token", status: "available", detail: "Pages and databases as agent workspace.", connect_hint: "Ask your agent to connect it — setup is guided.", accounts: [] },
+  { id: "linear", name: "Linear", category: "development", auth_kind: "token", status: "available", detail: "Issues and cycles.", connect_hint: "Ask your agent to connect it — setup is guided.", accounts: [] },
+  { id: "discord", name: "Discord", category: "communication", auth_kind: "token", status: "available", detail: "Bot presence in your servers.", connect_hint: "Ask your agent to connect it — setup is guided.", accounts: [] },
+  { id: "todoist", name: "Todoist", category: "productivity", auth_kind: "token", status: "available", detail: "Tasks and projects.", connect_hint: "Ask your agent to connect it — setup is guided.", accounts: [] },
+];
+
+const CATEGORY_LABELS: Record<string, string> = {
+  communication: "Communication",
+  productivity: "Productivity",
+  development: "Development",
+  knowledge: "Knowledge",
+  voice: "Voice",
+  ai: "AI",
+  business: "Business",
+  infrastructure: "Infrastructure",
+  other: "Other",
+};
+
+const AUTH_LABELS: Record<string, string> = {
+  oauth: "Signs in with the provider — you approve the permissions",
+  token: "Uses a key stored in your Mac's Keychain",
+  session: "Paired to your phone by QR code",
+  cli: "Authenticated through its official command-line tool",
+  apple: "Built into macOS — just needs permission",
+};
+
+function ConnectorCard({ c, onOpen }: { c: Connector; onOpen: (c: Connector) => void }) {
+  const connected = c.status === "connected";
+  const attention = c.status === "attention";
+  return (
+    <button
+      onClick={() => onOpen(c)}
+      className="text-left rounded-2xl border border-zinc-800 bg-zinc-950/60 px-4 py-3.5 hover:border-zinc-600 transition flex items-center gap-3.5"
+    >
+      <ConnectorLogo id={c.id} name={c.name} />
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2">
+          <span className="text-[13.5px] font-medium text-zinc-100 truncate">{c.name}</span>
+          {c.accounts.length > 1 && (
+            <span className="text-[10.5px] text-zinc-500 font-mono">×{c.accounts.length}</span>
+          )}
+        </div>
+        <div className="text-[11.5px] text-zinc-500 truncate mt-0.5">{c.detail}</div>
+      </div>
+      {connected ? (
+        <span className="inline-flex items-center gap-1.5 text-[11px] text-zinc-200 shrink-0">
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400/90" /> Connected
+        </span>
+      ) : attention ? (
+        <span className="inline-flex items-center gap-1.5 text-[11px] text-amber-300 shrink-0">
+          <span className="w-1.5 h-1.5 rounded-full bg-amber-400/90" /> Attention
+        </span>
+      ) : (
+        <span className="text-[12px] px-3 py-1.5 rounded-lg bg-zinc-100 text-zinc-950 font-medium shrink-0">
+          Connect
+        </span>
+      )}
+    </button>
+  );
+}
+
+function ConnectorsPane() {
+  const [connectors, setConnectors] = useState<Connector[] | null>(null);
+  const [open, setOpen] = useState<Connector | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      if (IN_TAURI) {
+        try {
+          setConnectors(await invoke<Connector[]>("list_connectors"));
+        } catch {
+          setConnectors([]);
+        }
+      } else {
+        await new Promise((r) => setTimeout(r, 400));
+        setConnectors(DEMO_CONNECTORS);
+      }
+    })();
+  }, []);
+
+  if (connectors === null)
+    return (
+      <div className="flex items-center gap-3 px-10 pt-16">
+        <div className="w-2 h-2 rounded-full bg-zinc-100 pulse-dot" />
+        <span className="text-[13.5px] text-zinc-200">Reading connections…</span>
+      </div>
+    );
+
+  const cats = Array.from(new Set(connectors.map((c) => c.category)));
+  const connectedCount = connectors.filter((c) => c.status === "connected").length;
+
+  return (
+    <div className="screen max-w-[720px] mx-auto px-8 pt-14 pb-16">
+      <h1 className="text-[22px] font-semibold tracking-tight mb-1">Connectors</h1>
+      <p className="text-[13px] text-zinc-300 mb-7">
+        {connectedCount} connected. Outside apps and accounts your system can act through.
+      </p>
+
+      {cats.map((cat) => {
+        const items = connectors
+          .filter((c) => c.category === cat)
+          .sort((a, b) => (a.status === "connected" ? -1 : 1) - (b.status === "connected" ? -1 : 1));
+        return (
+          <div key={cat} className="mb-7">
+            <div className="text-[11px] uppercase tracking-[0.12em] text-zinc-500 mb-2.5">
+              {CATEGORY_LABELS[cat] ?? cat}
+            </div>
+            <div className="grid grid-cols-2 gap-2.5">
+              {items.map((c) => (
+                <ConnectorCard key={c.id} c={c} onOpen={setOpen} />
+              ))}
+            </div>
+          </div>
+        );
+      })}
+
+      {open && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-40" onClick={() => setOpen(null)}>
+          <div
+            className="screen w-[440px] max-w-[88vw] rounded-2xl border border-zinc-700 bg-zinc-900 p-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-3.5 mb-4">
+              <ConnectorLogo id={open.id} name={open.name} size={42} />
+              <div>
+                <h2 className="text-[16px] font-semibold">{open.name}</h2>
+                <div className="text-[12px] text-zinc-400">{AUTH_LABELS[open.auth_kind] ?? ""}</div>
+              </div>
+            </div>
+
+            {open.accounts.length > 0 && (
+              <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 px-4 py-1 mb-4">
+                {open.accounts.map((a) => (
+                  <div key={a.identity} className="py-2.5 border-b border-zinc-800/60 last:border-0">
+                    <div className="text-[13px] text-zinc-100">{a.identity}</div>
+                    <div className="text-[11.5px] text-zinc-500 mt-0.5">{a.detail}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {open.status !== "connected" && (
+              <p className="text-[13px] text-zinc-300 leading-relaxed mb-2">{open.detail}</p>
+            )}
+            {open.connect_hint && (
+              <p className="text-[12.5px] text-zinc-400 leading-relaxed">{open.connect_hint}</p>
+            )}
+
+            <div className="flex justify-end gap-3 mt-5">
+              <button
+                onClick={() => setOpen(null)}
+                className="px-4 h-10 rounded-xl text-[13.5px] text-zinc-300 hover:text-zinc-100 transition"
+              >
+                Close
+              </button>
+              {open.status !== "connected" && (
+                <button className="px-5 h-10 rounded-xl bg-zinc-100 text-zinc-950 text-[13.5px] font-medium hover:bg-white transition">
+                  Connect
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ── pane: health ── */
 
 const DEMO_HEALTH: HealthReport = {
@@ -1588,7 +1788,7 @@ function Shell({
         {pane === "home" && <Home sys={sys} onUpdate={onUpdate} />}
         {pane === "health" && <HealthPane />}
         {pane === "arms" && <Arms />}
-        {pane === "connectors" && <Arms connectors />}
+        {pane === "connectors" && <ConnectorsPane />}
         {pane === "config" && <ConfigPane />}
         {pane === "updates" && (
           <UpdatesPane sys={sys} checking={checking} onCheck={onCheck} onUpdate={onUpdate} />
