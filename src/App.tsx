@@ -3921,33 +3921,30 @@ function Shell({
         </>
       )}
 
-      {/* Sits above the drag strip so it stays clickable. */}
+      {/* One icon, one position, forever: right of the macOS traffic lights
+          in the real window (they occupy ~70px of the top-left), standard
+          top-left in a browser. Never changes glyph, never moves. */}
       <button
         onClick={() => (desktop ? setCollapsed((v) => !v) : setNavOpen((v) => !v))}
         aria-label={navShown ? "Hide navigation" : "Show navigation"}
-        className="fixed top-1.5 left-2.5 z-50 w-10 h-10 rounded-lg flex items-center justify-center
-                   text-zinc-300 hover:text-zinc-50 hover:bg-zinc-900 transition"
+        className={
+          "fixed top-1.5 z-50 w-10 h-10 rounded-lg flex items-center justify-center " +
+          "text-zinc-300 hover:text-zinc-50 hover:bg-zinc-900 transition " +
+          (IN_TAURI ? "left-[78px]" : "left-2.5")
+        }
       >
         <svg width="16" height="16" viewBox="0 0 16 16">
-          {navOpen ? (
-            <path d="M3.5 3.5 12.5 12.5M12.5 3.5 3.5 12.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-          ) : navShown ? (
-            <>
-              <rect
-                x="2.25"
-                y="3.25"
-                width="11.5"
-                height="9.5"
-                rx="2"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                fill="none"
-              />
-              <path d="M6.25 3.25v9.5" stroke="currentColor" strokeWidth="1.5" />
-            </>
-          ) : (
-            <path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h11" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-          )}
+          <rect
+            x="2.25"
+            y="3.25"
+            width="11.5"
+            height="9.5"
+            rx="2"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            fill="none"
+          />
+          <path d="M6.25 3.25v9.5" stroke="currentColor" strokeWidth="1.5" />
         </svg>
       </button>
 
