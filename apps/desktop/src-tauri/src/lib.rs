@@ -12,6 +12,12 @@ struct SystemInfo {
     operator: Option<String>,
     update_status: Option<String>, // up_to_date | update_available | ...
     last_check: Option<String>,
+    /// The deployed release id (symlink target of ~/aos, e.g. "v0.7.5-cc89243").
+    /// Unlike VERSION, this CHANGES on every applied update — it is the value
+    /// that can actually answer "did my update apply".
+    release: Option<String>,
+    /// When the current release was deployed, human-readable.
+    updated: Option<String>,
 }
 
 fn read_system_info() -> SystemInfo {
@@ -50,7 +56,29 @@ fn read_system_info() -> SystemInfo {
             None => (None, None),
         };
 
-    SystemInfo { installed, version, operator, update_status, last_check }
+    // Release identity: ~/aos is a symlink to aos-releases/<release-id>.
+    let (release, updated) = std::fs::read_link(format!("{home}/aos"))
+        .ok()
+        .map(|target| {
+            let id = target
+                .file_name()
+                .map(|f| f.to_string_lossy().to_string())
+                .unwrap_or_default();
+            let when = std::fs::metadata(&target)
+                .or_else(|_| std::fs::metadata(format!("{home}/aos")))
+                .ok()
+                .and_then(|m| m.modified().ok())
+                .map(|t| {
+                    let secs = t
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs() as i64)
+                        .unwrap_or(0);
+                    epoch_to_date(secs)
+                });
+            (Some(id).filter(|s| !s.is_empty()), when)
+        })
+        .unwrap_or((None, None));
+    SystemInfo { installed, version, operator, update_status, last_check, release, updated }
 }
 
 /// Fast, local-only detection: is the system installed, what version, who's
@@ -3470,6 +3498,63 @@ async fn check_for_update(handle: &tauri::AppHandle) -> Option<tauri_plugin_upda
     builder.build().ok()?.check().await.ok().flatten()
 }
 
+/// The updater, narrated: every state lands on the frontend as an
+/// "app-update" event so the operator can SEE what happened. Silence was a
+/// design flaw — a finished update and a failed one felt identical.
+#[cfg(not(debug_assertions))]
+async fn run_app_update(handle: tauri::AppHandle) {
+    use tauri::Emitter as _;
+    let emit = |state: &str, extra: serde_json::Value| {
+        let mut payload = serde_json::json!({ "state": state });
+        if let (Some(obj), Some(add)) = (payload.as_object_mut(), extra.as_object()) {
+            for (k, v) in add {
+                obj.insert(k.clone(), v.clone());
+            }
+        }
+        let _ = handle.emit("app-update", payload);
+    };
+    emit("checking", serde_json::json!({}));
+    match check_for_update(&handle).await {
+        Some(update) => {
+            let version = update.version.clone();
+            emit("downloading", serde_json::json!({ "version": version }));
+            match update.download_and_install(|_, _| {}, || {}).await {
+                Ok(()) => emit("ready", serde_json::json!({ "version": version })),
+                Err(e) => emit("error", serde_json::json!({ "message": e.to_string() })),
+            }
+        }
+        None => emit("uptodate", serde_json::json!({})),
+    }
+}
+
+/// The app's own version — distinct from the SYSTEM version, and the thing
+/// the operator could not see anywhere when they asked "did the app update?".
+#[tauri::command]
+fn app_version() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
+}
+
+/// Re-run the update check on demand (Updates pane button).
+#[tauri::command]
+async fn check_app_update(handle: tauri::AppHandle) -> Result<(), String> {
+    #[cfg(not(debug_assertions))]
+    {
+        run_app_update(handle).await;
+    }
+    #[cfg(debug_assertions)]
+    {
+        use tauri::Emitter as _;
+        let _ = handle.emit("app-update", serde_json::json!({ "state": "uptodate", "dev": true }));
+    }
+    Ok(())
+}
+
+/// Apply a staged update: relaunch into the new version.
+#[tauri::command]
+fn restart_app(handle: tauri::AppHandle) {
+    handle.restart();
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -3482,9 +3567,7 @@ pub fn run() {
                 let _ = app.handle().plugin(tauri_plugin_updater::Builder::new().build());
                 let handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
-                    if let Some(update) = check_for_update(&handle).await {
-                        let _ = update.download_and_install(|_, _| {}, || {}).await;
-                    }
+                    run_app_update(handle).await;
                 });
             }
 
@@ -3504,6 +3587,9 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             run_install,
+            app_version,
+            check_app_update,
+            restart_app,
             detect_system,
             check_updates,
             run_update,
