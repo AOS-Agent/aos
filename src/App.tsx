@@ -19,7 +19,28 @@ type Screen =
   | "home"
   | "shell";
 
-type PaneId = "home" | "arms" | "config" | "updates";
+type PaneId = "home" | "health" | "arms" | "connectors" | "config" | "updates";
+
+interface SvcHealth {
+  label: string;
+  name: string;
+  running: boolean;
+  last_exit: number;
+}
+interface EndpointHealth {
+  name: string;
+  ok: boolean;
+  detail: string;
+}
+interface HealthReport {
+  mem_total_gb: number;
+  mem_free_pct: number | null;
+  disk_total_gb: number;
+  disk_avail_gb: number;
+  services: SvcHealth[];
+  endpoints: EndpointHealth[];
+  issues: string[];
+}
 
 interface TaskRow {
   id: string;
@@ -44,6 +65,7 @@ interface ModuleInfo {
   id: string;
   name: string;
   category: string;
+  kind?: string | null;
   tagline: string;
   consent?: string | null;
   costs: Record<string, string>;
@@ -757,7 +779,9 @@ function Home({
 const DEMO_MODULES: ModuleInfo[] = [
   { id: "vault", name: "Knowledge Vault", category: "standard", tagline: "A private knowledge base the system reads and writes.", costs: { resident_ram: "0" }, services: [], status: "active", can_toggle: false },
   { id: "memory-search", name: "Memory & Search", category: "standard", tagline: "The system remembers and finds anything it has seen.", costs: { resident_ram: "0 (index jobs only)" }, services: [], status: "active", can_toggle: false },
-  { id: "telegram", name: "Telegram", category: "arm", tagline: "Talk to your system from your phone — messages, voice notes, briefings.", costs: { resident_ram: "~60 MB (bridge)" }, services: ["com.aos.bridge"], status: "active", can_toggle: true },
+  { id: "telegram", kind: "connector", name: "Telegram", category: "arm", tagline: "Talk to your system from your phone — messages, voice notes, briefings.", costs: { resident_ram: "~60 MB (bridge)" }, services: ["com.aos.bridge"], status: "active", can_toggle: true },
+  { id: "whatsapp", kind: "connector", name: "WhatsApp", category: "arm", tagline: "WhatsApp messages flow through your system.", costs: { resident_ram: "~40 MB" }, services: ["com.aos.whatsmeow"], status: "active", can_toggle: true },
+  { id: "remote-access", kind: "connector", name: "Remote Access", category: "arm", tagline: "Reach this machine securely from your phone or laptop.", costs: { resident_ram: "~50 MB (tailscaled)" }, services: [], status: "active", can_toggle: false },
   { id: "voice-dictation", name: "Voice — Dictation", category: "arm", tagline: "On-device speech to text with a model that learns your vocabulary.", costs: { resident_ram: "~20 MB at rest", download: "1.6 GB" }, services: ["com.aos.transcriber"], status: "active", can_toggle: true },
   { id: "voice-meetings", name: "Voice — Meetings", category: "arm", tagline: "Meeting notes with named speakers, recognized by voice.", costs: { download: "~1 GB" }, services: [], status: "available", can_toggle: false, status_note: "arrives with a system update" },
   { id: "automations", name: "Automations (n8n)", category: "arm", tagline: "A visual engine for scheduled routines and triggers.", costs: { resident_ram: "~300 MB resident" }, services: ["com.aos.n8n"], status: "active", can_toggle: true },
@@ -835,7 +859,13 @@ function ModuleRow({
   );
 }
 
-function Arms({ onBack }: { onBack?: () => void }) {
+function Arms({
+  onBack,
+  connectors = false,
+}: {
+  onBack?: () => void;
+  connectors?: boolean;
+}) {
   const [modules, setModules] = useState<ModuleInfo[] | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<ModuleInfo | null>(null);
@@ -895,17 +925,21 @@ function Arms({ onBack }: { onBack?: () => void }) {
   );
 
   const groups: [string, ModuleInfo[]][] = modules
-    ? [
-        ["Arms", modules.filter((m) => m.category === "arm")],
-        ["Built-in", modules.filter((m) => m.category !== "arm")],
-      ]
+    ? connectors
+      ? [["Connectors", modules.filter((m) => m.kind === "connector")]]
+      : [
+          ["Arms", modules.filter((m) => m.category === "arm" && m.kind !== "connector")],
+          ["Built-in", modules.filter((m) => m.category !== "arm" && m.kind !== "connector")],
+        ]
     : [];
 
   return (
     <div className="screen h-full flex flex-col items-center py-14 overflow-y-auto console">
       <div className="w-[620px] max-w-[90vw]">
         <div className="flex items-end justify-between mb-1">
-          <h1 className="text-[22px] font-semibold tracking-tight">Arms & Connectors</h1>
+          <h1 className="text-[22px] font-semibold tracking-tight">
+            {connectors ? "Connectors" : "Arms"}
+          </h1>
           {onBack && (
             <button
               onClick={onBack}
@@ -976,6 +1010,181 @@ function Arms({ onBack }: { onBack?: () => void }) {
   );
 }
 
+/* ── pane: health ── */
+
+const DEMO_HEALTH: HealthReport = {
+  mem_total_gb: 16,
+  mem_free_pct: 79,
+  disk_total_gb: 228,
+  disk_avail_gb: 184,
+  services: [
+    { label: "com.aos.bridge", name: "bridge", running: true, last_exit: 0 },
+    { label: "com.aos.qareen", name: "qareen", running: true, last_exit: 0 },
+    { label: "com.aos.transcriber", name: "transcriber", running: true, last_exit: -11 },
+    { label: "com.aos.n8n", name: "n8n", running: true, last_exit: -15 },
+    { label: "com.aos.scheduler", name: "scheduler", running: false, last_exit: 0 },
+    { label: "com.aos.sentinel", name: "sentinel", running: true, last_exit: -10 },
+  ],
+  endpoints: [
+    { name: "qareen dashboard", ok: true, detail: "HTTP 200" },
+    { name: "bridge", ok: false, detail: "no response" },
+    { name: "transcriber", ok: true, detail: "HTTP 200" },
+    { name: "n8n", ok: true, detail: "HTTP 200" },
+  ],
+  issues: [
+    "transcriber: crashed (segfault) on its last run — restarted and running now.",
+    "n8n: terminated (SIGTERM) on its last run — restarted and running now.",
+    "bridge: health endpoint gave no response.",
+  ],
+};
+
+function Meter({ pct, label, detail }: { pct: number; label: string; detail: string }) {
+  return (
+    <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 px-5 py-4">
+      <div className="text-[11px] uppercase tracking-[0.12em] text-zinc-500 mb-2">{label}</div>
+      <div className="flex items-baseline gap-2 mb-2.5">
+        <span className="text-[24px] font-semibold tabular-nums tracking-tight">{pct}%</span>
+        <span className="text-[12px] text-zinc-300">{detail}</span>
+      </div>
+      <div className="h-1.5 rounded-full bg-zinc-800 overflow-hidden">
+        <div
+          className={"h-full rounded-full " + (pct > 75 ? "bg-red-400/80" : pct > 55 ? "bg-amber-400/80" : "bg-zinc-200")}
+          style={{ width: `${Math.min(100, Math.max(2, pct))}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function HealthPane() {
+  const [report, setReport] = useState<HealthReport | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const load = useCallback(async () => {
+    setRefreshing(true);
+    if (IN_TAURI) {
+      try {
+        setReport(await invoke<HealthReport>("health_check"));
+      } catch {
+        /* keep previous */
+      }
+    } else {
+      await new Promise((r) => setTimeout(r, 600));
+      setReport(DEMO_HEALTH);
+    }
+    setRefreshing(false);
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  if (report === null)
+    return (
+      <div className="flex items-center gap-3 px-10 pt-16">
+        <div className="w-2 h-2 rounded-full bg-zinc-100 pulse-dot" />
+        <span className="text-[13.5px] text-zinc-200">Inspecting the system…</span>
+      </div>
+    );
+
+  const memUsed = report.mem_free_pct !== null ? 100 - report.mem_free_pct : null;
+  const diskUsed =
+    report.disk_total_gb > 0
+      ? Math.round(((report.disk_total_gb - report.disk_avail_gb) / report.disk_total_gb) * 100)
+      : null;
+  const healthy = report.issues.length === 0;
+
+  return (
+    <div className="screen max-w-[680px] mx-auto px-8 pt-14">
+      <div className="flex items-end justify-between mb-1">
+        <h1 className="text-[22px] font-semibold tracking-tight">Health</h1>
+        <button
+          onClick={load}
+          disabled={refreshing}
+          className="text-[13px] text-zinc-300 hover:text-zinc-100 transition pb-1 disabled:opacity-40"
+        >
+          {refreshing ? "Checking…" : "Refresh"}
+        </button>
+      </div>
+      <p className="text-[13px] text-zinc-300 mb-6">
+        {healthy
+          ? "Everything looks good."
+          : `${report.issues.length} thing${report.issues.length > 1 ? "s" : ""} worth a look.`}
+      </p>
+
+      {report.issues.length > 0 && (
+        <div className="rounded-2xl border border-amber-900/40 bg-amber-950/20 px-5 py-4 mb-4">
+          {report.issues.map((iss, i) => (
+            <div key={i} className="flex gap-2.5 py-1 text-[13px] text-amber-200/90">
+              <span className="text-amber-400/90 font-semibold shrink-0">!</span>
+              <span className="select-text">{iss}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="grid grid-cols-2 gap-4 mb-4">
+        {memUsed !== null && (
+          <Meter pct={memUsed} label="Memory" detail={`of ${report.mem_total_gb} GB in use`} />
+        )}
+        {diskUsed !== null && (
+          <Meter
+            pct={diskUsed}
+            label="Storage"
+            detail={`${report.disk_avail_gb} GB free of ${report.disk_total_gb} GB`}
+          />
+        )}
+      </div>
+
+      <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 px-5 py-2 mb-4">
+        <div className="text-[11px] uppercase tracking-[0.12em] text-zinc-500 mt-2 mb-1">Services</div>
+        {report.services.map((s) => {
+          const crashedBefore = s.last_exit !== 0;
+          return (
+            <div key={s.label} className="flex items-center gap-2.5 py-2 border-b border-zinc-800/50 last:border-0">
+              <div
+                className={
+                  "w-2 h-2 rounded-full shrink-0 " +
+                  (s.running
+                    ? crashedBefore
+                      ? "bg-amber-400/90"
+                      : "bg-zinc-100"
+                    : crashedBefore
+                      ? "bg-red-400/90"
+                      : "border border-zinc-600")
+                }
+              />
+              <span className="text-[13px] text-zinc-100 flex-1">{s.name}</span>
+              <span className="font-mono text-[10.5px] text-zinc-500">
+                {s.running ? (crashedBefore ? "running · crashed before" : "running") : crashedBefore ? "down" : "idle"}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 px-5 py-4">
+        <div className="text-[11px] uppercase tracking-[0.12em] text-zinc-500 mb-2.5">Endpoints</div>
+        <div className="flex flex-wrap gap-2">
+          {report.endpoints.map((e) => (
+            <span
+              key={e.name}
+              className={
+                "inline-flex items-center gap-2 px-2.5 py-1.5 rounded-lg border text-[12px] " +
+                (e.ok ? "border-zinc-700 text-zinc-100" : "border-red-900/60 text-red-300")
+              }
+            >
+              <span className={"w-1.5 h-1.5 rounded-full " + (e.ok ? "bg-zinc-100" : "bg-red-400")} />
+              {e.name}
+              <span className="font-mono text-[10px] text-zinc-500">{e.detail}</span>
+            </span>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ── shell: sidebar + panes ── */
 
 function NavIcon({ id }: { id: PaneId }) {
@@ -1011,6 +1220,18 @@ function NavIcon({ id }: { id: PaneId }) {
           <path d="M8 5v5M5.8 8.2 8 10.4l2.2-2.2" {...stroke} />
         </svg>
       );
+    case "health":
+      return (
+        <svg width="15" height="15" viewBox="0 0 16 16">
+          <path d="M1.5 8.5h3l1.5-4 2.5 7 1.5-3h4.5" {...stroke} />
+        </svg>
+      );
+    case "connectors":
+      return (
+        <svg width="15" height="15" viewBox="0 0 16 16">
+          <path d="M5.5 2.5v3M10.5 2.5v3M4 5.5h8v2.5a4 4 0 0 1-8 0zM8 12v2" {...stroke} />
+        </svg>
+      );
   }
 }
 
@@ -1025,7 +1246,9 @@ function Sidebar({
 }) {
   const items: { id: PaneId; label: string; section: string }[] = [
     { id: "home", label: "Home", section: "" },
-    { id: "arms", label: "Arms & Connectors", section: "System" },
+    { id: "health", label: "Health", section: "" },
+    { id: "arms", label: "Arms", section: "System" },
+    { id: "connectors", label: "Connectors", section: "System" },
     { id: "config", label: "Configuration", section: "System" },
     { id: "updates", label: "Updates", section: "System" },
   ];
@@ -1076,41 +1299,47 @@ function Sidebar({
   );
 }
 
+const OPERATOR_DEMO: Record<string, string> = {
+  name: "Hisham Al Hadi",
+  agent_name: "Chief",
+  timezone: "America/Toronto",
+  style: "concise",
+  language: "en",
+  morning_briefing: "07:00",
+  evening_checkin: "21:00",
+  trust_level: "2",
+};
+
 function ConfigPane() {
-  const [values, setValues] = useState({ operatorName: "", machineName: "", role: "primary" });
+  const [values, setValues] = useState<Record<string, string>>({});
   const [saved, setSaved] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
     (async () => {
       if (IN_TAURI) {
         try {
-          const cfg = await invoke<Record<string, string> | null>("load_setup_config");
-          if (cfg)
-            setValues({
-              operatorName: cfg.operator_name ?? "",
-              machineName: cfg.machine_name ?? "",
-              role: cfg.role ?? "primary",
-            });
-        } catch {
-          /* defaults stand */
+          setValues((await invoke<Record<string, string>>("operator_config")) ?? {});
+        } catch (e) {
+          setError(String(e));
         }
       } else {
-        setValues({ operatorName: "Hadi", machineName: "agents-mac-mini", role: "primary" });
+        setValues(OPERATOR_DEMO);
       }
       setLoaded(true);
     })();
   }, []);
 
+  const set = (k: string, v: string) => setValues((s) => ({ ...s, [k]: v }));
+
   const save = useCallback(async () => {
+    setError(null);
     if (IN_TAURI) {
       try {
-        await invoke("save_setup_config", {
-          operatorName: values.operatorName,
-          machineName: values.machineName,
-          role: values.role,
-        });
-      } catch {
+        await invoke("save_operator_config", { fields: values });
+      } catch (e) {
+        setError(String(e));
         return;
       }
     }
@@ -1121,50 +1350,101 @@ function ConfigPane() {
   const inputCls =
     "w-64 h-10 px-3 rounded-lg bg-zinc-900 border border-zinc-800 text-[14px] text-zinc-100 " +
     "placeholder:text-zinc-500 outline-none focus:border-zinc-600 transition";
+  const smallInput = inputCls.replace("w-64", "w-28");
+
+  const TRUST_LABELS = ["Shadow", "Approval", "Semi-auto", "Full-auto"];
 
   return (
-    <div className="screen max-w-[640px] mx-auto px-8 pt-14">
+    <div className="screen max-w-[640px] mx-auto px-8 pt-14 pb-16">
       <h1 className="text-[22px] font-semibold tracking-tight mb-1">Configuration</h1>
-      <p className="text-[13px] text-zinc-300 mb-6">The essentials of this machine.</p>
-      {loaded && (
-        <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 px-5 divide-y divide-zinc-800/80">
-          <Field label="Your name">
-            <input
-              className={inputCls}
-              value={values.operatorName}
-              onChange={(e) => setValues({ ...values, operatorName: e.target.value })}
-            />
-          </Field>
-          <Field label="Machine name">
-            <input
-              className={inputCls}
-              value={values.machineName}
-              onChange={(e) => setValues({ ...values, machineName: e.target.value })}
-            />
-          </Field>
-          <Field label="Role">
-            <div className="flex rounded-lg border border-zinc-800 overflow-hidden">
-              {(["primary", "worker"] as const).map((r) => (
-                <button
-                  key={r}
-                  onClick={() => setValues({ ...values, role: r })}
-                  className={
-                    "px-4 h-10 text-[13px] capitalize transition " +
-                    (values.role === r
-                      ? "bg-zinc-100 text-zinc-950 font-medium"
-                      : "bg-zinc-900 text-zinc-300 hover:text-zinc-100")
-                  }
-                >
-                  {r}
-                </button>
-              ))}
-            </div>
-          </Field>
+      <p className="text-[13px] text-zinc-300 mb-6">
+        Your operator profile — saved straight into the system's configuration.
+      </p>
+
+      {error && (
+        <div className="mb-4 rounded-xl border border-red-900/60 bg-red-950/30 px-4 py-3 text-[13px] text-red-300 select-text">
+          {error}
         </div>
       )}
-      <div className="flex items-center gap-3 mt-6">
+
+      {loaded && (
+        <>
+          <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 px-5 divide-y divide-zinc-800/80 mb-4">
+            <Field label="Your name">
+              <input className={inputCls} value={values.name ?? ""} onChange={(e) => set("name", e.target.value)} />
+            </Field>
+            <Field label="Agent's name">
+              <input
+                className={inputCls}
+                placeholder="What you call your agent"
+                value={values.agent_name ?? ""}
+                onChange={(e) => set("agent_name", e.target.value)}
+              />
+            </Field>
+            <Field label="Timezone">
+              <input className={inputCls} value={values.timezone ?? ""} onChange={(e) => set("timezone", e.target.value)} />
+            </Field>
+            <Field label="Communication style">
+              <div className="flex rounded-lg border border-zinc-800 overflow-hidden">
+                {(["concise", "detailed"] as const).map((s) => (
+                  <button
+                    key={s}
+                    onClick={() => set("style", s)}
+                    className={
+                      "px-4 h-10 text-[13px] capitalize transition " +
+                      ((values.style ?? "concise") === s
+                        ? "bg-zinc-100 text-zinc-950 font-medium"
+                        : "bg-zinc-900 text-zinc-300 hover:text-zinc-100")
+                    }
+                  >
+                    {s}
+                  </button>
+                ))}
+              </div>
+            </Field>
+          </div>
+
+          <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 px-5 divide-y divide-zinc-800/80 mb-4">
+            <Field label="Morning briefing">
+              <input
+                className={smallInput + " text-center font-mono"}
+                value={values.morning_briefing ?? ""}
+                onChange={(e) => set("morning_briefing", e.target.value)}
+              />
+            </Field>
+            <Field label="Evening check-in">
+              <input
+                className={smallInput + " text-center font-mono"}
+                value={values.evening_checkin ?? ""}
+                onChange={(e) => set("evening_checkin", e.target.value)}
+              />
+            </Field>
+            <Field label="Trust level">
+              <div className="flex rounded-lg border border-zinc-800 overflow-hidden">
+                {TRUST_LABELS.map((label, i) => (
+                  <button
+                    key={label}
+                    onClick={() => set("trust_level", String(i))}
+                    title={label}
+                    className={
+                      "px-3 h-10 text-[12.5px] transition " +
+                      ((values.trust_level ?? "1") === String(i)
+                        ? "bg-zinc-100 text-zinc-950 font-medium"
+                        : "bg-zinc-900 text-zinc-300 hover:text-zinc-100")
+                    }
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </Field>
+          </div>
+        </>
+      )}
+
+      <div className="flex items-center gap-3">
         <PrimaryButton onClick={save}>Save</PrimaryButton>
-        {saved && <span className="screen text-[13px] text-zinc-300">Saved.</span>}
+        {saved && <span className="screen text-[13px] text-zinc-300">Saved to operator.yaml</span>}
       </div>
     </div>
   );
@@ -1182,8 +1462,26 @@ function UpdatesPane({
   onUpdate: () => void;
 }) {
   const updateAvailable = sys?.update_status === "update_available";
+  const [notes, setNotes] = useState<string | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      if (IN_TAURI) {
+        try {
+          setNotes(await invoke<string>("release_notes"));
+        } catch {
+          setNotes(null);
+        }
+      } else {
+        setNotes(
+          "## v0.7.5 — 2026-08-15\n\nSummary: The context diet — every session starts ~30k tokens lighter.\n\n- Changed chief.md from a 17KB manual into a 5.5KB router\n- Added a Context Budget section to ship-check\n- Fixed the fresh-install onboarding banner never reaching the session",
+        );
+      }
+    })();
+  }, []);
+
   return (
-    <div className="screen max-w-[640px] mx-auto px-8 pt-14">
+    <div className="screen max-w-[640px] mx-auto px-8 pt-14 pb-16">
       <h1 className="text-[22px] font-semibold tracking-tight mb-1">Updates</h1>
       <p className="text-[13px] text-zinc-300 mb-6">
         System updates install in place and restart services automatically.
@@ -1229,6 +1527,44 @@ function UpdatesPane({
           )}
         </div>
       </div>
+
+      {notes && (
+        <div className="mt-6">
+          <div className="text-[11px] uppercase tracking-[0.12em] text-zinc-500 mb-2.5">
+            What's new
+          </div>
+          <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 px-6 py-5">
+            {notes.split("\n").map((line, i) => {
+              const t = line.trim();
+              if (t.startsWith("## "))
+                return (
+                  <div key={i} className="text-[15px] font-semibold text-zinc-50 mt-4 first:mt-0 mb-1">
+                    {t.slice(3)}
+                  </div>
+                );
+              if (t.startsWith("Summary:"))
+                return (
+                  <div key={i} className="text-[13px] text-zinc-200 italic mb-2">
+                    {t.slice(8).trim()}
+                  </div>
+                );
+              if (t.startsWith("- "))
+                return (
+                  <div key={i} className="flex gap-2.5 py-0.5 text-[13px] text-zinc-200 leading-relaxed">
+                    <span className="text-zinc-500 shrink-0">–</span>
+                    <span>{t.slice(2)}</span>
+                  </div>
+                );
+              if (!t) return null;
+              return (
+                <div key={i} className="text-[13px] text-zinc-200 py-0.5 leading-relaxed">
+                  {t}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1250,7 +1586,9 @@ function Shell({
       <Sidebar pane={pane} setPane={setPane} sys={sys} />
       <div className="flex-1 min-w-0 overflow-y-auto console pb-14">
         {pane === "home" && <Home sys={sys} onUpdate={onUpdate} />}
+        {pane === "health" && <HealthPane />}
         {pane === "arms" && <Arms />}
+        {pane === "connectors" && <Arms connectors />}
         {pane === "config" && <ConfigPane />}
         {pane === "updates" && (
           <UpdatesPane sys={sys} checking={checking} onCheck={onCheck} onUpdate={onUpdate} />
