@@ -3423,6 +3423,22 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
+            // Self-update, Claude-app style: check quietly on launch, download
+            // and stage in the background; the new version runs on next start.
+            #[cfg(not(debug_assertions))]
+            {
+                let _ = app.handle().plugin(tauri_plugin_updater::Builder::new().build());
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    use tauri_plugin_updater::UpdaterExt;
+                    if let Ok(updater) = handle.updater() {
+                        if let Ok(Some(update)) = updater.check().await {
+                            let _ = update.download_and_install(|_, _| {}, || {}).await;
+                        }
+                    }
+                });
+            }
+
             // Open at 70% of the screen, centered — big enough to feel like a
             // home, small enough to stay a window.
             use tauri::Manager as _;
