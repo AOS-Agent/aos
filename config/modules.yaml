@@ -1,0 +1,405 @@
+# modules.yaml — the single source of truth for AOS modules, arms & connectors.
+#
+# Read by three consumers, which must never drift apart:
+#   1. install.sh        — core path installs only tier: core
+#   2. onboarding        — asks the operator per `ask:` text, arm by arm
+#   3. the desktop app   — renders the Arms & Connectors panel from this file
+#
+# Every module pays rent: costs are declared honestly and shown to the
+# operator BEFORE activation. Nothing invasive activates without `consent`.
+#
+# ─────────────────────────────────────────────────────────────────────────
+# schema 2 (2026-08-17) — WHY THIS CHANGED
+#
+# A ground-truth audit of this machine reported five modules BROKEN.
+# All five were false positives, and every one had the same cause: nothing
+# declared WHAT KIND OF THING each module is. A daemon that isn't running is
+# broken; a periodic job that isn't running between ticks is healthy. Judging
+# both by "is the label in launchctl list with a live PID" produced four false
+# alarms out of five, and missed the one service that was genuinely degraded.
+#
+# The same audit found the manifest described ~40% of the AOS services actually
+# running on the machine — including qareen (:4096), which the spec calls CORE.
+# A source of truth that omits three-fifths of the system is not one.
+#
+# Hence schema 2: `kind` (how to judge health), `tier` (core vs experimental),
+# `health` (how this module proves it works), and full coverage of every
+# com.aos.* / com.agent.* service on the machine.
+# ─────────────────────────────────────────────────────────────────────────
+#
+# tier — operator-set, drives UI grouping and install defaults:
+#   core          the spine; installed always, never offered for removal
+#   experimental  everything additional; opt-in, removable, labelled as such
+#
+# kind — decides what "healthy" MEANS. Never judge a module without it:
+#   daemon    long-running process. Healthy = process alive (+ port, if declared).
+#             Not running = BROKEN.
+#   periodic  launchd StartInterval / StartCalendarInterval job. Healthy = last
+#             run recent and exit 0. A `-` PID between ticks is NORMAL, not broken.
+#             Judge by log freshness (`health.max_silence`), never by liveness.
+#   oneshot   runs on demand only. Presence, not liveness, is the question.
+#   resource  no process at all — a directory, index, binary or model on disk.
+#
+# status — COMPUTED by the engine, never declared here:
+#   active     present and passing its health probes
+#   degraded   present and running, but a health probe fails (e.g. the service is
+#              up but its port is dark, or its venv can no longer install packages)
+#   broken     supposed to be running and is not
+#   absent     cleanly not installed
+#   unmanaged  running on this machine, described by no module (see `foreign`)
+#
+# detect — is it INSTALLED? (first present class decides)
+#   services / paths / commands
+#
+# health — does it WORK? (all declared probes must pass, else degraded)
+#   port         TCP port that must be LISTENing on 127.0.0.1
+#   venv         venv whose interpreter must be sane — importable pyexpat and a
+#                non-empty platform.mac_ver(). A venv on a broken interpreter can
+#                never take an update again; it looks green and is a dead end.
+#                (Homebrew python@3.12 and @3.14 both fail this probe today.)
+#   log          file whose mtime proves a periodic job is still firing
+#   max_silence  seconds; log older than this ⇒ degraded. Set to ~3× the interval.
+#
+# Spec: ~/vault/knowledge/specs/installer-modularization.md
+schema: 2
+
+modules:
+  # ── core: the spine ───────────────────────────────────────────────────
+  - id: vault
+    name: Knowledge Vault
+    tier: core
+    kind: resource
+    category: standard
+    tagline: A private knowledge base the system reads and writes.
+    ask: "Keep a knowledge vault — notes, research, decisions the system can use?"
+    costs: { resident_ram: "0", disk: "grows with use" }
+    detect:
+      paths: ["$HOME/vault"]
+
+  - id: memory-search
+    name: Memory & Search
+    tier: core
+    kind: resource
+    category: standard
+    tagline: The system remembers and finds anything it has seen.
+    ask: "Index your vault and logs so everything is searchable?"
+    costs: { resident_ram: "0 (index jobs only)", disk: "index ~100 MB" }
+    detect:
+      commands: ["qmd"]
+
+  - id: work
+    name: Work
+    tier: core
+    kind: resource
+    category: standard
+    tagline: Tasks, projects, and goals tracked with you.
+    ask: "Track tasks and projects together?"
+    costs: { resident_ram: "0", disk: "minimal" }
+    detect:
+      paths: ["$HOME/.aos/work"]
+
+  - id: orchestration
+    name: Orchestration
+    tier: core
+    kind: resource
+    category: standard
+    tagline: Big jobs run as coordinated agent fleets — the graph engine.
+    ask: null   # capability of the agent layer; nothing extra to install
+    costs: { resident_ram: "0 at rest; agents while running" }
+    detect:
+      paths: ["$HOME/aos/core"]
+
+  - id: observability
+    name: Observability
+    tier: core
+    kind: periodic          # ← the field that stops the false alarm
+    category: standard
+    tagline: See what's running, what's healthy, and what the system did.
+    ask: null   # default on; viewable, not asked
+    costs: { resident_ram: "~0 (scheduler)" }
+    services: ["com.aos.scheduler"]
+    detect:
+      services: ["com.aos.scheduler"]
+    health:
+      log: "$HOME/.aos-logs/crons/scheduler.log"
+      max_silence: 900      # fires every 5 min; 3 missed ticks ⇒ degraded
+
+  - id: qareen
+    name: Qareen
+    tier: core
+    kind: daemon
+    category: standard
+    tagline: The always-on companion service the agent layer talks to.
+    ask: null   # core — installed always
+    costs: { resident_ram: "~120 MB" }
+    services: ["com.aos.qareen"]
+    detect:
+      services: ["com.aos.qareen"]
+    health:
+      port: 4096
+      venv: "$HOME/.aos/services/qareen/.venv"
+
+  - id: work-runner
+    name: Work Runner
+    tier: core
+    kind: daemon
+    category: standard
+    tagline: Executes queued work in the background so tasks move without you.
+    ask: null   # core — installed always
+    costs: { resident_ram: "~40 MB" }
+    services: ["com.aos.work-runner"]
+    detect:
+      services: ["com.aos.work-runner"]
+
+  - id: telegram
+    kind: daemon
+    tier: core
+    name: Telegram
+    category: arm
+    tagline: Talk to your system from your phone — messages, voice notes, briefings.
+    ask: "Connect Telegram so you can reach the system from anywhere?"
+    costs: { resident_ram: "~60 MB (bridge)", disk: "minimal" }
+    services: ["com.aos.bridge"]
+    secrets: ["TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"]
+    connector: true
+    detect:
+      services: ["com.aos.bridge"]
+    health:
+      port: 4098            # was dark for days while the service looked green
+      venv: "$HOME/.aos/services/bridge/.venv"
+
+  # ── experimental: everything additional ───────────────────────────────
+  - id: whatsapp
+    kind: daemon
+    tier: experimental
+    name: WhatsApp
+    category: arm
+    tagline: WhatsApp messages flow through your system.
+    ask: "Connect WhatsApp (QR pairing with your phone)?"
+    costs: { resident_ram: "~40 MB", disk: "Go toolchain ~500 MB" }
+    services: ["com.aos.whatsmeow"]
+    connector: true
+    detect:
+      services: ["com.aos.whatsmeow"]   # com.agent.whatsmeow never existed
+    health:
+      port: 7601
+
+  - id: comms-intelligence
+    name: Comms Intelligence
+    tier: experimental
+    kind: periodic
+    category: arm
+    tagline: Nightly analysis of your communications — contacts, patterns, follow-ups.
+    ask: "Let the system study your communications overnight and surface what matters?"
+    costs: { resident_ram: "0 (nightly jobs)", tokens: "nightly Claude usage" }
+    detect:
+      paths: ["$HOME/.aos/data/comms.db"]
+
+  - id: voice-dictation
+    name: Voice — Dictation
+    tier: experimental
+    kind: daemon
+    category: arm
+    tagline: On-device speech to text with a model that learns your vocabulary.
+    ask: "Enable on-device dictation? Downloads a 1.6 GB speech model once."
+    costs: { resident_ram: "~20 MB at rest, ~2 GB while transcribing", disk: "1.6 GB model", download: "1.6 GB" }
+    services: ["com.aos.transcriber"]
+    install:
+      service: transcriber
+    requires: { arch: arm64 }
+    detect:
+      services: ["com.aos.transcriber"]
+    health:
+      port: 7602
+      venv: "$HOME/.aos/services/transcriber/.venv"
+
+  - id: voice-meetings
+    name: Voice — Meetings
+    tier: experimental
+    kind: resource
+    category: arm
+    tagline: Meeting notes with named speakers, recognized by voice.
+    ask: "Enable meeting transcription with speaker recognition?"
+    costs: { resident_ram: "0 (batch jobs)", disk: "~1 GB models", download: "~1 GB" }
+    status_note: "arrives with a system update"
+    detect:
+      paths: ["$HOME/.aos/models/diarization"]
+
+  - id: content-extraction
+    name: Content Extraction
+    tier: experimental
+    kind: resource
+    category: arm
+    tagline: Pull transcripts and content out of YouTube, X, Instagram, TikTok.
+    ask: "Extract and archive content from social links you share?"
+    costs: { resident_ram: "0", disk: "several GB (OCR models)", download: "multi-GB" }
+    detect:
+      commands: ["yt-dlp"]
+
+  - id: shipment-tracking
+    name: Shipment Tracking
+    tier: experimental
+    kind: periodic
+    category: arm
+    tagline: Watches carriers and tells you where packages are.
+    ask: "Track shipments automatically?"
+    costs: { resident_ram: "0 (polling jobs)", network: "carrier APIs every 30 min" }
+    install:
+      dirs: ["$HOME/.aos/data"]
+    detect:
+      paths: ["$HOME/.aos/data/tracking.db"]
+
+  - id: remote-access
+    kind: resource
+    tier: experimental
+    name: Remote Access
+    category: arm
+    tagline: Reach this machine securely from your phone or laptop.
+    ask: "Set up secure remote access (Tailscale + SSH)?"
+    costs: { resident_ram: "~50 MB (tailscaled)" }
+    connector: true
+    detect:
+      commands: ["tailscale"]
+
+  - id: appliance-mode
+    name: Appliance Mode
+    tier: experimental
+    kind: resource
+    category: arm
+    tagline: Headless always-on tuning — never sleeps, boots after power loss.
+    ask: "Is this a dedicated always-on machine? (Never choose this on a laptop.)"
+    consent: "Changes power, login, and screen-lock behavior. Meant only for a dedicated Mac that stays plugged in."
+    costs: { resident_ram: "0" }
+    detect:
+      paths: ["$HOME/.aos/config/appliance-mode"]
+
+  - id: sentinel
+    name: Sentinel (iMessage)
+    tier: experimental
+    kind: daemon
+    category: arm
+    tagline: Watches iMessage for commitments you make and drafts follow-through.
+    ask: "Allow the system to read iMessage and act on commitments? Off unless you say yes."
+    consent: "Reads your Messages database (requires Full Disk Access) and can draft outbound replies for your approval. Private by design, but this is the most personal arm there is."
+    costs: { resident_ram: "~30 MB", access: "Full Disk Access" }
+    services: ["com.aos.sentinel"]
+    install:
+      manual:
+        - "Grant Full Disk Access to the sentinel binary in System Settings › Privacy & Security"
+    detect:
+      services: ["com.aos.sentinel"]
+
+  # ── adopted 2026-08-17: were running on this machine, described by nothing ──
+  - id: converse
+    name: Converse
+    tier: experimental
+    kind: oneshot           # RunAtLoad=false by design — idle is NOT broken
+    category: arm
+    tagline: Live back-and-forth voice conversation with the system.
+    ask: "Enable live voice conversation?"
+    costs: { resident_ram: "~80 MB when loaded" }
+    services: ["com.aos.converse"]
+    status_note: "installed, intentionally not auto-started"
+    detect:
+      services: ["com.aos.converse"]
+
+  - id: envoy
+    name: Envoy
+    tier: experimental
+    kind: periodic          # StartInterval 300 — idle between ticks is HEALTHY
+    category: arm
+    tagline: Runs delegated outbound conversations on your behalf.
+    ask: "Let the system hold delegated conversations with other people?"
+    consent: "Sends messages to third parties introducing itself as your agent."
+    costs: { resident_ram: "0 (runs every 5 min)" }
+    services: ["com.aos.envoy"]
+    detect:
+      services: ["com.aos.envoy"]
+    health:
+      max_silence: 900
+
+  - id: sana-watch
+    name: Sana Watch
+    tier: experimental
+    kind: periodic          # StartInterval 90
+    category: arm
+    tagline: Watches a Sana source and reacts to changes.
+    ask: null
+    costs: { resident_ram: "0 (runs every 90s)" }
+    services: ["com.aos.sana-watch"]
+    detect:
+      services: ["com.aos.sana-watch"]
+    health:
+      max_silence: 300
+
+  - id: slack-watch
+    name: Slack Watch
+    tier: experimental
+    kind: periodic          # StartInterval 120
+    category: arm
+    tagline: Polls Slack for activity the system should act on.
+    ask: null
+    costs: { resident_ram: "0 (runs every 2 min)" }
+    services: ["com.aos.slack-watch"]
+    connector: true
+    detect:
+      services: ["com.aos.slack-watch"]
+    health:
+      max_silence: 400
+
+  - id: ios-deploy
+    name: iOS Deploy
+    tier: experimental
+    kind: daemon
+    category: arm
+    tagline: Builds and installs iOS apps straight to your device.
+    ask: "Enable direct iOS builds and device installs?"
+    costs: { resident_ram: "~30 MB", disk: "Xcode toolchain" }
+    services: ["com.aos.ios-deploy"]
+    detect:
+      services: ["com.aos.ios-deploy"]
+
+  - id: qareen-deploy
+    name: Qareen Deploy
+    tier: experimental
+    kind: daemon
+    category: arm
+    tagline: Ships Qareen builds without you touching a terminal.
+    ask: null
+    costs: { resident_ram: "~30 MB" }
+    services: ["com.aos.qareen-deploy"]
+    detect:
+      services: ["com.aos.qareen-deploy"]
+
+  - id: qareen-dev
+    name: Qareen (dev)
+    tier: experimental
+    kind: daemon
+    category: arm
+    tagline: Development instance of Qareen, run alongside the real one.
+    ask: null
+    consent: "Developer-only. Runs a second Qareen against your live data."
+    costs: { resident_ram: "~120 MB when loaded" }
+    services: ["com.agent.qareen-dev"]
+    status_note: "installed, not loaded"
+    detect:
+      services: ["com.agent.qareen-dev"]
+
+# ── foreign: observed on this machine, NOT owned by AOS ────────────────────
+#
+# The panel shows these read-only, under "Unmanaged", so that nothing running
+# on the machine is invisible. The engine must NEVER start, stop, install or
+# remove anything listed here — it does not own them and they are not arms.
+foreign:
+  - label: am.hish.adhan.audio
+    name: Adhan — audio server
+    note: "Operator's prayer-audio system. Sonos playback. Not AOS."
+  - label: am.hish.adhan.dashboard
+    name: Adhan — dashboard
+    note: "Operator's prayer-audio dashboard on :8081. Not AOS."
+  - label: am.hish.adhan.scheduler
+    name: Adhan — scheduler
+    note: "Triggers prayer-time playback. Authoritative on this Mac. Not AOS."
+  - label: am.hish.superwhisper-launcher
+    name: SuperWhisper launcher
+    note: "Third-party dictation. Redundant once voice-dictation lands. Not AOS."

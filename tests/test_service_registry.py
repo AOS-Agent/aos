@@ -40,9 +40,10 @@ reg_mod = _load_registry_module()
 def test_live_registry_loads_and_validates():
     reg = reg_mod.load_registry()
     names = {m.name for m in reg}
-    # The nine core/services dirs + qareen + n8n (services.d).
-    assert {"bridge", "transcriber", "whatsmeow", "listen", "eventd",
-            "crawler", "memory", "companion", "mesh", "qareen", "n8n"} <= names
+    # The core/services dirs + qareen (services.d). n8n and eventd were
+    # removed: n8n never held a workflow, eventd was retired in April.
+    assert {"bridge", "transcriber", "whatsmeow", "listen",
+            "crawler", "memory", "companion", "mesh", "qareen"} <= names
 
 
 def test_known_truth_is_declared_correctly():
@@ -53,15 +54,18 @@ def test_known_truth_is_declared_correctly():
     assert reg.by_name("bridge").liveness == "poll_timestamp"
     assert reg.by_name("bridge").health_url is None
     # Retirement is expressed in the manifest, and the retired set is derived.
-    assert {m.name for m in reg.retired()} == {"listen", "eventd"}
-    # whatsmeow is deployed under the com.agent.* prefix.
-    assert reg.by_name("whatsmeow").label == "com.agent.whatsmeow"
+    assert {m.name for m in reg.retired()} == {"listen"}
+    # whatsmeow is deployed as com.aos.whatsmeow. The manifest used to say
+    # com.agent.*, which no plist has ever matched — the watchdog looked up a
+    # label that did not exist and alerted 90 times about a healthy service.
+    # This assertion encoded that drift as truth; it now encodes the fix.
+    assert reg.by_name("whatsmeow").label == "com.aos.whatsmeow"
 
 
 def test_active_health_urls_excludes_retired_and_non_http():
     reg = reg_mod.load_registry()
     urls = reg.active_health_urls()
-    assert "listen" not in urls and "eventd" not in urls  # retired
+    assert "listen" not in urls  # retired
     assert "bridge" not in urls                            # poll_timestamp, no URL
     assert urls["transcriber"] == "http://127.0.0.1:7602/health"
 

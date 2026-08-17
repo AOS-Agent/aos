@@ -57,37 +57,6 @@ async def list_connectors() -> JSONResponse:
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
-@router.get("/node-types")
-async def get_node_types() -> JSONResponse:
-    """Get available n8n node types based on connected integrations.
-
-    Returns a map of n8n node type -> connector info, plus always-available types.
-    Used by the flow editor to show connection status on nodes.
-    """
-    try:
-        sys.path.insert(0, str(AOS_HOME / "core"))
-        from automations.connector_bridge import get_available_node_types
-
-        node_types = get_available_node_types()
-
-        connected = sum(1 for v in node_types.values() if v.get("status") == "connected")
-        available = sum(1 for v in node_types.values() if v.get("status") in ("available", "partial", "broken"))
-        always = sum(1 for v in node_types.values() if v.get("status") == "always")
-
-        return JSONResponse({
-            "node_types": node_types,
-            "summary": {
-                "connected": connected,
-                "available": available,
-                "always_available": always,
-                "total": len(node_types),
-            },
-        })
-    except Exception as e:
-        logger.exception("Failed to get node types")
-        return JSONResponse({"error": str(e)}, status_code=500)
-
-
 @router.get("/automation-ideas")
 async def get_automation_ideas() -> JSONResponse:
     """Get automation ideas from connected integrations.

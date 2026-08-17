@@ -15,6 +15,7 @@ we surface it but never force it.
 from __future__ import annotations
 
 import logging
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -39,9 +40,41 @@ class DevBackendPlistCheck(ReconcileCheck):
     def __init__(self) -> None:
         self._installed = False
         self._loaded = False
+        self._disabled = False
         self._reason = ""
 
+    @staticmethod
+    def _is_disabled() -> bool:
+        """True when the operator has deliberately turned this job off.
+
+        `launchctl disable` is the documented way to retire a LaunchAgent
+        without deleting its plist. Treating that as a fault turns a
+        deliberate decision into a recurring false alarm, and an alarm that
+        cries wolf every cycle is worse than no alarm — it teaches you to
+        ignore the channel that also carries the real failures.
+        """
+        try:
+            result = subprocess.run(
+                ["launchctl", "print-disabled", f"gui/{os.getuid()}"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if result.returncode != 0:
+                return False
+            # Lines look like:  "com.agent.qareen-dev" => disabled
+            for line in result.stdout.splitlines():
+                if LABEL in line:
+                    return "true" in line.lower() or "disabled" in line.lower()
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+        return False
+
     def check(self) -> bool:
+        # Deliberately retired? Then there is nothing to reconcile.
+        self._disabled = self._is_disabled()
+        if self._disabled:
+            self._reason = "deliberately disabled by the operator"
+            return True
+
         # Is the plist file present?
         self._installed = PLIST_PATH.is_file()
         if not self._installed:

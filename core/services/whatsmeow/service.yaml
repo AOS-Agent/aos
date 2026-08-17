@@ -6,7 +6,7 @@ owner_layer: framework
 # Deployed under the com.agent.* prefix by the WhatsApp integration installer
 # (core/infra/integrations/whatsapp/setup.sh), not from a config/launchagents
 # template — hence plist_template: generated.
-label: com.agent.whatsmeow
+label: com.aos.whatsmeow   # was com.agent.* — the deployed plist has always been com.aos.*
 plist_template: generated
 keepalive: true
 liveness: http

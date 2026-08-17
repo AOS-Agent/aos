@@ -1,3 +1,4 @@
+from .arms_coverage import ArmsCoverageCheck
 from .bridge_poll_liveness import BridgePollLivenessCheck
 from .claude_defaults import ClaudeDefaultsCheck
 from .claude_md import GlobalClaudeMdCheck, RootClaudeMdCheck
@@ -17,7 +18,6 @@ from .launchagents import LaunchAgentPythonCheck
 from .launcher_naming import LauncherNamingCheck
 from .log_location import LogLocationCheck
 from .mcp_location import McpLocationCheck
-from .n8n import N8nServiceCheck
 from .network_binding import NetworkBindingCheck
 from .power_autorestart import PowerAutorestartCheck
 from .push_guard import PushGuardCheck
@@ -64,6 +64,7 @@ ALL_CHECKS = [
     # any AOS plist exec'ing a bare interpreter gets wrapped so System
     # Settings shows "AOS Bridge", not "python3"
     LauncherNamingCheck,
+    ArmsCoverageCheck,
 
     # Services — deployed Sentinel plist matches its framework template
     # (catches drift back to hardcoded operator paths after a manual edit
@@ -84,8 +85,6 @@ ALL_CHECKS = [
     # Services — transcriber running and healthy
     TranscriberServiceCheck,
 
-    # Services — n8n automation engine running and healthy
-    N8nServiceCheck,
 
     # Tooling — dev-browser binary for Chrome automation (blueprint,
     # clone-website, dissect, frontend-craft, harvest skills; reverser agent)

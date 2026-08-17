@@ -1,0 +1,130 @@
+#!/usr/bin/env bash
+# ─── codex-dispatch ───────────────────────────────────────
+# Dispatch one task to Codex (external model worker), with
+# full JSONL logging and trust-ledger write-back.
+#
+# Usage:
+#   codex-dispatch "<task prompt>" [--cd DIR] [--sandbox MODE] [--capability CAP] [--model M]
+#
+# Defaults: sandbox=workspace-write, cd=$PWD, capability=code_changes.
+# danger-full-access is refused — that requires the operator, not an agent.
+#
+# Output: Codex's final message on stdout, then a --- footer with
+#   exit code, log path, and token usage. Exit 0 = turn completed.
+# Log:    ~/.aos/logs/external-agents/codex-<ts>.jsonl (full event stream)
+# Ledger: trust-log record codex <cap> executed|escalated (automatic)
+#
+# CHIEF'S DISPATCH POLICY
+#   Dispatch to Codex when ALL of:
+#     - task is self-contained and precisely specified (a prompt that
+#       would work with zero follow-up questions)
+#     - output is verifiable (diff review, tests, or a checkable artifact)
+#     - it needs none of: secrets, outbound comms, people/comms DBs,
+#       qmd/MCP tools, destructive ops
+#   AND ONE of:
+#     - Claude usage headroom is low (the whole point: overflow)
+#     - the task is bulk/parallel grunt work not worth Claude tokens
+#     - a second model's independent opinion is the value
+#   Otherwise handle it directly.
+#
+#   Cost note: a trivial prompt still costs ~16K input tokens of fixed
+#   system-prompt overhead per exec. Batch related grunt work into one
+#   dispatch rather than many small ones.
+#
+# AUDIT CONTRACT (two ledger entries per dispatch):
+#   1. This wrapper records `executed` (or `escalated` on failure).
+#   2. The dispatcher MUST review the result and record the verdict:
+#        trust-log record codex <cap> approved|rejected|reverted --action "..."
+#      An `executed` with no follow-up verdict = unreviewed work.
+#
+# On nonzero exit (including Codex hitting ITS OWN usage limit):
+#   the footer says FAILED — fall back to doing the task yourself.
+
+set -uo pipefail   # deliberately NOT -e: the ledger write must happen even on failure
+
+TASK="${1:-}"
+if [[ -z "$TASK" ]]; then
+    echo "usage: codex-dispatch \"<task>\" [--cd DIR] [--sandbox MODE] [--capability CAP] [--model M]" >&2
+    exit 2
+fi
+shift
+
+WORKDIR="$PWD"; SANDBOX="workspace-write"; CAP="code_changes"; MODEL=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --cd)         WORKDIR="$2"; shift 2 ;;
+        --sandbox)    SANDBOX="$2"; shift 2 ;;
+        --capability) CAP="$2"; shift 2 ;;
+        --model)      MODEL="$2"; shift 2 ;;
+        *) echo "codex-dispatch: unknown option $1" >&2; exit 2 ;;
+    esac
+done
+
+if [[ "$SANDBOX" == "danger-full-access" ]]; then
+    echo "codex-dispatch: refused — danger-full-access requires the operator running codex directly" >&2
+    exit 2
+fi
+
+LOG_DIR="$HOME/.aos/logs/external-agents"
+mkdir -p "$LOG_DIR"
+TS=$(date -u +%Y%m%dT%H%M%SZ)
+LOG="$LOG_DIR/codex-$TS.jsonl"
+LAST_MSG="$LOG_DIR/codex-$TS.last.md"
+ERR="$LOG_DIR/codex-$TS.stderr"
+
+ARGS=(exec --json -s "$SANDBOX" --cd "$WORKDIR" --output-last-message "$LAST_MSG")
+[[ -n "$MODEL" ]] && ARGS+=(-m "$MODEL")
+git -C "$WORKDIR" rev-parse --is-inside-work-tree &>/dev/null || ARGS+=(--skip-git-repo-check)
+
+codex "${ARGS[@]}" "$TASK" > "$LOG" 2> "$ERR"
+CODE=$?
+
+# Parse outcome + token usage from the event stream.
+RESULT=$(python3 - "$LOG" "$CODE" <<'PY'
+import json, sys
+log, code = sys.argv[1], int(sys.argv[2])
+usage, completed, errors = None, False, []
+try:
+    for line in open(log, errors="replace"):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            ev = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        t = str(ev.get("type", ""))
+        if t == "turn.completed":
+            completed = True
+            usage = ev.get("usage")
+        elif t == "turn.failed" or "error" in t:
+            errors.append(json.dumps(ev)[:300])
+except OSError:
+    pass
+print(json.dumps({"ok": completed and code == 0, "usage": usage, "errors": errors[-3:]}))
+PY
+)
+OK=$(printf '%s' "$RESULT" | python3 -c "import json,sys; print('yes' if json.load(sys.stdin)['ok'] else 'no')")
+
+# Ledger write-back — never let this block the result surfacing.
+TRUST_LOG="$HOME/aos/core/bin/cli/trust-log"
+SUMMARY=$(printf '%.80s' "$TASK")
+if [[ "$OK" == "yes" ]]; then
+    "$TRUST_LOG" record codex "$CAP" executed --action "$SUMMARY" --session "$LOG" 2>/dev/null || true
+else
+    "$TRUST_LOG" record codex "$CAP" escalated --action "FAILED: $SUMMARY" --session "$LOG" 2>/dev/null || true
+fi
+
+# Surface result to the caller.
+[[ -s "$LAST_MSG" ]] && cat "$LAST_MSG"
+echo ""
+echo "---"
+echo "codex-dispatch: exit=$CODE log=$LOG"
+printf '%s' "$RESULT" | python3 -c "import json,sys; d=json.load(sys.stdin); print('usage:', d['usage'] or 'n/a')"
+if [[ "$OK" != "yes" ]]; then
+    echo "codex-dispatch: FAILED — fall back to handling this task directly."
+    printf '%s' "$RESULT" | python3 -c "import json,sys; [print('  error:', e) for e in json.load(sys.stdin)['errors']]"
+    [[ -s "$ERR" ]] && tail -3 "$ERR" | sed 's/^/  stderr: /'
+    exit 1
+fi
+exit 0
