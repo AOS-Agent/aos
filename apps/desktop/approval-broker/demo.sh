@@ -8,7 +8,7 @@
 # dead, and a liveness state the client is required to render.
 
 set -uo pipefail
-cd "$(dirname "$0")"
+cd "$(dirname "$0")" || exit 1
 
 BROKER_PID=""
 PORT=4110
