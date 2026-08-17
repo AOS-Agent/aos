@@ -60,6 +60,7 @@ export const DOMAINS: Record<string, string> = {
   discord: "discord.com",
   todoist: "todoist.com",
   composio: "composio.dev",
+  "claude-chrome": "chrome.google.com",
   claude: "claude.ai",
   anthropic: "anthropic.com",
   kimi: "kimi.com",
