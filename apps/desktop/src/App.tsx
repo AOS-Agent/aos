@@ -125,7 +125,18 @@ interface SystemInfo {
   operator?: string | null;
   update_status?: string | null; // up_to_date | update_available
   last_check?: string | null;
+  /** Release id (changes on EVERY applied update, unlike version). */
+  release?: string | null;
+  updated?: string | null;
 }
+
+type AppUpdateState =
+  | { state: "idle" }
+  | { state: "checking" }
+  | { state: "downloading"; version?: string }
+  | { state: "ready"; version?: string }
+  | { state: "uptodate" }
+  | { state: "error"; message?: string };
 
 const IN_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
@@ -763,7 +774,7 @@ function Home({
               {sys?.operator ? `, ${sys.operator}` : ""}
             </div>
             <div className="flex items-center gap-2 text-[11.5px] text-zinc-500 mt-0.5">
-              <span className="font-mono">{sys?.version ?? ""}</span>
+              <span className="font-mono">{sys?.release ?? sys?.version ?? ""}</span>
               {updateAvailable ? (
                 <button onClick={onUpdate} className="text-zinc-200 hover:text-white transition underline underline-offset-2">
                   update available
@@ -3648,11 +3659,13 @@ function Sidebar({
   pane,
   setPane,
   sys,
+  appVersion,
   width,
 }: {
   pane: PaneId;
   setPane: (p: PaneId) => void;
   sys: SystemInfo | null;
+  appVersion: string;
   /** Set by the shell — the operator can drag this. */
   width: number;
 }) {
@@ -3711,7 +3724,10 @@ function Sidebar({
           );
         })}
       </nav>
-      <div className="px-2.5 text-[11px] text-zinc-500 font-mono">{sys?.version ?? ""}</div>
+      <div className="px-2.5 text-[11px] text-zinc-500 font-mono leading-relaxed">
+        <div>app {appVersion || "…"}</div>
+        <div className="truncate" title={sys?.release ?? undefined}>{sys?.release ?? sys?.version ?? ""}</div>
+      </div>
     </div>
   );
 }
@@ -3867,14 +3883,37 @@ function UpdatesPane({
   checking,
   onCheck,
   onUpdate,
+  appVersion,
 }: {
   sys: SystemInfo | null;
   checking: boolean;
   onCheck: () => void;
   onUpdate: () => void;
+  appVersion: string;
 }) {
   const updateAvailable = sys?.update_status === "update_available";
   const [notes, setNotes] = useState<string | null>(null);
+  const [appUpd, setAppUpd] = useState<AppUpdateState>({ state: "idle" });
+
+  useEffect(() => {
+    const un = listen<AppUpdateState & { state: string }>("app-update", (e) => {
+      setAppUpd(e.payload as AppUpdateState);
+    });
+    return () => {
+      un.then((f) => f());
+    };
+  }, []);
+
+  const checkApp = useCallback(async () => {
+    if (IN_TAURI) {
+      setAppUpd({ state: "checking" });
+      invoke("check_app_update").catch(() => setAppUpd({ state: "error", message: "couldn't start the check" }));
+    } else {
+      setAppUpd({ state: "checking" });
+      setTimeout(() => setAppUpd({ state: "downloading", version: "0.3.0" }), 900);
+      setTimeout(() => setAppUpd({ state: "ready", version: "0.3.0" }), 2400);
+    }
+  }, []);
 
   useEffect(() => {
     (async () => {
@@ -3897,12 +3936,67 @@ function UpdatesPane({
       <p className="text-[13px] text-zinc-300 mb-6">
         System updates install in place and restart services automatically.
       </p>
-      <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 px-5 py-5">
-        <div className="flex items-center justify-between gap-4">
+      {/* The app itself — narrated, never silent again. */}
+      <div className="text-[11px] uppercase tracking-[0.12em] text-zinc-500 mb-2.5">This app</div>
+      <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 px-5 py-5 mb-6">
+        <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <div className="text-[14px] text-zinc-100 font-medium flex items-center gap-2.5">
               <span className="font-mono text-[13px] px-2 py-0.5 rounded-md border border-zinc-800 bg-zinc-900">
-                {sys?.version ?? "—"}
+                {appVersion || "—"}
+              </span>
+              {appUpd.state === "checking" && (
+                <span className="flex items-center gap-2 text-[13px] text-zinc-300">
+                  <span className="w-1.5 h-1.5 rounded-full bg-zinc-100 pulse-dot" /> checking…
+                </span>
+              )}
+              {appUpd.state === "downloading" && (
+                <span className="flex items-center gap-2 text-[13px] text-zinc-100">
+                  <span className="w-1.5 h-1.5 rounded-full bg-zinc-100 pulse-dot" /> downloading {"version" in appUpd ? appUpd.version : ""}…
+                </span>
+              )}
+              {appUpd.state === "ready" && (
+                <span className="text-[13px] text-zinc-100">
+                  {"version" in appUpd ? appUpd.version : "update"} installed — restart to finish
+                </span>
+              )}
+              {appUpd.state === "uptodate" && <span className="text-[13px] text-zinc-300">up to date</span>}
+              {appUpd.state === "error" && (
+                <span className="text-[13px] text-zinc-200">
+                  update check failed{"message" in appUpd && appUpd.message ? ` — ${appUpd.message}` : ""}
+                </span>
+              )}
+            </div>
+            <div className="text-[11.5px] text-zinc-500 mt-1.5">
+              Updates itself from aos.hish.am — downloads quietly, applies on restart.
+            </div>
+          </div>
+          {appUpd.state === "ready" ? (
+            <button
+              onClick={() => (IN_TAURI ? invoke("restart_app") : undefined)}
+              className="px-4 h-10 rounded-lg bg-zinc-100 text-zinc-950 text-[13.5px] font-medium hover:bg-white transition shrink-0"
+            >
+              Restart now
+            </button>
+          ) : (
+            <button
+              onClick={checkApp}
+              disabled={appUpd.state === "checking" || appUpd.state === "downloading"}
+              className="px-4 h-10 rounded-lg border border-zinc-700 text-[13.5px] text-zinc-200 hover:text-white hover:border-zinc-500 transition disabled:opacity-40 shrink-0"
+            >
+              Check now
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="text-[11px] uppercase tracking-[0.12em] text-zinc-500 mb-2.5">System</div>
+      <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 px-5 py-5">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <div className="text-[14px] text-zinc-100 font-medium flex items-center gap-2.5">
+              <span className="font-mono text-[13px] px-2 py-0.5 rounded-md border border-zinc-800 bg-zinc-900">
+                {sys?.release ?? sys?.version ?? "—"}
               </span>
               {checking ? (
                 <span className="flex items-center gap-2 text-[13px] text-zinc-300">
@@ -3914,11 +4008,11 @@ function UpdatesPane({
                 <span className="text-[13px] text-zinc-300">up to date</span>
               )}
             </div>
-            {sys?.last_check && (
-              <div className="text-[11.5px] text-zinc-500 mt-1.5">
-                Last checked {sys.last_check.replace("T", " ").slice(0, 16)}
-              </div>
-            )}
+            <div className="text-[11.5px] text-zinc-500 mt-1.5">
+              {sys?.updated ? `Deployed ${sys.updated}` : ""}
+              {sys?.updated && sys?.last_check ? " · " : ""}
+              {sys?.last_check ? `checked ${sys.last_check.replace("T", " ").slice(11, 16)}` : ""}
+            </div>
           </div>
           {updateAvailable ? (
             <button
@@ -4008,11 +4102,13 @@ function Shell({
   checking,
   onCheck,
   onUpdate,
+  appVersion,
 }: {
   sys: SystemInfo | null;
   checking: boolean;
   onCheck: () => void;
   onUpdate: () => void;
+  appVersion: string;
 }) {
   const [pane, setPane] = useState<PaneId>("home");
   const [navOpen, setNavOpen] = useState(false);
@@ -4090,7 +4186,7 @@ function Shell({
       {/* Desktop: the rail is there unless collapsed, and drags to resize. */}
       {!collapsed && (
         <div ref={railRef} className="hidden md:flex h-full relative shrink-0">
-          <Sidebar pane={pane} setPane={setPane} sys={sys} width={width} />
+          <Sidebar pane={pane} setPane={setPane} sys={sys} width={width} appVersion={appVersion} />
           <div
             onPointerDown={startResize}
             onDoubleClick={() => setWidth(SIDEBAR_DEFAULT)}
@@ -4116,6 +4212,7 @@ function Shell({
               }}
               sys={sys}
               width={width}
+              appVersion={appVersion}
             />
           </div>
         </>
@@ -4156,7 +4253,7 @@ function Shell({
         {pane === "connectors" && <ConnectorsPane />}
         {pane === "config" && <ConfigPane />}
         {pane === "updates" && (
-          <UpdatesPane sys={sys} checking={checking} onCheck={onCheck} onUpdate={onUpdate} />
+          <UpdatesPane sys={sys} checking={checking} onCheck={onCheck} onUpdate={onUpdate} appVersion={appVersion} />
         )}
       </div>
     </div>
@@ -4478,6 +4575,15 @@ export default function App() {
   const [exitCode, setExitCode] = useState(0);
   const [sys, setSys] = useState<SystemInfo | null>(null);
   const [checking, setChecking] = useState(false);
+  const [appVersion, setAppVersion] = useState("");
+
+  useEffect(() => {
+    if (IN_TAURI) {
+      invoke<string>("app_version").then(setAppVersion).catch(() => {});
+    } else {
+      setAppVersion("0.2.0");
+    }
+  }, []);
   const [config, setConfig] = useState<SetupConfig>({
     operatorName: "",
     machineName: "",
@@ -4540,7 +4646,7 @@ export default function App() {
         setSys({ installed: false });
       } else {
         // Browser demo: pretend we're an existing install and find an update.
-        setSys({ installed: true, version: "v0.7.5", operator: "Hadi" });
+        setSys({ installed: true, version: "v0.7.5", operator: "Hadi", release: "v0.7.5-cc89243", updated: "Aug 17, 2026" });
         setChecking(true);
         setTimeout(() => {
           if (cancelled) return;
@@ -4548,6 +4654,8 @@ export default function App() {
             installed: true,
             version: "v0.7.5",
             operator: "Hadi",
+            release: "v0.7.5-cc89243",
+            updated: "Aug 17, 2026",
             update_status: "update_available",
           });
           setChecking(false);
@@ -4616,6 +4724,7 @@ export default function App() {
             checking={checking}
             onCheck={checkNow}
             onUpdate={() => setScreen("update")}
+            appVersion={appVersion}
           />
         ) : (
           <Welcome onSetup={() => setScreen("preflight")} onJoin={() => setScreen("member")} />
