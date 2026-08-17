@@ -340,6 +340,251 @@ fn search_vault(query: String) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
+// ── Connectors ──────────────────────────────────────────────────────
+
+#[derive(serde::Serialize)]
+struct ConnectorAccount {
+    identity: String,
+    detail: String,
+}
+
+#[derive(serde::Serialize)]
+struct Connector {
+    id: String,
+    name: String,
+    category: String,
+    auth_kind: String, // oauth | token | session | cli | apple
+    status: String,    // connected | attention | available
+    detail: String,
+    accounts: Vec<ConnectorAccount>,
+    connect_hint: String,
+}
+
+fn keychain_names(home: &str) -> std::collections::HashSet<String> {
+    cmd_ok(
+        "bash",
+        &[&format!("{home}/aos/core/bin/cli/agent-secret"), "list"],
+    )
+    .map(|out| out.lines().map(|l| l.trim().to_string()).collect())
+    .unwrap_or_default()
+}
+
+#[tauri::command]
+fn list_connectors() -> Result<Vec<Connector>, String> {
+    let home = std::env::var("HOME").map_err(|e| e.to_string())?;
+    let secrets = keychain_names(&home);
+    let has = |n: &str| secrets.contains(n);
+    let loaded = loaded_launchd_labels();
+    let mut out: Vec<Connector> = Vec::new();
+
+    // Google Workspace — OAuth, per-account credential files with expiry.
+    let mut google_accounts = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(format!("{home}/.google_workspace_mcp/credentials")) {
+        for e in entries.flatten() {
+            let path = e.path();
+            if path.extension().and_then(|x| x.to_str()) != Some("json") {
+                continue;
+            }
+            let identity = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("account")
+                .to_string();
+            let detail = std::fs::read_to_string(&path)
+                .ok()
+                .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+                .map(|v| {
+                    let scopes = v["scopes"].as_array().map(|a| a.len()).unwrap_or(0);
+                    format!("{scopes} permissions · token auto-refreshes")
+                })
+                .unwrap_or_else(|| "credentials on file".into());
+            google_accounts.push(ConnectorAccount { identity, detail });
+        }
+    }
+    if !google_accounts.is_empty() {
+        out.push(Connector {
+            id: "google".into(),
+            name: "Google Workspace".into(),
+            category: "productivity".into(),
+            auth_kind: "oauth".into(),
+            status: "connected".into(),
+            detail: format!("{} accounts — Gmail, Drive, Calendar, Docs", google_accounts.len()),
+            accounts: google_accounts,
+            connect_hint: "Add another account through the onboarding assistant — it walks the Google sign-in and stores only the refresh token.".into(),
+        });
+    }
+
+    // GitHub — gh CLI keyring.
+    if let Some(gh) = cmd_ok("gh", &["auth", "status"]) {
+        let account = gh
+            .lines()
+            .find(|l| l.contains("account"))
+            .and_then(|l| l.split("account").nth(1))
+            .map(|s| s.trim().split_whitespace().next().unwrap_or("").to_string())
+            .unwrap_or_default();
+        let scopes = gh
+            .lines()
+            .find(|l| l.contains("Token scopes"))
+            .map(|l| l.split(':').nth(1).unwrap_or("").replace('\'', "").trim().to_string())
+            .unwrap_or_default();
+        out.push(Connector {
+            id: "github".into(),
+            name: "GitHub".into(),
+            category: "development".into(),
+            auth_kind: "cli".into(),
+            status: "connected".into(),
+            detail: format!("@{account}"),
+            accounts: vec![ConnectorAccount {
+                identity: format!("@{account}"),
+                detail: format!("permissions: {scopes}"),
+            }],
+            connect_hint: "gh auth login --web".into(),
+        });
+    }
+
+    // Telegram — bot token(s) in Keychain.
+    if has("TELEGRAM_BOT_TOKEN") {
+        let mut accounts = vec![ConnectorAccount {
+            identity: "primary bot".into(),
+            detail: "bot token in Keychain · tokens don't expire".into(),
+        }];
+        if has("TELEGRAM_BOT_TOKEN_TABIB") {
+            accounts.push(ConnectorAccount {
+                identity: "tabib bot".into(),
+                detail: "bot token in Keychain".into(),
+            });
+        }
+        out.push(Connector {
+            id: "telegram".into(),
+            name: "Telegram".into(),
+            category: "communication".into(),
+            auth_kind: "token".into(),
+            status: if loaded.contains("com.aos.bridge") { "connected" } else { "attention" }.into(),
+            detail: if loaded.contains("com.aos.bridge") {
+                "bridge running".into()
+            } else {
+                "token on file, bridge not running".into()
+            },
+            accounts,
+            connect_hint: "The onboarding assistant creates the bot with you and stores its token in the Keychain.".into(),
+        });
+    }
+
+    // WhatsApp — QR-paired session via whatsmeow.
+    let wa_running = loaded.contains("com.aos.whatsmeow") || loaded.contains("com.agent.whatsmeow");
+    if wa_running {
+        out.push(Connector {
+            id: "whatsapp".into(),
+            name: "WhatsApp".into(),
+            category: "communication".into(),
+            auth_kind: "session".into(),
+            status: "connected".into(),
+            detail: "phone-paired session".into(),
+            accounts: vec![ConnectorAccount {
+                identity: "paired device".into(),
+                detail: "QR session · re-pair if your phone unlinks it".into(),
+            }],
+            connect_hint: "Pair by scanning a QR code from WhatsApp on your phone.".into(),
+        });
+    }
+
+    // Slack — bot + app tokens.
+    if has("SLACK_BOT_TOKEN") {
+        out.push(Connector {
+            id: "slack".into(),
+            name: "Slack".into(),
+            category: "communication".into(),
+            auth_kind: "token".into(),
+            status: "connected".into(),
+            detail: "bot + app tokens in Keychain".into(),
+            accounts: vec![],
+            connect_hint: "Create a Slack app, install it to the workspace, store its tokens.".into(),
+        });
+    }
+
+    // Simple token-backed connectors: (id, name, category, [required secrets], detail)
+    let token_connectors: &[(&str, &str, &str, &[&str], &str)] = &[
+        ("clickup", "ClickUp", "productivity", &["CLICKUP_API_TOKEN"], "API token"),
+        ("plane", "Plane", "productivity", &["PLANE_API_TOKEN"], "API token"),
+        ("obsidian", "Obsidian", "knowledge", &["OBSIDIAN_REST_API_KEY"], "local REST API"),
+        ("elevenlabs", "ElevenLabs", "voice", &["elevenlabs-api-key"], "API key"),
+        ("openrouter", "OpenRouter", "ai", &["OPENROUTER_API_KEY"], "API key"),
+        ("paypal", "PayPal", "business", &["PAYPAL_CLIENT_ID"], "client credentials"),
+        ("wave", "Wave", "business", &["WAVE_ACCESS_TOKEN"], "access token"),
+        ("chitchats", "Chit Chats", "business", &["CHITCHATS_API_KEY"], "API key"),
+    ];
+    for (id, name, category, needed, kind) in token_connectors {
+        if needed.iter().all(|s| has(s)) {
+            out.push(Connector {
+                id: (*id).into(),
+                name: (*name).into(),
+                category: (*category).into(),
+                auth_kind: "token".into(),
+                status: "connected".into(),
+                detail: format!("{kind} in Keychain"),
+                accounts: vec![],
+                connect_hint: String::new(),
+            });
+        }
+    }
+
+    // Cloudflare — two separate accounts by design.
+    if has("CLOUDFLARE_HISHAM_TOKEN") || has("CLOUDFLARE_API_TOKEN") {
+        let mut accounts = Vec::new();
+        if has("CLOUDFLARE_HISHAM_TOKEN") {
+            accounts.push(ConnectorAccount { identity: "personal (hish.am)".into(), detail: "API token".into() });
+        }
+        if has("CLOUDFLARE_ELORAGREENS_API_TOKEN") {
+            accounts.push(ConnectorAccount { identity: "Elora Greens".into(), detail: "API token".into() });
+        }
+        out.push(Connector {
+            id: "cloudflare".into(),
+            name: "Cloudflare".into(),
+            category: "infrastructure".into(),
+            auth_kind: "token".into(),
+            status: "connected".into(),
+            detail: format!("{} accounts", accounts.len().max(1)),
+            accounts,
+            connect_hint: String::new(),
+        });
+    }
+
+    // Available (not yet connected) — from the integrations registry catalog.
+    if let Ok(text) =
+        std::fs::read_to_string(format!("{home}/aos/core/infra/integrations/registry.yaml"))
+    {
+        if let Ok(reg) = serde_yaml::from_str::<serde_yaml::Value>(&text) {
+            let connected_ids: std::collections::HashSet<String> =
+                out.iter().map(|c| c.id.clone()).collect();
+            for section in ["builtin", "catalog"] {
+                let Some(map) = reg.get(section).and_then(|v| v.as_mapping()) else { continue };
+                for (k, v) in map {
+                    let id = k.as_str().unwrap_or("").replace('_', "-");
+                    let plain = k.as_str().unwrap_or("");
+                    if connected_ids.contains(&id)
+                        || connected_ids.contains(plain)
+                        || ["google-suite", "superwhisper", "health", "email"].contains(&id.as_str())
+                    {
+                        continue;
+                    }
+                    out.push(Connector {
+                        id: id.clone(),
+                        name: v.get("name").and_then(|x| x.as_str()).unwrap_or(plain).to_string(),
+                        category: v.get("category").and_then(|x| x.as_str()).unwrap_or("other").to_string(),
+                        auth_kind: "token".into(),
+                        status: "available".into(),
+                        detail: v.get("description").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                        accounts: vec![],
+                        connect_hint: "Ask your agent to connect it — setup is guided.".into(),
+                    });
+                }
+            }
+        }
+    }
+
+    Ok(out)
+}
+
 // ── Health ──────────────────────────────────────────────────────────
 
 #[derive(serde::Serialize)]
@@ -969,6 +1214,7 @@ pub fn run() {
             load_setup_config,
             home_data,
             health_check,
+            list_connectors,
             operator_config,
             save_operator_config,
             release_notes,
