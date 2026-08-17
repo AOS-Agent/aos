@@ -1,4 +1,4 @@
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Write};
 use std::process::{Command, Stdio};
 use tauri::Emitter;
 
@@ -444,6 +444,85 @@ fn connector_about(id: String) -> serde_json::Value {
     serde_json::json!({ "about": "", "provides": [] })
 }
 
+/// Who in the system ACTUALLY consumes this connector — grep'd from the
+/// runtime tree, not assumed. A key in the Keychain that nothing reads is
+/// dormant, and the UI says so.
+#[tauri::command]
+fn connector_usage(id: String) -> serde_json::Value {
+    let terms: Vec<&str> = match id.as_str() {
+        "telegram" => vec!["TELEGRAM_BOT_TOKEN"],
+        "slack" => vec!["SLACK_BOT_TOKEN"],
+        "google" => vec!["GOOGLE_OAUTH_CLIENT_ID", "google_workspace_mcp"],
+        "github" => vec!["gh pr", "gh api", "gh auth"],
+        "whatsapp" => vec!["whatsmeow"],
+        "clickup" => vec!["CLICKUP_API_TOKEN"],
+        "plane" => vec!["PLANE_API_TOKEN"],
+        "obsidian" => vec!["OBSIDIAN_REST_API_KEY"],
+        "elevenlabs" => vec!["elevenlabs-api-key", "ELEVENLABS_API_KEY"],
+        "openrouter" => vec!["OPENROUTER_API_KEY"],
+        "paypal" => vec!["PAYPAL_CLIENT_ID"],
+        "wave" => vec!["WAVE_ACCESS_TOKEN"],
+        "chitchats" => vec!["CHITCHATS_API_KEY"],
+        "cloudflare" => vec!["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_HISHAM_TOKEN"],
+        "composio" => vec!["COMPOSIO_API_KEY"],
+        "notion" => vec!["NOTION_API_KEY"],
+        "linear" => vec!["LINEAR_API_KEY"],
+        "discord" => vec!["DISCORD_BOT_TOKEN"],
+        "todoist" => vec!["TODOIST_API_TOKEN"],
+        _ => vec![],
+    };
+    let Ok(home) = std::env::var("HOME") else {
+        return serde_json::json!({ "in_use": false, "used_by": [] });
+    };
+    let root = format!("{home}/aos");
+    let mut components: std::collections::BTreeSet<String> = Default::default();
+    for term in terms {
+        let Some(hits) = cmd_ok(
+            "grep",
+            &[
+                "-rl", "--include=*.py", "--include=*.sh", "--include=*.yaml",
+                "--include=*.ts", "--include=*.js", "--include=*.go", "--include=*.md",
+                "--exclude-dir=.venv", "--exclude-dir=node_modules", "--exclude-dir=vendor",
+                term, &format!("{root}/core"), &format!("{root}/config"),
+            ],
+        ) else {
+            continue;
+        };
+        for path in hits.lines() {
+            let rel = path.strip_prefix(&format!("{root}/")).unwrap_or(path);
+            // One-time migrations and test files aren't real consumers.
+            if rel.contains("/migrations/") || rel.contains("/tests/") || rel.contains("test_") {
+                continue;
+            }
+            let parts: Vec<&str> = rel.split('/').collect();
+            let label = match (parts.first().copied(), parts.get(1).copied(), parts.get(2).copied()) {
+                (Some("core"), Some("services"), Some(name)) => format!("{name} service"),
+                (Some("core"), Some("bin"), Some("crons")) => {
+                    format!("{} routine", parts.get(3).map(|s| s.trim_end_matches(".py")).unwrap_or("scheduled"))
+                }
+                (Some("core"), Some("skills"), Some(name)) => format!("{name} skill"),
+                (Some("core"), Some("qareen"), _) => "dashboard".into(),
+                (Some("core"), Some("engine"), Some(name)) => format!("{name} engine"),
+                (Some("core"), Some("infra"), Some("integrations")) => "integration setup".into(),
+                (Some("core"), Some("infra"), Some("lib")) => "core system".into(),
+                (Some("core"), Some("automations"), _) => "automations".into(),
+                (Some("config"), _, _) => "system configuration".into(),
+                _ => continue,
+            };
+            components.insert(label);
+        }
+    }
+    // Declarations aren't consumers: setup scripts and config registries
+    // (capabilities.yaml, accounts.yaml) mention every secret by name without
+    // using it — counting them would make everything look "in use".
+    let real: Vec<String> = components
+        .iter()
+        .filter(|c| c.as_str() != "integration setup" && c.as_str() != "system configuration")
+        .cloned()
+        .collect();
+    serde_json::json!({ "in_use": !real.is_empty(), "used_by": real })
+}
+
 // ── Composio (hosted OAuth broker — ported from OpenMausBot, MIT) ───
 //
 // A project key (ak_…) owns one reusable Session. The Session mints
@@ -459,14 +538,24 @@ fn curl_json(
     api_key: &str,
     body: Option<serde_json::Value>,
 ) -> Result<serde_json::Value, String> {
+    // The API key goes to curl via a stdin config file, never argv — argv is
+    // world-readable through `ps` for the lifetime of the request.
     let mut cmd = Command::new("curl");
-    cmd.args(["-s", "-m", "25", "-X", method, url, "-H"]);
-    cmd.arg(format!("x-api-key: {api_key}"));
+    cmd.args(["-s", "-m", "25", "-X", method, url, "--config", "-"]);
     if let Some(b) = body {
         cmd.args(["-H", "content-type: application/json", "--data-binary"]);
         cmd.arg(b.to_string());
     }
-    let out = cmd.stdin(Stdio::null()).output().map_err(|e| e.to_string())?;
+    cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = cmd.spawn().map_err(|e| e.to_string())?;
+    {
+        use std::io::Write as _;
+        let mut stdin = child.stdin.take().ok_or("no stdin")?;
+        stdin
+            .write_all(format!("header = \"x-api-key: {api_key}\"\n").as_bytes())
+            .map_err(|e| e.to_string())?;
+    }
+    let out = child.wait_with_output().map_err(|e| e.to_string())?;
     let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
     if text.is_empty() {
         return Err("No response from Composio — check your internet connection.".into());
@@ -788,7 +877,17 @@ fn list_connectors() -> Result<Vec<Connector>, String> {
                 .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
                 .map(|v| {
                     let scopes = v["scopes"].as_array().map(|a| a.len()).unwrap_or(0);
-                    format!("{scopes} permissions · token auto-refreshes")
+                    // No refresh token means the access token dies at `expiry`
+                    // and nothing can renew it — the operator must sign in again.
+                    let renewable = v["refresh_token"]
+                        .as_str()
+                        .map(|t| !t.trim().is_empty())
+                        .unwrap_or(false);
+                    if renewable {
+                        format!("{scopes} permissions · auto-refreshes")
+                    } else {
+                        format!("{scopes} permissions · needs re-authentication")
+                    }
                 })
                 .unwrap_or_else(|| "credentials on file".into());
             google_accounts.push(ConnectorAccount { identity, detail });
@@ -1027,6 +1126,337 @@ fn list_connectors() -> Result<Vec<Connector>, String> {
     }
 
     Ok(out)
+}
+
+// ── Connector probes (live, not cached) ─────────────────────────────
+//
+// Every function here talks to the real service. Nothing reports health
+// from a file on disk, and no secret is ever put in a message, a log line,
+// or a process argument — tokens go over a pipe or stay in the Keychain.
+
+/// GET a JSON endpoint that carries its own credential in the path or
+/// needs none at all. The URL is never echoed back in an error, because
+/// for the Telegram Bot API the URL *is* the token.
+fn curl_get_json(url: &str) -> Result<serde_json::Value, String> {
+    let out = Command::new("curl")
+        .args(["-s", "-m", "10", url])
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| format!("Couldn't run the connection test: {e}"))?;
+    let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if text.is_empty() {
+        return Err("No response — check your internet connection.".into());
+    }
+    serde_json::from_str(&text).map_err(|_| "The service sent back something unexpected.".to_string())
+}
+
+/// Live `getMe` for a bot token held in the Keychain, returning the API's
+/// `result` object (bot name, @handle, capabilities). The token is read,
+/// used, and dropped here — callers never see it.
+fn telegram_get_me(home: &str, secret: &str) -> Result<serde_json::Value, String> {
+    let token = agent_secret(home, &["get", secret])
+        .map_err(|_| "No bot token in the Keychain for this slot.".to_string())?;
+    let token = token.trim();
+    if token.is_empty() {
+        return Err("No bot token in the Keychain for this slot.".into());
+    }
+    let v = curl_get_json(&format!("https://api.telegram.org/bot{token}/getMe"))?;
+    if !v["ok"].as_bool().unwrap_or(false) {
+        return Err(v["description"]
+            .as_str()
+            .unwrap_or("Telegram rejected this bot token.")
+            .to_string());
+    }
+    v.get("result")
+        .cloned()
+        .ok_or_else(|| "Telegram answered without any bot details.".to_string())
+}
+
+/// Percent-encode one value for an `application/x-www-form-urlencoded` body.
+fn form_encode(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for b in value.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char)
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
+
+/// POST a form body to `url` with the body handed to curl over stdin, so
+/// client secrets and refresh tokens never appear in this machine's process
+/// list. Fields are `(name, value)` pairs, encoded here.
+fn curl_post_form(url: &str, fields: &[(&str, &str)]) -> Result<serde_json::Value, String> {
+    let body = fields
+        .iter()
+        .map(|(k, v)| format!("{}={}", form_encode(k), form_encode(v)))
+        .collect::<Vec<_>>()
+        .join("&");
+
+    let mut child = Command::new("curl")
+        .args([
+            "-s",
+            "-m",
+            "10",
+            "-X",
+            "POST",
+            url,
+            "-H",
+            "content-type: application/x-www-form-urlencoded",
+            "--data-binary",
+            "@-",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| format!("Couldn't run the connection test: {e}"))?;
+
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin
+            .write_all(body.as_bytes())
+            .map_err(|e| format!("Couldn't send the request: {e}"))?;
+    }
+
+    let out = child
+        .wait_with_output()
+        .map_err(|e| format!("Couldn't run the connection test: {e}"))?;
+    let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if text.is_empty() {
+        return Err("No response — check your internet connection.".into());
+    }
+    serde_json::from_str(&text).map_err(|_| "The service sent back something unexpected.".to_string())
+}
+
+/// Refresh the first stored Google account's access token against Google's
+/// own token endpoint — the only honest way to know the connection still
+/// works. One account only: this runs behind a button and must feel instant.
+/// Returns `(ok, plain-language message, account reached)`; never a token.
+fn google_refresh_probe(home: &str) -> (bool, String, Option<String>) {
+    let dir = format!("{home}/.google_workspace_mcp/credentials");
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return (false, "No Google accounts are connected on this Mac.".into(), None);
+    };
+    let mut files: Vec<std::path::PathBuf> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("json"))
+        .collect();
+    files.sort();
+    let Some(path) = files.first() else {
+        return (false, "No Google accounts are connected on this Mac.".into(), None);
+    };
+    let identity = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("account")
+        .to_string();
+
+    let creds = std::fs::read_to_string(path)
+        .ok()
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok());
+    let Some(creds) = creds else {
+        return (
+            false,
+            format!("Couldn't read the stored credentials for {identity}."),
+            Some(identity),
+        );
+    };
+    let refresh_token = creds["refresh_token"]
+        .as_str()
+        .map(str::trim)
+        .filter(|t| !t.is_empty());
+    let Some(refresh_token) = refresh_token else {
+        return (
+            false,
+            format!("{identity} has no refresh token — sign in to Google again."),
+            Some(identity),
+        );
+    };
+
+    let client_id = agent_secret(home, &["get", "GOOGLE_OAUTH_CLIENT_ID"]).unwrap_or_default();
+    let client_secret =
+        agent_secret(home, &["get", "GOOGLE_OAUTH_CLIENT_SECRET"]).unwrap_or_default();
+    if client_id.trim().is_empty() || client_secret.trim().is_empty() {
+        return (
+            false,
+            "Google's own app credentials aren't in the Keychain yet.".into(),
+            Some(identity),
+        );
+    }
+
+    let reply = curl_post_form(
+        "https://oauth2.googleapis.com/token",
+        &[
+            ("client_id", client_id.trim()),
+            ("client_secret", client_secret.trim()),
+            ("refresh_token", refresh_token),
+            ("grant_type", "refresh_token"),
+        ],
+    );
+    match reply {
+        Err(e) => (false, e, Some(identity)),
+        Ok(v) => {
+            let got_token = v["access_token"]
+                .as_str()
+                .map(|t| !t.is_empty())
+                .unwrap_or(false);
+            if got_token {
+                (
+                    true,
+                    format!("Refreshed access for {identity} — connection healthy"),
+                    Some(identity),
+                )
+            } else {
+                let why = v["error_description"]
+                    .as_str()
+                    .or_else(|| v["error"].as_str())
+                    .unwrap_or("Google refused to refresh this account.")
+                    .to_string();
+                (false, why, Some(identity))
+            }
+        }
+    }
+}
+
+/// Live identities for every Telegram bot token on file — one `getMe` per
+/// slot, so the UI can show real names and @handles instead of "primary bot".
+/// Tokens stay in the Keychain; only names come back.
+#[tauri::command]
+fn telegram_bot_info() -> Result<Vec<serde_json::Value>, String> {
+    let home = std::env::var("HOME").map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for (slot, secret) in [
+        ("primary", "TELEGRAM_BOT_TOKEN"),
+        ("tabib", "TELEGRAM_BOT_TOKEN_TABIB"),
+    ] {
+        match telegram_get_me(&home, secret) {
+            Ok(bot) => out.push(serde_json::json!({
+                "slot": slot,
+                "name": bot["first_name"].as_str().unwrap_or(""),
+                "username": bot["username"].as_str().unwrap_or(""),
+                "ok": true,
+            })),
+            Err(e) => out.push(serde_json::json!({
+                "slot": slot,
+                "ok": false,
+                "error": e,
+            })),
+        }
+    }
+    Ok(out)
+}
+
+/// One real end-to-end probe per connector, timed. Every message is written
+/// for a person: what happened, and what to do about it if it failed.
+/// `identity` names whoever we reached, when the probe learns it.
+#[tauri::command]
+fn test_connector(id: String) -> Result<serde_json::Value, String> {
+    let home = std::env::var("HOME").map_err(|e| e.to_string())?;
+    let started = std::time::Instant::now();
+
+    let (ok, message, identity): (bool, String, Option<String>) = match id.as_str() {
+        "github" => match cmd_ok("gh", &["auth", "status"]) {
+            Some(status) => {
+                let account = status
+                    .lines()
+                    .find(|l| l.contains("account"))
+                    .and_then(|l| l.split("account").nth(1))
+                    .map(|s| s.trim().split_whitespace().next().unwrap_or("").to_string())
+                    .unwrap_or_default();
+                if account.is_empty() {
+                    (true, "Signed in to GitHub".to_string(), None)
+                } else {
+                    (true, format!("Signed in as @{account}"), Some(format!("@{account}")))
+                }
+            }
+            None => (
+                false,
+                "Not signed in — run `gh auth login --web` in a terminal.".to_string(),
+                None,
+            ),
+        },
+
+        "telegram" => match telegram_get_me(&home, "TELEGRAM_BOT_TOKEN") {
+            Ok(bot) => {
+                let handle = bot["username"].as_str().unwrap_or("unknown").to_string();
+                (true, format!("Bot @{handle} is alive"), Some(format!("@{handle}")))
+            }
+            Err(e) => (false, e, None),
+        },
+
+        "google" => google_refresh_probe(&home),
+
+        "whatsapp" => match http_probe("http://127.0.0.1:7601/health") {
+            Some(code) => (
+                true,
+                format!("The WhatsApp bridge answered (HTTP {code})"),
+                None,
+            ),
+            None => (
+                false,
+                "The WhatsApp bridge isn't answering on this Mac.".to_string(),
+                None,
+            ),
+        },
+
+        "obsidian" => match http_probe("http://127.0.0.1:27123/") {
+            Some(code) => (
+                true,
+                format!("Obsidian's local API answered (HTTP {code})"),
+                None,
+            ),
+            None => (
+                false,
+                "Obsidian isn't answering — open it and check the Local REST API plugin.".to_string(),
+                None,
+            ),
+        },
+
+        _ => return Err("No test available yet for this connector.".into()),
+    };
+
+    // `ms` and `latency_ms` carry the same number: the app reads `ms`, the
+    // spec named `latency_ms`, and neither side should have to guess.
+    let elapsed = started.elapsed().as_millis() as u64;
+    Ok(serde_json::json!({
+        "ok": ok,
+        "message": message,
+        "identity": identity,
+        "ms": elapsed,
+        "latency_ms": elapsed,
+    }))
+}
+
+/// Forget one Google account: back its credentials up, then delete them.
+/// Destructive — the UI confirms before this runs, and the backup is the
+/// half-finished run must not fail on the accounts it already removed.
+#[tauri::command]
+fn remove_google_account(identity: String) -> Result<(), String> {
+    let identity = identity.trim();
+    if identity.is_empty() || identity.contains('/') || identity.contains("..") {
+        return Err("That doesn't look like an account name.".into());
+    }
+    let home = std::env::var("HOME").map_err(|e| e.to_string())?;
+    let path = format!("{home}/.google_workspace_mcp/credentials/{identity}.json");
+    if !std::path::Path::new(&path).exists() {
+        return Ok(());
+    }
+
+    let backup_dir = format!("{home}/.aos/backups/google-credentials");
+    std::fs::create_dir_all(&backup_dir)
+        .map_err(|e| format!("Couldn't prepare the backup folder: {e}"))?;
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    std::fs::copy(&path, format!("{backup_dir}/{identity}.json.{stamp}.bak"))
+        .map_err(|e| format!("Couldn't back up the credentials: {e}"))?;
+
+    std::fs::remove_file(&path).map_err(|e| format!("Couldn't remove the credentials: {e}"))
 }
 
 // ── Health ──────────────────────────────────────────────────────────
@@ -1659,6 +2089,10 @@ pub fn run() {
             home_data,
             health_check,
             list_connectors,
+            connector_usage,
+            telegram_bot_info,
+            test_connector,
+            remove_google_account,
             save_secret,
             delete_secret,
             open_url,
