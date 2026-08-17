@@ -48,9 +48,22 @@ class ArmsCoverageCheck(ReconcileCheck):
             return False
         # No manifest at all means the arm engine has not shipped here yet;
         # that is not a violated invariant, it is nothing to check.
-        return any(
+        if not any(
             (Path.home() / p).exists()
             for p in ("aos/config/modules.yaml", "project/aos/config/modules.yaml")
+        ):
+            return False
+        # This check's subject is the AOS services deployed on this machine:
+        # does the manifest describe all of them, and are any broken. With no
+        # AOS LaunchAgents at all the invariant is vacuously true and asserting
+        # it would mean reporting OK having verified nothing. "Verified fine"
+        # and "there was nothing to look at" must not give the same answer.
+        agents = Path.home() / "Library" / "LaunchAgents"
+        if not agents.is_dir():
+            return False
+        return any(
+            p.stem.startswith(("com.aos.", "com.agent."))
+            for p in agents.glob("*.plist")
         )
 
     def check(self) -> bool:
