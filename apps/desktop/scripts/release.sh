@@ -67,7 +67,11 @@ with open(path, "w") as f:
     json.dump(conf, f, indent=2)
     f.write("\n")
 PYEOF
-    echo "  ✓ version bumped to $NEW_VERSION"
+    # Cargo.toml too. tauri.conf.json wins at build time, so a stale Cargo
+    # version is invisible until something reads it and disagrees — exactly the
+    # drift class that cost us a night. Keep the two in lockstep.
+    /usr/bin/sed -i '' -E "0,/^version = \".*\"/s//version = \"$NEW_VERSION\"/" src-tauri/Cargo.toml
+    echo "  ✓ version bumped to $NEW_VERSION (tauri.conf.json + Cargo.toml)"
 fi
 
 VERSION="$("$HOME/.aos/python/bin/python3" -c "import json;print(json.load(open('$CONF'))['version'])")"
