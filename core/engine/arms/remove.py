@@ -21,11 +21,8 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-import yaml
-
+from .intent import SERVICES_CONFIG, module_service_names, set_disabled
 from .manifest import Manifest, Module, load_manifest
-
-INTENT_PATH = Path.home() / ".aos" / "config" / "app-modules.yaml"
 
 
 @dataclass
@@ -108,7 +105,13 @@ def plan(module_id: str, manifest: Manifest | None = None, purge: bool = False) 
             Step("note", secret, "Keychain secret left in place — remove manually if desired", destructive=False)
         )
 
-    steps.append(Step("intent", str(INTENT_PATH), f"{mod.id}: false", destructive=False))
+    names = module_service_names(mod)
+    if names:
+        steps.append(Step(
+            "intent", str(SERVICES_CONFIG),
+            "disabled: " + ", ".join(names),
+            destructive=False,
+        ))
 
     if not any(s.destructive for s in steps):
         steps.insert(0, Step("note", mod.id, "nothing installed to remove", destructive=False))
@@ -144,14 +147,14 @@ def apply(steps: list[Step]) -> tuple[list[str], list[str]]:
                 done.append(f"deleted {step.target}")
 
             elif step.action == "intent":
-                mod_id, _, value = step.detail.partition(": ")
-                INTENT_PATH.parent.mkdir(parents=True, exist_ok=True)
-                state = {}
-                if INTENT_PATH.exists():
-                    state = yaml.safe_load(INTENT_PATH.read_text()) or {}
-                state[mod_id] = value.strip() == "true"
-                INTENT_PATH.write_text(yaml.safe_dump(state, sort_keys=True))
-                done.append(f"recorded intent {mod_id}={value}")
+                # Written to the file reconcile already reads, so the panel and
+                # the reconciler can never hold different opinions.
+                _, _, names = step.detail.partition("disabled: ")
+                wanted = [n.strip() for n in names.split(",") if n.strip()]
+                now = set_disabled(wanted, disabled=True)
+                done.append(f"recorded opt-out in services.yaml ({', '.join(wanted)})")
+                if now:
+                    done.append(f"disabled services now: {', '.join(now)}")
 
         except Exception as exc:  # noqa: BLE001 — a failed step must not abort the rest
             failed.append(f"{step.action} {step.target}: {exc}")

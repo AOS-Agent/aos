@@ -26,6 +26,7 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .intent import module_service_names, read_disabled, set_disabled
 from .manifest import Manifest, Module, expand_path, load_manifest
 from .probe import probe_module, venv_usable
 
@@ -248,6 +249,15 @@ def apply(plan_obj: Plan, manifest: Manifest | None = None) -> tuple[list[str], 
 
         except Exception as exc:  # noqa: BLE001 — one bad step must not abort the rest
             failed.append(f"{step.kind} {step.target}: {exc}")
+
+    # Clear any operator opt-out for this module. Without this, reconcile would
+    # keep honouring an old "I switched this off" and quietly undo the install —
+    # the two halves of intent must move together or they fight.
+    if mod is not None:
+        names = module_service_names(mod)
+        if names and set(names) & read_disabled():
+            set_disabled(names, disabled=False)
+            done.append(f"cleared opt-out in services.yaml ({', '.join(names)})")
 
     # Verify by re-probing, not by assuming the steps worked.
     if mod is not None:
