@@ -70,7 +70,22 @@ PYEOF
     # Cargo.toml too. tauri.conf.json wins at build time, so a stale Cargo
     # version is invisible until something reads it and disagrees — exactly the
     # drift class that cost us a night. Keep the two in lockstep.
-    /usr/bin/sed -i '' -E "0,/^version = \".*\"/s//version = \"$NEW_VERSION\"/" src-tauri/Cargo.toml
+    #
+    # Not sed: BSD sed rejects the `0,/re/` address GNU accepts, and it fails
+    # without erroring, which is how the first attempt at this silently did
+    # nothing while reporting success.
+    "$HOME/.aos/python/bin/python3" - "$NEW_VERSION" <<'PYEOF'
+import re, sys
+from pathlib import Path
+version = sys.argv[1]
+p = Path("src-tauri/Cargo.toml")
+text = p.read_text()
+new, n = re.subn(r'^version = "[^"]*"', f'version = "{version}"', text, count=1, flags=re.M)
+if n != 1:
+    raise SystemExit("Cargo.toml: could not find a version line to bump")
+p.write_text(new)
+print(f"  ✓ Cargo.toml bumped to {version}")
+PYEOF
     echo "  ✓ version bumped to $NEW_VERSION (tauri.conf.json + Cargo.toml)"
 fi
 
