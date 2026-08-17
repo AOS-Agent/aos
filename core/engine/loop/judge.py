@@ -61,15 +61,20 @@ STEP 1 — machine_text. Is this text a HUMAN operator typing in the moment? mac
 Fragmented human notes with typos are NOT machine text — humans type messily.
 
 STEP 2 — label (only meaningful if machine_text=false):
-- "defect_report": the operator reports a flaw, bug, or quality shortfall in an ARTIFACT the agent built — UI defects ("the email isn't centered", "the glyphs are cut off", "arabic is left-aligned, should be right"), broken behavior ("zoom is broken", "clicking sign-in blanks the page", "where did the status line go?"), missing or wrong content in a produced document ("you missed the verses from X", "this should have been in the lesson"), or output quality shortfalls ("the rebuild didn't do a good job", "the extracted data seems off"). Needs NO emotional charge — a calm, even question-phrased report of something broken in agent work counts. Distinct from design preference: "I want it blue instead" is none; "it's rendering wrong / broken / missing" is defect_report.
-- "correction": the operator contradicts or faults the agent's UNDERSTANDING, CLAIM, or interaction behavior ("no that's not what I meant", "you're in the WRONG explorer", "I don't think that's the new font, are you sure", "your status updates need to be cleaner", "the whole point was to do it in ANOTHER session").
-- "frustration": annoyance AT the agent — repeated failed fixes ("THE SHIFT IS STILL THERE"), emphatic caps about broken output ("MORE DOESNT OPEN A DROPDOWN"), impatience with pace ("what's taking so long"), "why did you / what are you doing".
+- "defect_report": the operator ASSERTS AN OBSERVED WRONG STATE in something the agent built — it is broken, malfunctioning, rendering incorrectly, or missing content it was supposed to have. The bar: the artifact is failing ITS OWN INTENT, not merely failing to please. Reports of state ("the dates are messed up", "the glyphs are cut off", "arabic is left-aligned, should be right", "the stars seem fairly static"), broken behavior ("clicking sign-in blanks the page", "tapping play downloads the wrong surah then fails", "where did the status line go?"), omissions ("you missed the verses from X"), or the agent visibly doing it wrong ("you put the logo in the middle of the header"). No emotional charge needed — a calm, question-phrased report of something broken counts. If a message MIXES a broken-state report with design requests, the broken-state report wins -> defect_report.
+  NOT defect_report — wanting something DIFFERENT is design direction, label "none":
+  * "get rid of X", "make X bigger", "I want Y instead", "let's be more subtle", "simplify this", "it needs to be built better", "can we use this font instead" — a working artifact being redirected.
+  * Thinking out loud about a redesign, EVEN when it calls the current thing bad, unusable, or broken in passing ("honestly the whole flow is unusable, I never use it — I'm just thinking how this should work").
+  * Framing as a design/architecture question — "how do we make sure X renders crisp?", "what would the 10x version be?", "how would we rethink this?" — is forward-looking, not a defect report.
+- "correction": the operator contradicts or faults the agent's UNDERSTANDING, CLAIM, or interaction behavior ("no that's not what I meant", "no I mean you need to figure out whether they're doing it right", "don't read too much into that", "you're in the WRONG explorer", "I don't think that's the new font, are you sure", "I can't see those images here, you need to send them on telegram", "your status updates need to be cleaner", "the whole point was to do it in ANOTHER session"). Correction WINS over defect_report when the operator says the agent misread or misunderstood them ("I don't think that's what I meant by X", "I don't know if you understand when I say X") — even when an artifact is the subject.
+  NOT correction — forward-looking instructions and scope-setting, however emphatic: "I want you to also cover buying and price comparison", "I just want to make sure the lessons are slides, not articles like they currently are", "read the docs more carefully so we build this right". Stating what should happen NEXT is "none", even when it names the current state as a contrast, and even when it starts with "I want you to".
+- "frustration": annoyance AT the agent — repeated failed fixes ("THE SHIFT IS STILL THERE"), emphatic caps about broken output ("MORE DOESNT OPEN A DROPDOWN"), "why did you / what are you doing". IMPATIENCE AT PACE OR ABILITY ALWAYS COUNTS, even phrased as a short question with no caps: "what's taking so long", "why does this take sooo long", "how much longer??", "can't you find it?", "why are there 52 shells running", "usually builds take a minute, this is something else". Stretched letters ("sooo", "muchlongrr") and question-marks-at-the-agent are heat. Only a flat status check with zero edge ("still waiting", "any update?") is "none". Filler words alone are NOT heat — "can you just put it on my phone" is a plain request, "I just want X" is a plain want.
 - "overreach": the operator calls out that the agent did MORE than asked or acted without approval.
 - "retry": redo/rerun/revert because the attempt failed — INCLUDING surrounding-system failures (API errors, stalled jobs). EXCLUDES retries the operator attributes to their own environment ("sorry, my wifi was off — try again") — that is "none".
-- "none": everything else — new instructions, preferences, design iteration and creative redirection even when it voices dislike ("I don't like the visuals, how do we make this 10x", "make the kaaba bigger"), asking the agent to double-check BEFORE any mistake is found, plain questions ("did you launch something on the iphone?"), plain requests ("can you put it on my phone"), approvals including typos ("ship it", "shit it"), status checks, brainstorming.
+- "none": everything else — new instructions, requirements and scope; design iteration and creative redirection even when it voices dislike ("I don't like the visuals, how do we make this 10x", "make the kaaba bigger", "get rid of the sun in the dial"); thinking out loud about rebuilding something; the operator's OWN uncertainty or inability ("I can't place exactly where this came from"); asking the agent to double-check BEFORE any mistake is found; plain questions ("did you launch something on the iphone?"); plain requests ("can you just put it on my phone"); approvals including typos ("ship it", "shit it"); status checks; brainstorming.
 
-THE TEST for friction: is a specific thing the agent already DID, BUILT, or CLAIMED being called wrong? If the message only shapes what happens NEXT, it is "none".
-PRECEDENCE when mixed: emotional heat (caps, repetition, exasperation) -> "frustration"; else artifact flaw -> "defect_report"; else misunderstanding/claim -> "correction".
+THE TEST for friction: is a specific thing the agent already DID, BUILT, or CLAIMED being called WRONG — not merely being redirected? If the message mainly shapes what happens NEXT, it is "none". When torn between a friction label and "none", answer "none".
+PRECEDENCE when mixed: emotional heat (caps, repetition, exasperation) -> "frustration"; else the agent's understanding/claim faulted -> "correction"; else an observed broken/missing artifact -> "defect_report".
 
 Calibration examples (synthetic):
 - "You are Scout, an AI agent researching flights on behalf of..." -> machine_text true, none
@@ -82,8 +87,15 @@ Calibration examples (synthetic):
 - "hit another rate limit error, run it again" -> retry
 - "hmm I dont love how the cards look... what would the 10x version be? feel free to get creative" -> none
 - "double-check the schema docs so we build this right" -> none
-- "why does the page go blank after login?" -> defect_report
+- "why does the page go blank after login? it worked before" -> defect_report
+- "I also want to get rid of the sun in the dial, and make the whole line one weight" -> none
+- "honestly this whole mode feels unusable, ive never used it... im just thinking through how the flow should go" -> none
+- "how do we make sure the glyphs stay crisp when zoomed? the page slider needs to be built better too" -> none
+- "I just want to make sure the lessons show as slides, not articles the way they are now" -> none
+- "no I mean you need to check whether the sub-agents are doing it right" -> correction
 - "ok looks good, lets also add dark mode next" -> none
+- "whyy is this taking sooo long" -> frustration
+- "any update on the build?" -> none
 - "Batch: 17 message(s), channel=whatsapp. Messages: [wa_1024] (inbound) hey..." -> machine_text true, none
 
 OUTPUT CONTRACT — respond with ONLY this JSON, no prose, no code fences:
@@ -186,19 +198,40 @@ def _parse_batch(raw: str, expected_ids: list[int]) -> list[dict] | None:
     return [seen[i] for i in expected_ids]
 
 
+_BATCH_TIMEOUT_S = 300  # 30-item batches generate ~1k output tokens; 120s is too tight under load
+
+
+def _is_quota_error(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return "429" in msg or "limit" in msg
+
+
+async def _complete_tolerant(prompt: str) -> str | None:
+    """One batch call. Quota errors propagate (callers abort politely);
+    any other LLMError (timeout, updater window) returns None and flows
+    into the same retry/bisect ladder as a parse failure."""
+    try:
+        return await llm.complete(
+            prompt, model=MODEL, system=SYSTEM_PROMPT, timeout_s=_BATCH_TIMEOUT_S
+        )
+    except llm.LLMError as exc:
+        if _is_quota_error(exc):
+            raise
+        return None
+
+
 async def _judge_chunk(items: list[dict]) -> list[dict]:
     """One chunk (<= BATCH_SIZE): call, retry once, bisect, degrade."""
     ids = [it["id"] for it in items]
     prompt = _build_batch_prompt(items)
-    raw = await llm.complete(prompt, model=MODEL, system=SYSTEM_PROMPT)
-    parsed = _parse_batch(raw, ids)
+    raw = await _complete_tolerant(prompt)
+    parsed = _parse_batch(raw, ids) if raw is not None else None
     if parsed is None:
-        raw = await llm.complete(
+        raw = await _complete_tolerant(
             prompt + "\n\nYour previous output was malformed. Return ONLY the JSON object "
             "per the output contract — one entry per item id, no prose.",
-            model=MODEL, system=SYSTEM_PROMPT,
         )
-        parsed = _parse_batch(raw, ids)
+        parsed = _parse_batch(raw, ids) if raw is not None else None
     if parsed is not None:
         return parsed
     if len(items) == 1:

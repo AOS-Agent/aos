@@ -44,7 +44,6 @@ LIVE_RESTART_SURFACE = [
     "core/infra/reconcile/checks/bridge_poll_liveness.py",
     "core/infra/reconcile/checks/launchagents.py",
     "core/infra/reconcile/checks/sentinel_plist.py",
-    "core/infra/reconcile/checks/n8n.py",
 ]
 
 # Raw launchd lifecycle verbs that must not appear outside the choke-point.

@@ -78,9 +78,9 @@ def _normalize(s: str) -> str:
 def _clean_project_name(dirname: str) -> str:
     """Convert Claude project dirname to readable name.
 
-    -Users-agentalhadi-nuchay → nuchay
-    -Users-agentalhadi-chief-ios-app → chief-ios-app
-    -Users-agentalhadi-Desktop-mac-mini-agent → mac-mini-agent
+    -Users-<user>-myproject → myproject
+    -Users-<user>-some-ios-app → some-ios-app
+    -Users-<user>-Desktop-scratch-agent → scratch-agent
     """
     prefix = f"-Users-{USERNAME}-"
     name = dirname
@@ -95,7 +95,7 @@ def _clean_project_name(dirname: str) -> str:
 
 def _dir_from_project_name(dirname: str) -> Path:
     """Convert Claude project dirname back to filesystem path."""
-    # -Users-agentalhadi-nuchay → /Users/agentalhadi/nuchay
+    # dashes become separators: -Users-alice-myproject → the absolute path
     path_str = dirname.replace("-", "/")
     if path_str.startswith("/"):
         return Path(path_str)

@@ -81,7 +81,6 @@ export function PageActionsProvider({ children }: { children: ReactNode }) {
     { id: 'nav.settings', label: 'Go to Settings', category: 'navigate', execute: () => navRef.current('/settings') },
     { id: 'nav.timeline', label: 'Go to Timeline', category: 'navigate', execute: () => navRef.current('/timeline') },
     { id: 'nav.agents', label: 'Go to Agents', category: 'navigate', execute: () => navRef.current('/agents') },
-    { id: 'nav.automations', label: 'Go to Automations', category: 'navigate', execute: () => navRef.current('/automations') },
     { id: 'nav.chat', label: 'Go to Chat', category: 'navigate', execute: () => navRef.current('/chat') },
     { id: 'nav.companion', label: 'Go to Companion', category: 'navigate', execute: () => navRef.current('/') },
     { id: 'ui.sidebar', label: 'Toggle sidebar', category: 'toggle', execute: () => sidebarRef.current() },

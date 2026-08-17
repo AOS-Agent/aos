@@ -104,7 +104,6 @@ LABELS: dict[str, str] = {
     "google_workspace": "Google Workspace",
     "service_loaded": "a background service",
     "transcriber_service": "the transcriber",
-    "n8n_service": "the automation service",
     "bridge_poll_liveness": "the Telegram bridge",
     "deployment_health": "the last update",
     "dev_backend_plist": "the Qareen dev service",
@@ -218,11 +217,6 @@ def _transcriber_notify(message: str, detail: str | None) -> str:
             "bring it back automatically. I've logged the details.")
 
 
-def _n8n_notify(message: str, detail: str | None) -> str:
-    return ("🔧 The automation service (n8n) needs attention and I couldn't bring "
-            "it back automatically. I've logged the details.")
-
-
 TEMPLATES: dict[str, dict[str, object]] = {
     "volume_access": {
         "notify": (
@@ -295,10 +289,6 @@ TEMPLATES: dict[str, dict[str, object]] = {
     "transcriber_service": {
         "notify": _transcriber_notify,
         "fixed": "🔧 The transcriber was down — I redeployed and restarted it. Healthy again.",
-    },
-    "n8n_service": {
-        "notify": _n8n_notify,
-        "fixed": "🔧 The automation service (n8n) was down — I restarted it. Healthy again.",
     },
     "initiative_directories": {
         "error": ("📁 I couldn't create some initiative folders in the vault. "

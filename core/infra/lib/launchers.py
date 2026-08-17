@@ -58,7 +58,7 @@ def is_ugly_arg0(arg0: str) -> bool:
 
 # Casing that plain .capitalize() gets wrong.
 _SPECIAL_WORDS = {
-    "ios": "iOS", "macos": "macOS", "n8n": "n8n", "whatsmeow": "WhatsApp",
+    "ios": "iOS", "macos": "macOS", "whatsmeow": "WhatsApp",
     "api": "API", "mcp": "MCP", "ai": "AI",
 }
 
