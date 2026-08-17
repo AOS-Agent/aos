@@ -7,7 +7,7 @@ import { listen } from "@tauri-apps/api/event";
    Unbranded shell — the name is intentionally not fixed yet.
    ──────────────────────────────────────────────────────────────── */
 
-type Screen = "welcome" | "configure" | "install" | "done";
+type Screen = "welcome" | "configure" | "install" | "done" | "update";
 
 interface SetupConfig {
   operatorName: string;
@@ -15,6 +15,16 @@ interface SetupConfig {
   role: "primary" | "worker";
   dryRun: boolean;
 }
+
+interface SystemInfo {
+  installed: boolean;
+  version?: string | null;
+  operator?: string | null;
+  update_status?: string | null; // up_to_date | update_available
+  last_check?: string | null;
+}
+
+const IN_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 const STAGES = [
   "Checking your Mac",
@@ -83,6 +93,149 @@ function Welcome({ onContinue }: { onContinue: () => void }) {
         </p>
       </div>
       <PrimaryButton onClick={onContinue}>Continue</PrimaryButton>
+    </div>
+  );
+}
+
+/* ── screen 1b: welcome back (existing install) ── */
+
+function WelcomeBack({
+  sys,
+  checking,
+  onUpdate,
+  onContinue,
+}: {
+  sys: SystemInfo;
+  checking: boolean;
+  onUpdate: () => void;
+  onContinue: () => void;
+}) {
+  const updateAvailable = sys.update_status === "update_available";
+  return (
+    <div className="screen h-full flex flex-col items-center justify-center gap-9">
+      <Mark />
+      <div className="text-center space-y-2">
+        <h1 className="text-[26px] font-semibold tracking-tight text-zinc-50">
+          Welcome back{sys.operator ? `, ${sys.operator}` : ""}
+        </h1>
+        <div className="flex items-center justify-center gap-2 text-[13px] text-zinc-500">
+          <span className="px-2 py-0.5 rounded-md border border-zinc-800 bg-zinc-900 font-mono text-[12px] text-zinc-300">
+            {sys.version ?? "unknown"}
+          </span>
+          <span>installed on this Mac</span>
+        </div>
+      </div>
+
+      <div className="w-[380px] max-w-[80vw] rounded-2xl border border-zinc-800 bg-zinc-950/60 px-5 py-4">
+        {checking ? (
+          <div className="flex items-center gap-3">
+            <div className="w-2 h-2 rounded-full bg-zinc-100 pulse-dot" />
+            <span className="text-[13.5px] text-zinc-400">Checking for updates…</span>
+          </div>
+        ) : updateAvailable ? (
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <div className="text-[13.5px] text-zinc-100 font-medium">Update available</div>
+              <div className="text-[12px] text-zinc-500 mt-0.5">
+                A newer version is ready to install.
+              </div>
+            </div>
+            <button
+              onClick={onUpdate}
+              className="px-4 h-9 rounded-lg bg-zinc-100 text-zinc-950 text-[13px] font-medium
+                         hover:bg-white active:scale-[0.98] transition shrink-0"
+            >
+              Update now
+            </button>
+          </div>
+        ) : (
+          <div className="flex items-center gap-3">
+            <svg width="14" height="14" viewBox="0 0 14 14" className="text-zinc-400">
+              <path
+                d="M2.5 7.5 5.5 10.5 11.5 3.5"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                fill="none"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+            <span className="text-[13.5px] text-zinc-400">You're up to date</span>
+          </div>
+        )}
+      </div>
+
+      <PrimaryButton onClick={onContinue}>Continue</PrimaryButton>
+    </div>
+  );
+}
+
+/* ── screen: update ── */
+
+function Update({ onFinished }: { onFinished: (code: number) => void }) {
+  const [lines, setLines] = useState<string[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const consoleRef = useRef<HTMLDivElement>(null);
+  const started = useRef(false);
+
+  useEffect(() => {
+    const un1 = listen<string>("update:line", (e) => {
+      const clean = stripAnsi(e.payload).trimEnd();
+      if (!clean.trim()) return;
+      setLines((l) => [...l.slice(-500), clean]);
+    });
+    const un2 = listen<number>("update:done", (e) => onFinished(e.payload));
+    if (!started.current) {
+      started.current = true;
+      if (IN_TAURI) {
+        invoke("run_update").catch((err) => setError(String(err)));
+      } else {
+        const demo = [
+          "Pulling latest release…",
+          "Reconciling instance state…",
+          "Rebuilding environments…",
+          "Restarting services…",
+          "Health check passed",
+        ];
+        demo.forEach((d, i) => setTimeout(() => setLines((l) => [...l, d]), 800 * (i + 1)));
+        setTimeout(() => onFinished(0), 800 * (demo.length + 1));
+      }
+    }
+    return () => {
+      un1.then((f) => f());
+      un2.then((f) => f());
+    };
+  }, [onFinished]);
+
+  useEffect(() => {
+    consoleRef.current?.scrollTo({ top: consoleRef.current.scrollHeight });
+  }, [lines]);
+
+  return (
+    <div className="screen h-full flex flex-col items-center justify-center">
+      <div className="w-[560px] max-w-[86vw]">
+        <div className="flex items-center gap-3 mb-1">
+          <div className="w-2 h-2 rounded-full bg-zinc-100 pulse-dot" />
+          <h1 className="text-[22px] font-semibold tracking-tight">Updating</h1>
+        </div>
+        <p className="text-[13px] text-zinc-500 mb-6">
+          Pulling the latest version and restarting services. Hold on.
+        </p>
+
+        {error && (
+          <div className="mb-4 rounded-xl border border-red-900/60 bg-red-950/30 px-4 py-3 text-[13px] text-red-300">
+            {error}
+          </div>
+        )}
+
+        <div
+          ref={consoleRef}
+          className="console h-56 overflow-y-auto rounded-xl border border-zinc-800 bg-black/60 px-4 py-3
+                     font-mono text-[11.5px] leading-relaxed text-zinc-500 whitespace-pre-wrap select-text"
+        >
+          {lines.join("\n") || "Starting…"}
+        </div>
+      </div>
     </div>
   );
 }
@@ -393,6 +546,8 @@ function Done({
 export default function App() {
   const [screen, setScreen] = useState<Screen>("welcome");
   const [exitCode, setExitCode] = useState(0);
+  const [sys, setSys] = useState<SystemInfo | null>(null);
+  const [checking, setChecking] = useState(false);
   const [config, setConfig] = useState<SetupConfig>({
     operatorName: "",
     machineName: "",
@@ -400,16 +555,96 @@ export default function App() {
     dryRun: true,
   });
 
+  // Detect an existing install on launch, then refresh the update check.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (IN_TAURI) {
+        try {
+          const s = await invoke<SystemInfo>("detect_system");
+          if (cancelled) return;
+          setSys(s);
+          if (s.installed) {
+            setChecking(true);
+            try {
+              const fresh = await invoke<SystemInfo>("check_updates");
+              if (!cancelled) setSys(fresh);
+            } catch {
+              /* stale state still shows */
+            }
+            if (!cancelled) setChecking(false);
+          }
+        } catch {
+          if (!cancelled) setSys({ installed: false });
+        }
+      } else {
+        // Browser demo: pretend we're an existing install and find an update.
+        setSys({ installed: true, version: "v0.7.5", operator: "Hadi" });
+        setChecking(true);
+        setTimeout(() => {
+          if (cancelled) return;
+          setSys({
+            installed: true,
+            version: "v0.7.5",
+            operator: "Hadi",
+            update_status: "update_available",
+          });
+          setChecking(false);
+        }, 1600);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const handleFinished = useCallback((code: number) => {
     setExitCode(code);
     // small beat so the last checkmark lands before transitioning
     setTimeout(() => setScreen("done"), 900);
   }, []);
 
+  const handleUpdateFinished = useCallback((code: number) => {
+    setTimeout(async () => {
+      if (code === 0) {
+        if (IN_TAURI) {
+          try {
+            setSys(await invoke<SystemInfo>("detect_system"));
+          } catch {
+            /* keep old */
+          }
+        } else {
+          setSys((s) => ({ ...s!, version: "v0.7.6", update_status: "up_to_date" }));
+        }
+        setScreen("welcome");
+      } else {
+        setExitCode(code);
+        setScreen("done");
+      }
+    }, 700);
+  }, []);
+
+  const existing = sys?.installed === true;
+
   return (
     <div className="h-full">
       <DragRegion />
-      {screen === "welcome" && <Welcome onContinue={() => setScreen("configure")} />}
+      {screen === "welcome" &&
+        (sys === null ? (
+          <div className="h-full flex items-center justify-center">
+            <div className="w-2 h-2 rounded-full bg-zinc-100 pulse-dot" />
+          </div>
+        ) : existing ? (
+          <WelcomeBack
+            sys={sys}
+            checking={checking}
+            onUpdate={() => setScreen("update")}
+            onContinue={() => setScreen("configure")}
+          />
+        ) : (
+          <Welcome onContinue={() => setScreen("configure")} />
+        ))}
+      {screen === "update" && <Update onFinished={handleUpdateFinished} />}
       {screen === "configure" && (
         <Configure
           config={config}
