@@ -95,7 +95,7 @@ def _clean_project_name(dirname: str) -> str:
 
 def _dir_from_project_name(dirname: str) -> Path:
     """Convert Claude project dirname back to filesystem path."""
-    # -Users-alice-myproject → /Users/alice/myproject
+    # dashes become separators: -Users-alice-myproject → the absolute path
     path_str = dirname.replace("-", "/")
     if path_str.startswith("/"):
         return Path(path_str)
