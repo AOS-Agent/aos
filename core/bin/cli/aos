@@ -18,19 +18,23 @@
 set -euo pipefail
 
 AOS_DIR="$HOME/aos"
+# Always dispatch Python through the resolver, never bare `python3`.
+# Homebrew python can be present, correctly versioned, and unusable — a
+# subcommand that picks it dies on `import plistlib` before it can report.
+AOS_PY="$AOS_DIR/core/bin/internal/aos-python"
 RUNNER="$AOS_DIR/core/infra/migrations/runner.py"
 
 case "${1:-help}" in
     migrate)
-        python3 "$RUNNER" migrate
+        "$AOS_PY" "$RUNNER" migrate
         ;;
 
     status)
-        python3 "$RUNNER" status
+        "$AOS_PY" "$RUNNER" status
         ;;
 
     discover)
-        python3 "$RUNNER" discover
+        "$AOS_PY" "$RUNNER" discover
         ;;
 
     update)
@@ -54,7 +58,7 @@ case "${1:-help}" in
         # Show or set this machine's release channel (edge|stable).
         CHANNEL_FILE="$HOME/.aos/config/channel"
         if [[ -z "${2:-}" ]]; then
-            resolved=$(python3 "$AOS_DIR/core/lib/channels.py" channel 2>/dev/null || echo "stable")
+            resolved=$("$AOS_PY" "$AOS_DIR/core/lib/channels.py" channel 2>/dev/null || echo "stable")
             if [[ -f "$CHANNEL_FILE" ]]; then
                 echo "Channel: $resolved  (from $CHANNEL_FILE)"
             else
@@ -210,7 +214,7 @@ case "${1:-help}" in
         # crawler registered there.
         MCP_FILE="$HOME/.claude.json"
 
-        python3 - "$AOS_DIR" "$MCP_FILE" << 'SYNCMCP'
+        "$AOS_PY" - "$AOS_DIR" "$MCP_FILE" << 'SYNCMCP'
 import json, os, sys
 from pathlib import Path
 
@@ -320,16 +324,24 @@ SYNCMCP
         echo ""
         errors=0
 
-        # Check Python
-        if command -v python3 &>/dev/null; then
-            echo "  ✓ Python3 available"
+        # Check Python — the interpreter AOS will ACTUALLY use, and whether it
+        # works. "python3 exists" was the old test, and it passed happily on a
+        # machine whose Homebrew python had an unusable pyexpat: seven service
+        # venvs were frozen, the bridge's API was down, and self-test said fine.
+        if py_path=$("$AOS_PY" -c 'import sys; print(sys.executable)' 2>/dev/null) \
+           && "$AOS_PY" -c 'import platform, pyexpat, sys; sys.exit(0 if platform.mac_ver()[0] else 1)' 2>/dev/null; then
+            py_ver=$("$AOS_PY" -c 'import platform; print(platform.python_version())' 2>/dev/null)
+            echo "  ✓ Python $py_ver healthy ($py_path)"
         else
-            echo "  ✗ Python3 not found"
+            echo "  ✗ No healthy Python — the resolver found nothing usable."
+            echo "    A python3 that exists but fails an import/platform probe counts"
+            echo "    as absent: pip and uv both refuse to install into it."
             ((errors++))
         fi
 
-        # Check PyYAML
-        if python3 -c "import yaml" 2>/dev/null; then
+        # Check PyYAML in the interpreter AOS uses, not whichever python3 is
+        # first on PATH — those are routinely different, and only one matters.
+        if "$AOS_PY" -c "import yaml" 2>/dev/null; then
             echo "  ✓ PyYAML installed"
         else
             echo "  ✗ PyYAML not installed (pip3 install pyyaml)"
@@ -379,7 +391,7 @@ SYNCMCP
         done
 
         # Check work engine
-        if python3 -c "
+        if "$AOS_PY" -c "
 import sys; sys.path.insert(0, '$AOS_DIR/core/engine/work')
 import backend  # live engine (cli.py does 'import backend as engine')
 " 2>/dev/null; then
@@ -399,7 +411,7 @@ import backend  # live engine (cli.py does 'import backend as engine')
 
             # Check if Python script
             if head -1 "$script" | grep -q python; then
-                if python3 -c "
+                if "$AOS_PY" -c "
 import ast, sys
 # ast.parse: pure syntax check, no .pyc write — the runtime tree is
 # read-only, so py_compile's cache write failed and 26 healthy scripts
@@ -462,7 +474,7 @@ except SyntaxError as e:
         fi
 
         # Validate config files
-        validate_output=$(python3 -c "
+        validate_output=$("$AOS_PY" -c "
 import sys
 sys.path.insert(0, '$AOS_DIR/core')
 from lib.validate import validate_all_configs
@@ -724,7 +736,7 @@ PYEOF
                 # Fallback: extract deps from pyproject.toml (unpinned)
                 echo "    Installing from pyproject.toml..."
                 local deps
-                deps=$(python3 -c "
+                deps=$("$AOS_PY" -c "
 try:
     import tomllib
 except ImportError:
@@ -837,7 +849,7 @@ print('\n'.join(deps))
             echo "Example: aos rename-agent sahib"
             echo ""
             # Show current name
-            current=$(python3 -c "
+            current=$("$AOS_PY" -c "
 import yaml
 from pathlib import Path
 d = yaml.safe_load(Path.home().joinpath('.aos/config/operator.yaml').read_text()) or {}
@@ -857,7 +869,7 @@ print(d.get('agent_name', 'chief'))
         chief_source="$AOS_DIR/core/agents/chief.md"
 
         # Read current name
-        old_name=$(python3 -c "
+        old_name=$("$AOS_PY" -c "
 import yaml
 from pathlib import Path
 d = yaml.safe_load(Path.home().joinpath('.aos/config/operator.yaml').read_text()) or {}
@@ -875,7 +887,7 @@ print(d.get('agent_name', 'chief'))
         fi
 
         # Update operator.yaml
-        python3 -c "
+        "$AOS_PY" -c "
 import yaml
 from pathlib import Path
 p = Path.home() / '.aos/config/operator.yaml'
@@ -886,7 +898,7 @@ p.write_text(yaml.dump(d, default_flow_style=False, sort_keys=False, allow_unico
         echo "  Updated operator.yaml: agent_name=$new_name"
 
         # Update settings.json
-        python3 -c "
+        "$AOS_PY" -c "
 import json
 from pathlib import Path
 p = Path.home() / '.claude/settings.json'
@@ -960,7 +972,7 @@ p.write_text(json.dumps(s, indent=2) + '\n')
         echo ""
         echo "Checking migration state vs actual filesystem..."
         echo ""
-        python3 -c "
+        "$AOS_PY" -c "
 import sys, importlib.util
 from pathlib import Path
 
@@ -1067,7 +1079,6 @@ sys.exit(0 if errors == 0 else 1)
         # python3: on operator machines PATH python3 can be Apple's 3.9 with no
         # pytest — 24 of 25 "failures" in the v0.7.2 rollout were the grader
         # failing to open the exam, not the system being broken.
-        AOS_PY="$AOS_DIR/core/bin/internal/aos-python"
         test_errors=0
         failed_suites=""
         for test_file in "$TEST_DIR"/test_*.py; do
@@ -1172,7 +1183,7 @@ raise SystemExit(main(sys.argv[1:]))
     hygiene)
         # Instance hygiene — find orphaned artifacts and optionally clean them.
         # NEVER auto-deletes. Shows what it found, asks for each item.
-        python3 -c "
+        "$AOS_PY" -c "
 import sys, os, shutil, subprocess
 sys.path.insert(0, '$AOS_DIR/core/infra/reconcile')
 sys.path.insert(0, '$AOS_DIR/core/infra/reconcile/checks')
