@@ -121,6 +121,115 @@ fn run_update(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+#[derive(serde::Serialize, Clone)]
+struct Check {
+    id: String,
+    label: String,
+    status: String, // ok | warn | fail
+    detail: String,
+}
+
+fn check(id: &str, label: &str, status: &str, detail: String) -> Check {
+    Check { id: id.into(), label: label.into(), status: status.into(), detail }
+}
+
+fn cmd_ok(bin: &str, args: &[&str]) -> Option<String> {
+    Command::new(bin)
+        .args(args)
+        .stdin(Stdio::null())
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+}
+
+/// Machine-readiness checks, run before install and before adding any arm.
+/// Missing-but-installable tools are warnings (the installer handles them);
+/// only conditions the installer cannot fix are failures.
+#[tauri::command]
+fn run_preflight() -> Vec<Check> {
+    let mut out = Vec::new();
+
+    // Chip
+    if std::env::consts::ARCH == "aarch64" {
+        out.push(check("chip", "Apple Silicon", "ok", "Full support, including local voice models".into()));
+    } else {
+        out.push(check("chip", "Apple Silicon", "warn", "Intel Mac — core works; on-device voice models unavailable".into()));
+    }
+
+    // macOS version
+    match cmd_ok("sw_vers", &["-productVersion"]) {
+        Some(v) => out.push(check("macos", "macOS version", "ok", format!("macOS {v}"))),
+        None => out.push(check("macos", "macOS version", "warn", "Could not determine version".into())),
+    }
+
+    // Memory
+    if let Some(bytes) = cmd_ok("sysctl", &["-n", "hw.memsize"]).and_then(|s| s.parse::<u64>().ok()) {
+        let gb = bytes / 1_073_741_824;
+        let (status, note) = if gb >= 16 {
+            ("ok", "Comfortable headroom for agent runs")
+        } else if gb >= 8 {
+            ("warn", "Workable — keep optional services lean")
+        } else {
+            ("fail", "Below the minimum for agent workloads")
+        };
+        out.push(check("ram", "Memory", status, format!("{gb} GB — {note}")));
+    }
+
+    // Free disk
+    if let Some(df) = cmd_ok("df", &["-g", "/"]) {
+        if let Some(avail) = df
+            .lines()
+            .nth(1)
+            .and_then(|l| l.split_whitespace().nth(3))
+            .and_then(|s| s.parse::<u64>().ok())
+        {
+            let (status, note) = if avail >= 40 {
+                ("ok", "Plenty of room")
+            } else if avail >= 15 {
+                ("warn", "Enough for core; large optional models may not fit")
+            } else {
+                ("fail", "Not enough free space to install safely")
+            };
+            out.push(check("disk", "Free disk space", status, format!("{avail} GB available — {note}")));
+        }
+    }
+
+    // Xcode Command Line Tools
+    let clt = std::path::Path::new("/Library/Developer/CommandLineTools").exists()
+        || cmd_ok("xcode-select", &["-p"]).is_some();
+    out.push(if clt {
+        check("clt", "Developer tools", "ok", "Xcode Command Line Tools present".into())
+    } else {
+        check("clt", "Developer tools", "warn", "Missing — installed automatically during setup".into())
+    });
+
+    // git
+    out.push(match cmd_ok("git", &["--version"]) {
+        Some(v) => check("git", "Git", "ok", v),
+        None => check("git", "Git", "warn", "Missing — comes with developer tools during setup".into()),
+    });
+
+    // Homebrew
+    let brew = ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"]
+        .iter()
+        .find(|p| std::path::Path::new(p).exists());
+    out.push(match brew {
+        Some(_) => check("brew", "Package manager", "ok", "Homebrew present".into()),
+        None => check("brew", "Package manager", "warn", "Missing — installed automatically during setup".into()),
+    });
+
+    // Network
+    let net = cmd_ok("curl", &["-sI", "--max-time", "6", "https://github.com"]).is_some();
+    out.push(if net {
+        check("net", "Internet connection", "ok", "Reachable".into())
+    } else {
+        check("net", "Internet connection", "fail", "Can't reach the internet — setup needs to download components".into())
+    });
+
+    out
+}
+
 /// Runs the system installer (`~/aos/install.sh`), streaming each output line
 /// to the frontend as `install:line` events and the exit code as `install:done`.
 ///
@@ -189,7 +298,8 @@ pub fn run() {
             run_install,
             detect_system,
             check_updates,
-            run_update
+            run_update,
+            run_preflight
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
