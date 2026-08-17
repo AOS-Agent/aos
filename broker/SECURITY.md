@@ -17,6 +17,19 @@ One Composio project API key (`ak_…`), as a Cloudflare Worker secret. That key
 is the only credential in the system with real blast radius: it can read, mint,
 and delete connected accounts for **every** user of the project.
 
+An admin token (`ADMIN_TOKEN`, also a Worker secret), which is the sole
+credential able to mint invites. Whoever holds it can issue themselves access to
+the software and to the connector lane, so it is treated exactly like the
+Composio key: Keychain only, never in `[vars]`, never in a shell argument. If
+it is unset the admin endpoints answer 503 rather than falling open, and every
+attempt against them shares one rate-limit bucket so the token cannot be guessed
+at speed.
+
+Activation records (`MACHINES` KV): a handle, a machine id, and a timestamp per
+install. This is the first thing in the broker that is deliberately not
+anonymous — a handle is a name a person chose to be known by. It is not derived
+from the machine and carries no hardware linkage.
+
 ## What user machines hold
 
 - An invite token (a bearer credential for the broker, nothing else).
@@ -118,6 +131,18 @@ reconnect their services. Both follow directly from holding no mapping.
 
 Setting `status` to anything other than `"active"` blocks all new broker calls
 for that token within about 60 seconds (KV propagation).
+
+Revocation now also stops software updates. `/v1/updater/latest.json` is behind
+the same check, so a revoked machine stops seeing releases — it keeps running
+the version it already installed, which it can do indefinitely and offline. The
+gate withholds new versions; it does not and cannot reach into a machine and
+switch the app off.
+
+The manifest itself is not a secret — it is a version string and a signed
+download URL — and the release binaries stay signed by the Tauri updater key.
+Gating the manifest controls *distribution*, not integrity: an unlisted origin
+that leaks is an embarrassment, not a compromise, because a leaked manifest
+still only yields the same signed build.
 
 What revocation does **not** do: it does not revoke provider connections
 already established. Those persist in the Composio project under the derived

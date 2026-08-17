@@ -3418,6 +3418,58 @@ fn run_install(app: tauri::AppHandle, dry_run: bool) -> Result<(), String> {
     Ok(())
 }
 
+// ── Self-update (invite-gated) ──────────────────────────────────────
+
+/// The invite broker. Update manifests move behind it so that an invite — not
+/// a guessable URL — decides who may install and who may keep up to date.
+#[cfg(not(debug_assertions))]
+const BROKER_URL: &str = "https://aos-connect-broker.workers.dev";
+
+/// Where manifests were served before the broker existed. Installs that predate
+/// the gate have no invite on file, so they keep updating from here until one
+/// is issued — a gate that bricks the apps already in the field is not a gate,
+/// it is an outage.
+#[cfg(not(debug_assertions))]
+const PUBLIC_UPDATER_URL: &str = "https://aos.hish.am/updater/latest.json";
+
+/// Ask the updater whether there is anything newer, presenting this install's
+/// invite when it has one.
+///
+/// Silent by design: a missing invite, a revoked one, or no network all return
+/// `None`, and the app simply stays on the version it already has.
+#[cfg(not(debug_assertions))]
+async fn check_for_update(handle: &tauri::AppHandle) -> Option<tauri_plugin_updater::Update> {
+    use tauri_plugin_updater::UpdaterExt;
+
+    let home = std::env::var("HOME").ok()?;
+    let invite = agent_secret(&home, &["get", "AOS_INVITE_TOKEN"])
+        .ok()
+        .filter(|token| !token.is_empty());
+    let machine_id = std::fs::read_to_string(format!("{home}/.aos/.machine-id"))
+        .ok()
+        .map(|id| id.trim().to_string())
+        .filter(|id| !id.is_empty());
+
+    let builder = handle.updater_builder();
+    let builder = match (invite, machine_id) {
+        (Some(invite), Some(machine_id)) => {
+            let endpoint = tauri::Url::parse(&format!("{BROKER_URL}/v1/updater/latest.json")).ok()?;
+            builder
+                .endpoints(vec![endpoint])
+                .ok()?
+                .header("x-invite-token", invite)
+                .ok()?
+                .header("x-machine-id", machine_id)
+                .ok()?
+        }
+        _ => builder
+            .endpoints(vec![tauri::Url::parse(PUBLIC_UPDATER_URL).ok()?])
+            .ok()?,
+    };
+
+    builder.build().ok()?.check().await.ok().flatten()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -3430,11 +3482,8 @@ pub fn run() {
                 let _ = app.handle().plugin(tauri_plugin_updater::Builder::new().build());
                 let handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
-                    use tauri_plugin_updater::UpdaterExt;
-                    if let Ok(updater) = handle.updater() {
-                        if let Ok(Some(update)) = updater.check().await {
-                            let _ = update.download_and_install(|_, _| {}, || {}).await;
-                        }
+                    if let Some(update) = check_for_update(&handle).await {
+                        let _ = update.download_and_install(|_, _| {}, || {}).await;
                     }
                 });
             }
