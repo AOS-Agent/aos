@@ -1,0 +1,85 @@
+@import "tailwindcss";
+
+/* Zinc-dark language (Buzz / Claude-app family). Neutral, unbranded. */
+:root {
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  background: #09090b; /* zinc-950 */
+  color: #fafafa; /* zinc-50 */
+  overflow: hidden;
+}
+
+* {
+  user-select: none;
+  cursor: default;
+}
+
+input,
+textarea {
+  user-select: text;
+  cursor: text;
+}
+
+::selection {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+/* soft screen transitions */
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.screen {
+  animation: rise 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes pulse-dot {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+.pulse-dot {
+  animation: pulse-dot 1.4s ease-in-out infinite;
+}
+
+/* Quiet, overlay-feeling scrollbars everywhere — thumb only, no track,
+   invisible until you're actually scrolling something that scrolls. */
+::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 5px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+*:hover::-webkit-scrollbar-thumb,
+*:focus-within::-webkit-scrollbar-thumb {
+  background-color: #2c2c31;
+}
+::-webkit-scrollbar-thumb:hover {
+  background-color: #3f3f46;
+}
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}

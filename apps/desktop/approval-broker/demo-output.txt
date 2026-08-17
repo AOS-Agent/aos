@@ -1,0 +1,253 @@
+
+==================================================================
+  STEP 0  clean slate
+==================================================================
+  removed audit.jsonl and broker.key; trust.json set to level 2 (semi-auto)
+  the key does not exist yet - the broker mints it on first start
+
+==================================================================
+  STEP 1  start the broker
+==================================================================
+  brokerd running as pid 80209
+  bind: bind=127.0.0.1:4110  (loopback only, council lock)
+  auth key minted at ./broker.key with permissions -rw-------
+
+==================================================================
+  STEP 2  liveness is a value, and the client must render it
+==================================================================
+  raw payload the client renders:
+{
+  "alive": true,
+  "contract": "aos.broker.local/v1",
+  "fail_closed": true,
+  "pending": 0,
+  "render": {
+    "detail": "trust level 2 (semi-auto) - 0 pending",
+    "label": "BROKER UP",
+    "must_render": true,
+    "tone": "normal"
+  },
+  "render_contract": "Clients MUST display render.label and render.detail before attempting any tool call. Absence of this payload is not a neutral default: it is the DOWN state and means deny.",
+  "schema": "aos.broker.liveness/v1",
+  "state": "UP",
+  "trust_level": 2,
+  "trust_level_name": "semi-auto",
+  "uptime_s": 0.428
+}
+
+==================================================================
+  STEP 3  auth handshake is real - a client with no key gets nothing
+==================================================================
+  curl with no x-broker-key header:
+{
+  "contract": "aos.broker.local/v1",
+  "detail": "present the local contract key in the x-broker-key header",
+  "error": "unauthorized"
+}
+
+==================================================================
+  STEP 4  run the workspace client (trust level 2, semi-auto)
+==================================================================
+  it will attempt two tool calls:
+    a) message.send  -> benign, expected to auto-allow
+    b) shell.exec    -> destructive, expected to BLOCK on a human
+
+  client output so far (it is now parked, waiting on a human):
+
+WORKSPACE CLIENT (stub) - principal agent:workspace-agent-1
+asking broker at http://127.0.0.1:4110  (contract aos.broker.local/v1)
+==================================================================
+  BROKER STATE : UP
+  BROKER UP
+  trust level 2 (semi-auto) - 0 pending
+  uptime 0.493s | pending 0 | trust level 2 (semi-auto) | fail-closed True
+==================================================================
+
+-- tool call: workspace.chat.post (capability message.send)
+   summary: Post 'standup notes are up' to #general
+   ALLOWED  by broker:policy (semi_auto_allow)
+   EXECUTED (no-op stub): workspace.chat.post
+
+-- tool call: workspace.terminal.run (capability shell.exec)  [declared destructive]
+   summary: Run: rm -rf ~/project/scratch/build
+   BLOCKED  awaiting human approval - request id cebf725fa792 (reason: destructive_flag)
+            approve with: POST /v1/approvals/cebf725fa792/decide
+
+==================================================================
+  STEP 5  the approval queue - what a human is being asked to decide
+==================================================================
+{
+  "count": 1,
+  "pending": [
+    {
+      "args_digest": "sha256:9ba77e...01cc",
+      "capability": "shell.exec",
+      "created_at": 1786998341.04444,
+      "decided_at": null,
+      "decider": "pending:human",
+      "destructive": true,
+      "id": "cebf725fa792",
+      "principal": {
+        "id": "workspace-agent-1",
+        "kind": "agent"
+      },
+      "principal_key": "agent:workspace-agent-1",
+      "reason": "destructive_flag",
+      "state": "pending",
+      "summary": "Run: rm -rf ~/project/scratch/build",
+      "tool": "workspace.terminal.run",
+      "trust_level": 2,
+      "trust_level_name": "semi-auto"
+    }
+  ]
+}
+  pending request id: cebf725fa792
+
+==================================================================
+  STEP 6  a human approves it out of band
+==================================================================
+  POST /v1/approvals/cebf725fa792/decide  {allow: true, decider: operator:hisham}
+{
+  "args_digest": "sha256:9ba77e...01cc",
+  "capability": "shell.exec",
+  "created_at": 1786998341.04444,
+  "decided_at": 1786998341.3021939,
+  "decider": "operator:hisham",
+  "destructive": true,
+  "id": "cebf725fa792",
+  "principal": {
+    "id": "workspace-agent-1",
+    "kind": "agent"
+  },
+  "principal_key": "agent:workspace-agent-1",
+  "reason": "human_decision",
+  "state": "allow",
+  "summary": "Run: rm -rf ~/project/scratch/build",
+  "tool": "workspace.terminal.run",
+  "trust_level": 2,
+  "trust_level_name": "semi-auto"
+}
+
+==================================================================
+  STEP 7  the client unblocks and proceeds
+==================================================================
+
+WORKSPACE CLIENT (stub) - principal agent:workspace-agent-1
+asking broker at http://127.0.0.1:4110  (contract aos.broker.local/v1)
+==================================================================
+  BROKER STATE : UP
+  BROKER UP
+  trust level 2 (semi-auto) - 0 pending
+  uptime 0.493s | pending 0 | trust level 2 (semi-auto) | fail-closed True
+==================================================================
+
+-- tool call: workspace.chat.post (capability message.send)
+   summary: Post 'standup notes are up' to #general
+   ALLOWED  by broker:policy (semi_auto_allow)
+   EXECUTED (no-op stub): workspace.chat.post
+
+-- tool call: workspace.terminal.run (capability shell.exec)  [declared destructive]
+   summary: Run: rm -rf ~/project/scratch/build
+   BLOCKED  awaiting human approval - request id cebf725fa792 (reason: destructive_flag)
+            approve with: POST /v1/approvals/cebf725fa792/decide
+   ALLOWED  by operator:hisham (human_decision)
+   EXECUTED (no-op stub): workspace.terminal.run
+
+EXECUTION LEDGER
+   message.send   executed  semi_auto_allow
+   shell.exec     executed  human_decision
+   executed: 2 of 2
+
+==================================================================
+  STEP 8  the audit log (append-only JSONL, principal + capability keyed)
+==================================================================
+{"capability": "message.send", "decider": "broker:policy", "decision": "allow", "id": "9eeab0eb50df", "latency_ms": 0, "principal": "agent:workspace-agent-1", "reason": "semi_auto_allow", "tool": "workspace.chat.post", "trust_level": 2, "ts": "2026-08-17T20:25:41.043Z"}
+{"capability": "shell.exec", "decider": "operator:hisham", "decision": "allow", "id": "cebf725fa792", "latency_ms": 257, "principal": "agent:workspace-agent-1", "reason": "human_decision", "tool": "workspace.terminal.run", "trust_level": 2, "ts": "2026-08-17T20:25:41.302Z"}
+
+  one line per decision: who asked, what capability, who decided, how long it took
+
+==================================================================
+  STEP 9  FAIL-CLOSED PROOF - kill the broker, then run the client again
+==================================================================
+  brokerd killed. nothing is listening on 127.0.0.1:4110.
+  this is the adversarial test: is the broker a chokepoint or a curtain?
+
+
+WORKSPACE CLIENT (stub) - principal agent:workspace-agent-1
+asking broker at http://127.0.0.1:4110  (contract aos.broker.local/v1)
+==================================================================
+  BROKER STATE : DOWN
+  BROKER DOWN - nothing executes
+  cannot reach the broker on 127.0.0.1:4110 - <urlopen error [Errno 61] Connection refused>
+==================================================================
+
+The broker is not answering. This client has no local fallback,
+no cached grant, and no bypass. Both tool calls are refused now.
+
+   REFUSED  workspace.chat.post (message.send) - broker down, nothing executes
+   REFUSED  workspace.terminal.run (shell.exec) - broker down, nothing executes
+
+EXECUTION LEDGER
+   message.send   refused   broker_down_precheck
+   shell.exec     refused   broker_down_precheck
+   executed: 0 of 2
+
+FAIL-CLOSED PROOF: HELD - broker down, 0 of 2 calls executed
+
+  PROOF HELD (client exit 0): broker dead, 0 of 2 calls executed,
+  and the dead broker is rendered plainly rather than degraded into silence.
+
+==================================================================
+  STEP 10  same client, trust level 1 (approval) - everything blocks
+==================================================================
+  trust.json default_level -> 1
+  brokerd restarted as pid 80259 (same key, key file is persistent)
+
+  running the client with a 5s approval window and nobody at the keyboard:
+
+WORKSPACE CLIENT (stub) - principal agent:workspace-agent-1
+asking broker at http://127.0.0.1:4110  (contract aos.broker.local/v1)
+==================================================================
+  BROKER STATE : UP
+  BROKER UP
+  trust level 1 (approval) - 0 pending
+  uptime 0.263s | pending 0 | trust level 1 (approval) | fail-closed True
+==================================================================
+
+-- tool call: workspace.chat.post (capability message.send)
+   summary: Post 'standup notes are up' to #general
+   BLOCKED  awaiting human approval - request id 9fdaab6f95d6 (reason: approval_required)
+            approve with: POST /v1/approvals/9fdaab6f95d6/decide
+   DENIED   by broker:timeout (wait_timeout_fail_closed)
+   NOT EXECUTED
+
+-- tool call: workspace.terminal.run (capability shell.exec)  [declared destructive]
+   summary: Run: rm -rf ~/project/scratch/build
+   BLOCKED  awaiting human approval - request id f5f309f77c9d (reason: approval_required)
+            approve with: POST /v1/approvals/f5f309f77c9d/decide
+   DENIED   by broker:timeout (wait_timeout_fail_closed)
+   NOT EXECUTED
+
+EXECUTION LEDGER
+   message.send   refused   wait_timeout_fail_closed
+   shell.exec     refused   wait_timeout_fail_closed
+   executed: 0 of 2
+
+  both calls blocked, nobody answered, both denied by timeout - fail-closed.
+
+==================================================================
+  STEP 11  full audit trail for the whole ceremony
+==================================================================
+{"capability": "message.send", "decider": "broker:policy", "decision": "allow", "id": "9eeab0eb50df", "latency_ms": 0, "principal": "agent:workspace-agent-1", "reason": "semi_auto_allow", "tool": "workspace.chat.post", "trust_level": 2, "ts": "2026-08-17T20:25:41.043Z"}
+{"capability": "shell.exec", "decider": "operator:hisham", "decision": "allow", "id": "cebf725fa792", "latency_ms": 257, "principal": "agent:workspace-agent-1", "reason": "human_decision", "tool": "workspace.terminal.run", "trust_level": 2, "ts": "2026-08-17T20:25:41.302Z"}
+{"capability": "message.send", "decider": "broker:timeout", "decision": "deny", "id": "9fdaab6f95d6", "latency_ms": 5010, "principal": "agent:workspace-agent-1", "reason": "wait_timeout_fail_closed", "tool": "workspace.chat.post", "trust_level": 1, "ts": "2026-08-17T20:25:47.224Z"}
+{"capability": "shell.exec", "decider": "broker:timeout", "decision": "deny", "id": "f5f309f77c9d", "latency_ms": 5010, "principal": "agent:workspace-agent-1", "reason": "wait_timeout_fail_closed", "tool": "workspace.terminal.run", "trust_level": 1, "ts": "2026-08-17T20:25:52.239Z"}
+
+  decisions recorded: 4
+
+==================================================================
+  DONE
+==================================================================
+  auto-allow, block-and-approve, fail-closed-on-death, and level-1 lockdown
+  all demonstrated against one broker process on 127.0.0.1:4110.
+  trust.json restored to level 2 (semi-auto) so the repo copy is not a demo artifact.

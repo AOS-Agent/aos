@@ -1,0 +1,76 @@
+name = "aos-connect-broker"
+main = "worker.js"
+compatibility_date = "2026-08-17"
+
+# No node built-ins are used — crypto.subtle, fetch and KV are all platform
+# APIs — so no compatibility_flags are needed.
+
+# ── Secrets ─────────────────────────────────────────────────────────────
+# Neither COMPOSIO_API_KEY nor ADMIN_TOKEN is declared here. Both are set out
+# of band and never committed:
+#     wrangler secret put COMPOSIO_API_KEY
+#     wrangler secret put ADMIN_TOKEN
+# Anything placed in [vars] lands in the deployed bundle in plaintext and is
+# readable from the dashboard. Neither credential may ever live there.
+# ADMIN_TOKEN is the only thing standing between the internet and the ability
+# to mint invites, so it is generated with `openssl rand -hex 24` and kept in
+# the operator's Keychain as AOS_BROKER_ADMIN_TOKEN.
+
+[observability]
+enabled = true
+
+# ── KV namespaces ───────────────────────────────────────────────────────
+# Create these once, then paste the returned ids:
+#     wrangler kv namespace create INVITES
+#     wrangler kv namespace create SESSIONS
+#     wrangler kv namespace create MACHINES
+# (append --preview for each to get the preview ids)
+
+[[kv_namespaces]]
+binding = "INVITES"
+id = "f7a19b97f1fa4a21901fe3daadcb011c"
+
+[[kv_namespaces]]
+binding = "SESSIONS"
+id = "8d4528c9b4fa4ad3963b5a3470f7cb89"
+
+# Activation records: who claimed which handle, from which machine. Separate
+# from SESSIONS because this is durable identity, not disposable cache — a
+# stray `kv bulk delete` on the cache namespace must not erase it.
+[[kv_namespaces]]
+binding = "MACHINES"
+id = "361e17687179498ca1a90f15354e5f58"
+
+# ── Rate limiting (optional but recommended) ────────────────────────────
+# The worker uses this binding when it is present and falls back to a KV
+# counter when it is not. The KV fallback spends one write per request, which
+# is what exhausts the free tier's 1,000 writes/day — see OPERATIONS.md.
+# namespace_id is a number you choose, unique within this worker.
+
+[[unsafe.bindings]]
+name = "RATE_LIMITER"
+type = "ratelimit"
+namespace_id = "1001"
+simple = { limit = 60, period = 60 }
+
+# ── Routing ─────────────────────────────────────────────────────────────
+# Domain is still TBD. Until it is chosen the worker answers on its
+# workers.dev subdomain, which is enough for dogfooding:
+#     https://aos-connect-broker.<account-subdomain>.workers.dev
+#
+# When the domain is decided, uncomment ONE of the blocks below and redeploy.
+# The zone must already be in the same Cloudflare account as the worker.
+#
+# Custom domain (Cloudflare manages the DNS record and certificate):
+# routes = [
+#   { pattern = "connect.example.com", custom_domain = true }
+# ]
+#
+# Route on an existing zone (you keep the DNS record yourself):
+# routes = [
+#   { pattern = "example.com/connect/*", zone_name = "example.com" }
+# ]
+#
+# Turn the workers.dev URL off once a real domain is live, so there is exactly
+# one public entry point to reason about:
+# workers_dev = false

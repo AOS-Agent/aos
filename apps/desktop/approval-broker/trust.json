@@ -1,0 +1,24 @@
+{
+  "_comment": "Prototype copy of the AOS trust config. In the framework this is ~/.aos/config/trust.yaml (instance layer). See README.md for the field-by-field mapping.",
+  "default_level": 2,
+  "_levels": {
+    "0": "shadow    - record what would have happened, allow nothing",
+    "1": "approval  - every call blocks on a human",
+    "2": "semi-auto - auto-allow, except always_escalate or destructive calls",
+    "3": "full-auto - allow, except always_escalate exceptions"
+  },
+  "always_escalate": [
+    "secrets.read",
+    "payment.send",
+    "system.destroy"
+  ],
+  "destructive_capabilities": [
+    "shell.exec",
+    "fs.delete",
+    "system.destroy"
+  ],
+  "principals": {
+    "operator:hisham": {"level": 3},
+    "member:guest": {"level": 1}
+  }
+}
