@@ -37,7 +37,13 @@ frontend in `src/App.tsx`, logos in `src/logos.tsx`.
 - `src-tauri/modules.yaml` is still a copy of `config/modules.yaml` because
   `include_str!` needs a real file at compile time. Once the manifest lands on
   main it should become a symlink, which removes the last way these can diverge.
-- Releases still ship separately from the framework: `aos update` pulls the
-  system, `scripts/release.sh` builds, signs, notarizes and publishes the app to
-  aos.hish.am. One source of truth, two distribution channels — a notarized
-  macOS bundle cannot be delivered by git pull.
+- Distribution stays two channels (`aos update` pulls the system; the Tauri
+  updater pulls the app from aos.hish.am — a notarized macOS bundle cannot be
+  delivered by git pull), but the RELEASE is one pipeline with one number:
+  `/ship` runs `core/bin/cli/release-app`, which releases the app as the
+  repo-root VERSION whenever `apps/desktop/` changed since the last published
+  manifest (`latest.json` carries the `commit` it was built from). Never run
+  `scripts/release.sh` with a hand-picked version outside repair work.
+- In the UI the two artifacts are ONE update: the sidebar `UpdatePill` runs
+  the system update in place, stages the app bundle, and finishes both with a
+  single relaunch. There is no update screen — do not reintroduce one.

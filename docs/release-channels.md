@@ -50,6 +50,23 @@ aos promote --days 3     # require a 3-day soak
 aos promote --force      # skip the soak guard (still confirms)
 ```
 
+## The desktop app rides the same release
+
+The app (`apps/desktop/`) is a signed, notarized macOS bundle delivered by the
+Tauri updater from `aos.hish.am/updater/latest.json` — a channel git can't
+serve. But it releases through the SAME pipeline and carries the SAME version
+number: `/ship` runs `core/bin/cli/release-app`, which
+
+1. reads the `commit` field of the published manifest,
+2. skips entirely if `apps/desktop/` hasn't changed since,
+3. otherwise releases the app as the repo-root `VERSION` (auto-bumping the
+   patch — and `VERSION` with it — if that number is already published),
+4. builds, signs, notarizes, publishes and verifies via
+   `apps/desktop/scripts/release.sh`, committing the bumps so the ship's push
+   carries them.
+
+One ship, one number, two delivery channels.
+
 ## First-time setup
 
 The `stable` tag must exist before any stable machine can track it (until then

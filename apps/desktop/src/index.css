@@ -60,6 +60,23 @@ textarea {
   animation: pulse-dot 1.4s ease-in-out infinite;
 }
 
+/* The update pill's progress ring — an arc that orbits while work is
+   happening. Indeterminate on purpose: git pulls and service restarts
+   don't report percentages, and a ring that lies is worse than one that
+   just says "moving". */
+@keyframes ring-orbit {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+.ring-orbit {
+  animation: ring-orbit 1.1s linear infinite;
+  transform-origin: center;
+}
+
 /* Quiet, overlay-feeling scrollbars everywhere — thumb only, no track,
    invisible until you're actually scrolling something that scrolls. */
 ::-webkit-scrollbar {

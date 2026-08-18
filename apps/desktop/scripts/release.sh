@@ -2,9 +2,14 @@
 # Release AOS: signed, notarized, stapled DMG — and published, in one run.
 #
 # Usage:
-#   scripts/release.sh              # release the version already in tauri.conf.json
-#   scripts/release.sh 0.2.0        # bump to 0.2.0, then release
+#   scripts/release.sh              # release as the repo VERSION (the unified number)
+#   scripts/release.sh 0.2.0        # explicit override: bump to 0.2.0, then release
 #   scripts/release.sh 0.2.0 "Arms detail pages and a faster health probe"
+#
+# ONE VERSION NUMBER: with no argument, the app releases as the AOS VERSION at
+# the repo root. `release-app` (core/bin/cli) drives this from /ship so the git
+# release and the updater manifest always carry the same number. Passing an
+# explicit version stays possible for repair work, but the default is unity.
 #
 # Requires (all already on this machine):
 #   - Keychain identity "Developer ID Application: Hisham Al Hadi (KYT5TSBZ8B)"
@@ -25,6 +30,15 @@ cd "$(dirname "$0")/.."
 
 NEW_VERSION="${1:-}"
 NOTES="${2:-}"
+
+# No explicit version → the unified number: the repo-root VERSION, sans "v".
+if [ -z "$NEW_VERSION" ]; then
+    REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+    if [ -n "$REPO_ROOT" ] && [ -f "$REPO_ROOT/VERSION" ]; then
+        NEW_VERSION="$(tr -d 'v[:space:]' < "$REPO_ROOT/VERSION")"
+        echo "── unified version: $NEW_VERSION (from $REPO_ROOT/VERSION) ──"
+    fi
+fi
 
 IDENTITY="Developer ID Application: Hisham Al Hadi (KYT5TSBZ8B)"
 KEY_ID="PLMH58HXMH"
@@ -155,9 +169,20 @@ if not notes:
     except Exception:
         notes = f"AOS {version}"
 
+# The commit this build came from. `release-app` reads it back to decide
+# whether apps/desktop changed since the last published release — the field
+# that lets one pipeline own both artifacts.
+try:
+    commit = subprocess.run(
+        ["git", "rev-parse", "HEAD"], capture_output=True, text=True, timeout=10
+    ).stdout.strip()
+except Exception:
+    commit = ""
+
 manifest = {
     "version": version,
     "notes": notes,
+    "commit": commit,
     "pub_date": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     "platforms": {
         "darwin-aarch64": {

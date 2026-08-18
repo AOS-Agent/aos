@@ -16,7 +16,6 @@ type Screen =
   | "configure"
   | "install"
   | "done"
-  | "update"
   | "arms"
   | "home"
   | "shell";
@@ -137,6 +136,20 @@ type AppUpdateState =
   | { state: "ready"; version?: string }
   | { state: "uptodate" }
   | { state: "error"; message?: string };
+
+/**
+ * The one update story the operator sees. Two artifacts move underneath —
+ * the system (applied live, in place) and this app (staged by the Tauri
+ * updater, applied on relaunch) — but the sidebar pill narrates them as a
+ * single flow with a single action. The plumbing stays plumbing.
+ */
+type UnifiedUpdate =
+  | { phase: "idle" }
+  | { phase: "system"; note: string }
+  | { phase: "app"; version?: string }
+  | { phase: "relaunch"; version?: string }
+  | { phase: "done" }
+  | { phase: "error"; message: string };
 
 const IN_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
@@ -594,69 +607,241 @@ export function WelcomeBack({
   );
 }
 
-/* ── screen: update ── */
+/* ── unified update: hook + sidebar pill ──
+   The old flow took over the whole window with a console screen. Now the
+   update runs where updates belong: ambient, in the corner, cancel-nothing.
+   The operator keeps working; one relaunch finishes everything. */
 
-function Update({ onFinished }: { onFinished: (code: number) => void }) {
+function useUnifiedUpdate(sys: SystemInfo | null, refreshSys: () => Promise<void>) {
+  const [upd, setUpd] = useState<UnifiedUpdate>({ phase: "idle" });
   const [lines, setLines] = useState<string[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const consoleRef = useRef<HTMLDivElement>(null);
-  const started = useRef(false);
+  // Whether the system phase is in flight — the app-update listener needs to
+  // know if "uptodate" means "flow finished cleanly" or "nothing happened".
+  const inFlow = useRef(false);
 
   useEffect(() => {
     const un1 = listen<string>("update:line", (e) => {
       const clean = stripAnsi(e.payload).trimEnd();
       if (!clean.trim()) return;
       setLines((l) => [...l.slice(-500), clean]);
+      setUpd((u) => (u.phase === "system" ? { phase: "system", note: clean } : u));
     });
-    const un2 = listen<number>("update:done", (e) => onFinished(e.payload));
-    if (!started.current) {
-      started.current = true;
-      if (IN_TAURI) {
-        invoke("run_update").catch((err) => setError(String(err)));
-      } else {
-        const demo = [
-          "Pulling latest release…",
-          "Reconciling instance state…",
-          "Rebuilding environments…",
-          "Restarting services…",
-          "Health check passed",
-        ];
-        demo.forEach((d, i) => setTimeout(() => setLines((l) => [...l, d]), 800 * (i + 1)));
-        setTimeout(() => onFinished(0), 800 * (demo.length + 1));
+    const un2 = listen<number>("update:done", (e) => {
+      void (async () => {
+        if (e.payload !== 0) {
+          inFlow.current = false;
+          setUpd({ phase: "error", message: "system update failed" });
+          return;
+        }
+        await refreshSys();
+        // System is live on the new release; now stage the app half.
+        if (IN_TAURI) {
+          invoke("check_app_update").catch(() => {
+            inFlow.current = false;
+            setUpd({ phase: "done" });
+          });
+        }
+      })();
+    });
+    const un3 = listen<AppUpdateState & { state: string }>("app-update", (e) => {
+      const s = e.payload;
+      switch (s.state) {
+        case "downloading":
+          setUpd({ phase: "app", version: "version" in s ? s.version : undefined });
+          break;
+        case "ready":
+          inFlow.current = false;
+          setUpd({ phase: "relaunch", version: "version" in s ? s.version : undefined });
+          break;
+        case "uptodate":
+          // End of the unified flow — or a quiet background check that found
+          // nothing. Only the first deserves a "done" beat.
+          if (inFlow.current) {
+            inFlow.current = false;
+            setUpd({ phase: "done" });
+          }
+          break;
+        case "error":
+          if (inFlow.current) {
+            inFlow.current = false;
+            setUpd({ phase: "error", message: ("message" in s && s.message) || "app update failed" });
+          }
+          break;
       }
-    }
+    });
     return () => {
       un1.then((f) => f());
       un2.then((f) => f());
+      un3.then((f) => f());
     };
-  }, [onFinished]);
+  }, [refreshSys]);
 
+  // "Updated ✓" holds for a beat, then the pill leaves.
   useEffect(() => {
-    consoleRef.current?.scrollTo({ top: consoleRef.current.scrollHeight });
-  }, [lines]);
+    if (upd.phase !== "done") return;
+    const t = setTimeout(() => setUpd({ phase: "idle" }), 4000);
+    return () => clearTimeout(t);
+  }, [upd.phase]);
+
+  const start = useCallback(() => {
+    if (upd.phase === "relaunch") {
+      if (IN_TAURI) invoke("restart_app");
+      return;
+    }
+    if (upd.phase === "system" || upd.phase === "app") return; // already moving
+    setLines([]);
+    inFlow.current = true;
+    const sysAvailable = sys?.update_status === "update_available";
+    if (IN_TAURI) {
+      if (sysAvailable) {
+        setUpd({ phase: "system", note: "Starting…" });
+        invoke("run_update").catch((err) => {
+          inFlow.current = false;
+          setUpd({ phase: "error", message: String(err) });
+        });
+      } else {
+        invoke("check_app_update").catch((err) => {
+          inFlow.current = false;
+          setUpd({ phase: "error", message: String(err) });
+        });
+      }
+      return;
+    }
+    // Browser demo: the full arc, sped up.
+    const demo = [
+      "Pulling latest release…",
+      "Reconciling instance state…",
+      "Rebuilding environments…",
+      "Restarting services…",
+      "Health check passed",
+    ];
+    setUpd({ phase: "system", note: demo[0] });
+    demo.forEach((d, i) =>
+      setTimeout(() => {
+        setLines((l) => [...l, d]);
+        setUpd((u) => (u.phase === "system" ? { phase: "system", note: d } : u));
+      }, 700 * (i + 1)),
+    );
+    setTimeout(() => {
+      void refreshSys();
+      setUpd({ phase: "app", version: "0.8.0" });
+    }, 700 * (demo.length + 1));
+    setTimeout(() => {
+      inFlow.current = false;
+      setUpd({ phase: "relaunch", version: "0.8.0" });
+    }, 700 * (demo.length + 3));
+  }, [upd.phase, sys?.update_status, refreshSys]);
+
+  return { upd, lines, start };
+}
+
+/** The Mark with a progress ring around it while an update is moving. */
+function RingMark({ spinning }: { spinning: boolean }) {
+  return (
+    <span className="relative inline-flex items-center justify-center w-7 h-7 shrink-0">
+      <Mark size={18} />
+      {spinning && (
+        <svg width="28" height="28" viewBox="0 0 28 28" className="absolute inset-0 ring-orbit">
+          <circle cx="14" cy="14" r="12.5" stroke="rgba(255,255,255,0.14)" strokeWidth="1.8" fill="none" />
+          <circle
+            cx="14"
+            cy="14"
+            r="12.5"
+            stroke="rgba(255,255,255,0.85)"
+            strokeWidth="1.8"
+            fill="none"
+            strokeLinecap="round"
+            strokeDasharray="20 58.5"
+          />
+        </svg>
+      )}
+    </span>
+  );
+}
+
+/**
+ * The sidebar update card. Hidden when there is nothing to say; otherwise one
+ * card, one line of truth, one click. Never a separate screen.
+ */
+function UpdatePill({
+  sys,
+  upd,
+  onAction,
+  onDetails,
+}: {
+  sys: SystemInfo | null;
+  upd: UnifiedUpdate;
+  onAction: () => void;
+  onDetails: () => void;
+}) {
+  const sysAvailable = sys?.update_status === "update_available";
+  const busy = upd.phase === "system" || upd.phase === "app";
+
+  let title: string;
+  let sub: string;
+  let onClick: () => void = onAction;
+  if (upd.phase === "system") {
+    title = "Updating…";
+    sub = upd.note;
+    onClick = onDetails; // watching is allowed, interrupting is not
+  } else if (upd.phase === "app") {
+    title = "Downloading app…";
+    sub = upd.version ? `v${upd.version}` : "";
+    onClick = onDetails;
+  } else if (upd.phase === "relaunch") {
+    title = "Relaunch to update";
+    sub = upd.version ? `v${upd.version}` : "";
+  } else if (upd.phase === "done") {
+    title = "Up to date";
+    sub = sys?.release ?? sys?.version ?? "";
+    onClick = onDetails;
+  } else if (upd.phase === "error") {
+    title = "Update failed";
+    sub = "open Updates for the log";
+    onClick = onDetails;
+  } else if (sysAvailable) {
+    title = "Update available";
+    sub = "install now";
+  } else {
+    return null;
+  }
 
   return (
-    <div className="screen h-full flex flex-col items-center justify-center">
-      <div className="w-[560px] max-w-[86vw]">
-        <div className="flex items-center gap-3 mb-1">
-          <div className="w-2 h-2 rounded-full bg-zinc-100 pulse-dot" />
-          <h1 className="text-[22px] font-semibold tracking-tight">Updating</h1>
-        </div>
-        <p className="text-[13px] text-zinc-300 mb-6">
-          Pulling the latest version and restarting services. Hold on.
-        </p>
-
-        {error && <ErrorBanner className="mb-4">{error}</ErrorBanner>}
-
-        <div
-          ref={consoleRef}
-          className="console h-56 overflow-y-auto rounded-xl border border-zinc-800 bg-black/60 px-4 py-3
-                     font-mono text-[11.5px] leading-relaxed text-zinc-300 whitespace-pre-wrap select-text"
-        >
-          {lines.join("\n") || "Starting…"}
-        </div>
-      </div>
-    </div>
+    <button
+      onClick={onClick}
+      className="w-full mb-3 rounded-xl border border-zinc-800 bg-zinc-900/70 hover:bg-zinc-900
+                 hover:border-zinc-700 transition text-left px-2.5 py-2.5 flex items-center gap-2.5"
+    >
+      <RingMark spinning={busy} />
+      <span className="flex-1 min-w-0">
+        <span className="block text-[12px] font-medium text-zinc-100 leading-snug">{title}</span>
+        <span className="block text-[10.5px] text-zinc-500 truncate font-mono mt-0.5">{sub}</span>
+      </span>
+      {!busy && upd.phase !== "done" && (
+        <svg width="12" height="12" viewBox="0 0 16 16" className="text-zinc-400 shrink-0">
+          <path
+            d="M3 8h9.5M9 3.5 13.5 8 9 12.5"
+            stroke="currentColor"
+            strokeWidth="1.6"
+            fill="none"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      )}
+      {upd.phase === "done" && (
+        <svg width="13" height="13" viewBox="0 0 14 14" className="text-zinc-200 shrink-0">
+          <path
+            d="M2.5 7.5 5.5 10.5 11.5 3.5"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            fill="none"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      )}
+    </button>
   );
 }
 
@@ -3661,6 +3846,8 @@ function Sidebar({
   sys,
   appVersion,
   width,
+  upd,
+  onUpdateAction,
 }: {
   pane: PaneId;
   setPane: (p: PaneId) => void;
@@ -3668,6 +3855,8 @@ function Sidebar({
   appVersion: string;
   /** Set by the shell — the operator can drag this. */
   width: number;
+  upd: UnifiedUpdate;
+  onUpdateAction: () => void;
 }) {
   const items: { id: PaneId; label: string; section: string }[] = [
     { id: "home", label: "Home", section: "" },
@@ -3680,7 +3869,7 @@ function Sidebar({
     { id: "updates", label: "Updates", section: "System" },
   ];
   let lastSection = "";
-  const updateAvailable = sys?.update_status === "update_available";
+  const updateAvailable = sys?.update_status === "update_available" || upd.phase !== "idle";
   return (
     <div
       style={{ width }}
@@ -3724,6 +3913,7 @@ function Sidebar({
           );
         })}
       </nav>
+      <UpdatePill sys={sys} upd={upd} onAction={onUpdateAction} onDetails={() => setPane("updates")} />
       <div className="px-2.5 text-[11px] text-zinc-500 font-mono leading-relaxed">
         <div>app {appVersion || "…"}</div>
         <div className="truncate" title={sys?.release ?? undefined}>{sys?.release ?? sys?.version ?? ""}</div>
@@ -3878,18 +4068,61 @@ function ConfigPane() {
   );
 }
 
+/** The system update's console output — live-scrolling detail view. */
+function UpdateLog({ lines, live }: { lines: string[]; live: boolean }) {
+  const [open, setOpen] = useState(live);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (live) setOpen(true);
+  }, [live]);
+  useEffect(() => {
+    ref.current?.scrollTo({ top: ref.current.scrollHeight });
+  }, [lines, open]);
+  return (
+    <div className="mt-4">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex items-center gap-2 text-[11.5px] text-zinc-400 hover:text-zinc-200 transition"
+      >
+        <svg
+          width="10"
+          height="10"
+          viewBox="0 0 10 10"
+          className={"transition-transform " + (open ? "rotate-90" : "")}
+        >
+          <path d="M3 1.5 7 5 3 8.5" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+        update log
+      </button>
+      {open && (
+        <div
+          ref={ref}
+          className="mt-2 max-h-48 overflow-y-auto rounded-xl border border-zinc-800 bg-black/60 px-4 py-3
+                     font-mono text-[11px] leading-relaxed text-zinc-300 whitespace-pre-wrap select-text"
+        >
+          {lines.join("\n")}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function UpdatesPane({
   sys,
   checking,
   onCheck,
   onUpdate,
   appVersion,
+  upd,
+  updLines,
 }: {
   sys: SystemInfo | null;
   checking: boolean;
   onCheck: () => void;
   onUpdate: () => void;
   appVersion: string;
+  upd: UnifiedUpdate;
+  updLines: string[];
 }) {
   const updateAvailable = sys?.update_status === "update_available";
   const [notes, setNotes] = useState<string | null>(null);
@@ -3998,7 +4231,11 @@ function UpdatesPane({
               <span className="font-mono text-[13px] px-2 py-0.5 rounded-md border border-zinc-800 bg-zinc-900">
                 {sys?.release ?? sys?.version ?? "—"}
               </span>
-              {checking ? (
+              {upd.phase === "system" ? (
+                <span className="flex items-center gap-2 text-[13px] text-zinc-100">
+                  <span className="w-1.5 h-1.5 rounded-full bg-zinc-100 pulse-dot" /> {upd.note}
+                </span>
+              ) : checking ? (
                 <span className="flex items-center gap-2 text-[13px] text-zinc-300">
                   <span className="w-1.5 h-1.5 rounded-full bg-zinc-100 pulse-dot" /> checking…
                 </span>
@@ -4017,9 +4254,10 @@ function UpdatesPane({
           {updateAvailable ? (
             <button
               onClick={onUpdate}
-              className="px-4 h-10 rounded-lg bg-zinc-100 text-zinc-950 text-[13.5px] font-medium hover:bg-white transition shrink-0"
+              disabled={upd.phase === "system" || upd.phase === "app"}
+              className="px-4 h-10 rounded-lg bg-zinc-100 text-zinc-950 text-[13.5px] font-medium hover:bg-white transition disabled:opacity-40 shrink-0"
             >
-              Update now
+              {upd.phase === "system" || upd.phase === "app" ? "Updating…" : "Update now"}
             </button>
           ) : (
             <button
@@ -4032,6 +4270,9 @@ function UpdatesPane({
           )}
         </div>
       </div>
+
+      {/* The console the takeover screen used to own — now a detail, not a place. */}
+      {updLines.length > 0 && <UpdateLog lines={updLines} live={upd.phase === "system"} />}
 
       {notes && (
         <div className="mt-6">
@@ -4103,12 +4344,17 @@ function Shell({
   onCheck,
   onUpdate,
   appVersion,
+  upd,
+  updLines,
 }: {
   sys: SystemInfo | null;
   checking: boolean;
   onCheck: () => void;
+  /** Starts the unified background update — never a screen change. */
   onUpdate: () => void;
   appVersion: string;
+  upd: UnifiedUpdate;
+  updLines: string[];
 }) {
   const [pane, setPane] = useState<PaneId>("home");
   const [navOpen, setNavOpen] = useState(false);
@@ -4186,7 +4432,15 @@ function Shell({
       {/* Desktop: the rail is there unless collapsed, and drags to resize. */}
       {!collapsed && (
         <div ref={railRef} className="hidden md:flex h-full relative shrink-0">
-          <Sidebar pane={pane} setPane={setPane} sys={sys} width={width} appVersion={appVersion} />
+          <Sidebar
+            pane={pane}
+            setPane={setPane}
+            sys={sys}
+            width={width}
+            appVersion={appVersion}
+            upd={upd}
+            onUpdateAction={onUpdate}
+          />
           <div
             onPointerDown={startResize}
             onDoubleClick={() => setWidth(SIDEBAR_DEFAULT)}
@@ -4213,6 +4467,8 @@ function Shell({
               sys={sys}
               width={width}
               appVersion={appVersion}
+              upd={upd}
+              onUpdateAction={onUpdate}
             />
           </div>
         </>
@@ -4253,7 +4509,15 @@ function Shell({
         {pane === "connectors" && <ConnectorsPane />}
         {pane === "config" && <ConfigPane />}
         {pane === "updates" && (
-          <UpdatesPane sys={sys} checking={checking} onCheck={onCheck} onUpdate={onUpdate} appVersion={appVersion} />
+          <UpdatesPane
+            sys={sys}
+            checking={checking}
+            onCheck={onCheck}
+            onUpdate={onUpdate}
+            appVersion={appVersion}
+            upd={upd}
+            updLines={updLines}
+          />
         )}
       </div>
     </div>
@@ -4688,25 +4952,28 @@ export default function App() {
     setTimeout(() => setScreen("done"), 900);
   }, []);
 
-  const handleUpdateFinished = useCallback((code: number) => {
-    setTimeout(async () => {
-      if (code === 0) {
-        if (IN_TAURI) {
-          try {
-            setSys(await invoke<SystemInfo>("detect_system"));
-          } catch {
-            /* keep old */
-          }
-        } else {
-          setSys((s) => ({ ...s!, version: "v0.7.6", update_status: "up_to_date" }));
-        }
-        setScreen("welcome");
-      } else {
-        setExitCode(code);
-        setScreen("done");
+  const refreshSys = useCallback(async () => {
+    if (IN_TAURI) {
+      try {
+        setSys(await invoke<SystemInfo>("detect_system"));
+      } catch {
+        /* keep old */
       }
-    }, 700);
+    } else {
+      setSys((s) => (s ? { ...s, version: "v0.8.0", release: "v0.8.0-fresh", update_status: "up_to_date" } : s));
+    }
   }, []);
+
+  const { upd, lines: updLines, start: startUpdate } = useUnifiedUpdate(sys, refreshSys);
+
+  // Stage any pending app update quietly at boot — it downloads in the
+  // background and surfaces in the sidebar as "Relaunch to update".
+  const bootChecked = useRef(false);
+  useEffect(() => {
+    if (!IN_TAURI || !sys?.installed || bootChecked.current) return;
+    bootChecked.current = true;
+    invoke("check_app_update").catch(() => {});
+  }, [sys?.installed]);
 
   const existing = sys?.installed === true;
 
@@ -4723,8 +4990,10 @@ export default function App() {
             sys={sys}
             checking={checking}
             onCheck={checkNow}
-            onUpdate={() => setScreen("update")}
+            onUpdate={startUpdate}
             appVersion={appVersion}
+            upd={upd}
+            updLines={updLines}
           />
         ) : (
           <Welcome onSetup={() => setScreen("preflight")} onJoin={() => setScreen("member")} />
@@ -4733,7 +5002,6 @@ export default function App() {
         <Preflight onBack={() => setScreen("welcome")} onContinue={() => setScreen("configure")} />
       )}
       {screen === "member" && <Member onBack={() => setScreen("welcome")} />}
-      {screen === "update" && <Update onFinished={handleUpdateFinished} />}
       {screen === "configure" && (
         <Configure
           config={config}

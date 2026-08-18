@@ -134,6 +134,32 @@ Ask the operator exactly once:
 
 If they say yes, proceed. If no, stop.
 
+### Step 2b: App Release (when apps/desktop changed)
+
+The desktop app and the system ship as ONE release with ONE version number.
+Before pushing, check whether the app half needs to go out:
+
+```bash
+bash ~/project/aos/core/bin/cli/release-app --check
+```
+
+- "app unchanged" → nothing to do, continue to Step 3.
+- "would release app X.Y.Z" → tell the operator the ship includes an app
+  release (build + notarize takes ~5 minutes), then run it for real:
+
+```bash
+bash ~/project/aos/core/bin/cli/release-app --notes "<one-line summary>"
+```
+
+This aligns the app version with the repo VERSION (bumping the patch if that
+number is already published), builds, signs, notarizes, publishes the updater
+manifest to aos.hish.am, verifies it live, and commits the version bumps —
+so the push in Step 3 carries them. It never pushes on its own.
+
+If the publish target (`/Volumes/AOS-X`) is unavailable or signing fails,
+STOP and surface it — do not push framework changes that the app half of the
+release can't follow.
+
 ### Step 3: Commit & Push
 
 ```bash

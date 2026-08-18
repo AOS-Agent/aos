@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+# release-app — the app half of /ship. One pipeline, one version number.
+#
+# Decides whether apps/desktop changed since the last PUBLISHED app release
+# (the manifest's `commit` field is the source of truth), aligns the app
+# version with the repo-root VERSION — bumping the patch when that number is
+# already published — and runs the full signed release (build, notarize,
+# publish, verify). Nothing is pushed; pushing stays the operator's call.
+#
+# Usage:
+#   release-app                  # release if apps/desktop changed
+#   release-app --check          # report only, never build, never commit
+#   release-app --notes "..."    # release notes for the updater manifest
+#
+# Called by /ship after ship-check passes and before the operator approves
+# the push, so the VERSION bump (if any) and the tauri.conf bump land in the
+# same push as the framework changes they belong to.
+set -euo pipefail
+
+ENDPOINT="https://aos.hish.am/updater/latest.json"
+REPO="${AOS_DEV_REPO:-$HOME/project/aos}"
+PY="$HOME/.aos/python/bin/python3"
+[ -x "$PY" ] || PY="$(command -v python3)"
+
+CHECK_ONLY=0
+NOTES=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --check) CHECK_ONLY=1 ;;
+        --notes) NOTES="${2:-}"; shift ;;
+        *) echo "✗ unknown argument: $1" >&2; exit 2 ;;
+    esac
+    shift
+done
+
+[ -d "$REPO/apps/desktop" ] || { echo "✗ no apps/desktop under $REPO" >&2; exit 1; }
+cd "$REPO"
+
+VERSION="$(tr -d 'v[:space:]' < VERSION)"
+[[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "✗ VERSION is not X.Y.Z: $VERSION" >&2; exit 1; }
+
+# ── what the world is running ────────────────────────────────────────────────
+MANIFEST="$(/usr/bin/curl -fsS -m 15 "$ENDPOINT" 2>/dev/null || true)"
+PUB_VERSION="$(printf '%s' "$MANIFEST" | "$PY" -c 'import json,sys;print(json.load(sys.stdin).get("version",""))' 2>/dev/null || true)"
+PUB_COMMIT="$(printf '%s' "$MANIFEST" | "$PY" -c 'import json,sys;print(json.load(sys.stdin).get("commit",""))' 2>/dev/null || true)"
+
+# ── did the app change since that release? ───────────────────────────────────
+if [ -n "$PUB_COMMIT" ] && git cat-file -e "$PUB_COMMIT" 2>/dev/null; then
+    if git diff --quiet "$PUB_COMMIT"..HEAD -- apps/desktop; then
+        echo "✓ app unchanged since published $PUB_VERSION — nothing to release"
+        exit 0
+    fi
+    echo "→ apps/desktop changed since $PUB_VERSION (${PUB_COMMIT:0:8})"
+else
+    # Pre-unification manifests carry no commit. Can't prove "unchanged", so a
+    # release is due — this run establishes the field for every run after it.
+    echo "→ published manifest has no usable commit (${PUB_VERSION:-none} published) — release is due"
+fi
+
+# ── one number for both artifacts ────────────────────────────────────────────
+TARGET="$VERSION"
+NEED_BUMP=0
+if [ "$TARGET" = "$PUB_VERSION" ]; then
+    # The unified number is already published; the updater needs a bigger one.
+    # The unified version moves forward with the app, and the bump rides the
+    # same push as the app changes themselves.
+    TARGET="$(printf '%s' "$VERSION" | awk -F. '{printf "%d.%d.%d", $1, $2, $3+1}')"
+    NEED_BUMP=1
+fi
+
+if [ "$CHECK_ONLY" = 1 ]; then
+    echo "→ would release app $TARGET$([ "$NEED_BUMP" = 1 ] && echo " (bumping VERSION v$VERSION → v$TARGET)")"
+    exit 0
+fi
+
+if [ "$NEED_BUMP" = 1 ]; then
+    printf 'v%s\n' "$TARGET" > VERSION
+    git add VERSION
+    git commit -q -m "chore: version v$TARGET" \
+        -m "The app half of this ship needs a fresh number; the unified version moves with it."
+    echo "→ VERSION bumped v$VERSION → v$TARGET"
+fi
+
+# release.sh builds, signs, notarizes, publishes, verifies the live endpoint,
+# and commits the tauri.conf/Cargo bump. It does not push — nobody here does.
+bash apps/desktop/scripts/release.sh "$TARGET" "$NOTES"
+
+echo "✓ app $TARGET released — same number as the AOS release it ships with"
