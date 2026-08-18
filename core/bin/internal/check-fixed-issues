@@ -15,6 +15,10 @@
 #   check-fixed-issues        # run check
 #   check-fixed-issues --quiet  # exit code only (0=fixes found, 1=none)
 
+
+# Always resolve Python through the AOS resolver — a python3 on PATH can be
+# present, correctly versioned, and unusable (Homebrew 3.14's pyexpat).
+AOS_PY="${AOS_PY:-$HOME/aos/core/bin/internal/aos-python}"
 set -euo pipefail
 
 AOS_DIR="$HOME/aos"
@@ -49,7 +53,7 @@ main() {
 
     # Get pushed issue titles
     local pushed_titles
-    pushed_titles=$(python3 -c "
+    pushed_titles=$("$AOS_PY" -c "
 import json
 from pathlib import Path
 
@@ -77,7 +81,7 @@ for t in titles:
         search_result=$(gh issue list --repo "$repo" --state closed --search "$title" --json title,number,closedAt --limit 3 2>/dev/null || echo "[]")
 
         local matches
-        matches=$(echo "$search_result" | python3 -c "
+        matches=$(echo "$search_result" | "$AOS_PY" -c "
 import json, sys
 from pathlib import Path
 from datetime import datetime
@@ -109,7 +113,7 @@ for issue in issues:
 
     # Log fixes
     for fix in "${fixed[@]}"; do
-        python3 -c "
+        "$AOS_PY" -c "
 import json
 from datetime import datetime
 from pathlib import Path

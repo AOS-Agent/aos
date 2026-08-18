@@ -36,6 +36,10 @@
 #   - IP addresses
 #   - Anything that could identify the operator
 
+
+# Always resolve Python through the AOS resolver — a python3 on PATH can be
+# present, correctly versioned, and unusable (Homebrew 3.14's pyexpat).
+AOS_PY="${AOS_PY:-$HOME/aos/core/bin/internal/aos-python}"
 set -euo pipefail
 
 AOS_DIR="$HOME/aos"
@@ -76,7 +80,7 @@ _record_event() {
     TEL_ACTION="$action" \
     TEL_DURATION="$duration_ms" \
     TEL_LOG="$TELEMETRY_LOG" \
-    python3 -c "
+    "$AOS_PY" -c "
 import json, os, platform
 from datetime import datetime
 from pathlib import Path
@@ -108,7 +112,7 @@ _report() {
         return 0
     fi
 
-    TEL_LOG="$TELEMETRY_LOG" python3 -c "
+    TEL_LOG="$TELEMETRY_LOG" "$AOS_PY" -c "
 import json, os
 from pathlib import Path
 from collections import defaultdict
@@ -177,7 +181,7 @@ _push() {
 
     # Aggregate stats (never send raw events)
     local summary
-    summary=$(TEL_LOG="$TELEMETRY_LOG" python3 -c "
+    summary=$(TEL_LOG="$TELEMETRY_LOG" "$AOS_PY" -c "
 import json, os
 from pathlib import Path
 from collections import defaultdict

@@ -40,6 +40,10 @@
 # On nonzero exit (including Codex hitting ITS OWN usage limit):
 #   the footer says FAILED — fall back to doing the task yourself.
 
+
+# Always resolve Python through the AOS resolver — a python3 on PATH can be
+# present, correctly versioned, and unusable (Homebrew 3.14's pyexpat).
+AOS_PY="${AOS_PY:-$HOME/aos/core/bin/internal/aos-python}"
 set -uo pipefail   # deliberately NOT -e: the ledger write must happen even on failure
 
 TASK="${1:-}"
@@ -80,7 +84,7 @@ codex "${ARGS[@]}" "$TASK" > "$LOG" 2> "$ERR"
 CODE=$?
 
 # Parse outcome + token usage from the event stream.
-RESULT=$(python3 - "$LOG" "$CODE" <<'PY'
+RESULT=$("$AOS_PY" - "$LOG" "$CODE" <<'PY'
 import json, sys
 log, code = sys.argv[1], int(sys.argv[2])
 usage, completed, errors = None, False, []
@@ -104,7 +108,7 @@ except OSError:
 print(json.dumps({"ok": completed and code == 0, "usage": usage, "errors": errors[-3:]}))
 PY
 )
-OK=$(printf '%s' "$RESULT" | python3 -c "import json,sys; print('yes' if json.load(sys.stdin)['ok'] else 'no')")
+OK=$(printf '%s' "$RESULT" | "$AOS_PY" -c "import json,sys; print('yes' if json.load(sys.stdin)['ok'] else 'no')")
 
 # Ledger write-back — never let this block the result surfacing.
 TRUST_LOG="$HOME/aos/core/bin/cli/trust-log"
@@ -120,10 +124,10 @@ fi
 echo ""
 echo "---"
 echo "codex-dispatch: exit=$CODE log=$LOG"
-printf '%s' "$RESULT" | python3 -c "import json,sys; d=json.load(sys.stdin); print('usage:', d['usage'] or 'n/a')"
+printf '%s' "$RESULT" | "$AOS_PY" -c "import json,sys; d=json.load(sys.stdin); print('usage:', d['usage'] or 'n/a')"
 if [[ "$OK" != "yes" ]]; then
     echo "codex-dispatch: FAILED — fall back to handling this task directly."
-    printf '%s' "$RESULT" | python3 -c "import json,sys; [print('  error:', e) for e in json.load(sys.stdin)['errors']]"
+    printf '%s' "$RESULT" | "$AOS_PY" -c "import json,sys; [print('  error:', e) for e in json.load(sys.stdin)['errors']]"
     [[ -s "$ERR" ]] && tail -3 "$ERR" | sed 's/^/  stderr: /'
     exit 1
 fi

@@ -17,6 +17,10 @@
 #   - Operator directly when something feels off
 #   - Session close hook (optional satisfaction prompt)
 
+
+# Always resolve Python through the AOS resolver — a python3 on PATH can be
+# present, correctly versioned, and unusable (Homebrew 3.14's pyexpat).
+AOS_PY="${AOS_PY:-$HOME/aos/core/bin/internal/aos-python}"
 set -euo pipefail
 
 AOS_DIR="$HOME/aos"
@@ -48,7 +52,7 @@ _get_repo() {
 
 _collect_context() {
     # Collect system context for the report
-    python3 -c "
+    "$AOS_PY" -c "
 import json, subprocess, os, platform
 from datetime import datetime
 from pathlib import Path
@@ -115,7 +119,7 @@ _queue_issue() {
     FEEDBACK_ERROR_LOG="$error_log" \
     FEEDBACK_CTX_FILE="$ctx_file" \
     FEEDBACK_QUEUE_FILE="$QUEUE_FILE" \
-    python3 -c "
+    "$AOS_PY" -c "
 import json, os
 from datetime import datetime
 from pathlib import Path
@@ -150,7 +154,7 @@ print(entry['id'])
 _scrub_pii() {
     # Strips personal data before pushing to GitHub.
     # Input: JSON string on stdin. Output: scrubbed JSON on stdout.
-    python3 -c "
+    "$AOS_PY" -c "
 import json, sys, os, re
 from pathlib import Path
 
@@ -220,7 +224,7 @@ _push_to_github() {
     local pushed=0 failed=0
     while IFS= read -r line; do
         local status
-        status=$(echo "$line" | python3 -c "import json,sys; print(json.load(sys.stdin).get('status','queued'))")
+        status=$(echo "$line" | "$AOS_PY" -c "import json,sys; print(json.load(sys.stdin).get('status','queued'))")
         [[ "$status" == "pushed" ]] && continue
 
         # Scrub PII before building the issue
@@ -228,11 +232,11 @@ _push_to_github() {
         scrubbed=$(echo "$line" | _scrub_pii)
 
         local title labels
-        title=$(echo "$scrubbed" | python3 -c "import json,sys; print(json.load(sys.stdin)['title'])")
-        labels=$(echo "$scrubbed" | python3 -c "import json,sys; print(','.join(json.load(sys.stdin).get('labels',['bug'])))")
+        title=$(echo "$scrubbed" | "$AOS_PY" -c "import json,sys; print(json.load(sys.stdin)['title'])")
+        labels=$(echo "$scrubbed" | "$AOS_PY" -c "import json,sys; print(','.join(json.load(sys.stdin).get('labels',['bug'])))")
 
         # Build issue body with scrubbed context
-        body=$(echo "$scrubbed" | python3 -c "
+        body=$(echo "$scrubbed" | "$AOS_PY" -c "
 import json, sys
 entry = json.load(sys.stdin)
 parts = []
@@ -269,7 +273,7 @@ print('\n'.join(parts))
     if [[ $pushed -gt 0 ]]; then
         echo "  ${GREEN}Pushed $pushed issue(s) to GitHub${RESET}"
         # Mark all as pushed
-        python3 -c "
+        "$AOS_PY" -c "
 import json
 from pathlib import Path
 path = Path('$QUEUE_FILE')
@@ -294,7 +298,7 @@ _list_queue() {
     echo ""
     echo "  ${BOLD}Queued Feedback${RESET}"
     echo ""
-    python3 -c "
+    "$AOS_PY" -c "
 import json
 from pathlib import Path
 path = Path('$QUEUE_FILE')

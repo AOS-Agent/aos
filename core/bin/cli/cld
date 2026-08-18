@@ -7,9 +7,13 @@
 #   cld --resume           — resume last session
 
 # Read agent name from operator config (default: chief)
+
+# Always resolve Python through the AOS resolver — a python3 on PATH can be
+# present, correctly versioned, and unusable (Homebrew 3.14's pyexpat).
+AOS_PY="${AOS_PY:-$HOME/aos/core/bin/internal/aos-python}"
 AGENT_NAME="chief"
 if [[ -f "$HOME/.aos/config/operator.yaml" ]]; then
-    custom=$(python3 -c "
+    custom=$("$AOS_PY" -c "
 import yaml
 from pathlib import Path
 d = yaml.safe_load(Path.home().joinpath('.aos/config/operator.yaml').read_text()) or {}

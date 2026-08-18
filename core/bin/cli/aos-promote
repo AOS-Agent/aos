@@ -22,6 +22,10 @@
 #   aos promote --days 3   Require a 3-day soak instead of 2
 #   aos promote --force    Skip the soak guard (still asks for confirmation)
 
+
+# Always resolve Python through the AOS resolver — a python3 on PATH can be
+# present, correctly versioned, and unusable (Homebrew 3.14's pyexpat).
+AOS_PY="${AOS_PY:-$HOME/aos/core/bin/internal/aos-python}"
 set -uo pipefail
 
 AOS_DIR="$HOME/aos"
@@ -68,7 +72,7 @@ echo "───────────────────────"
 DEPLOYED_HASH=$(cat "$HASH_FILE" 2>/dev/null || echo "")
 [[ -z "$DEPLOYED_HASH" ]] && die "No deployed-hash recorded ($HASH_FILE). Is this a release-system machine?"
 
-CHANNEL=$(python3 "$CHANNELS_LIB" channel 2>/dev/null || echo "stable")
+CHANNEL=$("$AOS_PY" "$CHANNELS_LIB" channel 2>/dev/null || echo "stable")
 RUNNING_VERSION=$(cat "$AOS_DIR/VERSION" 2>/dev/null || echo "unknown")
 
 log "Channel of this machine:   $CHANNEL"
@@ -89,7 +93,7 @@ else
 fi
 NOW=$(date +%s)
 
-GUARD_OUT=$(python3 "$CHANNELS_LIB" guard "${DEPLOYED_AT:--}" "$NOW" "$MIN_DAYS" "$FORCE")
+GUARD_OUT=$("$AOS_PY" "$CHANNELS_LIB" guard "${DEPLOYED_AT:--}" "$NOW" "$MIN_DAYS" "$FORCE")
 GUARD_RC=$?
 IFS=$'\t' read -r ALLOWED _ REASON <<< "$GUARD_OUT"
 log "Soak:                      ${REASON}"

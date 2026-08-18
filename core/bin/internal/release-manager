@@ -20,6 +20,10 @@
 #   release-manager current             Show active release version
 #   release-manager convert             Convert git-clone ~/aos/ to release system
 
+
+# Always resolve Python through the AOS resolver — a python3 on PATH can be
+# present, correctly versioned, and unusable (Homebrew 3.14's pyexpat).
+AOS_PY="${AOS_PY:-$HOME/aos/core/bin/internal/aos-python}"
 set -euo pipefail
 
 RELEASES_DIR="$HOME/aos-releases"
@@ -282,7 +286,7 @@ activate() {
         if head -1 "$script" 2>/dev/null | grep -q python; then
             # Parse-check in memory. py_compile would try to write a .pyc into
             # the release dir, which is read-only (chmod a-w) → false failures.
-            if ! python3 -c "compile(open('$script','rb').read(), '$script', 'exec')" 2>/dev/null; then
+            if ! "$AOS_PY" -c "compile(open('$script','rb').read(), '$script', 'exec')" 2>/dev/null; then
                 log "WARN: Script $(basename "$script") fails to parse"
                 ((parse_fail++))
             fi
