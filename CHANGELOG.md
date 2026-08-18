@@ -2,6 +2,18 @@
 
 All notable changes to AOS. Release notes sent via Telegram after each 4am update.
 
+## v0.7.6 — 2026-08-18
+
+Summary: One update, one number — the app and the system now ship, and install, as a single release.
+
+- Added the sidebar update pill to the desktop app: `Update available` → an orbiting progress ring with the live stage line → `Relaunch to update`. One click runs the system update in the background, stages the app bundle, and a single relaunch finishes both.
+- Removed the full-screen update takeover; the Updates pane stays as the detail view and gained a collapsible live update log.
+- Changed pending app updates to stage quietly at boot instead of waiting for a visit to the Updates pane.
+- Added `core/bin/cli/release-app`: releases the desktop app as the repo-root `VERSION` whenever `apps/desktop/` changed since the last published manifest (`latest.json` now records the commit it was built from), auto-bumping the patch when the number is already taken.
+- Added `/ship` Step 2b — app changes ride the same ship with the same version number; `scripts/release.sh` defaults its version to the repo `VERSION`.
+- Fixed `privacy-scan` flagging SVG `d="…"` path data as phone numbers — icon coordinate streams no longer block a ship, while a phone disguised as an SVG attribute still fails.
+- Removed dead weight from the repo root: `specs/` folded into `docs/`, the ghost spec references in `CLAUDE.md`/`README.md` repointed at real documents, and the pre-bootstrap `Install AOS.command` wrapper deleted.
+
 ## v0.7.5 — 2026-08-15
 
 Summary: The context diet — every session starts ~30k tokens lighter, and budget gates keep it that way.
