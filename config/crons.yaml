@@ -130,6 +130,10 @@ jobs:
     tier: 2
     description: Intelligence Loop nightly sensors (comms entities, initiative drift, eval-gated friction judge)
 
+    # catch_up: enrich-comms (03:30) holds the serial tick for ~46 min, so this
+    # job's 5-minute window has closed by the time the scheduler is free. It ran
+    # only on days enrich-comms crashed early — 1 run in 28 days.
+    catch_up: true
   stale-detector:
     command: python3 ~/aos/core/bin/crons/stale-detector
     at: "08:00"
@@ -182,6 +186,10 @@ jobs:
     tier: 3
     description: Compiles behavior patterns from session data
 
+    # catch_up: enrich-comms (03:30) holds the serial tick for ~46 min, so this
+    # job's 5-minute window has closed by the time the scheduler is free. It ran
+    # only on days enrich-comms crashed early — 1 run in 28 days.
+    catch_up: true
   reconcile-sessions:
     command: python3 ~/aos/core/bin/crons/reconcile-sessions --quiet
     every: 2h
@@ -300,6 +308,10 @@ jobs:
     tier: 4
     description: Nightly comms-history sweep through the detection pipeline (dry-run report only)
 
+    # catch_up: enrich-comms (03:30) holds the serial tick for ~46 min, so this
+    # job's 5-minute window has closed by the time the scheduler is free. It ran
+    # only on days enrich-comms crashed early — 1 run in 28 days.
+    catch_up: true
   track-retention:
     command: bash ~/aos/core/bin/crons/track-retention
     at: "04:45"
