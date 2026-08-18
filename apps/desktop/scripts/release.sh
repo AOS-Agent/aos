@@ -116,7 +116,7 @@ PYEOF
 fi
 
 VERSION="$("$HOME/.aos/python/bin/python3" -c "import json;print(json.load(open('$CONF'))['version'])")"
-TARBALL_NAME="AOS_${VERSION}_aarch64.app.tar.gz"
+TARBALL_NAME="Qren_${VERSION}_aarch64.app.tar.gz"
 
 # Publishing over an existing version leaves installs that already took it
 # stranded on a build that no longer matches its signature. Refuse.
@@ -134,8 +134,8 @@ TAURI_SIGNING_PRIVATE_KEY="$(cat "$SIGNING_KEY")" \
 TAURI_SIGNING_PRIVATE_KEY_PASSWORD="" \
 bunx tauri build
 
-DMG=$(ls -t src-tauri/target/release/bundle/dmg/AOS_*.dmg | head -1)
-TARBALL="src-tauri/target/release/bundle/macos/AOS.app.tar.gz"
+DMG=$(ls -t src-tauri/target/release/bundle/dmg/Qren_*.dmg | head -1)
+TARBALL="src-tauri/target/release/bundle/macos/Qren.app.tar.gz"
 SIGFILE="$TARBALL.sig"
 
 [ -f "$TARBALL" ] || fail "no update bundle produced — is createUpdaterArtifacts enabled?"
@@ -152,7 +152,7 @@ spctl --assess --type open --context context:primary-signature -v "$DMG"
 echo "── publish → $UPDATER_DIR ──"
 mkdir -p "$UPDATER_DIR"
 cp "$TARBALL" "$UPDATER_DIR/$TARBALL_NAME"
-cp "$DMG" "$SITE_ROOT/AOS_${VERSION}.dmg"
+cp "$DMG" "$SITE_ROOT/Qren_${VERSION}.dmg"
 
 # Keep the download page honest: point its CTA + version line at the DMG that
 # was just published. Before this, the page drifted (still offered 0.1.0 while
@@ -160,13 +160,13 @@ cp "$DMG" "$SITE_ROOT/AOS_${VERSION}.dmg"
 # release loudly rather than silently staying stale.
 INDEX="$SITE_ROOT/index.html"
 if [ -f "$INDEX" ]; then
-    grep -Eq 'AOS_[0-9]+\.[0-9]+\.[0-9]+\.dmg' "$INDEX" \
-        || fail "download page has no AOS_<version>.dmg link to update: $INDEX"
+    grep -Eq '(AOS|Qren)_[0-9]+\.[0-9]+\.[0-9]+\.dmg' "$INDEX" \
+        || fail "download page has no (AOS|Qren)_<version>.dmg link to update: $INDEX"
     sed -i '' -E \
-        -e "s|AOS_[0-9]+\.[0-9]+\.[0-9]+\.dmg|AOS_${VERSION}.dmg|g" \
+        -e "s|(AOS|Qren)_[0-9]+\.[0-9]+\.[0-9]+\.dmg|Qren_${VERSION}.dmg|g" \
         -e "s|v[0-9]+\.[0-9]+\.[0-9]+ · Apple Silicon|v${VERSION} · Apple Silicon|" \
         "$INDEX"
-    grep -q "AOS_${VERSION}.dmg" "$INDEX" || fail "download page rewrite did not take"
+    grep -q "Qren_${VERSION}.dmg" "$INDEX" || fail "download page rewrite did not take"
     echo "  download page → v${VERSION}"
 else
     fail "download page missing: $INDEX"
@@ -246,7 +246,7 @@ echo
 echo "✓ Released $VERSION"
 echo "    manifest : $ENDPOINT"
 echo "    update   : https://qren.ai/updater/$TARBALL_NAME  ($LOCAL_BYTES bytes)"
-echo "    download : https://qren.ai/AOS_${VERSION}.dmg"
+echo "    download : https://qren.ai/Qren_${VERSION}.dmg"
 echo
 echo "  Installed apps pick this up on their next launch."
 echo "  The bump is committed on $BRANCH — push it so main matches what shipped."
