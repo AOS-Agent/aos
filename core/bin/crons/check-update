@@ -20,6 +20,10 @@
 #   - User via `aos check-update` / `aos update`
 #   - Dashboard update button
 
+
+# Always resolve Python through the AOS resolver — a python3 on PATH can be
+# present, correctly versioned, and unusable (Homebrew 3.14's pyexpat).
+AOS_PY="${AOS_PY:-$HOME/aos/core/bin/internal/aos-python}"
 set +e
 
 AOS_DIR="$HOME/aos"
@@ -79,7 +83,7 @@ find_repo() {
 CHANNELS_LIB="$AOS_DIR/core/lib/channels.py"
 
 read_channel() {
-    python3 "$CHANNELS_LIB" channel 2>/dev/null || echo "stable"
+    "$AOS_PY" "$CHANNELS_LIB" channel 2>/dev/null || echo "stable"
 }
 
 # Fetch origin/main plus the stable tag into a repo. The stable tag MOVES on
@@ -99,14 +103,14 @@ _resolve_channel_target() {
     local main_hash stable_hash
     main_hash=$(git -C "$repo" rev-parse origin/main 2>/dev/null || echo "")
     stable_hash=$(git -C "$repo" rev-parse -q --verify "refs/tags/stable^{commit}" 2>/dev/null || echo "")
-    python3 "$CHANNELS_LIB" resolve "$main_hash" "$stable_hash" 2>/dev/null
+    "$AOS_PY" "$CHANNELS_LIB" resolve "$main_hash" "$stable_hash" 2>/dev/null
 }
 
 # ── State writers (env-based — no string interpolation into code) ────────────
 
 _write_state() {
     # $1=status  $2=local_hash  $3=remote_hash
-    STATUS="$1" LOCAL="$2" REMOTE="$3" python3 - <<'PY'
+    STATUS="$1" LOCAL="$2" REMOTE="$3" "$AOS_PY" - <<'PY'
 import json, datetime, os
 state = {
     "last_check": datetime.datetime.now().isoformat(),
@@ -121,7 +125,7 @@ PY
 
 _write_state_update() {
     # $1=local_hash  $2=remote_hash  $3=behind  $4=changes (newline-separated)
-    LOCAL="$1" REMOTE="$2" BEHIND="$3" CHANGES="$4" python3 - <<'PY'
+    LOCAL="$1" REMOTE="$2" BEHIND="$3" CHANGES="$4" "$AOS_PY" - <<'PY'
 import json, datetime, os
 changes = [c for c in os.environ.get("CHANGES", "").strip().split("\n") if c]
 state = {
@@ -144,7 +148,7 @@ PY
 # migrations failed, script exited 0, nothing recorded anywhere.)
 _write_apply_result() {
     # $1=result(ok|failed)  $2=step  $3=detail  $4=from_version  $5=to_version
-    RESULT="$1" STEP="$2" DETAIL="$3" FROM_V="${4:-}" TO_V="${5:-}" python3 - <<'PY'
+    RESULT="$1" STEP="$2" DETAIL="$3" FROM_V="${4:-}" TO_V="${5:-}" "$AOS_PY" - <<'PY'
 import json, datetime, os
 path = os.environ["STATE_FILE"]
 try:
@@ -223,7 +227,7 @@ update_available() {
         check_git
     fi
     # Re-read the freshly written state file for the verdict.
-    python3 - <<'PY'
+    "$AOS_PY" - <<'PY'
 import json, os, sys
 try:
     s = json.load(open(os.environ["STATE_FILE"]))
@@ -352,7 +356,7 @@ apply() {
 _write_handoff() {
     # $1=install_type $2=old_hash $3=new_hash $4=old_version $5=new_version $6=repo
     ITYPE="$1" OLD_HASH="$2" NEW_HASH="$3" OLD_VERSION="$4" NEW_VERSION="$5" REPO="$6" \
-    python3 - <<'PY'
+    "$AOS_PY" - <<'PY'
 import json, datetime, os
 handoff = {
     "triggered_at": datetime.datetime.now().isoformat(),
@@ -558,7 +562,7 @@ _find_uv() {
 
 # Extract the newline-separated dependency list from a pyproject.toml.
 _pyproject_deps() {
-    PYPROJECT="$1" python3 - <<'PY'
+    PYPROJECT="$1" "$AOS_PY" - <<'PY'
 import os, re
 p = os.environ["PYPROJECT"]
 try:
@@ -814,12 +818,12 @@ deploy() {
     fi
 
     local install_type old_hash new_hash old_version new_version repo
-    install_type=$(python3 -c "import json; print(json.load(open('$HANDOFF_FILE')).get('install_type','git'))" 2>/dev/null)
-    old_hash=$(python3 -c "import json; print(json.load(open('$HANDOFF_FILE')).get('old_hash',''))" 2>/dev/null)
-    new_hash=$(python3 -c "import json; print(json.load(open('$HANDOFF_FILE')).get('new_hash',''))" 2>/dev/null)
-    old_version=$(python3 -c "import json; print(json.load(open('$HANDOFF_FILE')).get('old_version','unknown'))" 2>/dev/null)
-    new_version=$(python3 -c "import json; print(json.load(open('$HANDOFF_FILE')).get('new_version','unknown'))" 2>/dev/null)
-    repo=$(python3 -c "import json; print(json.load(open('$HANDOFF_FILE')).get('repo',''))" 2>/dev/null)
+    install_type=$("$AOS_PY" -c "import json; print(json.load(open('$HANDOFF_FILE')).get('install_type','git'))" 2>/dev/null)
+    old_hash=$("$AOS_PY" -c "import json; print(json.load(open('$HANDOFF_FILE')).get('old_hash',''))" 2>/dev/null)
+    new_hash=$("$AOS_PY" -c "import json; print(json.load(open('$HANDOFF_FILE')).get('new_hash',''))" 2>/dev/null)
+    old_version=$("$AOS_PY" -c "import json; print(json.load(open('$HANDOFF_FILE')).get('old_version','unknown'))" 2>/dev/null)
+    new_version=$("$AOS_PY" -c "import json; print(json.load(open('$HANDOFF_FILE')).get('new_version','unknown'))" 2>/dev/null)
+    repo=$("$AOS_PY" -c "import json; print(json.load(open('$HANDOFF_FILE')).get('repo',''))" 2>/dev/null)
 
     # Delete handoff BEFORE destructive work — idempotency guard.
     rm -f "$HANDOFF_FILE"
@@ -955,7 +959,7 @@ deploy() {
 
     # new_hash comes from the handoff (release installs have no .git in ~/aos).
     [[ -z "$new_hash" ]] && new_hash=$(git rev-parse HEAD 2>/dev/null || echo "")
-    VERSION="$new_version" OLD_VERSION="$old_version" NEW_HASH="$new_hash" python3 - <<'PY'
+    VERSION="$new_version" OLD_VERSION="$old_version" NEW_HASH="$new_hash" "$AOS_PY" - <<'PY'
 import json, datetime, os
 state = {
     "last_check": datetime.datetime.now().isoformat(),
@@ -1030,7 +1034,7 @@ _health_check() {
 
 _extract_release_notes() {
     local version="$1"
-    python3 -c "
+    "$AOS_PY" -c "
 from pathlib import Path
 import re
 
@@ -1102,7 +1106,7 @@ if other:
 
 status() {
     if [[ -f "$STATE_FILE" ]]; then
-        python3 -c "
+        "$AOS_PY" -c "
 import json
 with open('$STATE_FILE') as f:
     s = json.load(f)

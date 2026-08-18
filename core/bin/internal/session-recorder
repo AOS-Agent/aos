@@ -27,6 +27,10 @@
 #   error         — something went wrong
 #   note          — context annotation
 
+
+# Always resolve Python through the AOS resolver — a python3 on PATH can be
+# present, correctly versioned, and unusable (Homebrew 3.14's pyexpat).
+AOS_PY="${AOS_PY:-$HOME/aos/core/bin/internal/aos-python}"
 set -euo pipefail
 
 USER_DIR="$HOME/.aos"
@@ -53,7 +57,7 @@ _write_event() {
 
     local session_file="$SESSION_DIR/${session_id}.jsonl"
 
-    python3 -c "
+    "$AOS_PY" -c "
 import json, os
 from datetime import datetime
 
@@ -78,7 +82,7 @@ _start() {
     echo "$session_id" > "$CURRENT_FILE"
 
     SESSION_FILE="$SESSION_DIR/${session_id}.jsonl"
-    EVENT_TYPE="flow_start" EVENT_DETAIL="$flow" python3 -c "
+    EVENT_TYPE="flow_start" EVENT_DETAIL="$flow" "$AOS_PY" -c "
 import json, os, platform
 from datetime import datetime
 from pathlib import Path
@@ -106,7 +110,7 @@ _event() {
     SESSION_FILE="$SESSION_DIR/${session_id}.jsonl" \
     EVENT_TYPE="$action" \
     EVENT_DETAIL="$detail" \
-    python3 -c "
+    "$AOS_PY" -c "
 import json, os
 from datetime import datetime
 event = {
@@ -128,7 +132,7 @@ _error() {
     SESSION_FILE="$SESSION_DIR/${session_id}.jsonl" \
     EVENT_MESSAGE="$message" \
     EVENT_CONTEXT="$context" \
-    python3 -c "
+    "$AOS_PY" -c "
 import json, os
 from datetime import datetime
 event = {
@@ -151,7 +155,7 @@ _choice() {
     SESSION_FILE="$SESSION_DIR/${session_id}.jsonl" \
     EVENT_QUESTION="$question" \
     EVENT_ANSWER="$answer" \
-    python3 -c "
+    "$AOS_PY" -c "
 import json, os
 from datetime import datetime
 event = {
@@ -172,7 +176,7 @@ _end() {
     [[ -z "$session_id" ]] && return 1
 
     SESSION_FILE="$SESSION_DIR/${session_id}.jsonl" \
-    python3 -c "
+    "$AOS_PY" -c "
 import json, os
 from datetime import datetime
 from pathlib import Path
@@ -224,7 +228,7 @@ _show() {
     echo "  ${BOLD}Session: $session_id${RESET}"
     echo "  ${DIM}─────────────────────────────────────────${RESET}"
 
-    python3 -c "
+    "$AOS_PY" -c "
 import json
 from pathlib import Path
 
@@ -268,7 +272,7 @@ _replay() {
         return 1
     fi
 
-    python3 -c "
+    "$AOS_PY" -c "
 import json
 from pathlib import Path
 

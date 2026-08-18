@@ -20,6 +20,10 @@
 #   account-resolve --default google           → hisham@nuchay.com
 #   account-resolve alhuda google --trust      → ask
 
+
+# Always resolve Python through the AOS resolver — a python3 on PATH can be
+# present, correctly versioned, and unusable (Homebrew 3.14's pyexpat).
+AOS_PY="${AOS_PY:-$HOME/aos/core/bin/internal/aos-python}"
 set -euo pipefail
 
 REGISTRY="$HOME/.aos/config/accounts.yaml"
@@ -34,7 +38,7 @@ fi
 _yaml_query() {
   local query="$1"
   if command -v python3 &>/dev/null; then
-    python3 -c "
+    "$AOS_PY" -c "
 import yaml, sys
 with open('$REGISTRY') as f:
     data = yaml.safe_load(f)
@@ -74,7 +78,7 @@ _resolve() {
 # Get trust level for an account
 _trust() {
   local service="$1" account_id="$2"
-  python3 - "$REGISTRY" "$service" "$account_id" <<'PYEOF'
+  "$AOS_PY" - "$REGISTRY" "$service" "$account_id" <<'PYEOF'
 import yaml, sys
 registry, service, account_id = sys.argv[1], sys.argv[2], sys.argv[3]
 with open(registry) as f:
@@ -91,7 +95,7 @@ PYEOF
 # Get credential keys for an account
 _keys() {
   local service="$1" account_id="$2"
-  python3 - "$REGISTRY" "$service" "$account_id" <<'PYEOF'
+  "$AOS_PY" - "$REGISTRY" "$service" "$account_id" <<'PYEOF'
 import yaml, sys
 registry, service, account_id = sys.argv[1], sys.argv[2], sys.argv[3]
 with open(registry) as f:
@@ -109,7 +113,7 @@ PYEOF
 
 # Find the default context
 _default_context() {
-  python3 -c "
+  "$AOS_PY" -c "
 import yaml
 with open('$REGISTRY') as f:
     data = yaml.safe_load(f)
@@ -122,7 +126,7 @@ for name, ctx in data.get('contexts', {}).items():
 
 # List all contexts
 _list_contexts() {
-  python3 -c "
+  "$AOS_PY" -c "
 import yaml
 with open('$REGISTRY') as f:
     data = yaml.safe_load(f)
@@ -136,7 +140,7 @@ for name, ctx in data.get('contexts', {}).items():
 # List all accounts for a service
 _list_accounts() {
   local service="$1"
-  python3 -c "
+  "$AOS_PY" -c "
 import yaml
 with open('$REGISTRY') as f:
     data = yaml.safe_load(f)
@@ -153,7 +157,7 @@ _discover() {
   local service="$1" account_id="$2"
   local timestamp
   timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-  python3 -c "
+  "$AOS_PY" -c "
 import yaml
 with open('$REGISTRY') as f:
     data = yaml.safe_load(f)

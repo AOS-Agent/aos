@@ -12,6 +12,10 @@
 #   aos mesh send <node> "msg" Send a message to another node
 #   aos mesh nodes             List all nodes with details
 
+
+# Always resolve Python through the AOS resolver — a python3 on PATH can be
+# present, correctly versioned, and unusable (Homebrew 3.14's pyexpat).
+AOS_PY="${AOS_PY:-$HOME/aos/core/bin/internal/aos-python}"
 set -euo pipefail
 
 # shellcheck disable=SC2034
@@ -101,7 +105,7 @@ cmd_init() {
 
     # Generate Headscale config
     echo "  Generating Headscale configuration..."
-    python3 - "$HEADSCALE_DIR" "$node_name" << 'INITPY'
+    "$AOS_PY" - "$HEADSCALE_DIR" "$node_name" << 'INITPY'
 import sys, json
 from pathlib import Path
 
@@ -238,7 +242,7 @@ cmd_invite() {
     echo "  Generating auth key..."
     local user_id
     user_id=$(headscale -c "$hs_config" users list -o json 2>/dev/null | \
-        python3 -c "import sys,json; [print(u['id']) for u in json.load(sys.stdin) if u.get('name')=='$name']" 2>/dev/null)
+        "$AOS_PY" -c "import sys,json; [print(u['id']) for u in json.load(sys.stdin) if u.get('name')=='$name']" 2>/dev/null)
 
     if [[ -z "$user_id" ]]; then
         error "Could not find user ID for '$name'."
@@ -317,7 +321,7 @@ cmd_kick() {
     echo "  Removing $name's nodes from Headscale..."
     # List node IDs for this user and delete each
     headscale -c "$hs_config" nodes list --user "$name" --output json 2>/dev/null | \
-        python3 -c "
+        "$AOS_PY" -c "
 import sys, json
 try:
     nodes = json.load(sys.stdin)
@@ -333,7 +337,7 @@ except: pass
 
     # Remove from local roster
     if [[ -f "$MESH_DATA/roster.json" ]]; then
-        python3 -c "
+        "$AOS_PY" -c "
 import json
 p = '$MESH_DATA/roster.json'
 d = json.loads(open(p).read())
@@ -381,10 +385,10 @@ cmd_status() {
     if [[ "$role" == "admin" ]]; then
         local fleet
         fleet=$(curl -s "http://127.0.0.1:4100/fleet/health" 2>/dev/null || echo "")
-        if [[ -n "$fleet" ]] && echo "$fleet" | python3 -c "import sys,json; json.load(sys.stdin)" 2>/dev/null; then
+        if [[ -n "$fleet" ]] && echo "$fleet" | "$AOS_PY" -c "import sys,json; json.load(sys.stdin)" 2>/dev/null; then
             echo ""
             echo -e "  ${BOLD}Fleet:${NC}"
-            echo "$fleet" | python3 -c "
+            echo "$fleet" | "$AOS_PY" -c "
 import sys, json
 d = json.load(sys.stdin)
 print(f'    Online: {d.get(\"online\",0)}/{d.get(\"total\",0)}  Healthy: {d.get(\"healthy\",0)}  Errors: {d.get(\"errors\",0)}')
@@ -415,7 +419,7 @@ cmd_health() {
         exit 1
     fi
 
-    echo "$fleet" | python3 -c "
+    echo "$fleet" | "$AOS_PY" -c "
 import sys, json
 d = json.load(sys.stdin)
 
@@ -462,7 +466,7 @@ cmd_send() {
 
     # Resolve target IP via Tailscale
     local target_ip
-    target_ip=$(tailscale status --json 2>/dev/null | python3 -c "
+    target_ip=$(tailscale status --json 2>/dev/null | "$AOS_PY" -c "
 import sys, json
 d = json.load(sys.stdin)
 target = '$target'.lower()
@@ -480,14 +484,14 @@ for _, p in d.get('Peer', {}).items():
 
     # Build and send message
     local payload
-    payload=$(python3 -c "
+    payload=$("$AOS_PY" -c "
 import json, uuid
 from datetime import datetime, timezone
 print(json.dumps({
     'from': '$node_name',
     'to': '$target',
     'type': 'text',
-    'payload': {'message': $(python3 -c "import json; print(json.dumps('$message'))")},
+    'payload': {'message': $("$AOS_PY" -c "import json; print(json.dumps('$message'))")},
     'id': 'msg_' + uuid.uuid4().hex[:8],
     'timestamp': datetime.now(timezone.utc).isoformat(),
 }))
