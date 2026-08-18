@@ -225,7 +225,7 @@ Four boundaries. Never crossed.
 ├── apps/                  Qareen UI, content engine
 ├── config/                System configuration, LaunchAgent templates
 ├── templates/             Agent catalog + project scaffold
-└── specs/                 Architecture documentation
+└── docs/                  Architecture documentation
 
 ~/.aos/
 ├── data/                  work.db, comms.db, people.db, qareen.db

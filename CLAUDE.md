@@ -77,7 +77,7 @@ core/infra/reconcile/
 │   └── bin/                   CLI tools, crons, utilities
 ├── config/                    Shipped config (crons.yaml, etc.)
 ├── templates/                 Agent catalog + project scaffold
-└── specs/                     Architecture docs
+└── docs/                      Architecture docs
 
 ~/.aos/                      USER DATA (never in git)
 ├── work/                      Tasks, goals, inbox
@@ -132,10 +132,10 @@ Two top-level folders. No exceptions.
 
 See `~/vault/SCHEMA.md` for frontmatter contracts per document type. Every file must have: title, type, date, tags, source_ref. Knowledge files carry a `stage` (1-6). `project` field for scoping.
 
-## Key Specs
+## Key Docs
 
-| Spec | What |
-|------|------|
-| `specs/aos-v2-brief.md` | Original brief and research |
-| `specs/work-system-architecture.md` | Work system data models |
-| `specs/v2-system-map.md` | Full system map |
+| Doc | What |
+|-----|------|
+| `docs/ARCHITECTURE.md` | System architecture |
+| `docs/framework-lockdown.md` | Framework/instance boundary rules |
+| `docs/release-channels.md` | Release and update channels |
