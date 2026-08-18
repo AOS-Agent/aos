@@ -53,9 +53,10 @@ aos promote --force      # skip the soak guard (still confirms)
 ## The desktop app rides the same release
 
 The app (`apps/desktop/`) is a signed, notarized macOS bundle delivered by the
-Tauri updater from `aos.hish.am/updater/latest.json` — a channel git can't
-serve. But it releases through the SAME pipeline and carries the SAME version
-number: `/ship` runs `core/bin/cli/release-app`, which
+Tauri updater from the public updater endpoint (`latest.json`, declared in
+`apps/desktop/scripts/release.sh`) — a channel git can't serve. But it releases
+through the SAME pipeline and carries the SAME version number: `/ship` runs
+`core/bin/cli/release-app`, which
 
 1. reads the `commit` field of the published manifest,
 2. skips entirely if `apps/desktop/` hasn't changed since,

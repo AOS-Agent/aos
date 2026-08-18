@@ -153,8 +153,8 @@ bash ~/project/aos/core/bin/cli/release-app --notes "<one-line summary>"
 
 This aligns the app version with the repo VERSION (bumping the patch if that
 number is already published), builds, signs, notarizes, publishes the updater
-manifest to aos.hish.am, verifies it live, and commits the version bumps —
-so the push in Step 3 carries them. It never pushes on its own.
+manifest to the public updater endpoint, verifies it live, and commits the
+version bumps — so the push in Step 3 carries them. It never pushes on its own.
 
 If the publish target (`/Volumes/AOS-X`) is unavailable or signing fails,
 STOP and surface it — do not push framework changes that the app half of the

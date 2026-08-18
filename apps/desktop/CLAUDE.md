@@ -38,8 +38,9 @@ frontend in `src/App.tsx`, logos in `src/logos.tsx`.
   `include_str!` needs a real file at compile time. Once the manifest lands on
   main it should become a symlink, which removes the last way these can diverge.
 - Distribution stays two channels (`aos update` pulls the system; the Tauri
-  updater pulls the app from aos.hish.am — a notarized macOS bundle cannot be
-  delivered by git pull), but the RELEASE is one pipeline with one number:
+  updater pulls the app from the public updater endpoint in `scripts/release.sh`
+  — a notarized macOS bundle cannot be delivered by git pull), but the RELEASE
+  is one pipeline with one number:
   `/ship` runs `core/bin/cli/release-app`, which releases the app as the
   repo-root VERSION whenever `apps/desktop/` changed since the last published
   manifest (`latest.json` carries the `commit` it was built from). Never run

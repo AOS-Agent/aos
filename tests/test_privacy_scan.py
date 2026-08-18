@@ -414,6 +414,25 @@ def test_real_shaped_non_reserved_phone_still_fails():
     assert ps.report(hits) == 1
 
 
+def test_svg_path_data_not_a_phone():
+    # An SVG icon's coordinate stream is separator-grouped digits — the exact
+    # shape PHONE_RE hunts — and must not trip the gate. (Two of these once
+    # blocked a ship over an arrow icon.)
+    line = '            d="M3 8h9.5M9 3.51 13.5 8 9 12.5"'
+    diff = make_diff("apps/desktop/src/App.tsx", [line])
+    hits = ps.scan_diff(diff, [])
+    assert not [h for h in hits if h.category == "phone"]
+
+
+def test_phone_disguised_as_svg_attribute_still_fails():
+    # The exemption requires the value to OPEN with a path command letter;
+    # a real phone stuffed into a d= attribute is still caught.
+    diff = make_diff("apps/desktop/src/App.tsx", [f'd="{REAL_PHONE}"'])
+    hits = ps.scan_diff(diff, [])
+    phones = [h for h in hits if h.category == "phone"]
+    assert phones and not any(h.precedented for h in phones)
+
+
 def test_non_nanp_number_ending_in_555_01_not_reserved():
     # The NANP fictional block is North-American-only; a formatted 12-digit
     # international number that merely ends in ...555 0142 must NOT be treated

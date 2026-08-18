@@ -286,6 +286,25 @@ def _looks_like_code_constant(raw: str) -> bool:
     return not raw.startswith("+") and re.fullmatch(r"\d+", raw) is not None
 
 
+SVG_PATH_ATTR_RE = re.compile(r"""\bd\s*=\s*(["'])([MmLlHhVvCcSsQqTtAaZz][^"']*)\1""")
+
+
+def _inside_svg_path_data(content: str, start: int, end: int) -> bool:
+    """True if a PHONE_RE match sits inside the quoted value of an SVG path
+    ``d="…"`` attribute. Coordinate streams like ``M3 8h9.5M9 3.5 13.5 8`` are
+    separator-grouped digit runs — exactly the shape a phone number takes — so
+    every hand-drawn icon would trip the gate without this. Scoped hard: the
+    attribute must literally be ``d=`` and the value must open with an SVG
+    path command letter, so a phone number in prose or ordinary code can
+    never hide behind it (``d="+1416…"`` starts with ``+``, not a command,
+    and still fails).
+    """
+    for m in SVG_PATH_ATTR_RE.finditer(content):
+        if m.start(2) <= start and end <= m.end(2):
+            return True
+    return False
+
+
 def _looks_like_versioned_identifier(content: str, start: int, end: int) -> bool:
     """True if a PHONE_RE match sits inside a larger hyphen-glued identifier
     token that also contains letters — a model ID (``claude-haiku-4-5-
@@ -345,6 +364,8 @@ def scan_diff(diff_text: str, denylist, precedent_lookup=None):
                 if _looks_like_code_constant(raw):
                     continue
                 if _looks_like_versioned_identifier(content, m.start(1), m.end(1)):
+                    continue
+                if _inside_svg_path_data(content, m.start(1), m.end(1)):
                     continue
                 if not overlaps(m.start(), m.end()):
                     h = Hit(path, lineno, "phone", digits, content=content)
