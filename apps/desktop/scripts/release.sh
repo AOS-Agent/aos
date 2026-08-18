@@ -52,7 +52,18 @@ security find-identity -v -p codesigning 2>/dev/null | grep -q "$IDENTITY" \
     || fail "Developer ID identity not in the Keychain: $IDENTITY"
 ISSUER="$(bash "$HOME/aos/core/bin/cli/agent-secret" get ASC_ISSUER_ID)" \
     || fail "ASC_ISSUER_ID not in the Keychain"
-echo "  ✓ signing key, ASC key, identity, issuer, publish target"
+# The bump must be able to land. release.sh publishes an artifact to the world;
+# if the version bump that produced it cannot be committed, main ends up
+# claiming one version while every installed app runs another. That happened
+# with 0.3.2: cut from a detached worktree, artifact pushed, bump stranded.
+BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+[ "$BRANCH" = "HEAD" ] && fail "detached HEAD — the version bump would have nowhere to land.
+    Check out a branch before releasing."
+if ! git diff --quiet -- src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock; then
+    fail "uncommitted version files. Commit or discard them before releasing, so the
+    bump this run makes is the only change in the release commit."
+fi
+echo "  ✓ signing key, ASC key, identity, issuer, publish target, branch $BRANCH"
 
 # ── version ────────────────────────────────────────────────────────────────
 if [ -n "$NEW_VERSION" ]; then
@@ -176,6 +187,17 @@ LOCAL_BYTES=$(wc -c < "$UPDATER_DIR/$TARBALL_NAME" | tr -d ' ')
 SERVED_BYTES=$(/usr/bin/curl -fsSI -m 15 "https://aos.hish.am/updater/$TARBALL_NAME" | awk 'tolower($1)=="content-length:"{print $2+0}')
 [ "$LOCAL_BYTES" = "$SERVED_BYTES" ] || fail "served artifact is $SERVED_BYTES bytes, published file is $LOCAL_BYTES"
 
+# Commit the bump NOW, while the artifact that matches it is verified live.
+# Not pushed: pushing is the operator's call. But the commit exists, so the
+# bump can no longer be lost between publishing and remembering.
+if git diff --quiet -- src-tauri/tauri.conf.json src-tauri/Cargo.toml; then
+    echo "── version files already committed ──"
+else
+    git add src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock 2>/dev/null || true
+    git commit -q -m "app $VERSION" -m "Published and verified live at $ENDPOINT." \
+        && echo "── committed the $VERSION bump on $BRANCH ──"
+fi
+
 echo
 echo "✓ Released $VERSION"
 echo "    manifest : $ENDPOINT"
@@ -183,3 +205,4 @@ echo "    update   : https://aos.hish.am/updater/$TARBALL_NAME  ($LOCAL_BYTES by
 echo "    download : https://aos.hish.am/AOS_${VERSION}.dmg"
 echo
 echo "  Installed apps pick this up on their next launch."
+echo "  The bump is committed on $BRANCH — push it so main matches what shipped."
