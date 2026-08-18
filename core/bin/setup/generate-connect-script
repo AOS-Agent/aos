@@ -10,6 +10,10 @@
 # This machine's Tailscale IP, login user, hostname, and agent name are baked in
 # at generation time, so the generated script needs no arguments and no
 # knowledge of AOS.
+
+# Always resolve Python through the AOS resolver — a python3 on PATH can be
+# present, correctly versioned, and unusable (Homebrew 3.14's pyexpat).
+AOS_PY="${AOS_PY:-$HOME/aos/core/bin/internal/aos-python}"
 set -euo pipefail
 
 OUT="${1:-$HOME/Desktop/connect-to-aos.sh}"
@@ -26,12 +30,12 @@ if [[ -z "$TS_IP" ]]; then
 fi
 
 TS_HOST=$(tailscale status --self --json 2>/dev/null \
-    | python3 -c 'import json,sys; print(json.load(sys.stdin)["Self"]["DNSName"].rstrip(".").split(".")[0])' 2>/dev/null || true)
+    | "$AOS_PY" -c 'import json,sys; print(json.load(sys.stdin)["Self"]["DNSName"].rstrip(".").split(".")[0])' 2>/dev/null || true)
 [[ -n "$TS_HOST" ]] || TS_HOST=$(scutil --get ComputerName 2>/dev/null || hostname -s)
 
 SSH_USER=$(whoami)
 
-AGENT_NAME=$(python3 -c "
+AGENT_NAME=$("$AOS_PY" -c "
 import yaml
 try:
     with open('$HOME/.aos/config/operator.yaml') as f:

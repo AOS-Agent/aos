@@ -9,6 +9,10 @@
 # intended push: FORCE_GUARD=1 git push ...
 #
 # stdin: <local ref> <local sha> <remote ref> <remote sha> per line.
+
+# Always resolve Python through the AOS resolver — a python3 on PATH can be
+# present, correctly versioned, and unusable (Homebrew 3.14's pyexpat).
+AOS_PY="${AOS_PY:-$HOME/aos/core/bin/internal/aos-python}"
 set -u
 [ "${FORCE_GUARD:-0}" = "1" ] && exit 0
 
@@ -37,8 +41,8 @@ while read -r _local_ref local_sha _remote_ref remote_sha; do
 
     # 3. Personal data (the same scanner ship-check runs)
     if [ -x "$REPO_ROOT/core/bin/cli/privacy-scan" ]; then
-        if ! python3 "$REPO_ROOT/core/bin/cli/privacy-scan" "$range" >/dev/null 2>&1; then
-            python3 "$REPO_ROOT/core/bin/cli/privacy-scan" "$range" 2>&1 | tail -8 >&2
+        if ! "$AOS_PY" "$REPO_ROOT/core/bin/cli/privacy-scan" "$range" >/dev/null 2>&1; then
+            "$AOS_PY" "$REPO_ROOT/core/bin/cli/privacy-scan" "$range" 2>&1 | tail -8 >&2
             fail "privacy-scan found personal data in the push range"
         fi
     fi

@@ -31,6 +31,10 @@
 #   - Scheduler (crons.yaml) daily at 04:15
 #   - User manually: `bash ~/aos/core/bin/crons/harness-update`
 
+
+# Always resolve Python through the AOS resolver — a python3 on PATH can be
+# present, correctly versioned, and unusable (Homebrew 3.14's pyexpat).
+AOS_PY="${AOS_PY:-$HOME/aos/core/bin/internal/aos-python}"
 set +e
 
 LOG_DIR="$HOME/.aos/logs"
@@ -60,7 +64,7 @@ get_installed_version() {
     fi
     # `npm ls -g --depth=0 --json` is more reliable than parsing `claude --version`
     npm ls -g @anthropic-ai/claude-code --depth=0 --json 2>/dev/null \
-        | python3 -c "
+        | "$AOS_PY" -c "
 import json, sys
 try:
     d = json.load(sys.stdin)

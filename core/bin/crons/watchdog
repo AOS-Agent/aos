@@ -7,6 +7,10 @@
 # Also checks: Tailscale, internet, disk space
 
 # Never crash on any individual failure
+
+# Always resolve Python through the AOS resolver — a python3 on PATH can be
+# present, correctly versioned, and unusable (Homebrew 3.14's pyexpat).
+AOS_PY="${AOS_PY:-$HOME/aos/core/bin/internal/aos-python}"
 set +e
 
 AOS_DIR="$HOME/aos"
@@ -106,7 +110,7 @@ You are the system technician. Service '${name}' has been flagged by the watchdo
 5. Send a Telegram message reporting what you found and what you did"
 
     local escaped_prompt
-    escaped_prompt=$(printf '%s' "$prompt" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))' 2>/dev/null || echo '"'"$prompt"'"')
+    escaped_prompt=$(printf '%s' "$prompt" | "$AOS_PY" -c 'import sys,json; print(json.dumps(sys.stdin.read()))' 2>/dev/null || echo '"'"$prompt"'"')
 
     curl -s --max-time 10 -X POST "http://127.0.0.1:7600/job" \
         -H "Content-Type: application/json" \
@@ -160,7 +164,7 @@ STATE_YAML="$HOME/.aos/config/state.yaml"
 # Parse YAML into "name|label|health_url" lines — one per service
 SERVICES_LIST=""
 if [[ -f "$STATE_YAML" ]]; then
-    SERVICES_LIST=$(python3 -c "
+    SERVICES_LIST=$("$AOS_PY" -c "
 import yaml, sys
 with open('$STATE_YAML') as f:
     data = yaml.safe_load(f)

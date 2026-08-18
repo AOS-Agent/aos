@@ -14,6 +14,10 @@
 #   1 = failures found (block ship)
 #   2 = warnings found (ship with caution)
 
+
+# Always resolve Python through the AOS resolver — a python3 on PATH can be
+# present, correctly versioned, and unusable (Homebrew 3.14's pyexpat).
+AOS_PY="${AOS_PY:-$HOME/aos/core/bin/internal/aos-python}"
 set -uo pipefail
 
 # Repo under check: default to the dev workspace, but allow override so the
@@ -59,7 +63,7 @@ if [[ -n "$PY_FILES" ]]; then
     while IFS= read -r f; do
         [[ -z "$f" ]] && continue
         [[ -f "$f" ]] || continue
-        if ! python3 -c "import py_compile; py_compile.compile('$f', doraise=True)" 2>/dev/null; then
+        if ! "$AOS_PY" -c "import py_compile; py_compile.compile('$f', doraise=True)" 2>/dev/null; then
             fail "Syntax error: $f"
             py_errors=$((py_errors + 1))
         fi
@@ -156,7 +160,7 @@ for module in \
     "core.work.inject_context"; do
     mod_path=$(echo "$module" | tr '.' '/')
     if [[ -f "$DEV/${mod_path}.py" ]]; then
-        if ! python3 -c "import sys; sys.path.insert(0,'$DEV'); __import__('${module}')" 2>/dev/null; then
+        if ! "$AOS_PY" -c "import sys; sys.path.insert(0,'$DEV'); __import__('${module}')" 2>/dev/null; then
             fail "Import failed: $module"
             import_errors=$((import_errors + 1))
         fi
@@ -317,7 +321,7 @@ desc_over=0
 for skill_md in "$DEV"/core/skills/*/SKILL.md; do
     [[ -f "$skill_md" ]] || continue
     skill_name=$(basename "$(dirname "$skill_md")")
-    desc_len=$(python3 - "$skill_md" <<'PYEOF'
+    desc_len=$("$AOS_PY" - "$skill_md" <<'PYEOF'
 import sys, re
 text = open(sys.argv[1]).read()
 m = re.match(r'^---\n(.*?)\n---', text, re.S)
@@ -621,7 +625,7 @@ fi
 # Framework code should not import from services not in core/services/ or preserved-services.yaml
 if [[ -f "$DEV/config/preserved-services.yaml" ]]; then
     # Extract preserved service names
-    preserved=$(python3 -c "
+    preserved=$("$AOS_PY" -c "
 import yaml
 with open('$DEV/config/preserved-services.yaml') as f:
     d = yaml.safe_load(f) or {}
@@ -863,7 +867,7 @@ for entry in \
     mod_path=$(echo "$mod" | tr '.' '/')
     # Only test if the file exists in dev workspace
     if [[ -f "$DEV/${mod_path}.py" ]]; then
-        err=$(python3 -c "
+        err=$("$AOS_PY" -c "
 import sys, os
 sys.path.insert(0, '$DEV')
 os.chdir('$DEV')
