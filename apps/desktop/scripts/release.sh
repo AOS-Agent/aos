@@ -46,11 +46,12 @@ KEY_PATH="$HOME/private_keys/AuthKey_${KEY_ID}.p8"
 SIGNING_KEY="$HOME/.tauri/aos-updater.key"
 CONF="src-tauri/tauri.conf.json"
 
-# Where aos.hish.am is served from (declared in ~/project/hish.am/sites.yaml,
-# port 8096, access: public). Never hand-edit Caddy — this only writes files.
-SITE_ROOT="/Volumes/AOS-X/hish.am/sites/aos"
+# Where qren.ai is served from (declared in ~/project/hish.am/sites.yaml,
+# port 8097, access: public; renamed from aos.hish.am 2026-08-18). Never
+# hand-edit Caddy — this only writes files.
+SITE_ROOT="/Volumes/AOS-X/hish.am/sites/qren"
 UPDATER_DIR="$SITE_ROOT/updater"
-ENDPOINT="https://aos.hish.am/updater/latest.json"
+ENDPOINT="https://qren.ai/updater/latest.json"
 
 fail() { echo "✗ $*" >&2; exit 1; }
 
@@ -207,7 +208,7 @@ manifest = {
             # The signature is read from the .sig this build produced, never
             # copied by hand — that pairing is the whole trust model.
             "signature": Path(sigfile).read_text().strip(),
-            "url": f"https://aos.hish.am/updater/{tarball}",
+            "url": f"https://qren.ai/updater/{tarball}",
         }
     },
 }
@@ -222,12 +223,12 @@ SERVED=$(/usr/bin/curl -fsS -m 15 "$ENDPOINT" | "$HOME/.aos/python/bin/python3" 
     || fail "updater endpoint did not serve valid JSON: $ENDPOINT"
 [ "$SERVED" = "$VERSION" ] || fail "endpoint serves $SERVED but we published $VERSION"
 
-CODE=$(/usr/bin/curl -fsS -o /dev/null -w "%{http_code}" -m 30 "https://aos.hish.am/updater/$TARBALL_NAME") \
+CODE=$(/usr/bin/curl -fsS -o /dev/null -w "%{http_code}" -m 30 "https://qren.ai/updater/$TARBALL_NAME") \
     || fail "published artifact is not downloadable"
 [ "$CODE" = "200" ] || fail "artifact returned HTTP $CODE"
 
 LOCAL_BYTES=$(wc -c < "$UPDATER_DIR/$TARBALL_NAME" | tr -d ' ')
-SERVED_BYTES=$(/usr/bin/curl -fsSI -m 15 "https://aos.hish.am/updater/$TARBALL_NAME" | awk 'tolower($1)=="content-length:"{print $2+0}')
+SERVED_BYTES=$(/usr/bin/curl -fsSI -m 15 "https://qren.ai/updater/$TARBALL_NAME" | awk 'tolower($1)=="content-length:"{print $2+0}')
 [ "$LOCAL_BYTES" = "$SERVED_BYTES" ] || fail "served artifact is $SERVED_BYTES bytes, published file is $LOCAL_BYTES"
 
 # Commit the bump NOW, while the artifact that matches it is verified live.
@@ -244,8 +245,8 @@ fi
 echo
 echo "✓ Released $VERSION"
 echo "    manifest : $ENDPOINT"
-echo "    update   : https://aos.hish.am/updater/$TARBALL_NAME  ($LOCAL_BYTES bytes)"
-echo "    download : https://aos.hish.am/AOS_${VERSION}.dmg"
+echo "    update   : https://qren.ai/updater/$TARBALL_NAME  ($LOCAL_BYTES bytes)"
+echo "    download : https://qren.ai/AOS_${VERSION}.dmg"
 echo
 echo "  Installed apps pick this up on their next launch."
 echo "  The bump is committed on $BRANCH — push it so main matches what shipped."
