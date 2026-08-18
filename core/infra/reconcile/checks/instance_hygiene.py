@@ -14,6 +14,7 @@ Cleanup requires explicit operator approval via `aos hygiene --apply`.
 Runs every update cycle. Only flags AOS-namespaced items.
 """
 
+import subprocess
 import sys
 from pathlib import Path
 
@@ -115,7 +116,56 @@ def _framework_launchagents():
                 labels.add(name.removesuffix(".plist.template"))
             elif name.endswith(".plist"):
                 labels.add(name.removesuffix(".plist"))
-    return labels | _registry_labels() | _load_preserved()["launchagents"]
+    return (
+        labels
+        | _registry_labels()
+        | _load_preserved()["launchagents"]
+        | _manifest_labels()
+    )
+
+
+def _manifest_labels():
+    """LaunchAgent labels declared in config/modules.yaml.
+
+    The module manifest describes every AOS service on the machine, including
+    the nine that have no core/services/ dir and no services.d entry — qareen,
+    work-runner, ios-deploy, qareen-deploy, converse, envoy, sana-watch,
+    slack-watch, qareen-dev. Without reading it, hygiene called five live
+    services orphans and offered to delete them: two running daemons and three
+    periodic jobs that were merely idle between ticks, which is what healthy
+    looks like for a periodic job.
+    """
+    manifest = AOS / "config" / "modules.yaml"
+    if not manifest.is_file():
+        return set()
+    try:
+        import yaml
+        data = yaml.safe_load(manifest.read_text()) or {}
+    except Exception:
+        return set()
+    labels = {s for m in (data.get("modules") or []) for s in (m.get("services") or [])}
+    labels |= {f["label"] for f in (data.get("foreign") or []) if f.get("label")}
+    return labels
+
+
+def _loaded_labels():
+    """Labels currently known to launchd.
+
+    A loaded job is not an orphan, whatever the declarations say. This is the
+    backstop: a declaration can be missing for many reasons, but proposing to
+    delete something the system is actively running is never right.
+    """
+    try:
+        out = subprocess.run(
+            ["launchctl", "list"], capture_output=True, text=True, timeout=15
+        ).stdout
+    except Exception:
+        return set()   # can't tell → assume loaded → propose nothing
+    return {
+        parts[2]
+        for parts in (line.split("\t") for line in out.splitlines()[1:])
+        if len(parts) >= 3
+    }
 
 
 def _installed_launchagents():
@@ -127,6 +177,56 @@ def _installed_launchagents():
         f.name.removesuffix(".plist")
         for f in la_dir.glob("com.aos.*.plist")
     }
+
+
+def _live_exec_paths():
+    """Filesystem paths that currently-loaded LaunchAgents actually execute.
+
+    Following the launcher matters: AOS points each plist at a named wrapper in
+    ~/.aos/launchers ("AOS Slack Watch") so Login Items shows a readable name,
+    and the wrapper execs the real target. Reading only ProgramArguments finds
+    the wrapper and misses the code — which is how ~/.aos/services/slack-watch,
+    the directory a running job execs, ended up on a deletion list.
+    """
+    import plistlib
+    import re
+
+    paths = set()
+    la_dir = Path.home() / "Library" / "LaunchAgents"
+    for label in _loaded_labels():
+        plist = la_dir / f"{label}.plist"
+        if not plist.is_file():
+            continue
+        try:
+            args = plistlib.loads(plist.read_bytes()).get("ProgramArguments") or []
+        except Exception:
+            continue
+        for arg in args:
+            arg = str(arg)
+            if arg.startswith("/"):
+                paths.add(Path(arg))
+        if not args:
+            continue
+        launcher = Path(str(args[0]))
+        if launcher.parent == Path.home() / ".aos" / "launchers" and launcher.is_file():
+            try:
+                for m in re.finditer(r"(/[^\s\"']+)", launcher.read_text()):
+                    paths.add(Path(m.group(1)))
+            except Exception:
+                pass
+    return paths
+
+
+def _is_live(candidate: Path, live_paths) -> bool:
+    """True when a loaded job executes something at or beneath this path."""
+    for lp in live_paths:
+        try:
+            lp.relative_to(candidate)
+            return True
+        except ValueError:
+            if lp == candidate:
+                return True
+    return False
 
 
 def _stale_model_caches():
@@ -174,12 +274,18 @@ def find_orphans():
 
     # 1. Service venvs
     fw_services = _framework_services()
+    live_paths = _live_exec_paths()
     instance_services = USER / "services"
     if instance_services.is_dir():
         svc_orphans = []
         for d in instance_services.iterdir():
             if d.is_dir() and d.name not in fw_services:
                 if f"service:{d.name}" in known:
+                    continue
+                # A directory a loaded job execs is not an orphan, whatever the
+                # framework declares. ~/.aos/services/slack-watch holds the
+                # watch.py that com.aos.slack-watch runs every 120 seconds.
+                if _is_live(d, live_paths):
                     continue
                 is_service = (
                     (d / ".venv").exists()
@@ -194,9 +300,15 @@ def find_orphans():
     # 2. LaunchAgents
     fw_agents = _framework_launchagents()
     inst_agents = _installed_launchagents()
+    loaded = _loaded_labels()
     la_orphans = []
     for label in inst_agents - fw_agents:
         if f"launchagent:{label}" in known:
+            continue
+        # Never offer to delete something launchd is running. A missing
+        # declaration is a coverage gap in the manifest; a loaded job is a
+        # working part of the system, and the two must not be confused.
+        if label in loaded:
             continue
         plist = Path.home() / "Library" / "LaunchAgents" / f"{label}.plist"
         if plist.exists():
