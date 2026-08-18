@@ -153,6 +153,24 @@ mkdir -p "$UPDATER_DIR"
 cp "$TARBALL" "$UPDATER_DIR/$TARBALL_NAME"
 cp "$DMG" "$SITE_ROOT/AOS_${VERSION}.dmg"
 
+# Keep the download page honest: point its CTA + version line at the DMG that
+# was just published. Before this, the page drifted (still offered 0.1.0 while
+# 0.7.6 was live — found 2026-08-18). Anchored so an unmatched page fails the
+# release loudly rather than silently staying stale.
+INDEX="$SITE_ROOT/index.html"
+if [ -f "$INDEX" ]; then
+    grep -Eq 'AOS_[0-9]+\.[0-9]+\.[0-9]+\.dmg' "$INDEX" \
+        || fail "download page has no AOS_<version>.dmg link to update: $INDEX"
+    sed -i '' -E \
+        -e "s|AOS_[0-9]+\.[0-9]+\.[0-9]+\.dmg|AOS_${VERSION}.dmg|g" \
+        -e "s|v[0-9]+\.[0-9]+\.[0-9]+ · Apple Silicon|v${VERSION} · Apple Silicon|" \
+        "$INDEX"
+    grep -q "AOS_${VERSION}.dmg" "$INDEX" || fail "download page rewrite did not take"
+    echo "  download page → v${VERSION}"
+else
+    fail "download page missing: $INDEX"
+fi
+
 "$HOME/.aos/python/bin/python3" - "$UPDATER_DIR" "$VERSION" "$TARBALL_NAME" "$SIGFILE" "$NOTES" <<'PYEOF'
 import json, subprocess, sys
 from datetime import datetime, timezone
