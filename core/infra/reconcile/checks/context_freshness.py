@@ -53,7 +53,7 @@ def _get_running_services() -> list[str]:
         name = plist.stem.replace("com.aos.", "")
 
         # Skip cron-like agents (scheduler, reindex, etc.)
-        skip = {"scheduler", "qmd-reindex", "healthsync-deploy", "claude-remote", "memory"}
+        skip = {"scheduler", "qmd-reindex", "healthsync-deploy", "claude-remote"}
         if name in skip:
             continue
 

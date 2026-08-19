@@ -14,6 +14,7 @@ Summary: Qareen decommissioned — the companion bet moves to aos-app; the syste
 - Added migration 107: boots out the three Qareen LaunchAgents, kills stray deploy watchers, deletes the ~1.1 GB service venv, drops the dead tables, removes companion skill links and the `qareen` state.yaml entry. `qareen.db` itself stays — intelligence, loop signals, cron telemetry, people intel, and work sessions still live there (rename tracked as aos#131).
 - Removed four half-baked services in the same sweep: `companion` (the pre-Qareen meeting service, superseded twice), `listen` (retired since April, now a tombstone manifest in `config/services.d/`), `n8n` (never held a workflow), and `slack-watch` (superseded by sana-watch). Their `modules.yaml` entries — plus the orphaned `shipment-tracking` and never-shipped `voice-meetings` modules — are gone; the scheduler no longer tries to restart retired listen.
 - Added migration 108: removes those services' LaunchAgents, launchers, venvs (~2.2 GB total), and stale state.yaml entries. sana-watch and slack-lite are untouched.
+- Removed the memory MCP server — its ChromaDB index was empty (zero documents ever indexed) and QMD is the production search/memory layer. `sync-mcp` no longer registers it; migration 109 deregisters it from `~/.claude.json`/`mcp.json` and deletes the ~300 MB venv and empty index.
 
 ## v0.7.6 — 2026-08-18
 

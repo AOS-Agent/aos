@@ -210,7 +210,7 @@ case "${1:-help}" in
         # Claude Code reads user-scope MCP servers from ~/.claude.json (the same
         # file `claude mcp add --scope user` writes, and where 059_gws_cli.py
         # registers gws). The old target ~/.claude/mcp.json is only read for
-        # sessions whose cwd is ~/.claude/, so AOS sessions never saw memory or
+        # sessions whose cwd is ~/.claude/, so AOS sessions never saw
         # crawler registered there.
         MCP_FILE="$HOME/.claude.json"
 
@@ -235,13 +235,6 @@ servers = config.setdefault("mcpServers", {})
 
 # AOS MCP servers — defined here, single source of truth
 aos_servers = {
-    "memory": {
-        "type": "stdio",
-        "command": str(home / ".aos/services/memory/.venv/bin/python"),
-        "args": [str(aos_dir / "core/services/memory/main.py")],
-        "cwd": str(aos_dir / "core/services/memory"),
-        "env": {}
-    },
     "crawler": {
         "type": "stdio",
         "command": str(home / ".aos/services/crawler/.venv/bin/python"),
@@ -926,7 +919,7 @@ p.write_text(json.dumps(s, indent=2) + '\n')
 
         # Delete and rebuild venvs
         echo "  Rebuilding service venvs..."
-        for svc in bridge memory; do
+        for svc in bridge; do
             rm -rf "$HOME/.aos/services/$svc/.venv"
         done
         bash "$0" deploy
