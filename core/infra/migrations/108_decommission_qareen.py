@@ -1,5 +1,5 @@
 """
-Migration 107: decommission Qareen (aos#208).
+Migration 108: decommission Qareen (aos#208).
 
 Qareen — the companion service on :4096 (FastAPI + ontology + React screen) —
 is removed from the framework in the same commit as this migration. The

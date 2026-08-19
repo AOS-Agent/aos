@@ -1,5 +1,5 @@
 """
-Migration 109: retire the memory MCP server (operator-approved 2026-08-18).
+Migration 110: retire the memory MCP server (operator-approved 2026-08-18).
 
 The ChromaDB-backed "memory" MCP server never earned its keep: on the
 reference machine its index directory was 0 bytes — not one document ever

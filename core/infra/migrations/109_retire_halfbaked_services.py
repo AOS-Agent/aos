@@ -1,7 +1,7 @@
 """
-Migration 108: retire the half-baked services sweep (operator-approved 2026-08-18).
+Migration 109: retire the half-baked services sweep (operator-approved 2026-08-18).
 
-Companion decision follows Qareen's (migration 107): the framework removes the
+Companion decision follows Qareen's (migration 108): the framework removes the
 code in the same commit; this migration cleans each machine.
 
   - companion  — the pre-Qareen meeting service. Never had a LaunchAgent on
