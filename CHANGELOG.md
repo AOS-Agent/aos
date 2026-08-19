@@ -2,7 +2,7 @@
 
 All notable changes to AOS. Release notes sent via Telegram after each 4am update.
 
-## v0.8.0 — UNRELEASED
+## v0.8.0 — 2026-08-19
 
 Summary: Qareen decommissioned — the companion bet moves to aos-app; the system sheds a whole service, its UI, and the retired Auto Tracker.
 

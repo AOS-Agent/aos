@@ -919,9 +919,7 @@ p.write_text(json.dumps(s, indent=2) + '\n')
 
         # Delete and rebuild venvs
         echo "  Rebuilding service venvs..."
-        for svc in bridge; do
-            rm -rf "$HOME/.aos/services/$svc/.venv"
-        done
+        rm -rf "$HOME/.aos/services/bridge/.venv"
         bash "$0" deploy
         echo ""
 
