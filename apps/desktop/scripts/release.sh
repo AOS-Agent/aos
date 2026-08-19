@@ -46,10 +46,15 @@ KEY_PATH="$HOME/private_keys/AuthKey_${KEY_ID}.p8"
 SIGNING_KEY="$HOME/.tauri/aos-updater.key"
 CONF="src-tauri/tauri.conf.json"
 
-# Where qren.ai is served from (declared in ~/project/hish.am/sites.yaml,
-# port 8097, access: public; renamed from aos.hish.am 2026-08-18). Never
-# hand-edit Caddy — this only writes files.
-SITE_ROOT="/Volumes/AOS-X/hish.am/sites/qren"
+# Where qren.ai is served from. The publish root is a machine-local detail of
+# the operator's serving registry (sites.yaml), so it lives in instance config,
+# never in this repo: ~/.aos/config/qren-site-root (one line, the absolute
+# path), or the QREN_SITE_ROOT env var. Never hand-edit the web server config —
+# this script only writes files into the root.
+SITE_ROOT="${QREN_SITE_ROOT:-}"
+if [ -z "$SITE_ROOT" ] && [ -f "$HOME/.aos/config/qren-site-root" ]; then
+    SITE_ROOT="$(tr -d '[:space:]' < "$HOME/.aos/config/qren-site-root")"
+fi
 UPDATER_DIR="$SITE_ROOT/updater"
 ENDPOINT="https://qren.ai/updater/latest.json"
 
@@ -60,9 +65,12 @@ echo "── preflight ──"
 [ -f "$SIGNING_KEY" ] || fail "updater signing key missing: $SIGNING_KEY
     Without it no update can be signed, and installed apps will never upgrade."
 [ -f "$KEY_PATH" ] || fail "App Store Connect key missing: $KEY_PATH"
+[ -n "$SITE_ROOT" ] || fail "publish root not configured.
+    Put the site's publish root in ~/.aos/config/qren-site-root (one line,
+    absolute path) or set QREN_SITE_ROOT."
 [ -d "$SITE_ROOT" ] || fail "publish target not reachable: $SITE_ROOT
-    /Volumes/AOS-X is not mounted. Mount it before releasing — otherwise the
-    build succeeds and there is nowhere to publish it."
+    The volume it lives on is not mounted. Mount it before releasing —
+    otherwise the build succeeds and there is nowhere to publish it."
 security find-identity -v -p codesigning 2>/dev/null | grep -q "$IDENTITY" \
     || fail "Developer ID identity not in the Keychain: $IDENTITY"
 ISSUER="$(bash "$HOME/aos/core/bin/cli/agent-secret" get ASC_ISSUER_ID)" \
