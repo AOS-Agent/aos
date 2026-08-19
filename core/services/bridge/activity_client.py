@@ -1,76 +1,40 @@
-"""Activity logging client — logs agent actions to the dashboard via HTTP."""
+"""Bridge activity hooks — no-op seam since Qareen was decommissioned (aos#208).
 
-import logging
+These functions used to POST activity/conversation rows to the Qareen
+dashboard (:4096 → ingest_activity / ingest_conversations tables). Nothing
+ever read those rows, so the transport and the tables were removed with the
+rest of Qareen.
 
-import httpx
+The call sites across the bridge (telegram_channel, slack_channel, heartbeat)
+are kept: they mark exactly the moments a future activity feed (aos-app)
+will want — message received, response sent, agent invoked, job completed.
+Wire the new backend in here; the signatures are the contract.
+"""
 
-logger = logging.getLogger(__name__)
+from __future__ import annotations
 
-DASHBOARD_URL = "http://localhost:4096"
-
-
-def log_activity(agent: str, action: str, parent_agent: str = None,
-                 status: str = "completed", summary: str = None) -> int | None:
-    """Log an activity to the dashboard. Returns activity ID or None if dashboard is down."""
-    try:
-        params = {"agent": agent, "action": action, "status": status}
-        if parent_agent:
-            params["parent_agent"] = parent_agent
-        if summary:
-            params["summary"] = summary
-        r = httpx.post(f"{DASHBOARD_URL}/api/activity", params=params, timeout=3)
-        return r.json().get("id")
-    except Exception as e:
-        logger.debug(f"Activity log failed (dashboard down?): {e}")
-        return None
+from typing import Any, Optional
 
 
-def update_activity(activity_id: int, status: str, summary: str = None,
-                    duration_ms: int = None):
-    """Update an activity's status. Silently fails if dashboard is down."""
-    if activity_id is None:
-        return
-    try:
-        params = {"status": status}
-        if summary:
-            params["summary"] = summary
-        if duration_ms is not None:
-            params["duration_ms"] = str(duration_ms)
-        httpx.patch(f"{DASHBOARD_URL}/api/activity/{activity_id}",
-                    params=params, timeout=3)
-    except Exception as e:
-        logger.debug(f"Activity update failed: {e}")
+def log_activity(agent: str, action: str, parent_agent: Optional[str] = None,
+                 **kwargs: Any) -> None:
+    """No-op. Returns None (callers treat the id as optional)."""
+    return None
 
 
-def log_conversation(user_key: str, agent: str = None, topic_name: str = None,
-                     message: str = "", response: str = None,
-                     duration_ms: int = None, message_type: str = "text") -> int | None:
-    """Log a conversation exchange. Returns conversation ID or None."""
-    try:
-        r = httpx.post(f"{DASHBOARD_URL}/api/conversations", json={
-            "channel": "telegram",
-            "user_key": user_key,
-            "agent": agent,
-            "topic_name": topic_name,
-            "message": message,
-            "response": response,
-            "duration_ms": duration_ms,
-            "message_type": message_type,
-        }, timeout=5)
-        return r.json().get("id")
-    except Exception as e:
-        logger.debug(f"Conversation log failed: {e}")
-        return None
+def update_activity(activity_id: Any, status: str, summary: Optional[str] = None,
+                    **kwargs: Any) -> None:
+    """No-op."""
+    return None
 
 
-def update_conversation(conv_id: int, response: str, duration_ms: int = None):
-    """Update a conversation with the response."""
-    if conv_id is None:
-        return
-    try:
-        httpx.patch(f"{DASHBOARD_URL}/api/conversations/{conv_id}", json={
-            "response": response,
-            "duration_ms": duration_ms,
-        }, timeout=5)
-    except Exception as e:
-        logger.debug(f"Conversation update failed: {e}")
+def log_conversation(user_key: str, agent: Optional[str] = None,
+                     topic_name: Optional[str] = None, **kwargs: Any) -> None:
+    """No-op. Returns None (callers treat the conversation id as optional)."""
+    return None
+
+
+def update_conversation(conv_id: Any, response: str,
+                        duration_ms: Optional[int] = None) -> None:
+    """No-op."""
+    return None

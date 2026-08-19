@@ -40,10 +40,10 @@ reg_mod = _load_registry_module()
 def test_live_registry_loads_and_validates():
     reg = reg_mod.load_registry()
     names = {m.name for m in reg}
-    # The core/services dirs + qareen (services.d). n8n and eventd were
+    # The core/services dirs (+ services.d). n8n and eventd were
     # removed: n8n never held a workflow, eventd was retired in April.
     assert {"bridge", "transcriber", "whatsmeow", "listen",
-            "crawler", "memory", "companion", "mesh", "qareen"} <= names
+            "crawler", "memory", "companion", "mesh"} <= names
 
 
 def test_known_truth_is_declared_correctly():

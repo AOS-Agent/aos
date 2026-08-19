@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 # Make the work package importable without installing it. `backend` handles its
-# own `core.qareen.*` path setup at import time.
+# own ontology path setup at import time.
 WORK_DIR_SRC = Path(__file__).parent.parent / "core" / "engine" / "work"
 if str(WORK_DIR_SRC) not in sys.path:
     sys.path.insert(0, str(WORK_DIR_SRC))

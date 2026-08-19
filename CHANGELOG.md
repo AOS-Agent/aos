@@ -2,6 +2,17 @@
 
 All notable changes to AOS. Release notes sent via Telegram after each 4am update.
 
+## v0.8.0 — UNRELEASED
+
+Summary: Qareen decommissioned — the companion bet moves to aos-app; the system sheds a whole service, its UI, and the retired Auto Tracker.
+
+- Removed `core/qareen/` entirely: the :4096 FastAPI service, 238-route API, React screen, voice pipeline, and event bus. The voice/meeting concept is archived at `~/project/_archive/qareen-reference/` for aos-app.
+- Removed the Auto Tracker (shipment tracking): `qareen.tracking`, the four `track-*` crons, `aos-track`, the comms bus consumer, the briefing SHIPMENTS section, and its qareen.db tables (data deletion operator-approved).
+- Moved the work engine's ontology layer (WorkAdapter, types, work_utils, activity, base) from `core/qareen/ontology/` to `core/engine/work/ontology/` — session/task linking now runs fully in-process; the engine no longer imports from or POSTs to a service.
+- Removed the write-only `ingest_activity`/`ingest_conversations`/`ingest_sessions` tables and every hook/bridge HTTP call that fed them; `_notify_dashboard` and the bridge activity client remain as documented no-op seams for a future aos-app event feed.
+- Removed the four `companion-*` session skills from the active set (archived with the reference), the Qareen reconcile checks (`tracker_health`, `dev_backend_plist`), registry/modules/installer/desktop-app wiring, and every dashboard mention in onboarding and skill docs.
+- Added migration 107: boots out the three Qareen LaunchAgents, kills stray deploy watchers, deletes the ~1.1 GB service venv, drops the dead tables, removes companion skill links and the `qareen` state.yaml entry. `qareen.db` itself stays — intelligence, loop signals, cron telemetry, people intel, and work sessions still live there (rename tracked as aos#131).
+
 ## v0.7.6 — 2026-08-18
 
 Summary: One update, one number — the app and the system now ship, and install, as a single release.

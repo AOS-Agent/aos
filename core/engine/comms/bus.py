@@ -86,7 +86,6 @@ class MessageBus:
         _consumer_classes = [
             ("core.comms.consumers.people_intel", "PeopleIntelConsumer"),
             ("core.comms.consumers.pattern_update", "PatternUpdateConsumer"),
-            ("core.comms.consumers.tracking_detect", "TrackingDetectConsumer"),
             ("core.comms.orchestrator", "CommsOrchestrator"),
         ]
         for mod_path, cls_name in _consumer_classes:

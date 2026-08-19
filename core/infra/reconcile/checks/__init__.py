@@ -7,7 +7,6 @@ from .context_freshness import ContextFreshnessCheck
 from .cron_health import CronHealthCheck
 from .dead_code import DeadCodeCheck
 from .deployment_health import DeploymentHealthCheck
-from .dev_backend_plist import DevBackendPlistCheck
 from .dev_browser import DevBrowserCheck
 from .disk_smart import DiskSmartCheck
 from .google_workspace import GoogleWorkspaceCheck
@@ -26,7 +25,6 @@ from .sentinel_plist import SentinelPlistDriftCheck
 from .service_loaded import ServiceLoadedCheck
 from .storage_layout import StorageLayoutCheck
 from .symlinks import AgentSymlinkCheck, RuleSymlinkCheck, SkillSymlinkCheck
-from .tracker_health import TrackerHealthCheck
 from .transcriber import TranscriberServiceCheck
 from .vault_contract import VaultContractCheck
 from .volume_access import VolumeAccessCheck
@@ -128,11 +126,6 @@ ALL_CHECKS = [
     # operator-approved upgrades.
     VaultContractCheck,
 
-    # Dev backend LaunchAgent — verifies qareen-dev is loaded under launchd
-    # so the dev uvicorn on 4097 auto-restarts on crash. Notify-only; never
-    # auto-installs (modifies ~/Library/LaunchAgents/).
-    DevBackendPlistCheck,
-
     # cmux socket control — cmux's default ("cmuxOnly") refuses socket commands
     # from outside cmux, which is every call `aos start` makes. Left alone, the
     # way into the system silently degrades to "Claude Code in whatever terminal
@@ -148,10 +141,6 @@ ALL_CHECKS = [
     # check allowed to repair between deploys.
     ServiceLoadedCheck,
 
-    # Auto Tracker — carrier packs lint-load, qareen.db tracking tables
-    # exist, scheduler singleton lock not stale, carrier Keychain keys not
-    # half-configured. Report-only (NOTIFY); never repairs.
-    TrackerHealthCheck,
     CronHealthCheck,
 
     # Instance hygiene — diff framework declarations against instance state,

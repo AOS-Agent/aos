@@ -1758,7 +1758,7 @@ INFRA_PLISTS=(
 )
 
 # Which plists may the installer deploy? Answered by the service registry
-# (core/services/*/service.yaml + core/qareen/service.yaml + config/services.d/),
+# (core/services/*/service.yaml + config/services.d/),
 # never by listing config/launchagents/.
 #
 # This distinction matters: a glob can see filenames but not `status`. Globbing
@@ -1849,9 +1849,8 @@ install_launchagents() {
         sed "s|__HOME__|$HOME|g" "$f" > "$temp_plist"
 
         # Never load a plist with an unsubstituted __PLACEHOLDER__. Templates
-        # owned by another renderer (the Cloudflare tunnel carries
-        # __CLOUDFLARED__ and __TUNNEL_TOKEN__, filled in by
-        # core/qareen/services/tunnel_manager.py) would otherwise be written
+        # owned by another renderer (e.g. a Cloudflare tunnel template carrying
+        # __CLOUDFLARED__ and __TUNNEL_TOKEN__) would otherwise be written
         # out with a literal placeholder as the program path and then loaded
         # with KeepAlive — a permanent crash loop for a feature nobody enabled.
         if grep -q '__[A-Z_]\{2,\}__' "$temp_plist"; then
@@ -2534,12 +2533,8 @@ PY
                 _check "Service $svc_name venv" "[[ -f '$USER_DIR/services/$svc_name/.venv/bin/python' ]]" ;;
         esac
     done
-    # Verify critical imports in the venvs we require. (The old Dashboard and
-    # Listen checks were removed: dashboard was replaced by Qareen in migration
-    # 054 and its service directory is gone; listen is retired.)
+    # Verify critical imports in the venvs we require.
     _check "Bridge: yaml+httpx" "'$USER_DIR/services/bridge/.venv/bin/python' -c 'import yaml, httpx'"
-    _check "Qareen: fastapi" "'$USER_DIR/services/qareen/.venv/bin/python' -c 'import yaml, fastapi'"
-    _check "Qareen responding" "curl -sfm 5 http://127.0.0.1:4096/api/health"
 
     # Secrets accessible (login keychain)
     _check "Secrets (login keychain)" "security find-generic-password -a aos -s aos.test 2>/dev/null || true"
@@ -2722,39 +2717,6 @@ for name, job in (data.get('jobs') or {}).items():
     fi
 }
 
-QAREEN_URL="http://localhost:4096"
-
-# Wait briefly for the Qareen service to answer, then open it in the operator's
-# browser. Headless / SSH sessions (no GUI) just get the URL printed instead.
-# Never fatal — a browser that won't open is a printed link, not a failed install.
-_open_qareen() {
-    # Headless / SSH sessions have no browser to open — print the link and
-    # return immediately (no point waiting on the service we won't open).
-    if [[ -n "${SSH_CONNECTION:-}${SSH_TTY:-}" ]] || ! command -v open >/dev/null 2>&1; then
-        echo "  ${BOLD}Open AOS in your browser:${RESET}"
-        echo "    ${BRAND}${BOLD}${QAREEN_URL}${RESET}"
-        echo ""
-        return 0
-    fi
-
-    # GUI session: give the Qareen service a moment to answer, then open it so
-    # the operator lands on a live page rather than a connection error.
-    local i=0
-    while [[ $i -lt 15 ]]; do
-        curl -sfm 2 "$QAREEN_URL/api/health" >/dev/null 2>&1 && break
-        sleep 1
-        ((i++)) || true
-    done
-
-    if open "$QAREEN_URL" >/dev/null 2>&1; then
-        echo "  ${MUTED}Opening AOS in your browser…${RESET}"
-    else
-        echo "  ${BOLD}Open AOS in your browser:${RESET}"
-        echo "    ${BRAND}${BOLD}${QAREEN_URL}${RESET}"
-    fi
-    echo ""
-}
-
 print_handoff() {
     local total
     total=$(_total_elapsed)
@@ -2786,16 +2748,9 @@ except: print('Operator')
     echo "  ${MUTED}────────────────────────────────────────────────────${RESET}"
     echo ""
 
-    # Onboarding runs in cmux, for BOTH roles. It used to be gated on
-    # ROLE == developer, which meant an operator — the person who needs it most —
-    # was handed a browser tab and the line "Sahib will take it from here",
-    # while nothing in Qareen ever started onboarding. Qareen is the dashboard;
-    # Sahib lives in the session.
+    # Onboarding runs in cmux, for BOTH roles.
     local onboarded=true
     [[ -f "$HOME/.aos/config/onboarding.yaml" ]] || onboarded=false
-
-    echo "  ${BOLD}AOS is running at${RESET} ${BRAND}${QAREEN_URL}${RESET}"
-    echo ""
 
     if command -v cld &>/dev/null || command -v claude &>/dev/null; then
         if [[ "$onboarded" == false ]]; then
@@ -2812,10 +2767,6 @@ except: print('Operator')
     if [[ "$ROLE" == "developer" ]]; then
         echo "  ${MUTED}Dev workspace: ~/project/aos — framework changes go there, never ~/aos.${RESET}"
         echo ""
-    else
-        # Operators get the dashboard opened for them — but as the dashboard,
-        # not as the place onboarding happens.
-        _open_qareen
     fi
 
     echo "  ${MUTED}────────────────────────────────────────────────────${RESET}"

@@ -457,8 +457,7 @@ think about them — but you should know they exist. A few: {2-3 real ones,
 described in plain language}."
 
 "If anything fails, Steward catches it. If the machine reboots, the scheduler
-detects it and restarts everything. You can see all of this on your dashboard
-under 'Automations'."
+detects it and restarts everything. Ask me for a system check anytime."
 
 ### What Else Is Running
 
@@ -730,7 +729,6 @@ and run: `bash ~/Downloads/connect-to-aos.sh`"
 
 The script creates:
 - `AOS Terminal.command` on their Desktop — double-click to SSH in
-- `AOS Dashboard.webloc` on their Desktop — opens the dashboard
 - SSH config entry — `ssh aos` works from Terminal
 
 **For iPhone:**
@@ -740,15 +738,6 @@ The script creates:
 AskUserQuestion:
 - question: "Install Tailscale on your phone and sign in with the same account."
 - options: ["Done"]
-
-"Now open Safari on your phone and go to:"
-
-```
-http://{tailscale_ip}:4096
-```
-
-"Bookmark that — tap Share → Add to Home Screen. You now have your
-dashboard on your phone's home screen."
 
 ### Verify
 
@@ -768,7 +757,7 @@ If works: "You're in. From anywhere in the world — `ssh aos`."
 
 `python3 ~/aos/core/engine/work/cli.py start "your first task"`
 
-### The Dashboard Moment
+### The Work Review Moment
 
 Complete any remaining onboarding tasks:
 ```bash
@@ -778,20 +767,14 @@ python3 ~/aos/core/engine/work/cli.py done "meet the team" 2>/dev/null
 python3 ~/aos/core/engine/work/cli.py done "remote access" 2>/dev/null
 ```
 
-Open the dashboard:
+Show them the finished project:
 ```bash
-open "http://localhost:4096"
+python3 ~/aos/core/engine/work/cli.py list
 ```
 
-"Take a look at your dashboard. See your onboarding project — 5 tasks, all done.
-That's how the work system tracks everything. Tasks flow from todo to active to done.
-Sessions link to tasks. Patterns compile into scripts. It's all visible here."
-
-Walk them through what they're seeing:
-- Main page: health, activity feed
-- Work page: their completed onboarding project
-- Agents page: Chief, Steward, Advisor
-- "Bookmark this — it's your command center."
+"See your onboarding project — every task done. That's how the work system
+tracks everything. Tasks flow from todo to active to done. Sessions link to
+tasks. Ask me 'what's on my plate' anytime and I'll read it back to you."
 
 ### The Handoff
 
@@ -805,8 +788,7 @@ Let them describe it. Create the task:
 python3 ~/aos/core/engine/work/cli.py add "{their task}" --project {relevant_project}
 ```
 
-"Done. Your first task is tracked. You can check on it anytime — just say `/work list`
-or open the dashboard."
+"Done. Your first task is tracked. You can check on it anytime — just say `/work list`."
 
 ### Bigger Than Tasks — Initiatives
 
@@ -1261,7 +1243,6 @@ Format:
 
 ## Phase 5: First Task
 - Task created: "{title}" in project {project}
-- Dashboard shown: yes
 - Feedback: smooth / confusing / broke
 ```
 

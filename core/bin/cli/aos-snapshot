@@ -362,7 +362,7 @@ def subsystems() -> dict:
     """
     Optional capability layers — present only if their data actually exists.
 
-    This is what onboarding kept missing: comms, people, tracking, initiatives
+    This is what onboarding kept missing: comms, people, initiatives
     and councils all arrived after the skill was written, so a new operator was
     never told about them. Detected, never listed.
     """
@@ -379,9 +379,6 @@ def subsystems() -> dict:
 
     people = _table_count(data / "people.db", "people")
     out["people"] = {"present": people is not None, "contacts": people}
-
-    shipments = _table_count(data / "qareen.db", "shipments")
-    out["tracking"] = {"present": shipments is not None, "shipments": shipments}
 
     tasks = _table_count(data / "work.db", "tasks")
     out["work"] = {"present": tasks is not None, "tasks": tasks}
@@ -488,8 +485,6 @@ def render(snap: dict) -> str:
             live.append(f"comms ({sub['comms']['messages'] or 0:,} messages)")
         if sub["people"]["present"]:
             live.append(f"people ({sub['people']['contacts'] or 0:,} contacts)")
-        if sub["tracking"]["present"]:
-            live.append(f"tracking ({_plural(sub['tracking']['shipments'] or 0, 'shipment')})")
         if sub["initiatives"]["present"]:
             live.append(f"initiatives ({_plural(sub['initiatives']['docs'], 'doc')})")
         if sub["councils"]["present"] and sub["councils"]["count"]:

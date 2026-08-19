@@ -4,7 +4,7 @@ Backs the three tables in ~/.aos/data/comms.db defined by schema.sql:
 conversation_sessions, session_messages, session_actions. See
 ~/.aos/tmp/sessions-build/PLAN.md §2 for the full design — this module is
 the SINGLE SOURCE of the status/state enums referenced there; db.py, the
-turn handler (converse/turn.py, T2b), and the Qareen API (core/qareen/api/
+turn handler (converse/turn.py, T2b), and the retired Qareen API (
 converse.py, T2c) all import from here instead of re-declaring string
 literals. sqlite has no enum type, so these are plain string constants
 plus grouping tuples for validation and status-set queries.

@@ -24,7 +24,6 @@ validates, and returns manifests from:
 
 - `core/services/*/service.yaml` — one per service directory (required; a guard
   test fails CI if a service dir has no manifest)
-- `core/qareen/service.yaml` — qareen lives outside `core/services`
 - `config/services.d/*.yaml` — services with a framework launchd presence but no
   code dir here (e.g. `n8n`, an external tool AOS wraps)
 

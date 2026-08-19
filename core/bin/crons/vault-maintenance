@@ -11,11 +11,11 @@
 # Invoked nightly by cron, wrapped through cron-wrap for telemetry.
 set -e
 
-QAREEN_PYTHON="$HOME/.aos/services/qareen/.venv/bin/python"
+LINT_PYTHON="$HOME/.aos/services/crawler/.venv/bin/python"
 AOS_ROOT="$HOME/aos"
 
-if [ ! -x "$QAREEN_PYTHON" ]; then
-    echo "[vault-maintenance] qareen venv python not found: $QAREEN_PYTHON" >&2
+if [ ! -x "$LINT_PYTHON" ]; then
+    echo "[vault-maintenance] crawler venv python not found: $LINT_PYTHON" >&2
     exit 1
 fi
 
@@ -25,4 +25,4 @@ if [ ! -d "$AOS_ROOT/core/engine/intelligence/lint" ]; then
 fi
 
 cd "$AOS_ROOT/core"
-exec "$QAREEN_PYTHON" -m engine.intelligence.lint.runner "$@"
+exec "$LINT_PYTHON" -m engine.intelligence.lint.runner "$@"

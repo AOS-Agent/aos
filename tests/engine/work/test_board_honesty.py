@@ -8,19 +8,10 @@ Covers the truth repairs:
   * summary() reports authoritative whole-table counts.
   * inbox provenance (source) survives, items can be snoozed and promoted.
   * update_task emits task.status_changed carrying updated_from.
-  * ActionRegistry builds TYPED events (task_id/project first-class), the fix
-    that lets listeners and GitHub sync fire on the API path.
 
 Isolated: uses the work_env fixture (throwaway AOS_WORK_DB), never the real DB.
 """
 from __future__ import annotations
-
-import sys
-from pathlib import Path
-
-# Make the `qareen` package importable (package root is core/).
-sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "core"))
-
 
 # ── entity_history / audit trail ────────────────────────────────────────────
 
@@ -140,51 +131,3 @@ def test_update_task_emits_status_changed(populated_work_env, monkeypatch):
     sent.clear()
     eng.update_task(tid, priority=1)
     assert not [e for e in sent if e.get("action") == "task.status_changed"]
-
-
-# ── ActionRegistry emits TYPED events (the §2.4 fix) ────────────────────────
-
-def _make_registry():
-    from qareen.events.actions import ActionRegistry
-    from qareen.events.audit import AuditLog
-    from qareen.events.bus import EventBus
-
-    class _MemAudit(AuditLog):
-        def __init__(self):
-            pass
-        async def log(self, entry):
-            return None
-
-    bus = EventBus()
-    return ActionRegistry(bus=bus, audit_log=_MemAudit()), bus
-
-
-def test_action_registry_builds_typed_task_created():
-    from qareen.events.actions import ActionDefinition
-    from qareen.events.types import TaskCreated
-
-    registry, _ = _make_registry()
-    definition = ActionDefinition(name="create_task", emits="task.created")
-    result = {"task_id": "aos#9", "title": "Wire the board", "project": "aos"}
-    event = registry._build_event(definition, result)
-    assert isinstance(event, TaskCreated)
-    assert event.task_id == "aos#9"
-    assert event.project == "aos"   # getattr(event, "project") now works → github sync fires
-    assert event.title == "Wire the board"
-
-
-def test_action_registry_status_changed_from_updated():
-    from qareen.events.actions import ActionDefinition
-
-    registry, _ = _make_registry()
-    definition = ActionDefinition(name="update_task", emits="task.updated")
-    result = {
-        "task_id": "aos#9",
-        "updated_fields": ["status"],
-        "status": "active",
-        "updated_from": {"status": "todo"},
-    }
-    extra = registry._build_status_changed(definition, result)
-    assert extra is not None
-    assert extra.event_type == "task.status_changed"
-    assert extra.payload["updated_from"] == {"status": "todo"}

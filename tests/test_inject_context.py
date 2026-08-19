@@ -31,7 +31,7 @@ INJECT_CONTEXT = WORK_PKG / "inject_context.py"
 # ---------------------------------------------------------------------------
 # Scratch work.db — the subset of the canonical schema the hook's read path
 # touches (get_all_tasks, summary(), find_tasks_by_project_or_cwd). Mirrors
-# core/qareen/schemas/qareen.sql for these tables, including the migration-added
+# the legacy qareen.db schema for these tables, including the migration-added
 # columns on `tasks` that the live database carries.
 # ---------------------------------------------------------------------------
 

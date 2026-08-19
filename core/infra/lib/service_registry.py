@@ -10,7 +10,7 @@ service incident in the aos#180 batch traced to that scatter: a transcriber
 killed by a wrong-port health check, a bridge health-probed on an endpoint it
 doesn't serve, `listen` dead for months because monitoring derived from
 deployed plists instead of intent. The fix is a single source of truth: each
-``core/services/<name>/service.yaml`` (plus ``core/qareen/service.yaml`` and
+``core/services/<name>/service.yaml`` (plus
 ``config/services.d/*.yaml`` for services without a code dir) declares the
 service once, and every consumer reads it from here.
 
@@ -87,7 +87,6 @@ import yaml
 # the worktree in dev). Computed from __file__ so it is correct in both.
 AOS_ROOT = Path(__file__).resolve().parents[3]
 SERVICES_DIR = AOS_ROOT / "core" / "services"
-QAREEN_MANIFEST = AOS_ROOT / "core" / "qareen" / "service.yaml"
 SERVICES_D = AOS_ROOT / "config" / "services.d"
 
 _STATUSES = {"active", "retired", "optional"}
@@ -257,12 +256,10 @@ def _validate(raw: dict, source: Path) -> ServiceManifest:
 
 def _manifest_paths() -> list[Path]:
     """Every service.yaml the registry sources, in a stable order:
-    core/services/*/service.yaml, core/qareen/service.yaml, config/services.d/*.yaml."""
+    core/services/*/service.yaml, config/services.d/*.yaml."""
     paths: list[Path] = []
     if SERVICES_DIR.exists():
         paths += sorted(SERVICES_DIR.glob("*/service.yaml"))
-    if QAREEN_MANIFEST.exists():
-        paths.append(QAREEN_MANIFEST)
     if SERVICES_D.exists():
         paths += sorted(SERVICES_D.glob("*.yaml"))
     return paths

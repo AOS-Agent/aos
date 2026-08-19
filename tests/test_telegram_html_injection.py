@@ -342,41 +342,6 @@ def test_bus_notify_consumer_escapes_before_framing():
     assert "unescape" not in router, "router now unescapes; the escape above would be undone"
 
 
-# ===========================================================================
-# The XSS verdict rests on a frontend property. Pin it or it silently expires.
-# ===========================================================================
-
-def test_frontend_never_enables_raw_html():
-    """`brief.py` does not escape its markdown, and that is currently fine.
-
-    It is fine ONLY because every consumer renders brief fields as React text
-    nodes and react-markdown escapes raw HTML by default. Add `rehype-raw`,
-    `allowDangerousHtml`, or a `dangerouslySetInnerHTML`, and unescaped task
-    titles become a genuine XSS — the audit's conclusion would silently expire.
-    This test is the tripwire.
-    """
-    src_dir = ROOT / "core" / "qareen" / "screen" / "src"
-    if not src_dir.is_dir():
-        pytest.skip("frontend not present")
-
-    banned = ("dangerouslySetInnerHTML", "rehype-raw", "rehypeRaw",
-              "allowDangerousHtml", ".innerHTML")
-    hits = []
-    for path in src_dir.rglob("*"):
-        if path.suffix not in (".ts", ".tsx", ".js", ".jsx") or not path.is_file():
-            continue
-        text = path.read_text(errors="ignore")
-        for token in banned:
-            if token in text:
-                hits.append(f"{path.relative_to(src_dir)}: {token}")
-
-    assert not hits, (
-        "raw-HTML rendering appeared in the frontend. Brief fields carry "
-        "unescaped attacker-influenced task titles, so this turns them into "
-        "XSS. Either escape at the brief layer or drop the raw-HTML sink:\n  "
-        + "\n  ".join(hits))
-
-
 def test_escape_is_what_telegram_documents():
     """Sanity-check the primitive against Telegram's stated requirement."""
     assert html.escape("<b>&</b>", quote=False) == "&lt;b&gt;&amp;&lt;/b&gt;"

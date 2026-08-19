@@ -240,7 +240,7 @@ def _work_db_path() -> Path:
 def _session_db_path() -> Path | None:
     """Where sessions/session_tasks live.
 
-    They are Qareen-owned until aos#131, so after the work.db cutover they are
+    They live in qareen.db until aos#131, so after the work.db cutover they are
     only in qareen.db. When AOS_WORK_DB is injected (tests) we never escape to
     the real instance DB — same rule the adapter follows.
     """

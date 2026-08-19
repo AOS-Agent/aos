@@ -1,7 +1,6 @@
 ---
 paths:
   - "**/core/engine/people/**"
-  - "**/core/qareen/ontology/**"
   - "**/people.db*"
 ---
 

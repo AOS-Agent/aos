@@ -14,7 +14,7 @@ prompt to Claude Code when that file is absent, and `install.sh` ends by
 
 > Both roles. Onboarding used to be gated on `ROLE == developer`, which meant a
 > non-developer install finished by opening a browser tab and promising "Sahib
-> will take it from here" — while nothing in Qareen ever started onboarding.
+> will take it from here" — while nothing ever started onboarding.
 
 ## Where things live
 

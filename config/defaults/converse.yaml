@@ -22,7 +22,7 @@ max_concurrent_handlers: 2
 batch_quiet_seconds: 30
 
 # Defaults applied to a new session when the creator doesn't override them
-# (CLI, Qareen POST /sessions, the Sentinel trigger factory in Phase D).
+# (CLI, the Sentinel trigger factory in Phase D).
 defaults:
   trust_level: 2        # 1 gate-all, 2 confidence-gated, 3 autonomous
   max_messages: 30

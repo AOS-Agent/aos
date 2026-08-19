@@ -40,25 +40,25 @@ _project_root = _this_dir.parent.parent               # <root>/
 sys.path.insert(0, str(_project_root))
 
 # If symlinks resolved differently (e.g., core/engine/work/), also try
-# finding root by walking up until we find core/qareen/.
-if not (_project_root / "core" / "qareen").is_dir():
+# finding root by walking up until we find core/engine/work/.
+if not (_project_root / "core" / "engine" / "work").is_dir():
     _candidate = Path(__file__).resolve().parent
     for _ in range(6):
         _candidate = _candidate.parent
-        if (_candidate / "core" / "qareen").is_dir():
+        if (_candidate / "core" / "engine" / "work").is_dir():
             _project_root = _candidate
             sys.path.insert(0, str(_project_root))
             break
 
-from core.qareen.ontology.adapters.work import WorkAdapter
-from core.qareen.ontology.types import (
+from core.engine.work.ontology.work import WorkAdapter
+from core.engine.work.ontology.types import (
     Goal,
     Project,
     Task,
     TaskPriority,
     TaskStatus,
 )
-from core.qareen.ontology.work_utils import (
+from core.engine.work.ontology.work_utils import (
     HandoffFormatter,
     LiveContext,
     ProjectContext,
@@ -128,7 +128,6 @@ def _resolve_db_path() -> Path:
 DB_PATH = _resolve_db_path()
 WORK_DIR = Path.home() / ".aos" / "work"
 ACTIVITY_FILE = WORK_DIR / "activity.yaml"
-DASHBOARD_URL = "http://127.0.0.1:4096"
 AOS_REPO = "hishamalhadi/aos"
 MAX_ACTIVITY = 100
 
@@ -405,31 +404,11 @@ def _log_activity(action: str, task_id: str = None, title: str = None,
 
 
 def _notify_dashboard(event: dict) -> None:
-    """POST work event to dashboard for instant SSE push. Best-effort.
-
-    Never fires under pytest. The suite has no dashboard to talk to, so every
-    POST just waits out its timeout — and each mutation sends two. With the
-    dashboard down or wedged that is ~2s per task, which turned a 51-task test
-    into 104 seconds of blocking on a socket. Same reasoning that already
-    hard-disables GitHub sync under pytest (see _gh_sync_enabled): a test must
-    not depend on, or be slowed by, a service that isn't part of the test.
-
-    Tests that assert on notifications monkeypatch this function and so never
-    reach this guard.
-    """
-    if _in_pytest():
-        return
-    try:
-        data = json.dumps(event).encode()
-        req = urllib.request.Request(
-            f"{DASHBOARD_URL}/api/work/notify",
-            data=data,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        urllib.request.urlopen(req, timeout=1)
-    except Exception:
-        pass  # Dashboard may not be running
+    """Work event hook — no-op since the Qareen dashboard was decommissioned
+    (aos#208). Name and signature are kept: every mutation path calls it,
+    tests monkeypatch it to assert on notifications, and a future UI
+    (aos-app) plugs its event bus in here."""
+    del event
 
 
 def _in_pytest() -> bool:

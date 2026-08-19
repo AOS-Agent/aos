@@ -393,6 +393,4 @@ Strict — do not edit files owned by another workstream.
 | Compiler | `brief_types.py`, `brief.py`, `tests/engine/work/test_brief.py` |
 | Attribution | `actor.py`, `engine.py`, `backend.py`, `cli.py` |
 | Enricher | `enrich.py`, `tests/engine/work/test_enrich.py` |
-| API | `core/qareen/api/work.py` |
-| UI | `core/qareen/screen/src/**` |
 | Wires | `session_close.py`, `detect_projects.py` |

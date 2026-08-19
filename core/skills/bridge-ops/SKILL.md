@@ -35,9 +35,6 @@ ps aux | grep "bridge.*main.py" | grep -v grep
 
 # Listen server
 curl -sf http://localhost:7600/jobs && echo "OK" || echo "DOWN"
-
-# Dashboard
-curl -sf http://localhost:4096/api/health && echo "OK" || echo "DOWN"
 ```
 
 ## Common Failure Modes

@@ -38,7 +38,6 @@ if _HERE not in sys.path:
 
 import actor as _actor  # noqa: E402
 
-DASHBOARD_URL = "http://127.0.0.1:4096"
 AOS_REPO = "hishamalhadi/aos"  # GitHub repo for issue sync
 
 
@@ -299,7 +298,7 @@ def _row_to_task(row: sqlite3.Row) -> dict:
             handoff["blockers"] = blockers
         task["handoff"] = handoff
 
-    # Load session links from session_tasks table (Qareen-owned until aos#131)
+    # Load session links from session_tasks table (in qareen.db until aos#131)
     _sc0 = _session_conn(conn)
     sess_rows = _sc0.execute(
         "SELECT st.session_id, s.started_at, s.outcome "
@@ -737,26 +736,8 @@ def _log_activity(action: str, task_id: str = None, title: str = None,
                     raise
             finally:
                 fcntl.flock(lf, fcntl.LOCK_UN)
-
-        # Push to dashboard SSE bus (fire-and-forget)
-        _notify_dashboard(event)
     except Exception:
         pass  # Activity log is best-effort
-
-
-def _notify_dashboard(event: dict) -> None:
-    """POST work event to dashboard for instant SSE push. Best-effort."""
-    try:
-        data = json.dumps(event).encode()
-        req = urllib.request.Request(
-            f"{DASHBOARD_URL}/api/work/notify",
-            data=data,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        urllib.request.urlopen(req, timeout=1)
-    except Exception:
-        pass  # Dashboard may not be running
 
 
 def _sync_initiative_checkbox(task: dict) -> None:
@@ -822,18 +803,10 @@ def _sync_initiative_checkbox(task: dict) -> None:
 
 
 def notify_initiative_event(action: str, title: str, **kwargs) -> None:
-    """Send an initiative event to the dashboard SSE stream. Best-effort.
-
-    Actions: initiative_created, initiative_update, phase_completed,
-             initiative_completed, gate_check
-    """
-    event = {
-        "action": action,
-        "title": title,
-        "ts": datetime.now().isoformat(),
-    }
-    event.update(kwargs)
-    _notify_dashboard(event)
+    """Initiative event hook — no-op since the Qareen dashboard was
+    decommissioned (aos#208). Kept because initiative flows call it; a future
+    UI (aos-app) can plug its event bus in here."""
+    del action, title, kwargs
 
 
 def get_activity(limit: int = 30) -> list:
@@ -1957,7 +1930,7 @@ def link_session_to_task(task_id: str, session_id: str, outcome: str = None,
     if not row:
         return None
 
-    # Use session_tasks table for linking (Qareen-owned until aos#131)
+    # Use session_tasks table for linking (in qareen.db until aos#131)
     _sc = _session_conn(conn)
     if _sc is None:
         return None  # no session store available (injected env) — skip link

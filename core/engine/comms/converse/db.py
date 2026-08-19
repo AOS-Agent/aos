@@ -1,7 +1,7 @@
 """Converse — typed CRUD layer over the three converse tables in comms.db.
 
 Everything else imports this: the supervisor daemon (core/services/converse,
-T3), the turn handler (converse/turn.py, T2b), the Qareen API (core/qareen/
+T3), the turn handler (converse/turn.py, T2b), the retired Qareen API (
 api/converse.py, T2c), and the migration that creates the schema
 (core/infra/migrations/100_converse_init.py) all go through db.connect() +
 these functions rather than touching sqlite3 directly. See
@@ -51,7 +51,7 @@ def connect(db_path: Path | str | None = None) -> sqlite3.Connection:
 
     Idempotent: schema.sql is entirely CREATE TABLE/INDEX IF NOT EXISTS, so
     this is safe to call on every connect, from every process (the
-    supervisor, the Qareen API, tests) — first one in creates the tables,
+    supervisor, tests) — first one in creates the tables,
     everyone else is a no-op check.
     """
     path = Path(db_path) if db_path else DB_PATH
@@ -126,7 +126,7 @@ def create_session(
 
     Validates the enum-shaped fields against models.py rather than trusting
     the caller — this is the single write path new sessions go through
-    (CLI, Qareen POST /sessions, the Sentinel trigger factory in Phase D).
+    (CLI, the Sentinel trigger factory in Phase D).
     """
     if mode not in models.MODES:
         raise ValueError(f"invalid mode: {mode!r}")
@@ -296,7 +296,7 @@ def add_message(
     """Low-level insert on an OPEN connection (caller commits). Returns the
     new message id. Used internally by ingest_inbound/apply_turn_result and
     exposed for callers that need to compose an insert into a larger
-    transaction (e.g. the Qareen inject endpoint writing one operator row).
+    transaction (e.g. an API inject endpoint writing one operator row).
     """
     if role not in models.ROLES:
         raise ValueError(f"invalid role: {role!r}")
@@ -392,7 +392,7 @@ def list_messages(
     db_path: Path | str | None = None,
 ) -> list[models.SessionMessage]:
     """Transcript window, oldest first. `after_id` gives incremental reads
-    (Qareen's GET /sessions/{id}/messages?after_id=) by filtering to rows
+    (a poll consumer's GET /sessions/{id}/messages?after_id=) by filtering to rows
     created at or after that message's created_at (ties broken by id)."""
     conn = connect(db_path)
     try:

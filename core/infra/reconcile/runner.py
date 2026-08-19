@@ -172,7 +172,7 @@ def _log_results(results: list[CheckResult]):
 
 
 def _write_state(results: list[CheckResult]):
-    """Write summary state for Qareen."""
+    """Write summary reconcile state (read by dashboards/CLIs)."""
     STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
     state = {
         "last_run": datetime.now(timezone.utc).isoformat(),
@@ -183,7 +183,7 @@ def _write_state(results: list[CheckResult]):
         "notify": sum(1 for r in results if r.status == Status.NOTIFY),
         "error": sum(1 for r in results if r.status == Status.ERROR),
         # Counted separately so a deliberately-off service never inflates
-        # the failure count Qareen reads.
+        # the failure count consumers read.
         "disabled": sum(1 for r in results if r.status == Status.DISABLED),
         "checks": {
             r.name: {"status": r.status.value, "message": r.message}

@@ -121,18 +121,6 @@ TERMEOF
 chmod +x "$TERM_CMD"
 say "Created 'AOS Terminal' on your Desktop — double-click to connect."
 
-cat > "$HOME/Desktop/AOS Dashboard.webloc" <<WEBEOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>URL</key>
-    <string>http://${AOS_IP}:4096</string>
-</dict>
-</plist>
-WEBEOF
-say "Created 'AOS Dashboard' on your Desktop."
-
 # ── 4. Verify ────────────────────────────────────────────────────────────────
 echo ""
 if ssh -o BatchMode=yes -o ConnectTimeout=8 aos true 2>/dev/null; then

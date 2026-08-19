@@ -26,7 +26,7 @@ mutation flows through. Nothing new is invented here:
   cheap list query can show attribution without joining history.
 
 The actor string format matches the vocabulary already in the DB and in
-``core/qareen/ontology/activity.py``: ``operator``, ``agent:chief``,
+``core/engine/work/ontology/activity.py``: ``operator``, ``agent:chief``,
 ``system:work``, ``cron:nightly-review``, ``import:islah``, ``unknown``.
 
 All writes here are best-effort: failing to record a signature must never lose

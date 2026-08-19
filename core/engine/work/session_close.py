@@ -38,28 +38,12 @@ except ImportError:
 
 LOG_DIR = Path.home() / ".aos" / "logs"
 LOG_FILE = LOG_DIR / "sessions.jsonl"
-DASHBOARD_URL = "http://127.0.0.1:4096"
 
 # Add ontology backend to path
 _this_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _this_dir)
 _work_dir = os.path.abspath(os.path.join(_this_dir, '..', '..', 'work'))
 sys.path.insert(0, _work_dir)
-
-
-def _notify_dashboard(event: dict) -> None:
-    """POST event to dashboard SSE stream. Best-effort."""
-    try:
-        data = json.dumps(event).encode()
-        req = urllib.request.Request(
-            f"{DASHBOARD_URL}/api/work/notify",
-            data=data,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        urllib.request.urlopen(req, timeout=1)
-    except Exception:
-        pass
 
 
 def _estimate_session_scope(transcript: str) -> dict:
@@ -199,22 +183,6 @@ def main():
     with open(LOG_FILE, "a") as f:
         f.write(json.dumps(entry) + "\n")
 
-    # Notify dashboard of session end (fire-and-forget)
-    try:
-        notify_data = json.dumps({
-            "hook_type": "stop",
-            "payload": {"session_id": session_id}
-        }).encode()
-        req = urllib.request.Request(
-            f"{DASHBOARD_URL}/api/sessions/hook",
-            data=notify_data,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        urllib.request.urlopen(req, timeout=1)
-    except Exception:
-        pass  # Dashboard may not be running
-
     # --- Step 2: Link to work system ---
     try:
         import backend as engine
@@ -317,16 +285,6 @@ def main():
                     with open(tmp_path, "w") as f:
                         f.write(new_content)
                     os.replace(tmp_path, fpath)
-                    # Notify dashboard SSE
-                    try:
-                        _notify_dashboard({
-                            "action": "initiative_update",
-                            "title": title_val,
-                            "detail": "Session touched this initiative",
-                            "ts": datetime.now().isoformat(),
-                        })
-                    except Exception:
-                        pass
                 except Exception:
                     pass  # never crash session_close for initiative updates
         except Exception:

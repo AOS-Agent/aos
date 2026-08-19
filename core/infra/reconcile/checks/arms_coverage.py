@@ -5,7 +5,7 @@ and nothing it describes is silently broken.
 Two failures this check exists to prevent, both observed on 2026-08-17:
 
 1. COVERAGE. modules.yaml described 16 modules while 25 AOS LaunchAgents were
-   running — including qareen (:4096), which the spec calls core. A manifest
+   running. A manifest
    that omits three-fifths of the system is not a source of truth, and the
    Arms panel rendered from it was confidently incomplete. Anything the
    manifest cannot name, it cannot report on, install, or remove.

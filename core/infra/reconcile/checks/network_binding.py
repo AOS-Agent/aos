@@ -3,7 +3,7 @@ Invariant: no AOS-managed service listens on a wildcard address.
 
 ``~/.claude/CLAUDE.md`` states the network rule plainly: *"Network: localhost
 only. Tailscale for remote access."* Most services honour it — bridge (7610),
-transcriber (7602) and whatsmeow (7601) all bind 127.0.0.1. Qareen did not: it
+transcriber (7602) and whatsmeow (7601) all bind 127.0.0.1. Qareen (retired) did not: it
 defaulted to ``0.0.0.0`` and sat on port 4096 serving the full dashboard,
 unauthenticated, over plain HTTP to anything on the LAN — people.db (1,148
 contacts), comms.db (~248,000 messages), every task and project, and the vault
@@ -21,7 +21,7 @@ don't). A deployed LaunchAgent in ~/Library/LaunchAgents is AOS-managed if
 either:
   * its label starts with ``com.aos.`` — the framework's own namespace, or
   * any string in the plist points into the AOS tree (``/aos/`` or ``/.aos/``)
-    — which catches dev/side-loaded jobs like ``com.agent.qareen-dev`` that run
+    — which catches dev/side-loaded jobs that run
     out of an AOS venv under a different label.
 Everything else on the machine is deliberately out of scope. The operator's
 caddy sites (8088/8092) are *supposed* to be public, and their personal
@@ -42,7 +42,7 @@ the operator reaches that service over the LAN today, an unattended "fix"
 would cut their access with no warning — which is a worse failure than the
 exposure it closes (see migration 095, which sets up ``tailscale serve`` and
 verifies it *before* flipping a bind). So: NOTIFY, with the evidence, and let
-a human choose. Same posture as StorageLayoutCheck and TrackerHealthCheck.
+a human choose. Same posture as StorageLayoutCheck.
 
 OPT-OUT
 A genuinely-intentional wildcard bind is declared in ``~/.aos/config/network.yaml``:

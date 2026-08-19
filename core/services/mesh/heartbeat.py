@@ -107,7 +107,7 @@ class HeartbeatSender:
         The set of critical services and their health URLs is derived from the
         service registry (active services with an HTTP health endpoint), never a
         hardcoded list — the old list probed the retired eventd and a mislabeled
-        "dashboard" :4096 (that port is qareen)."""
+        "dashboard" :4096 (retired qareen port)."""
         errors = []
 
         for name, url in _critical_health_urls().items():

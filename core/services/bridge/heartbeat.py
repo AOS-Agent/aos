@@ -18,7 +18,7 @@ WORKSPACE = Path.home() / "aos"
 
 # Service identity (which services exist, their health URLs, their status) comes
 # from the one registry — never a hardcoded probe. This is what stops a RETIRED
-# service (listen) from being reported DOWN and a mislabeled port (qareen :4096
+# service (listen) from being reported DOWN and a mislabeled port (:4096
 # was labeled "Dashboard") from lingering.
 sys.path.insert(0, str(WORKSPACE / "core" / "infra" / "lib"))
 try:

@@ -199,7 +199,7 @@ Always save both the `.d2` source (version-controllable) and the rendered output
 1. **Use nested containers** to show containment (Mac Mini > services > subcomponents)
 2. **Color-code by category**: services=orange, data=cyan, external=pink, agents=purple
 3. **Label all connections** with the protocol/method (HTTP, Telegram API, MCP, SSH, etc.)
-4. **Include ports** on services (`:4096`, `:8880`, `:7600`)
+4. **Include ports** on services (`:4098`, `:7602`, `:7601`)
 5. **Show the operator** as a person shape connecting via Tailscale
 6. **Group related services** visually
 7. **Use direction: right** for horizontal layouts, **direction: down** for vertical
@@ -217,7 +217,6 @@ When asked for the AOS architecture, generate a comprehensive diagram showing:
 
 **Mac Mini Layer:**
 - Bridge (daemon) — connects Telegram ↔ Claude CLI
-- Dashboard (:4096) — web UI
 - Listen (:7600) — job server
 - Memory (MCP) — ChromaDB semantic search
 

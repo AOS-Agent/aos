@@ -220,28 +220,6 @@ def test_backfill_lands_history_once_and_is_idempotent(tmp_path, monkeypatch):
     assert count_second == count_first
 
 
-# ── API governed action ──────────────────────────────────────────────────────
-
-def test_api_append_action_writes_through_adapter(populated_work_env):
-    from core.qareen.actions.work import append_activity as append_action
-    from core.qareen.ontology.types import ObjectType
-
-    eng = populated_work_env["engine"]
-    tid = populated_work_env["t1"]["id"]
-    adapter = eng._get_adapter()
-
-    class _Ont:
-        _adapters = {ObjectType.TASK: adapter}
-
-    out = asyncio.run(append_action(
-        _Ont(), tid, "attempt", "api attempt",
-        data={"branch": "fix/api"}, actor="agent:advisor",
-    ))
-    assert out["task_id"] == tid and out["kind"] == "attempt"
-    story = adapter.list_activity(tid)
-    assert any(e["kind"] == "attempt" and e["body"] == "api attempt" for e in story)
-
-
 # ── the islah narrative fixture (qg#1-shaped, FAKE data) ─────────────────────
 
 def test_islah_shaped_story_reads_coherently_and_nothing_flattened(work_env):

@@ -148,41 +148,12 @@ async def emit_proposal_pending(proposal: dict[str, Any]) -> None:
 # ---------------------------------------------------------------------------
 
 async def _run_actions(rule: ActionRule, *, event: str, payload: dict[str, Any]) -> None:
-    if rule.notify_event:
-        await _emit_event_bus(event, rule, payload)
+    # rule.notify_event used to publish to the Qareen event bus; the bus was
+    # removed with Qareen (aos#208). The flag is accepted but does nothing.
     if rule.notify_telegram:
         await _notify_telegram(event, rule, payload)
     if rule.create_task:
         _create_task(rule, payload)
-
-
-async def _emit_event_bus(event: str, rule: ActionRule, payload: dict[str, Any]) -> None:
-    """Publish to the AOS event bus if available."""
-    try:
-        # The bus client lives in the qareen service; use a thin subprocess
-        # shim to avoid dragging the fastapi app state into engine code.
-        try:
-            from qareen.events.bus import get_bus  # type: ignore
-        except ImportError:
-            return
-        bus = get_bus()
-        if bus is None:
-            return
-        try:
-            from qareen.events.types import Event  # type: ignore
-        except ImportError:
-            return
-        e = Event(
-            event_type=f"intelligence.{event}",
-            source="intelligence.hooks",
-            payload={
-                "rule": rule.name,
-                **{k: v for k, v in payload.items() if k not in ("extraction_json", "compilation_json")},
-            },
-        )
-        await bus.emit(e)
-    except Exception as e:
-        logger.debug("event bus emit failed: %s", e)
 
 
 async def _notify_telegram(event: str, rule: ActionRule, payload: dict[str, Any]) -> None:

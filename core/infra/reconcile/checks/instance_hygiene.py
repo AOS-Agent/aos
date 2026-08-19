@@ -128,9 +128,9 @@ def _manifest_labels():
     """LaunchAgent labels declared in config/modules.yaml.
 
     The module manifest describes every AOS service on the machine, including
-    the nine that have no core/services/ dir and no services.d entry — qareen,
-    work-runner, ios-deploy, qareen-deploy, converse, envoy, sana-watch,
-    slack-watch, qareen-dev. Without reading it, hygiene called five live
+    those that have no core/services/ dir and no services.d entry —
+    work-runner, ios-deploy, converse, envoy, sana-watch, slack-watch.
+    Without reading it, hygiene called five live
     services orphans and offered to delete them: two running daemons and three
     periodic jobs that were merely idle between ticks, which is what healthy
     looks like for a periodic job.

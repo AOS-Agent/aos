@@ -614,7 +614,6 @@ fn compute_usage(id: &str) -> serde_json::Value {
                     format!("{} routine", parts.get(3).map(|s| s.trim_end_matches(".py")).unwrap_or("scheduled"))
                 }
                 (Some("core"), Some("skills"), Some(name)) => format!("{name} skill"),
-                (Some("core"), Some("qareen"), _) => "dashboard".into(),
                 (Some("core"), Some("engine"), Some(name)) => format!("{name} engine"),
                 (Some("core"), Some("infra"), Some("integrations")) => "integration setup".into(),
                 (Some("core"), Some("infra"), Some("lib")) => "core system".into(),
@@ -2620,7 +2619,6 @@ fn health_check() -> Result<HealthReport, String> {
     // Known local endpoints
     let mut endpoints = Vec::new();
     for (name, url) in [
-        ("qareen dashboard", "http://127.0.0.1:4096/"),
         ("bridge", "http://127.0.0.1:4098/health"),
         ("transcriber", "http://127.0.0.1:7602/health"),
         ("n8n", "http://127.0.0.1:5678/"),

@@ -14,7 +14,7 @@ Every subcommand accepts a global --db PATH to target a non-default comms.db
 (verification / tests never touch the live ~/.aos/data/comms.db this way).
 
 Full session lifecycle (takeover/release/inject, import-slack-lite) lives in
-the Qareen API / later migration phases per PLAN.md §7-8 — this CLI covers
+later migration phases per PLAN.md §7-8 — this CLI covers
 the T3 supervisor's own surface: creating sessions and controlling them from
 the terminal.
 """

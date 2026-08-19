@@ -106,7 +106,6 @@ LABELS: dict[str, str] = {
     "transcriber_service": "the transcriber",
     "bridge_poll_liveness": "the Telegram bridge",
     "deployment_health": "the last update",
-    "dev_backend_plist": "the Qareen dev service",
     "cmux_socket_control": "your terminal",
     "dev_browser": "the automation browser",
     "launchagent_python_paths": "background services",
@@ -244,10 +243,6 @@ TEMPLATES: dict[str, dict[str, object]] = {
     "deployment_health": {
         "notify": _deployment_health_notify,
         "fixed": _deployment_health_fixed,
-    },
-    "dev_backend_plist": {
-        "notify": ("🔧 The Qareen dev service isn't loaded, so the dashboard and dev "
-                   "backend may be offline. Logged for a look."),
     },
     "cmux_socket_control": {
         "notify": ("🖥️ I can't open your terminal for you right now, so starting a "

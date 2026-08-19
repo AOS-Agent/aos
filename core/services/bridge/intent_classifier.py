@@ -52,7 +52,7 @@ QMD_BIN = Path.home() / ".bun" / "bin" / "qmd"
 
 # The set of services to health-check, their labels, and their URLs come from
 # the one registry — never a hardcoded menu. The old hardcoded list had four
-# bugs at once: qareen mislabeled "Dashboard", the retired "Listen", and the
+# bugs at once: a service mislabeled "Dashboard", the retired "Listen", and the
 # transcriber probed on :7601 (whatsmeow's port) instead of :7602 (aos#180).
 sys.path.insert(0, str(AOS_DIR / "core" / "infra" / "lib"))
 try:

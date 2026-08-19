@@ -53,8 +53,6 @@ try:
 except Exception:
     _safe_exit(_check_onboarding() or "")
 
-DASHBOARD_URL = "http://127.0.0.1:4096"
-
 # people.db path — overridable for tests
 PEOPLE_DB_PATH = Path.home() / ".aos" / "data" / "people.db"
 
@@ -916,28 +914,6 @@ def main():
         guidance_lines.append("Overdue tasks exist — flag them to the operator if relevant.")
 
     guidance = "\n".join(guidance_lines)
-
-    # Notify dashboard of session start (fire-and-forget)
-    try:
-        Path(cwd).name if cwd else "unknown"
-        notify_data = json.dumps({
-            "hook_type": "tool",
-            "payload": {
-                "session_id": session_id,
-                "tool_name": "SessionStart",
-                "tool_input": {},
-                "cwd": cwd,
-            }
-        }).encode()
-        req = urllib.request.Request(
-            f"{DASHBOARD_URL}/api/sessions/hook",
-            data=notify_data,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        urllib.request.urlopen(req, timeout=1)
-    except Exception:
-        pass  # Dashboard may not be running
 
     output = {
         "additionalContext": f"[Work System]\n{context}\n---\n{guidance}"

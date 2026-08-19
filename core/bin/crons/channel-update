@@ -159,13 +159,6 @@ def collect_services() -> dict:
     except Exception:
         services["Listen"] = {"ok": False, "detail": "DOWN"}
 
-    # Dashboard
-    try:
-        r = httpx.get("http://localhost:4096/api/health", timeout=3)
-        services["Dashboard"] = {"ok": r.status_code == 200, "detail": "OK" if r.status_code == 200 else f"HTTP {r.status_code}"}
-    except Exception:
-        services["Dashboard"] = {"ok": False, "detail": "DOWN"}
-
     # Bridge (check via pgrep)
     try:
         result = subprocess.run(["pgrep", "-f", "apps/bridge/main.py"],

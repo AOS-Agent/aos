@@ -19,7 +19,7 @@
 # alarms out of five, and missed the one service that was genuinely degraded.
 #
 # The same audit found the manifest described ~40% of the AOS services actually
-# running on the machine — including qareen (:4096), which the spec calls CORE.
+# running on the machine.
 # A source of truth that omits three-fifths of the system is not one.
 #
 # Hence schema 2: `kind` (how to judge health), `tier` (core vs experimental),
@@ -123,21 +123,6 @@ modules:
     health:
       log: "$HOME/.aos-logs/crons/scheduler.log"
       max_silence: 900      # fires every 5 min; 3 missed ticks ⇒ degraded
-
-  - id: qareen
-    name: Qareen
-    tier: core
-    kind: daemon
-    category: standard
-    tagline: The always-on companion service the agent layer talks to.
-    ask: null   # core — installed always
-    costs: { resident_ram: "~120 MB" }
-    services: ["com.aos.qareen"]
-    detect:
-      services: ["com.aos.qareen"]
-    health:
-      port: 4096
-      venv: "$HOME/.aos/services/qareen/.venv"
 
   - id: work-runner
     name: Work Runner
@@ -365,32 +350,6 @@ modules:
     services: ["com.aos.ios-deploy"]
     detect:
       services: ["com.aos.ios-deploy"]
-
-  - id: qareen-deploy
-    name: Qareen Deploy
-    tier: experimental
-    kind: daemon
-    category: arm
-    tagline: Ships Qareen builds without you touching a terminal.
-    ask: null
-    costs: { resident_ram: "~30 MB" }
-    services: ["com.aos.qareen-deploy"]
-    detect:
-      services: ["com.aos.qareen-deploy"]
-
-  - id: qareen-dev
-    name: Qareen (dev)
-    tier: experimental
-    kind: daemon
-    category: arm
-    tagline: Development instance of Qareen, run alongside the real one.
-    ask: null
-    consent: "Developer-only. Runs a second Qareen against your live data."
-    costs: { resident_ram: "~120 MB when loaded" }
-    services: ["com.agent.qareen-dev"]
-    status_note: "installed, not loaded"
-    detect:
-      services: ["com.agent.qareen-dev"]
 
 # ── foreign: observed on this machine, NOT owned by AOS ────────────────────
 #
