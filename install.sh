@@ -1784,7 +1784,7 @@ except Exception:
     sys.exit(1)
 
 for manifest in registry:
-    # `optional` is opt-in (mesh, companion, work-runner, the MCP stdio
+    # `optional` is opt-in (mesh, work-runner, the MCP stdio
     # servers) and `retired` must never load. Only `active` ships by default.
     if not manifest.is_active:
         continue

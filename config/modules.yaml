@@ -198,18 +198,6 @@ modules:
       port: 7602
       venv: "$HOME/.aos/services/transcriber/.venv"
 
-  - id: voice-meetings
-    name: Voice — Meetings
-    tier: experimental
-    kind: resource
-    category: arm
-    tagline: Meeting notes with named speakers, recognized by voice.
-    ask: "Enable meeting transcription with speaker recognition?"
-    costs: { resident_ram: "0 (batch jobs)", disk: "~1 GB models", download: "~1 GB" }
-    status_note: "arrives with a system update"
-    detect:
-      paths: ["$HOME/.aos/models/diarization"]
-
   - id: content-extraction
     name: Content Extraction
     tier: experimental
@@ -220,19 +208,6 @@ modules:
     costs: { resident_ram: "0", disk: "several GB (OCR models)", download: "multi-GB" }
     detect:
       commands: ["yt-dlp"]
-
-  - id: shipment-tracking
-    name: Shipment Tracking
-    tier: experimental
-    kind: periodic
-    category: arm
-    tagline: Watches carriers and tells you where packages are.
-    ask: "Track shipments automatically?"
-    costs: { resident_ram: "0 (polling jobs)", network: "carrier APIs every 30 min" }
-    install:
-      dirs: ["$HOME/.aos/data"]
-    detect:
-      paths: ["$HOME/.aos/data/tracking.db"]
 
   - id: remote-access
     kind: resource
@@ -316,21 +291,6 @@ modules:
       services: ["com.aos.sana-watch"]
     health:
       max_silence: 300
-
-  - id: slack-watch
-    name: Slack Watch
-    tier: experimental
-    kind: periodic          # StartInterval 120
-    category: arm
-    tagline: Polls Slack for activity the system should act on.
-    ask: null
-    costs: { resident_ram: "0 (runs every 2 min)" }
-    services: ["com.aos.slack-watch"]
-    connector: true
-    detect:
-      services: ["com.aos.slack-watch"]
-    health:
-      max_silence: 400
 
   - id: ios-deploy
     name: iOS Deploy

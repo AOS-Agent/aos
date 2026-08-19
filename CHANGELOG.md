@@ -12,6 +12,8 @@ Summary: Qareen decommissioned — the companion bet moves to aos-app; the syste
 - Removed the write-only `ingest_activity`/`ingest_conversations`/`ingest_sessions` tables and every hook/bridge HTTP call that fed them; `_notify_dashboard` and the bridge activity client remain as documented no-op seams for a future aos-app event feed.
 - Removed the four `companion-*` session skills from the active set (archived with the reference), the Qareen reconcile checks (`tracker_health`, `dev_backend_plist`), registry/modules/installer/desktop-app wiring, and every dashboard mention in onboarding and skill docs.
 - Added migration 107: boots out the three Qareen LaunchAgents, kills stray deploy watchers, deletes the ~1.1 GB service venv, drops the dead tables, removes companion skill links and the `qareen` state.yaml entry. `qareen.db` itself stays — intelligence, loop signals, cron telemetry, people intel, and work sessions still live there (rename tracked as aos#131).
+- Removed four half-baked services in the same sweep: `companion` (the pre-Qareen meeting service, superseded twice), `listen` (retired since April, now a tombstone manifest in `config/services.d/`), `n8n` (never held a workflow), and `slack-watch` (superseded by sana-watch). Their `modules.yaml` entries — plus the orphaned `shipment-tracking` and never-shipped `voice-meetings` modules — are gone; the scheduler no longer tries to restart retired listen.
+- Added migration 108: removes those services' LaunchAgents, launchers, venvs (~2.2 GB total), and stale state.yaml entries. sana-watch and slack-lite are untouched.
 
 ## v0.7.6 — 2026-08-18
 

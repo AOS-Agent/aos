@@ -129,7 +129,7 @@ def _manifest_labels():
 
     The module manifest describes every AOS service on the machine, including
     those that have no core/services/ dir and no services.d entry —
-    work-runner, ios-deploy, converse, envoy, sana-watch, slack-watch.
+    work-runner, ios-deploy, converse, envoy, sana-watch.
     Without reading it, hygiene called five live
     services orphans and offered to delete them: two running daemons and three
     periodic jobs that were merely idle between ticks, which is what healthy

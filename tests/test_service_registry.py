@@ -43,7 +43,7 @@ def test_live_registry_loads_and_validates():
     # The core/services dirs (+ services.d). n8n and eventd were
     # removed: n8n never held a workflow, eventd was retired in April.
     assert {"bridge", "transcriber", "whatsmeow", "listen",
-            "crawler", "memory", "companion", "mesh"} <= names
+            "crawler", "memory", "mesh"} <= names
 
 
 def test_known_truth_is_declared_correctly():
