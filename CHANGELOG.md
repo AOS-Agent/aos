@@ -2,7 +2,26 @@
 
 All notable changes to AOS. Release notes sent via Telegram after each 4am update.
 
-## v0.8.0 — 2026-08-19
+## v0.8.0 — clean and freeze — 2026-08-20
+
+Summary: The last AOS release. The system sheds what it never used, switches off what it should never have had on by default, and stops offering itself new features — patches only from here. What comes next is Qren, installed deliberately, not an update that arrives at 4am.
+
+- Changed the update policy to **frozen**: `frozen: true` in `~/.aos/config/channel-update.yaml` (written by migration 117) means `check-update` offers patches and nothing else. "Patch" is decided by the VERSION numbers — same major.minor, higher patch — not by trust in the sender, and a machine that cannot read the candidate's version is offered nothing rather than something unidentified.
+- Added a host scope guard to the update path: a machine whose hostname matches the excluded set is logged and skipped, exit 0, before any pull, release build, or service restart. Matching is on exact identity strings and never on a normalized ComputerName — two of the minis on this tailnet are both "Agent's Mac mini", and normalizing makes them the same machine.
+- Changed `work-runner` to off by default fleet-wide (migration 111). `task_runs` held zero rows on every machine audited: 905 lines and a resident LaunchAgent that never once delegated a task. `modules.yaml` called it `tier: core` while the service registry called it `optional` — aligned, and it now carries the ask text of an opt-in service.
+- Changed `sentinel`, `converse` and `envoy` to off by default (migration 112). Autonomous outbound comms is the one surface whose failure mode is a message actually sent to another human; it becomes a future Qren arm rather than something left switched on in a system nobody is developing.
+- Added `~/.aos/config/services.yaml` `enabled:` — the operator's explicit opt-in, which nothing in AOS ever auto-disables. Without it, "off by default" and "off by decree" are the same code path, and an operator who wants Sentinel gets it switched off under them on every update.
+- Added the `default_off_services` reconcile check: migrations run once and cannot notice the opt-out declaration being lost to a hand-edit or a restored older config, which reads downstream as "this service should be running".
+- Fixed `SentinelPlistDriftCheck` ignoring the operator's opt-out — it never declared `service = "sentinel"`, so reconcile could not know which service it owned, and fix-mode re-rendered the plist and restarted Sentinel for an operator who had switched it off. `BridgePollLivenessCheck` had the same gap. Both now declare their service; `transcriber` always did, and the asymmetry was invisible because each file looks correct in isolation.
+- Removed 368 test-fixture tasks from the live `work.db` (migration 114) — the six literal titles from `tests/test_engine.py`, dated April to July, 17% of the task table and the bulk of the `t#` bucket shown in every session-start briefing. Matched on exact title **and** creation window **and** zero activity rows, so a real task that happens to share a title survives.
+- Removed three stale database backups, ~238 MB (migration 113), each copied to `~/.aos/backups/pre-purge/` first. Named files only, never a glob: a `*.bak-*` sweep would delete the safety copy the next operator takes before a risky migration.
+- Changed 3,574 auto-generated "Work in …" threads to closed (migration 115) — one per worktree checkout, 4,059 of 4,061 still "exploring", 2 ever promoted. Closed rather than deleted, and the generation code is deliberately left alone: changing what the system records is a behaviour change, not a freeze.
+- Added the Qren-readiness inventory (migration 116): `~/.aos/data/qren-readiness.json` records machine identity, install shape, detected agent CLIs, every service and whether it is disabled, module tiers, and database sizes — written now, while the system still knows itself. `qren.invite_token` stays empty.
+- Fixed `aos self-test` reporting a stale version: it read `.last-seen-version` (the "what has the operator been shown" marker, updated by the walkthrough) and printed v0.7.5 immediately after a clean update to v0.7.6.
+- Fixed four false "Unknown key" warnings on every self-test run: `location`, `prayer`, `nickname` and `notifications` are real `operator.yaml` fields that the Adhan and briefing systems read, and the validator's allowlist never caught up.
+- Fixed the Telegram add-task reply echoing raw CLI stdout — texting a task returned "Added: Created t#187: …". It now replies in clean English with no IDs, and creates the task in the current project when one is known.
+
+### Earlier in v0.8.0 — the decommission sweep (2026-08-19)
 
 Summary: Qareen decommissioned — the companion bet moves to aos-app; the system sheds a whole service, its UI, and the retired Auto Tracker.
 

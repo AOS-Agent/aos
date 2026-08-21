@@ -106,6 +106,53 @@ _resolve_channel_target() {
     "$AOS_PY" "$CHANNELS_LIB" resolve "$main_hash" "$stable_hash" 2>/dev/null
 }
 
+# ── Freeze + host scope (v0.8.0) ─────────────────────────────────────────────
+#
+# Two pre-flight gates, both decided in core/lib/channels.py so they are unit
+# tested rather than trusted:
+#
+#   host scope — some machines must never be updated by this system. A shared
+#                mini belonging to another account runs AOS and is not part of
+#                the fleet rollout. Exiting 0 (not 1) is deliberate: being out
+#                of scope is a correct outcome, and a non-zero exit here would
+#                report a cron failure every two hours forever.
+#
+#   freeze     — v0.8.0 is the last feature release. A machine with
+#                `frozen: true` in ~/.aos/config/channel-update.yaml stops being
+#                offered feature updates and keeps taking patches.
+
+# Echo TAB-separated: excluded(0|1)  matched  reason
+_host_scope() {
+    "$AOS_PY" "$CHANNELS_LIB" host-scope "$(hostname)" \
+        "$(scutil --get LocalHostName 2>/dev/null || echo -)" 2>/dev/null \
+        || echo -e "0\t-\thost-scope check unavailable"
+}
+
+# 0 if this host may update; 1 (and a log line) if it is excluded.
+host_in_scope() {
+    local excluded matched reason
+    IFS=$'\t' read -r excluded matched reason < <(_host_scope)
+    if [[ "$excluded" == "1" ]]; then
+        log "Out of scope: $reason"
+        _write_state "out_of_scope" "" ""
+        return 1
+    fi
+    return 0
+}
+
+# Echo TAB-separated: allowed(0|1)  kind  reason
+_freeze_gate() {
+    # $1 = current version, $2 = candidate version
+    "$AOS_PY" "$CHANNELS_LIB" freeze-gate "$1" "$2" 2>/dev/null \
+        || echo -e "1\tnot-frozen\tfreeze gate unavailable"
+}
+
+# Read the candidate release's VERSION from a repo at a given ref (best effort).
+_remote_version() {
+    # $1 = repo, $2 = ref-or-hash
+    git -C "$1" show "$2:VERSION" 2>/dev/null | tr -d '[:space:]'
+}
+
 # ── State writers (env-based — no string interpolation into code) ────────────
 
 _write_state() {
@@ -203,6 +250,8 @@ notify() {
 # release-system machines, where ~/aos has no git remote.)
 
 check() {
+    host_in_scope || return 0
+
     local itype
     itype=$(detect_install)
     case "$itype" in
@@ -219,6 +268,8 @@ check() {
 # Returns 0 (true) if an update is available, 1 (false) otherwise.
 # Side effect: refreshes the state file. Used by both check and apply.
 update_available() {
+    host_in_scope || return 1
+
     local itype
     itype=$(detect_install)
     if [[ "$itype" == "release" ]]; then
@@ -273,6 +324,17 @@ check_release() {
         return 0
     fi
 
+    # Freeze gate: a frozen machine is only offered patches.
+    local new_version fz_allowed fz_kind fz_reason
+    new_version=$(_remote_version "$repo" "$remote_hash")
+    IFS=$'\t' read -r fz_allowed fz_kind fz_reason < <(_freeze_gate "$cur_version" "$new_version")
+    if [[ "$fz_allowed" == "0" ]]; then
+        log "Frozen: $fz_reason"
+        _write_state "frozen" "$deployed_hash" "$remote_hash"
+        return 0
+    fi
+    [[ "$fz_kind" == "patch" ]] && log "Frozen machine, patch allowed: $fz_reason"
+
     local behind changes
     behind=$(git -C "$repo" rev-list --count "$deployed_hash..$remote_hash" 2>/dev/null || echo 0)
     changes=$(git -C "$repo" log --oneline "$deployed_hash..$remote_hash" 2>/dev/null | head -5)
@@ -319,6 +381,17 @@ check_git() {
         return 0
     fi
 
+    local cur_version new_version fz_allowed fz_kind fz_reason
+    cur_version=$(cat "$AOS_DIR/VERSION" 2>/dev/null || echo "unknown")
+    new_version=$(_remote_version "$AOS_DIR" "$remote_hash")
+    IFS=$'\t' read -r fz_allowed fz_kind fz_reason < <(_freeze_gate "$cur_version" "$new_version")
+    if [[ "$fz_allowed" == "0" ]]; then
+        log "Frozen: $fz_reason"
+        _write_state "frozen" "$local_hash" "$remote_hash"
+        return 0
+    fi
+    [[ "$fz_kind" == "patch" ]] && log "Frozen machine, patch allowed: $fz_reason"
+
     local behind changes
     behind=$(git rev-list --count "$local_hash..$remote_hash" 2>/dev/null || echo 0)
     changes=$(git log --oneline "$local_hash..$remote_hash" 2>/dev/null | head -5)
@@ -339,6 +412,13 @@ check_git() {
 # problem — the old script never drives its own deployment.
 
 apply() {
+    # The hard stop. Nothing below this line runs on an excluded machine — not
+    # a git pull, not a release build, not a service restart.
+    if ! host_in_scope; then
+        log "Refusing to apply an update on an out-of-scope host"
+        return 0
+    fi
+
     local itype
     itype=$(detect_install)
     case "$itype" in
