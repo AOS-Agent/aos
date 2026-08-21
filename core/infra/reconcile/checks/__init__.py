@@ -6,6 +6,7 @@ from .cmux_socket_control import CmuxSocketControlCheck
 from .context_freshness import ContextFreshnessCheck
 from .cron_health import CronHealthCheck
 from .dead_code import DeadCodeCheck
+from .default_off_services import DefaultOffServicesCheck
 from .deployment_health import DeploymentHealthCheck
 from .dev_browser import DevBrowserCheck
 from .disk_smart import DiskSmartCheck
@@ -63,6 +64,12 @@ ALL_CHECKS = [
     # Settings shows "AOS Bridge", not "python3"
     LauncherNamingCheck,
     ArmsCoverageCheck,
+
+    # Services — the v0.8.0 default-off set stays declared off. Must run
+    # BEFORE ServiceLoadedCheck and the per-service checks: they read the very
+    # file this repairs, so a missing declaration would otherwise be read as
+    # "should be running" for one whole cycle.
+    DefaultOffServicesCheck,
 
     # Services — deployed Sentinel plist matches its framework template
     # (catches drift back to hardcoded operator paths after a manual edit

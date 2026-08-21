@@ -126,11 +126,16 @@ modules:
 
   - id: work-runner
     name: Work Runner
-    tier: core
+    tier: experimental
     kind: daemon
     category: standard
     tagline: Executes queued work in the background so tasks move without you.
-    ask: null   # core — installed always
+    # v0.8.0: OFF by default fleet-wide (migration 111). `task_runs` held zero
+    # rows on every machine audited — built, deployed, never once used. The
+    # service registry has always called this `optional`; `tier: core` here was
+    # the drift the registry exists to prevent. Opt in with `work runner enable`.
+    ask: "Run delegated tasks in the background? (off by default — autonomous agent spawning)"
+    status_note: "off by default since v0.8.0 — opt in with `work runner enable`"
     costs: { resident_ram: "~40 MB" }
     services: ["com.aos.work-runner"]
     detect:
@@ -246,6 +251,7 @@ modules:
     install:
       manual:
         - "Grant Full Disk Access to the sentinel binary in System Settings › Privacy & Security"
+    status_note: "off by default since v0.8.0 — autonomous comms deferred to Qren"
     detect:
       services: ["com.aos.sentinel"]
 
@@ -259,7 +265,7 @@ modules:
     ask: "Enable live voice conversation?"
     costs: { resident_ram: "~80 MB when loaded" }
     services: ["com.aos.converse"]
-    status_note: "installed, intentionally not auto-started"
+    status_note: "off by default since v0.8.0 — autonomous comms deferred to Qren"
     detect:
       services: ["com.aos.converse"]
 
@@ -273,6 +279,7 @@ modules:
     consent: "Sends messages to third parties introducing itself as your agent."
     costs: { resident_ram: "0 (runs every 5 min)" }
     services: ["com.aos.envoy"]
+    status_note: "instance-only, not installable; off by default since v0.8.0"
     detect:
       services: ["com.aos.envoy"]
     health:
@@ -287,6 +294,7 @@ modules:
     ask: null
     costs: { resident_ram: "0 (runs every 90s)" }
     services: ["com.aos.sana-watch"]
+    status_note: "instance-only, not installable"
     detect:
       services: ["com.aos.sana-watch"]
     health:
@@ -301,6 +309,7 @@ modules:
     ask: "Enable direct iOS builds and device installs?"
     costs: { resident_ram: "~30 MB", disk: "Xcode toolchain" }
     services: ["com.aos.ios-deploy"]
+    status_note: "instance-only, not installable"
     detect:
       services: ["com.aos.ios-deploy"]
 
