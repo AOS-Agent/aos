@@ -4,7 +4,7 @@ Migration 117: freeze the machine, and tell the operator once.
 v0.8.0 is the last AOS release. This migration is where that becomes true on
 each machine:
 
-  1. Writes `frozen: true` to ~/.aos/config/channel-update.yaml. From then on
+  1. Writes `frozen: true` to ~/.aos/config/update-policy.yaml. From then on
      `check-update` offers patches and nothing else (core/lib/channels.py
      freeze_gate, tested in tests/test_freeze_and_host_scope.py).
   2. Sends one Telegram notice through the existing aos-notify path.
@@ -25,6 +25,14 @@ The text follows the operator's own Telegram rule — clean English, short
 sentences, no jargon, no paths, no version numbers. It says three things: AOS
 is done, Qren is coming, it will be invite only.
 
+**Its own file, deliberately.** The obvious name was channel-update.yaml, and
+that name is already taken: since March it holds the hourly Telegram
+status-update settings (forum_topic_id, include: {...}). Writing a fresh
+`frozen: true` document there would silently delete a working config for an
+unrelated feature, and nobody would notice until they asked why the hourly
+updates stopped. channels.py still READS a `frozen:` key there for an operator
+who set it by hand; nothing ever writes it.
+
 Idempotent: check() passes once the flag is set and the notice marker exists.
 Reversible: set `frozen: false` (or delete the file) to resume normal updates.
 """
@@ -38,7 +46,7 @@ from pathlib import Path
 
 HOME = Path.home()
 AOS_ROOT = HOME / "aos"
-CONFIG = HOME / ".aos" / "config" / "channel-update.yaml"
+CONFIG = HOME / ".aos" / "config" / "update-policy.yaml"
 NOTICE_MARKER = HOME / ".aos" / "state" / ".freeze-notice-sent"
 NOTIFY_CLI = AOS_ROOT / "core" / "bin" / "cli" / "aos-notify"
 

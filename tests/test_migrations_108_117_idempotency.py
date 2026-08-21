@@ -1,0 +1,574 @@
+"""
+Idempotency and safety tests for the v0.8.0 migrations (111–117).
+
+The migration contract is that up() can run twice. The runner replays on any
+machine whose recorded level is behind, a release can be activated and rolled
+back and activated again, and an operator can run `aos migrate` by hand — so a
+second run doing damage the first did not is a bug that surfaces on someone
+else's machine, at 4am, on data nobody backed up twice.
+
+Every test here runs against a **throwaway copy** of the real ~/.aos/data/work.db
+in tmp_path, with HOME redirected. Nothing touches the live instance. Where the
+real DB is absent (CI), the DB-backed tests build an equivalent fixture, so the
+suite asserts the same behaviour either way rather than silently skipping.
+
+The shape of each test is the same: run up() once, record the world, run up()
+again, assert the world did not move — and separately assert that the first run
+actually did the thing, because a migration that does nothing is trivially
+idempotent and useless.
+"""
+
+from __future__ import annotations
+
+import importlib.util
+import shutil
+import sqlite3
+import sys
+from pathlib import Path
+
+import pytest
+
+REPO = Path(__file__).resolve().parent.parent
+MIGRATIONS = REPO / "core" / "infra" / "migrations"
+LIVE_WORK_DB = Path.home() / ".aos" / "data" / "work.db"
+
+FIXTURE_TITLES = (
+    "Fix the login bug",
+    "Deploy the bridge service",
+    "Refactor the database connection pool",
+    "Real task",
+    "First task",
+    "Second task",
+)
+
+
+# ── Harness ──────────────────────────────────────────────────────────────────
+
+
+def load_migration(name: str, home: Path):
+    """Import a migration with Path.home() already pointing at the sandbox.
+
+    Migrations resolve their paths at import time (HOME = Path.home() at module
+    scope), so the patch has to be in place before exec_module, and the module
+    has to be re-imported per test rather than cached.
+    """
+    path = next(MIGRATIONS.glob(f"{name}*.py"))
+    real_home = Path.home
+    Path.home = staticmethod(lambda: home)  # type: ignore[method-assign]
+    try:
+        spec = importlib.util.spec_from_file_location(f"mig_{name}_{home.name}", path)
+        mod = importlib.util.module_from_spec(spec)
+        sys.path.insert(0, str(REPO / "core" / "infra" / "lib"))
+        spec.loader.exec_module(mod)
+        return mod
+    finally:
+        Path.home = real_home  # type: ignore[method-assign]
+
+
+@pytest.fixture
+def home(tmp_path, monkeypatch):
+    """A sandbox HOME with the AOS tree symlinked in, and nothing else real."""
+    h = tmp_path / "home"
+    (h / ".aos" / "data").mkdir(parents=True)
+    (h / ".aos" / "config").mkdir(parents=True)
+    (h / "Library" / "LaunchAgents").mkdir(parents=True)
+    (h / "aos").symlink_to(REPO)
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: h))
+    return h
+
+
+def _seed_fixture_db(path: Path) -> None:
+    """Build a work.db equivalent to the polluted live one."""
+    conn = sqlite3.connect(str(path))
+    conn.executescript(
+        """
+        CREATE TABLE tasks (
+            id TEXT PRIMARY KEY, title TEXT, status TEXT,
+            project_id TEXT, created_at TEXT, parent_id TEXT
+        );
+        CREATE TABLE task_activity (
+            id INTEGER PRIMARY KEY, task_id TEXT,
+            ts TEXT NOT NULL, actor TEXT NOT NULL, kind TEXT NOT NULL
+        );
+        CREATE TABLE threads (
+            id TEXT PRIMARY KEY, title TEXT, status TEXT,
+            created_at TEXT, project_id TEXT
+        );
+        """
+    )
+    rows = []
+    for i, title in enumerate(FIXTURE_TITLES):
+        for n in range(10):
+            rows.append((f"t#{i}{n}", title, "todo", None, "2026-05-01", None))
+    # A real task that shares a fixture title but was touched — must survive.
+    rows.append(("t#900", "Fix the login bug", "todo", "aos", "2026-05-02", None))
+    # A real task with a fixture title created OUTSIDE the window — must survive.
+    rows.append(("t#901", "Real task", "todo", "aos", "2026-08-01", None))
+    conn.executemany("INSERT INTO tasks VALUES (?,?,?,?,?,?)", rows)
+    insert_activity(conn, "t#900")
+
+    threads = [(f"th{i}", "Work in v0.7.6-abc", "exploring", "2026-05-01", None)
+               for i in range(50)]
+    threads.append(("th-real", "People DB intelligence gaps", "exploring", "2026-05-01", None))
+    threads.append(("th-new", "Work in v0.8.0-xyz", "exploring", "2999-01-01", None))
+    conn.executemany("INSERT INTO threads VALUES (?,?,?,?,?)", threads)
+    conn.commit()
+    conn.close()
+
+
+@pytest.fixture
+def work_db(home):
+    """A throwaway copy of the live work.db, or an equivalent fixture."""
+    dest = home / ".aos" / "data" / "work.db"
+    if LIVE_WORK_DB.exists():
+        shutil.copy2(LIVE_WORK_DB, dest)
+    else:
+        _seed_fixture_db(dest)
+    return dest
+
+
+def insert_activity(conn: sqlite3.Connection, task_id: str) -> None:
+    """Add a task_activity row, whatever that table's NOT NULL columns are.
+
+    The live schema has ts/actor/kind/body NOT NULL and has gained columns
+    before. Hard-coding the column list makes this test a tripwire for
+    unrelated schema changes; introspecting it tests what it means to test —
+    that the task has been touched.
+    """
+    cols = conn.execute("PRAGMA table_info(task_activity)").fetchall()
+    values = {"task_id": task_id}
+    for _cid, name, _type, notnull, default, pk in cols:
+        if name in values or pk or default is not None or not notnull:
+            continue
+        values[name] = "2026-05-01T00:00:00" if name == "ts" else "test"
+    names = ", ".join(values)
+    marks = ", ".join("?" for _ in values)
+    conn.execute(f"INSERT INTO task_activity ({names}) VALUES ({marks})",
+                 tuple(values.values()))
+
+
+def count(db: Path, sql: str, params=()) -> int:
+    conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    try:
+        return conn.execute(sql, params).fetchone()[0]
+    finally:
+        conn.close()
+
+
+# ── 111: work-runner default off ─────────────────────────────────────────────
+
+
+def test_111_disables_then_is_a_noop(home):
+    m = load_migration("111", home)
+    assert m.check() is False
+    assert m.up() is True
+    assert m.check() is True
+
+    before = (home / ".aos" / "config" / "services.yaml").read_text()
+    assert m.up() is True
+    assert (home / ".aos" / "config" / "services.yaml").read_text() == before
+
+
+def test_111_respects_an_explicit_opt_in(home):
+    (home / ".aos" / "config" / "services.yaml").write_text(
+        "enabled:\n  - work-runner\ndisabled: []\n"
+    )
+    m = load_migration("111", home)
+    assert m.check() is True, "an opted-in service is already in its desired state"
+    m.up()
+    from default_off import disabled_services, enabled_services
+    assert "work-runner" in enabled_services()
+    assert "work-runner" not in disabled_services()
+
+
+def test_111_preserves_other_disabled_entries(home):
+    (home / ".aos" / "config" / "services.yaml").write_text(
+        "disabled:\n  - n8n\n  - sana-watch\n"
+    )
+    m = load_migration("111", home)
+    m.up()
+    from default_off import disabled_services
+    off = disabled_services()
+    assert {"n8n", "sana-watch", "work-runner"} <= off
+
+
+# ── 112: comms arms default off ──────────────────────────────────────────────
+
+
+def test_112_disables_all_three_then_is_a_noop(home):
+    m = load_migration("112", home)
+    assert m.check() is False
+    assert m.up() is True
+    assert m.check() is True
+
+    before = (home / ".aos" / "config" / "services.yaml").read_text()
+    m.up()
+    assert (home / ".aos" / "config" / "services.yaml").read_text() == before
+
+
+def test_112_records_every_arm(home):
+    load_migration("112", home).up()
+    from default_off import disabled_services
+    assert {"sentinel", "converse", "envoy"} <= disabled_services()
+
+
+def test_112_leaves_an_opted_in_arm_alone(home):
+    (home / ".aos" / "config" / "services.yaml").write_text(
+        "enabled:\n  - sentinel\ndisabled: []\n"
+    )
+    load_migration("112", home).up()
+    from default_off import disabled_services, enabled_services
+    assert "sentinel" in enabled_services()
+    assert "sentinel" not in disabled_services()
+    assert {"converse", "envoy"} <= disabled_services()
+
+
+# ── 113: stale DB backup purge ───────────────────────────────────────────────
+
+
+def test_113_purges_named_files_and_keeps_a_copy(home):
+    data = home / ".aos" / "data"
+    for name in ("comms.db.bak-preconverse", "qareen.db.bak-2026-06-26-chief-dejunk"):
+        (data / name).write_bytes(b"x" * 1024)
+    m = load_migration("113", home)
+    assert m.check() is False
+    assert m.up() is True
+    assert m.check() is True
+
+    for name in ("comms.db.bak-preconverse", "qareen.db.bak-2026-06-26-chief-dejunk"):
+        assert not (data / name).exists()
+    copies = list((home / ".aos" / "backups" / "pre-purge").iterdir())
+    assert len(copies) == 2
+
+    m.up()  # second run
+    assert len(list((home / ".aos" / "backups" / "pre-purge").iterdir())) == 2
+
+
+def test_113_never_globs(home):
+    """A *.bak-* sweep would eat the next operator's safety copy."""
+    data = home / ".aos" / "data"
+    (data / "comms.db.bak-preconverse").write_bytes(b"x")
+    innocent = data / "work.db.bak-2026-08-20-before-something-risky"
+    innocent.write_bytes(b"precious")
+    load_migration("113", home).up()
+    assert innocent.exists(), "only the three named files may ever be deleted"
+
+
+def test_113_is_a_noop_when_nothing_is_present(home):
+    m = load_migration("113", home)
+    assert m.check() is True
+    assert m.up() is True
+
+
+# ── 114: test-fixture task purge ─────────────────────────────────────────────
+
+
+def test_114_deletes_fixtures_then_is_a_noop(work_db, home):
+    m = load_migration("114", home)
+    before = count(work_db, "SELECT COUNT(*) FROM tasks")
+    assert m.check() is False, "the copied DB should still hold fixture rows"
+
+    assert m.up() is True
+    assert m.check() is True
+    after = count(work_db, "SELECT COUNT(*) FROM tasks")
+    assert after < before, "the first run must actually delete something"
+
+    assert m.up() is True
+    assert count(work_db, "SELECT COUNT(*) FROM tasks") == after
+
+
+def test_114_spares_a_touched_task_with_a_fixture_title(work_db, home):
+    """Zero task_activity rows is one of the three required conditions."""
+    conn = sqlite3.connect(str(work_db))
+    conn.execute(
+        "INSERT INTO tasks (id, title, status, created_at) "
+        "VALUES ('t#guard1', 'Fix the login bug', 'todo', '2026-05-01')"
+    )
+    insert_activity(conn, "t#guard1")
+    conn.commit()
+    conn.close()
+
+    load_migration("114", home).up()
+    assert count(work_db, "SELECT COUNT(*) FROM tasks WHERE id='t#guard1'") == 1
+
+
+def test_114_spares_a_fixture_title_outside_the_window(work_db, home):
+    conn = sqlite3.connect(str(work_db))
+    conn.execute(
+        "INSERT INTO tasks (id, title, status, created_at) "
+        "VALUES ('t#guard2', 'Real task', 'todo', '2026-08-19')"
+    )
+    conn.commit()
+    conn.close()
+
+    load_migration("114", home).up()
+    assert count(work_db, "SELECT COUNT(*) FROM tasks WHERE id='t#guard2'") == 1
+
+
+def test_114_spares_a_similar_but_different_title(work_db, home):
+    conn = sqlite3.connect(str(work_db))
+    conn.execute(
+        "INSERT INTO tasks (id, title, status, created_at) "
+        "VALUES ('t#guard3', 'Fix the login bug in checkout', 'todo', '2026-05-01')"
+    )
+    conn.commit()
+    conn.close()
+
+    load_migration("114", home).up()
+    assert count(work_db, "SELECT COUNT(*) FROM tasks WHERE id='t#guard3'") == 1
+
+
+def test_114_backs_up_before_deleting(work_db, home):
+    load_migration("114", home).up()
+    backups = list((home / ".aos" / "backups" / "pre-purge").glob("work.db.bak-*"))
+    assert backups, "work.db must be copied before any DELETE"
+
+
+def test_114_is_a_noop_without_a_db(home):
+    m = load_migration("114", home)
+    assert m.check() is True
+    assert m.up() is True
+
+
+# ── 115: stale thread close ──────────────────────────────────────────────────
+
+
+def test_115_closes_then_is_a_noop(work_db, home):
+    m = load_migration("115", home)
+    assert m.check() is False
+    open_before = count(work_db, "SELECT COUNT(*) FROM threads WHERE status='exploring'")
+
+    assert m.up() is True
+    assert m.check() is True
+    open_after = count(work_db, "SELECT COUNT(*) FROM threads WHERE status='exploring'")
+    assert open_after < open_before
+
+    assert m.up() is True
+    assert count(work_db, "SELECT COUNT(*) FROM threads WHERE status='exploring'") == open_after
+
+
+def test_115_spares_hand_written_threads(work_db, home):
+    conn = sqlite3.connect(str(work_db))
+    conn.execute(
+        "INSERT INTO threads (id, title, status, created_at) "
+        "VALUES ('th-guard', 'A real exploration', 'exploring', '2020-01-01')"
+    )
+    conn.commit()
+    conn.close()
+
+    load_migration("115", home).up()
+    status = sqlite3.connect(f"file:{work_db}?mode=ro", uri=True).execute(
+        "SELECT status FROM threads WHERE id='th-guard'"
+    ).fetchone()[0]
+    assert status == "exploring", "only auto-generated 'Work in %' threads may be closed"
+
+
+def test_115_spares_recent_threads(work_db, home):
+    conn = sqlite3.connect(str(work_db))
+    conn.execute(
+        "INSERT INTO threads (id, title, status, created_at) "
+        "VALUES ('th-today', 'Work in v0.8.0-now', 'exploring', date('now'))"
+    )
+    conn.commit()
+    conn.close()
+
+    load_migration("115", home).up()
+    status = sqlite3.connect(f"file:{work_db}?mode=ro", uri=True).execute(
+        "SELECT status FROM threads WHERE id='th-today'"
+    ).fetchone()[0]
+    assert status == "exploring", "the current working week stays open"
+
+
+def test_115_closes_rather_than_deletes(work_db, home):
+    total_before = count(work_db, "SELECT COUNT(*) FROM threads")
+    load_migration("115", home).up()
+    assert count(work_db, "SELECT COUNT(*) FROM threads") == total_before
+
+
+def test_115_handles_both_date_formats(work_db, home):
+    """created_at holds bare dates AND full ISO timestamps."""
+    conn = sqlite3.connect(str(work_db))
+    conn.execute(
+        "INSERT INTO threads (id, title, status, created_at) "
+        "VALUES ('th-iso', 'Work in old-iso', 'exploring', '2026-03-21T00:00:00')"
+    )
+    conn.commit()
+    conn.close()
+
+    load_migration("115", home).up()
+    status = sqlite3.connect(f"file:{work_db}?mode=ro", uri=True).execute(
+        "SELECT status FROM threads WHERE id='th-iso'"
+    ).fetchone()[0]
+    assert status == "closed", "an ISO timestamp must compare as old, not be skipped"
+
+
+# ── 116: Qren readiness ──────────────────────────────────────────────────────
+
+
+def test_116_writes_report_then_is_a_noop(home):
+    m = load_migration("116", home)
+    assert m.check() is False
+    assert m.up() is True
+    assert m.check() is True
+
+    report = home / ".aos" / "data" / "qren-readiness.json"
+    assert report.exists()
+    assert m.up() is True
+    assert m.check() is True
+
+
+def test_116_report_has_the_expected_shape(home):
+    m = load_migration("116", home)
+    m.up()
+    import json
+    data = json.loads((home / ".aos" / "data" / "qren-readiness.json").read_text())
+    for key in ("schema_version", "machine", "aos", "engines", "services",
+                "modules", "data", "qren"):
+        assert key in data, key
+
+
+def test_116_invite_token_stays_empty(home):
+    load_migration("116", home).up()
+    import json
+    data = json.loads((home / ".aos" / "data" / "qren-readiness.json").read_text())
+    assert data["qren"]["invite_token"] == ""
+
+
+def test_116_never_claims_an_unprobed_login_state(home):
+    """authenticated is null (not determined), never false (checked and no)."""
+    load_migration("116", home).up()
+    import json
+    data = json.loads((home / ".aos" / "data" / "qren-readiness.json").read_text())
+    for engine in data["engines"].values():
+        assert engine["authenticated"] is None
+
+
+# ── 117: freeze ──────────────────────────────────────────────────────────────
+
+
+def test_117_freezes_then_is_a_noop(home, monkeypatch):
+    m = load_migration("117", home)
+    monkeypatch.setattr(m, "_send_notice", lambda: True)
+
+    assert m.check() is False
+    assert m.up() is True
+    assert m.check() is True
+
+    body = m.CONFIG.read_text()
+    m.up()
+    assert m.CONFIG.read_text() == body
+
+
+def test_117_sends_the_notice_exactly_once(home, monkeypatch):
+    m = load_migration("117", home)
+    sends = []
+    monkeypatch.setattr(m, "_send_notice", lambda: sends.append(1) or True)
+
+    m.up()
+    m.up()
+    m.up()
+    assert len(sends) == 1, "a replayed migration must not re-announce the freeze"
+
+
+def test_117_does_not_retry_after_a_failed_send(home, monkeypatch):
+    """A Telegram outage must not become the same message arriving days later."""
+    m = load_migration("117", home)
+    sends = []
+    monkeypatch.setattr(m, "_send_notice", lambda: sends.append(1) and False)
+
+    m.up()
+    m.up()
+    assert len(sends) == 1
+    assert m.NOTICE_MARKER.exists()
+
+
+def test_117_writes_the_flag_even_if_the_notice_fails(home, monkeypatch):
+    m = load_migration("117", home)
+    monkeypatch.setattr(m, "_send_notice", lambda: False)
+    m.up()
+    assert m._flag_set() is True
+
+
+def test_117_notice_text_follows_the_telegram_rule(home):
+    """Clean English: no IDs, no paths, no version numbers, no jargon."""
+    m = load_migration("117", home)
+    text = m.NOTICE
+    for banned in ("v0.8", "0.8.0", "~/", "/Users/", "migration", "reconcile",
+                   "launchctl", "check-update", "#"):
+        assert banned not in text, f"{banned!r} must not appear in the notice"
+    assert "Qren" in text
+    assert "invite only" in text
+
+
+def test_117_does_not_clobber_an_existing_channel_update_config(home, monkeypatch):
+    """channel-update.yaml already holds the hourly Telegram settings.
+
+    The freeze flag went into that file in the first draft. On any machine set
+    up since March it would have replaced a working config for an unrelated
+    feature with a two-line freeze document, and nothing would have surfaced it
+    until someone asked why the hourly updates stopped.
+    """
+    existing = home / ".aos" / "config" / "channel-update.yaml"
+    body = "forum_topic_id: 88\ninterval: hourly\ninclude:\n  health: true\n"
+    existing.write_text(body)
+
+    m = load_migration("117", home)
+    monkeypatch.setattr(m, "_send_notice", lambda: True)
+    m.up()
+
+    assert existing.read_text() == body, "an unrelated config must not be touched"
+    assert (home / ".aos" / "config" / "update-policy.yaml").exists()
+
+
+def test_117_reads_a_hand_set_flag_in_the_legacy_file(home):
+    """An operator who put frozen: true in channel-update.yaml is still frozen."""
+    (home / ".aos" / "config" / "channel-update.yaml").write_text(
+        "forum_topic_id: 88\nfrozen: true\n"
+    )
+    sys.path.insert(0, str(REPO / "core" / "infra" / "lib"))
+    import channels
+    assert channels.is_frozen(home / ".aos" / "config") is True
+
+
+def test_117_flag_is_readable_by_the_freeze_gate(home, monkeypatch):
+    """The migration and the gate must agree on the file it writes."""
+    m = load_migration("117", home)
+    monkeypatch.setattr(m, "_send_notice", lambda: True)
+    m.up()
+
+    sys.path.insert(0, str(REPO / "core" / "infra" / "lib"))
+    import channels
+    config_dir = home / ".aos" / "config"
+    assert channels.is_frozen(config_dir) is True
+    assert channels.freeze_gate("0.8.0", "0.9.0", channels.is_frozen(config_dir))["allowed"] is False
+    assert channels.freeze_gate("0.8.0", "0.8.1", channels.is_frozen(config_dir))["allowed"] is True
+
+
+# ── The live instance is never touched ───────────────────────────────────────
+
+
+def test_live_instance_is_untouched_by_this_suite():
+    """Guard the guard: these tests must never write to the real ~/.aos.
+
+    This is not paranoia. The first version of default_off.py resolved
+    Path.home() at import time, which means whichever caller imported it first
+    decided — for the whole process — whose services.yaml every later caller
+    wrote to. In a test run that is the operator's own machine.
+    """
+    assert Path.home() == Path("~").expanduser(), "Path.home patch leaked out of a test"
+
+    policy = Path.home() / ".aos" / "config" / "update-policy.yaml"
+    assert not policy.exists(), (
+        "the live instance has a freeze flag — either the suite wrote outside its "
+        "sandbox, or migration 117 was run for real against this machine"
+    )
+
+    marker = Path.home() / ".aos" / "state" / ".freeze-notice-sent"
+    assert not marker.exists(), "the freeze notice marker was written to the live instance"
+
+    services = Path.home() / ".aos" / "config" / "services.yaml"
+    if services.exists():
+        assert "enabled:" not in services.read_text(), (
+            "the live services.yaml gained an `enabled:` key — a sandboxed "
+            "migration wrote to the real instance"
+        )

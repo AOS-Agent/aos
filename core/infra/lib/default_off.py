@@ -31,8 +31,41 @@ from __future__ import annotations
 
 from pathlib import Path
 
-HOME = Path.home()
-SERVICES_CONFIG = HOME / ".aos" / "config" / "services.yaml"
+# Resolved on every call, never captured at import.
+#
+# A module-level `Path.home()` is frozen at the moment of first import, and
+# this module is imported by migrations, by a reconcile check, and by tests
+# that redirect HOME to a sandbox. Whichever caller imported it first would
+# decide, for the whole process, which machine's config every later caller
+# wrote to — and in a test run that means writing to the operator's real
+# services.yaml.
+def _config_path() -> Path:
+    return Path.home() / ".aos" / "config" / "services.yaml"
+
+
+class _ConfigPath:
+    """`SERVICES_CONFIG` as a live value, for callers that print or stat it."""
+
+    def __truediv__(self, other):
+        return _config_path() / other
+
+    def __getattr__(self, name):
+        return getattr(_config_path(), name)
+
+    def __fspath__(self):
+        return str(_config_path())
+
+    def __str__(self):
+        return str(_config_path())
+
+    def __repr__(self):
+        return repr(_config_path())
+
+    def __eq__(self, other):
+        return _config_path() == other
+
+
+SERVICES_CONFIG = _ConfigPath()
 
 # The v0.8.0 default-off set. work-runner: 0 rows in task_runs, ever.
 # sentinel/converse/envoy: autonomous comms, deferred to Qren.
@@ -65,10 +98,10 @@ def _yaml():
 def _read() -> dict:
     """The config as a dict. Unreadable / malformed / absent → {}."""
     yaml = _yaml()
-    if yaml is None or not SERVICES_CONFIG.exists():
+    if yaml is None or not _config_path().exists():
         return {}
     try:
-        raw = yaml.safe_load(SERVICES_CONFIG.read_text())
+        raw = yaml.safe_load(_config_path().read_text())
     except Exception:  # noqa: BLE001
         return {}
     return raw if isinstance(raw, dict) else {}
@@ -125,9 +158,10 @@ def disable_service(name: str) -> bool:
     names = sorted(set(current) | {name}) if isinstance(current, list) else [name]
     data["disabled"] = names
 
-    SERVICES_CONFIG.parent.mkdir(parents=True, exist_ok=True)
+    path = _config_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
     body = yaml.safe_dump(data, sort_keys=False, default_flow_style=False)
-    SERVICES_CONFIG.write_text(_HEADER + "\n" + body)
+    path.write_text(_HEADER + "\n" + body)
     return True
 
 
@@ -155,8 +189,9 @@ def enable_service(name: str) -> bool:
     data["enabled"] = sorted(enabled)
     data["disabled"] = sorted(disabled)
 
-    SERVICES_CONFIG.parent.mkdir(parents=True, exist_ok=True)
-    SERVICES_CONFIG.write_text(
+    path = _config_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
         _HEADER + "\n" + yaml.safe_dump(data, sort_keys=False, default_flow_style=False)
     )
     return True

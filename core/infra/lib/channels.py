@@ -199,23 +199,25 @@ def promotion_guard(
 # keeps the operator's bridge running; here, failing open would push an
 # unknown release onto a machine that asked to stop receiving them.
 
-FREEZE_FILE = "channel-update.yaml"
+# The flag lives in its OWN file. `channel-update.yaml` was the obvious name
+# and is already taken: on machines going back to March it holds the hourly
+# Telegram status-update settings (forum_topic_id, include: {...}). A freeze
+# migration that wrote a fresh `frozen: true` document there would silently
+# delete a working config for an unrelated feature — the kind of collision that
+# is invisible until someone asks why the hourly updates stopped. So the policy
+# gets update-policy.yaml, and channel-update.yaml is only ever READ, never
+# written, in case an operator set the flag there by hand.
+FREEZE_FILE = "update-policy.yaml"
+LEGACY_FREEZE_FILES = ("channel-update.yaml",)
 
 
 def freeze_config_path(config_dir=None) -> Path:
+    """The file the freeze flag is WRITTEN to."""
     base = Path(config_dir) if config_dir else Path.home() / ".aos" / "config"
     return base / FREEZE_FILE
 
 
-def is_frozen(config_dir=None) -> bool:
-    """True when this machine has declared itself frozen.
-
-    Total by construction: a missing file, unreadable file, malformed YAML, or
-    a non-boolean `frozen` all mean "not frozen". A machine must never be
-    accidentally frozen by a typo — that failure mode is silent and lasts until
-    someone notices months of missed patches.
-    """
-    path = freeze_config_path(config_dir)
+def _frozen_in(path: Path) -> bool:
     try:
         text = path.read_text()
     except (FileNotFoundError, NotADirectoryError, OSError):
@@ -226,6 +228,20 @@ def is_frozen(config_dir=None) -> bool:
     except Exception:  # noqa: BLE001
         return False
     return isinstance(raw, dict) and raw.get("frozen") is True
+
+
+def is_frozen(config_dir=None) -> bool:
+    """True when this machine has declared itself frozen.
+
+    Total by construction: a missing file, unreadable file, malformed YAML, or
+    a non-boolean `frozen` all mean "not frozen". A machine must never be
+    accidentally frozen by a typo — that failure mode is silent and lasts until
+    someone notices months of missed patches.
+    """
+    base = Path(config_dir) if config_dir else Path.home() / ".aos" / "config"
+    if _frozen_in(base / FREEZE_FILE):
+        return True
+    return any(_frozen_in(base / name) for name in LEGACY_FREEZE_FILES)
 
 
 def parse_version(raw: str | None) -> tuple[int, int, int] | None:
