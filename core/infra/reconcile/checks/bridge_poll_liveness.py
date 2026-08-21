@@ -41,6 +41,12 @@ class BridgePollLivenessCheck(ReconcileCheck):
     name = "bridge_poll_liveness"
     description = "Bridge Telegram poll loop is fetching (not silently wedged)"
 
+    # See SentinelPlistDriftCheck: a single-service check that repairs by
+    # restarting must name its service, or the operator's opt-out cannot reach
+    # it. This one restarts the bridge; an operator who disabled the bridge
+    # would have had it restarted out from under them on the next cycle.
+    service = "bridge"
+
     HOME = Path.home()
     STATE_FILE = HOME / ".aos" / "services" / "bridge" / ".last_poll.json"
     GOALS_YAML = HOME / "aos" / "config" / "goals.yaml"

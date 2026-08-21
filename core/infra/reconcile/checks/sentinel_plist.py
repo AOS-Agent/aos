@@ -30,6 +30,17 @@ class SentinelPlistDriftCheck(ReconcileCheck):
     name = "sentinel_plist_drift"
     description = "Deployed Sentinel plist matches its framework template"
 
+    # The service this check enforces. Without it the runner cannot know this
+    # check owns Sentinel, so an operator who switched Sentinel OFF still got
+    # fix() called on every deploy — which re-renders the plist and calls
+    # restart_launchagent(), starting the service they disabled. The opt-out
+    # existed and was simply not consulted, because the check never said what
+    # it was about. TranscriberServiceCheck declared this from the start; this
+    # one did not, and the asymmetry was invisible: both look correct in
+    # isolation. As of v0.8.0 sentinel is default-off, so this was the exact
+    # path that would have re-armed the arm we just switched off.
+    service = "sentinel"
+
     PLIST_NAME = "com.aos.sentinel"
     HOME = Path.home()
     TEMPLATE_PATH = (
