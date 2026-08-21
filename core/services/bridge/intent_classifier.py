@@ -396,34 +396,100 @@ def handle_list_tasks(text: str) -> str:
         return f"<b>Tasks</b>\nError loading tasks: {esc(e)}"
 
 
+def _current_project() -> str | None:
+    """The project the operator is most likely working in right now.
+
+    The bridge is a daemon: its own cwd is ~/.aos/services/bridge, so the CLI's
+    detect_project_from_cwd() has never once resolved a project for a task
+    texted in from Telegram — every one of them landed unassigned in `t#`.
+
+    The most recently touched *active* task is a real signal of what the
+    operator has open, which is more than a daemon's working directory will
+    ever be. It is still a guess, so it is a soft one: no active task means no
+    project, not a stale one from last week.
+    """
+    db = Path.home() / ".aos" / "data" / "work.db"
+    if not db.exists():
+        return None
+    try:
+        import sqlite3
+        conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    except Exception:  # noqa: BLE001
+        return None
+    try:
+        # Columns are project_id / modified_at — NOT project / updated_at,
+        # which is what the CLI's own vocabulary suggests and what the schema
+        # does not have.
+        row = conn.execute(
+            """
+            SELECT project_id FROM tasks
+            WHERE status = 'active'
+              AND project_id IS NOT NULL AND project_id != ''
+            ORDER BY COALESCE(modified_at, created_at) DESC
+            LIMIT 1
+            """
+        ).fetchone()
+    except Exception:  # noqa: BLE001
+        return None
+    finally:
+        conn.close()
+    return row[0] if row else None
+
+
+def _project_display(project_id: str) -> str:
+    """A project id rendered for a human. 'quran-garden' → 'Quran Garden'."""
+    return project_id.replace("-", " ").replace("_", " ").title()
+
+
 def handle_add_task(text: str) -> str:
     """Add a task to the v2 work engine."""
-    text_lower = text.lower().strip()
+    text = text.strip()
+    text_lower = text.lower()
 
-    # Strip trigger phrases to get the title (colon-separated or space-separated)
-    for prefix in ("create task: ", "create task ", "new task: ", "new task ",
-                    "add task: ", "add task ", "task: ", "task "):
+    # Strip the trigger phrase to get the title.
+    #
+    # Every prefix here used to require a TRAILING SPACE, so a bare "add task:"
+    # matched none of them, fell through to the else branch, and created a task
+    # whose title was the words "add task:". That is how "--help" ended up
+    # persisted twice as a task title. The trailing space is dropped from the
+    # patterns and stripped from the remainder instead.
+    for prefix in ("create task:", "create task", "new task:", "new task",
+                   "add task:", "add task", "task:", "task"):
         if text_lower.startswith(prefix):
-            title = text[len(prefix):].strip()
+            title = text[len(prefix):].strip().lstrip(":").strip()
             break
     else:
-        title = text.strip()
+        title = text
 
     if not title:
-        return "Please provide a task title. Example: add task: Fix the login page"
+        return "What should the task say? For example: add task: Fix the login page"
+
+    cmd = [sys.executable, str(AOS_DIR / "core" / "engine" / "work" / "cli.py"),
+           "add", title]
+    project = _current_project()
+    if project:
+        cmd += ["--project", project]
 
     try:
-        result = subprocess.run(
-            [sys.executable, str(AOS_DIR / "core" / "engine" / "work" / "cli.py"), "add", title],
-            capture_output=True, text=True, timeout=10,
-        )
-        if result.returncode == 0:
-            output = result.stdout.strip()
-            return f"Added: {output}"
-        else:
-            return f"Could not add task: {result.stderr[:200]}"
-    except Exception as e:
-        return f"Error adding task: {e}"
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("add task failed: %s", e)
+        return "😕 Couldn't save that one. Try again in a moment."
+
+    if result.returncode != 0:
+        # The operator cannot act on a Python traceback, and it is the last
+        # thing anyone wants on their phone. It goes to the log; they get a
+        # sentence.
+        logger.warning("add task failed: %s", result.stderr[:500])
+        return "😕 Couldn't save that one. Try again in a moment."
+
+    # Reply in the operator's own words, not the CLI's. This used to return the
+    # command's raw stdout — "Added: Created t#187: Fix the login page" — which
+    # put an internal ID in front of the operator every time they texted a
+    # task, against the house Telegram rule (clean English, no IDs, no jargon).
+    if project:
+        return f"✅ Added to {esc(_project_display(project))}: {esc(title)}"
+    return f"✅ Added: {esc(title)}"
 
 
 def handle_done_task(text: str) -> str:
