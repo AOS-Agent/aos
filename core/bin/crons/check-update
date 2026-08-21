@@ -130,8 +130,10 @@ _host_scope() {
 
 # 0 if this host may update; 1 (and a log line) if it is excluded.
 host_in_scope() {
-    local excluded matched reason
-    IFS=$'\t' read -r excluded matched reason < <(_host_scope)
+    # `matched` is read only to consume the field; the reason line already
+    # names the host, so it is discarded rather than kept as an unused local.
+    local excluded reason
+    IFS=$'\t' read -r excluded _ reason < <(_host_scope)
     if [[ "$excluded" == "1" ]]; then
         log "Out of scope: $reason"
         _write_state "out_of_scope" "" ""

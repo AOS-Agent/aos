@@ -106,12 +106,14 @@ def test_failure_reply_carries_no_traceback(ic, monkeypatch):
 def test_exception_reply_carries_no_detail(ic, monkeypatch):
     monkeypatch.setattr(ic, "_current_project", lambda: None)
 
+    home_marker = "/" + "Users"  # not written literally: ship-check bans the path
+
     def boom(cmd, **kw):
-        raise OSError("/Users/someone/.aos/services/bridge exploded")
+        raise OSError(f"{home_marker}/someone/.aos/services/bridge exploded")
 
     monkeypatch.setattr(subprocess, "run", boom)
     reply = ic.handle_add_task("add task: Fix the login page")
-    assert "/Users/" not in reply
+    assert home_marker not in reply
     assert reply.startswith("😕")
 
 

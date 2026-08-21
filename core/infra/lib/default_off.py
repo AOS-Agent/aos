@@ -31,6 +31,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+
 # Resolved on every call, never captured at import.
 #
 # A module-level `Path.home()` is frozen at the moment of first import, and

@@ -301,20 +301,17 @@ def freeze_gate(current: str | None, candidate: str | None, frozen: bool) -> dic
 # remembering not to run a command.
 #
 # Matching is on identity strings, never on a normalized ComputerName. The two
-# minis are literally "Agent's Mac mini" and "Agent's Mac mini (2)"; strip the
+# minis carry ComputerNames that differ only by a "(2)" suffix; strip the
 # punctuation and they collide, and the guard would refuse to update the very
-# machine the release rolls out to first. The excluded machine's LocalHostName
-# is "Agents-Mac-mini" and its tailscale name "agents-mac-mini-2"; this one's
-# are "agentalhadi" / "agents-mac-mini". Those are distinguishable, so match
-# them exactly and leave ComputerName out of it.
+# machine the release rolls out to first — silently, while looking correct.
+# The excluded machine's LocalHostName is "Agents-Mac-mini" and its tailscale
+# name "agents-mac-mini-2". Those are exact, distinguishable strings, so match
+# them exactly and leave ComputerName out of it entirely.
 
 EXCLUDED_HOST_PATTERNS = (
-    "agents-mac-mini-2",   # tailscale hostname (prefix match: .local, .ts.net)
+    "agents-mac-mini-2",      # tailscale hostname (prefix match: .local, .ts.net)
     "agents-mac-mini.local",  # LocalHostName-derived hostname of the excluded mini
 )
-
-# Never excluded, whatever else matches. The release machine.
-HOST_ALLOWLIST = ("agentalhadi",)
 
 OVERRIDE_FILE = "allow-updates"
 
@@ -341,12 +338,12 @@ def excluded_host(hostname=None, local_hostname=None, config_dir=None) -> dict:
     if not names:
         return {"excluded": False, "matched": None, "reason": "no hostname to test"}
 
-    for allowed in HOST_ALLOWLIST:
-        for n in names:
-            if n == allowed or n == f"{allowed}.local":
-                return {"excluded": False, "matched": n,
-                        "reason": f"{n} is on the host allowlist"}
-
+    # Exclusion is by exact match on the patterns above, with no allowlist
+    # counterweight. An allowlist naming the release machine was the first
+    # draft; it put an operator's username in framework code that ships to
+    # every machine, to defend against a collision the patterns already cannot
+    # produce. If a pattern is ever loose enough to need an allowlist, the
+    # pattern is the thing that is wrong.
     override = freeze_config_path(config_dir).parent / OVERRIDE_FILE
     for pattern in EXCLUDED_HOST_PATTERNS:
         for n in names:

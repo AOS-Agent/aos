@@ -21,7 +21,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "core" / "lib"))
 
 import channels  # noqa: E402
 
-
 # ── Version parsing ──────────────────────────────────────────────────────────
 
 
@@ -140,19 +139,21 @@ def test_release_machine_is_not_excluded(tmp_path):
     This is the test that would have caught a normalized-ComputerName
     implementation: both minis answer to "Agent's Mac mini", and a guard that
     compares those strings bricks the rollout on the first machine while
-    looking like it is working.
+    looking like it is working. The release machine's own names are its
+    LocalHostName and the bare tailscale name — neither is an excluded pattern.
     """
-    r = channels.excluded_host("agentalhadi.local", "agentalhadi", tmp_path)
-    assert r["excluded"] is False
+    assert channels.excluded_host("host-four.local", "host-four", tmp_path)["excluded"] is False
+    assert channels.excluded_host("agents-mac-mini", "host-four", tmp_path)["excluded"] is False
 
 
 @pytest.mark.parametrize("hostname,local", [
-    ("hisham-pi5", "hisham-pi5"),
-    ("hishams-imac.local", "hishams-imac"),
-    ("mhs-macbook-pro-4", "mhs-macbook-pro-4"),
-    ("agents-mac-mini", "agentalhadi"),      # this Mini's tailscale name
+    ("host-one", "host-one"),
+    ("host-two.local", "host-two"),
+    ("host-three-4", "host-three-4"),
+    ("agents-mac-mini", "host-four"),  # the release Mini's own tailscale name
 ])
-def test_fleet_machines_are_not_excluded(hostname, local, tmp_path):
+def test_other_fleet_machines_are_not_excluded(hostname, local, tmp_path):
+    """Only the one excluded mini matches — everything else updates normally."""
     assert channels.excluded_host(hostname, local, tmp_path)["excluded"] is False
 
 
@@ -188,7 +189,7 @@ def test_host_scope_is_case_insensitive(tmp_path):
 def test_cli_host_scope_exit_codes(capsys, tmp_path):
     """Exit 1 for excluded, 0 for in-scope — bash branches on this."""
     assert channels.main(["host-scope", "Agents-Mac-mini.local", "-", str(tmp_path)]) == 1
-    assert channels.main(["host-scope", "agentalhadi.local", "-", str(tmp_path)]) == 0
+    assert channels.main(["host-scope", "host-four.local", "-", str(tmp_path)]) == 0
 
 
 def test_cli_host_scope_output_is_tab_separated(capsys, tmp_path):
