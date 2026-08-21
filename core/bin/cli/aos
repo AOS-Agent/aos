@@ -459,11 +459,26 @@ except SyntaxError as e:
             echo "  ~ Initiative directory missing (run: aos migrate)"
         fi
 
-        # Check version tracking
-        if [ -f "$HOME/.aos/config/.last-seen-version" ]; then
-            echo "  ✓ Version tracking active ($(cat "$HOME/.aos/config/.last-seen-version"))"
+        # Check version tracking.
+        #
+        # Report the version that is actually DEPLOYED, not .last-seen-version.
+        # That file answers a different question — "what has the operator been
+        # shown in the what's-new walkthrough" — and it lags by design. Reading
+        # it here made self-test print v0.7.5 in the minutes after a clean
+        # update to v0.7.6: a wrong number inside "All checks passed", which is
+        # worse than no number, because release verification is exactly when
+        # someone reads this line to confirm the update landed.
+        deployed_version=$(cat "$AOS_DIR/VERSION" 2>/dev/null || echo "")
+        if [ -n "$deployed_version" ]; then
+            seen_version=$(cat "$HOME/.aos/config/.last-seen-version" 2>/dev/null || echo "")
+            if [ -n "$seen_version" ] && [ "$seen_version" != "$deployed_version" ]; then
+                # Not an error: the walkthrough simply hasn't run yet.
+                echo "  ✓ Running $deployed_version (what's-new not yet shown for it)"
+            else
+                echo "  ✓ Running $deployed_version"
+            fi
         else
-            echo "  ~ Version tracking not initialized"
+            echo "  ~ No VERSION file — cannot determine deployed version"
         fi
 
         # Validate config files

@@ -26,11 +26,24 @@ class ValidationResult:
 
 
 # Keys we expect in operator.yaml. Unknown keys produce a warning.
+#
+# This allowlist is a claim about what the system reads, and it drifted: four
+# fields below were flagged "Unknown key" on every single self-test run while
+# being actively read by shipped code. Four permanent warnings train the
+# operator to ignore the warning section, which is the section that has to
+# work the day something is genuinely wrong.
+#
+# Adding a field to operator.yaml means adding it here, in the same commit.
 _OPERATOR_REQUIRED = {"name", "timezone", "schedule"}
 _OPERATOR_KNOWN = _OPERATOR_REQUIRED | {
     "role",  # developer | operator — stamped by migration 081 (role-aware AOS)
     "communication", "daily_loop", "trust", "agent_name",
     "initiatives", "projects",
+    # Read by shipped code, flagged as unknown since they were introduced:
+    "location",       # prayer times + weather in the morning briefing
+    "prayer",         # calculation method / madhab for the Adhan schedule
+    "nickname",       # how the system addresses the operator
+    "notifications",  # per-topic notification preferences
 }
 
 
