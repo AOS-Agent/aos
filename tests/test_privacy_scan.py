@@ -419,7 +419,7 @@ def test_svg_path_data_not_a_phone():
     # shape PHONE_RE hunts — and must not trip the gate. (Two of these once
     # blocked a ship over an arrow icon.)
     line = '            d="M3 8h9.5M9 3.51 13.5 8 9 12.5"'
-    diff = make_diff("apps/desktop/src/App.tsx", [line])
+    diff = make_diff("core/x.tsx", [line])
     hits = ps.scan_diff(diff, [])
     assert not [h for h in hits if h.category == "phone"]
 
@@ -427,7 +427,7 @@ def test_svg_path_data_not_a_phone():
 def test_phone_disguised_as_svg_attribute_still_fails():
     # The exemption requires the value to OPEN with a path command letter;
     # a real phone stuffed into a d= attribute is still caught.
-    diff = make_diff("apps/desktop/src/App.tsx", [f'd="{REAL_PHONE}"'])
+    diff = make_diff("core/x.tsx", [f'd="{REAL_PHONE}"'])
     hits = ps.scan_diff(diff, [])
     phones = [h for h in hits if h.category == "phone"]
     assert phones and not any(h.precedented for h in phones)
