@@ -143,6 +143,20 @@ def _segment_quality(seg: dict) -> float:
     return score
 
 
+def _passthrough(seg: dict, lang: str) -> dict:
+    """Single-pass segment -> merged-segment shape, keeping quality signals."""
+    return {
+        "start": seg["start"],
+        "end": seg["end"],
+        "text": seg["text"].strip(),
+        "_lang": lang,
+        "avg_logprob": seg.get("avg_logprob"),
+        "compression_ratio": seg.get("compression_ratio"),
+        "no_speech_prob": seg.get("no_speech_prob"),
+        "temperature": seg.get("temperature"),
+    }
+
+
 def _merge_bilingual(en_result: dict, ar_result: dict) -> tuple[list[dict], str]:
     """Merge English and Arabic transcription passes by segment quality.
 
@@ -158,9 +172,9 @@ def _merge_bilingual(en_result: dict, ar_result: dict) -> tuple[list[dict], str]
     if not en_segs and not ar_segs:
         return [], "unknown"
     if not en_segs:
-        return [{"start": s["start"], "end": s["end"], "text": s["text"].strip(), "_lang": "ar"} for s in ar_segs], "ar"
+        return [_passthrough(s, "ar") for s in ar_segs], "ar"
     if not ar_segs:
-        return [{"start": s["start"], "end": s["end"], "text": s["text"].strip(), "_lang": "en"} for s in en_segs], "en"
+        return [_passthrough(s, "en") for s in en_segs], "en"
 
     # Build a timeline: for each EN segment, find overlapping AR segments
     # and pick the one with better quality
@@ -170,12 +184,12 @@ def _merge_bilingual(en_result: dict, ar_result: dict) -> tuple[list[dict], str]
         en_start = en_seg.get("start", 0)
         en_end = en_seg.get("end", 0)
         en_text = en_seg.get("text", "").strip()
-        _segment_quality(en_seg)
+        en_score = _segment_quality(en_seg)
 
         # Find overlapping AR segments
         best_ar_text = ""
         best_ar_score = -999
-        ar_candidates = []
+        best_ar_seg = None
 
         for ar_seg in ar_segs:
             ar_start = ar_seg.get("start", 0)
@@ -185,26 +199,33 @@ def _merge_bilingual(en_result: dict, ar_result: dict) -> tuple[list[dict], str]
             if ar_start < en_end and ar_end > en_start:
                 ar_score = _segment_quality(ar_seg)
                 ar_text = ar_seg.get("text", "").strip()
-                ar_candidates.append((ar_text, ar_score))
                 if ar_score > best_ar_score:
                     best_ar_score = ar_score
                     best_ar_text = ar_text
+                    best_ar_seg = ar_seg
 
-        # Decide: use EN or AR for this segment
-        # Prefer AR if it contains Arabic script AND has reasonable quality
+        # Decide: use EN or AR for this segment.
+        #
+        # The AR pass is FORCED to language="ar", so on English-only audio it
+        # emits Arabic-script hallucinations rather than nothing. Arabic script
+        # is therefore not evidence of Arabic speech, and "has Arabic script and
+        # clears a fixed floor" is not a sufficient test: it let a -1.9 Arabic
+        # hallucination beat a -0.15 English transcription, because the two were
+        # never compared. Require the AR pass to actually score BETTER than EN.
         ar_has_arabic = bool(_ARABIC_RE.search(best_ar_text)) if best_ar_text else False
         en_has_arabic = bool(_ARABIC_RE.search(en_text)) if en_text else False
 
-        if ar_has_arabic and best_ar_score > -2.0:
-            # AR pass captured Arabic content with decent quality — use it
+        chosen_seg = en_seg
+        if ar_has_arabic and best_ar_score > en_score and best_ar_score > -2.0:
+            # AR captured Arabic content AND beat the English pass on quality.
             chosen_text = best_ar_text
             chosen_lang = "ar"
+            chosen_seg = best_ar_seg
         elif en_has_arabic:
-            # EN pass somehow got Arabic too — keep it
+            # EN pass picked up Arabic itself — keep it.
             chosen_text = en_text
             chosen_lang = "en+ar"
         else:
-            # Default to EN for English content
             chosen_text = en_text
             chosen_lang = "en"
 
@@ -214,6 +235,13 @@ def _merge_bilingual(en_result: dict, ar_result: dict) -> tuple[list[dict], str]
                 "end": en_end,
                 "text": chosen_text,
                 "_lang": chosen_lang,
+                # Carry the winning pass's quality signals through the merge —
+                # without these the downstream clean_segments copy has nothing
+                # to surface, and qren#9.4 stays broken on the bilingual path.
+                "avg_logprob": (chosen_seg or {}).get("avg_logprob"),
+                "compression_ratio": (chosen_seg or {}).get("compression_ratio"),
+                "no_speech_prob": (chosen_seg or {}).get("no_speech_prob"),
+                "temperature": (chosen_seg or {}).get("temperature"),
             })
 
     # Determine overall language mix
@@ -265,8 +293,15 @@ def transcribe(
     kwargs = {
         "path_or_hf_repo": MODEL_REPO,
         "initial_prompt": _initial_prompt,
-        "condition_on_previous_text": True,
+        # Must stay False. True lets a repetition loop feed itself its own
+        # output — the context-poisoning failure. Measured on a real 92.5s
+        # recording: 23 repeated lines with defaults, 0 with this False.
+        "condition_on_previous_text": False,
+        # These two MUST travel together. hallucination_silence_threshold is a
+        # documented no-op unless word_timestamps is True, so setting it alone
+        # produces a guard that reads as live and does nothing.
         "hallucination_silence_threshold": 1.0,
+        "word_timestamps": True,
     }
 
     if mode == "fast":
@@ -277,8 +312,16 @@ def transcribe(
     if language_hint != "auto":
         kwargs["language"] = language_hint
 
-    if timestamps and mode == "accurate":
-        kwargs["word_timestamps"] = True
+    if not timestamps:
+        # Opting out of word timestamps also disables the hallucination guard —
+        # they are inseparable. Drop both together rather than silently keeping
+        # a dead threshold in the kwargs.
+        kwargs.pop("word_timestamps", None)
+        kwargs.pop("hallucination_silence_threshold", None)
+        logger.warning(
+            "timestamps=False: word_timestamps and the hallucination guard are "
+            "both disabled for this call"
+        )
 
     logger.info(f"Transcribing {audio_path} (mode={mode}, lang={language_hint})")
 
@@ -293,8 +336,13 @@ def _transcribe_bilingual(engine, audio_path: str, timestamps: bool, t0: float) 
 
     base_kwargs = {
         "path_or_hf_repo": MODEL_REPO,
-        "condition_on_previous_text": True,
+        # See the single-pass path: False prevents context-poisoning loops.
+        "condition_on_previous_text": False,
+        # Paired, and previously unpaired here — this dual-pass EN+AR path is
+        # the meetings use case, and its guard was inert because neither this
+        # dict nor en_kwargs/ar_kwargs ever set word_timestamps.
         "hallucination_silence_threshold": 1.0,
+        "word_timestamps": True,
         "best_of": 1,  # Greedy for speed (we're running twice)
     }
 
@@ -321,8 +369,16 @@ def _transcribe_bilingual(engine, audio_path: str, timestamps: bool, t0: float) 
 
     # Clean segments for output (remove internal _lang key)
     clean_segments = [
-        {"start": s["start"], "end": s["end"], "text": s["text"]}
-        for s in merged_segments
+        {
+            "start": seg["start"],
+            "end": seg["end"],
+            "text": seg["text"],
+            "avg_logprob": seg.get("avg_logprob"),
+            "compression_ratio": seg.get("compression_ratio"),
+            "no_speech_prob": seg.get("no_speech_prob"),
+            "temperature": seg.get("temperature"),
+        }
+        for seg in merged_segments
     ]
 
     logger.info(
@@ -356,6 +412,13 @@ def _build_result(result: dict, t0: float) -> TranscriptionResult:
             "start": seg.get("start", 0),
             "end": seg.get("end", 0),
             "text": seg.get("text", "").strip(),
+            # mlx-whisper already computes these and _segment_quality() already
+            # reads them; they were being dropped here, leaving callers with no
+            # way to detect a hallucinated span. Surfacing them is the whole fix.
+            "avg_logprob": seg.get("avg_logprob"),
+            "compression_ratio": seg.get("compression_ratio"),
+            "no_speech_prob": seg.get("no_speech_prob"),
+            "temperature": seg.get("temperature"),
         })
 
     duration_audio = segments[-1]["end"] if segments else 0
