@@ -123,6 +123,14 @@ jobs:
     tier: 2
     description: Analyzes session patterns for friction and improvements
 
+  memory-curate:
+    command: python3 ~/aos/core/bin/crons/memory-curate
+    at: "06:00"
+    weekday: sunday
+    timeout: 1200
+    tier: 2
+    description: Weekly memory curation — proposes vault log-to-knowledge promotions for operator review
+
   loop-sensors:
     command: python3 ~/aos/core/bin/crons/loop-sensors
     at: "03:40"
