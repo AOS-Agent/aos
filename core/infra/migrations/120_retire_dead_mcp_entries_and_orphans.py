@@ -149,14 +149,35 @@ import subprocess
 import time
 from pathlib import Path
 
-HOME = Path.home()
-AOS_ROOT = HOME / "aos"
-LA_DIR = HOME / "Library" / "LaunchAgents"
-SERVICES_DIR = HOME / ".aos" / "services"
-BACKUP_DIR = HOME / ".aos" / "backups" / "retired-services"
-CLAUDE_JSON = HOME / ".claude.json"
-INTEGRATIONS_CONFIG = HOME / ".aos" / "config" / "integrations.yaml"
-OBSIDIAN_CHECK = AOS_ROOT / "core" / "infra" / "integrations" / "obsidian" / "setup.sh"
+
+# Resolved on every call, never captured at import — see default_off.py's own
+# docstring (core/infra/lib/default_off.py) for why a module-level
+# `Path.home()` here would freeze whichever machine (or sandboxed test HOME)
+# happened to import this module first, for the rest of the process — and
+# this migration writes two of the operator's live config files (c, d).
+def _la_dir() -> Path:
+    return Path.home() / "Library" / "LaunchAgents"
+
+
+def _services_dir() -> Path:
+    return Path.home() / ".aos" / "services"
+
+
+def _backup_dir() -> Path:
+    return Path.home() / ".aos" / "backups" / "retired-services"
+
+
+def _claude_json_path() -> Path:
+    return Path.home() / ".claude.json"
+
+
+def _integrations_config_path() -> Path:
+    return Path.home() / ".aos" / "config" / "integrations.yaml"
+
+
+def _obsidian_check_path() -> Path:
+    return Path.home() / "aos" / "core" / "infra" / "integrations" / "obsidian" / "setup.sh"
+
 
 BRIDGE_LABEL = "com.aos.bridge"
 
@@ -180,10 +201,11 @@ def _plist_references(name: str) -> bool:
     every launcher wrapper this codebase generates execs an absolute path
     that contains "services/<name>" verbatim (see core/infra/lib/launchers.py).
     """
-    if not LA_DIR.exists():
+    la_dir = _la_dir()
+    if not la_dir.exists():
         return False
     needle = f"services/{name}".encode()
-    for plist in LA_DIR.glob("*.plist"):
+    for plist in la_dir.glob("*.plist"):
         try:
             if needle in plist.read_bytes():
                 return True
@@ -194,9 +216,10 @@ def _plist_references(name: str) -> bool:
 
 def _orphans_present() -> list[str]:
     """Named orphan dirs that exist and are not (yet) claimed by a plist."""
+    services_dir = _services_dir()
     return [
         name for name in ORPHAN_SERVICE_DIRS
-        if (SERVICES_DIR / name).exists() and not _plist_references(name)
+        if (services_dir / name).exists() and not _plist_references(name)
     ]
 
 
@@ -208,23 +231,25 @@ def _archive_orphan(name: str) -> Path:
     since the move already removed it) gets a numbered sibling instead of a
     silent clobber.
     """
-    src = SERVICES_DIR / name
-    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    src = _services_dir() / name
+    backup_dir = _backup_dir()
+    backup_dir.mkdir(parents=True, exist_ok=True)
     stamp = time.strftime("%Y-%m-%d")
-    dest = BACKUP_DIR / f"{name}-{stamp}"
+    dest = backup_dir / f"{name}-{stamp}"
     n = 2
     while dest.exists():
-        dest = BACKUP_DIR / f"{name}-{stamp}-{n}"
+        dest = backup_dir / f"{name}-{stamp}-{n}"
         n += 1
     shutil.move(str(src), str(dest))
     return dest
 
 
 def _claude_json_servers() -> dict:
-    if not CLAUDE_JSON.exists():
+    claude_json = _claude_json_path()
+    if not claude_json.exists():
         return {}
     try:
-        config = json.loads(CLAUDE_JSON.read_text())
+        config = json.loads(claude_json.read_text())
     except (json.JSONDecodeError, OSError):
         return {}
     servers = config.get("mcpServers")
@@ -244,10 +269,11 @@ def _clean_claude_json() -> list[str]:
     live-written by every running Claude Code session. Per-project
     `projects.*.mcpServers` blocks are never touched.
     """
-    if not CLAUDE_JSON.exists():
+    claude_json = _claude_json_path()
+    if not claude_json.exists():
         return []
     try:
-        config = json.loads(CLAUDE_JSON.read_text())
+        config = json.loads(claude_json.read_text())
     except (json.JSONDecodeError, OSError):
         return []
     servers = config.get("mcpServers")
@@ -259,15 +285,15 @@ def _clean_claude_json() -> list[str]:
         return []
 
     stamp = time.strftime("%Y%m%d-%H%M%S")
-    backup = CLAUDE_JSON.with_name(f".claude.json.bak-120-{stamp}")
-    backup.write_text(CLAUDE_JSON.read_text())
+    backup = claude_json.with_name(f".claude.json.bak-120-{stamp}")
+    backup.write_text(claude_json.read_text())
 
     for name in removed:
         del servers[name]
 
-    tmp = CLAUDE_JSON.with_suffix(CLAUDE_JSON.suffix + ".tmp")
+    tmp = claude_json.with_suffix(claude_json.suffix + ".tmp")
     tmp.write_text(json.dumps(config, indent=2) + "\n")
-    os.replace(tmp, CLAUDE_JSON)
+    os.replace(tmp, claude_json)
     return removed
 
 
@@ -291,11 +317,12 @@ def _obsidian_check_passes() -> bool | None:
     None (script missing, or could not run it) must never be treated as
     "passed" — see docstring §d, "only flip it if the check passes".
     """
-    if not OBSIDIAN_CHECK.exists():
+    obsidian_check = _obsidian_check_path()
+    if not obsidian_check.exists():
         return None
     try:
         r = subprocess.run(
-            ["bash", str(OBSIDIAN_CHECK), "--check"],
+            ["bash", str(obsidian_check), "--check"],
             capture_output=True, text=True, timeout=30,
         )
     except Exception:  # noqa: BLE001
@@ -304,11 +331,12 @@ def _obsidian_check_passes() -> bool | None:
 
 
 def _read_integrations() -> dict:
-    if not INTEGRATIONS_CONFIG.exists():
+    integrations_config = _integrations_config_path()
+    if not integrations_config.exists():
         return {}
     try:
         import yaml
-        data = yaml.safe_load(INTEGRATIONS_CONFIG.read_text())
+        data = yaml.safe_load(integrations_config.read_text())
     except Exception:  # noqa: BLE001
         return {}
     return data if isinstance(data, dict) else {}
@@ -319,7 +347,7 @@ def _write_integrations(data: dict) -> bool:
         import yaml
     except Exception:  # noqa: BLE001
         return False
-    INTEGRATIONS_CONFIG.write_text(
+    _integrations_config_path().write_text(
         yaml.safe_dump(data, default_flow_style=False, sort_keys=False, allow_unicode=True)
     )
     return True
@@ -405,10 +433,11 @@ def up() -> bool:
             dest = _archive_orphan(name)
             print(f"  (b) archived {name} -> {dest}")
     else:
-        already_done = [n for n in ORPHAN_SERVICE_DIRS if not (SERVICES_DIR / n).exists()]
+        services_dir = _services_dir()
+        already_done = [n for n in ORPHAN_SERVICE_DIRS if not (services_dir / n).exists()]
         still_referenced = [
             n for n in ORPHAN_SERVICE_DIRS
-            if (SERVICES_DIR / n).exists() and _plist_references(n)
+            if (services_dir / n).exists() and _plist_references(n)
         ]
         if still_referenced:
             print(f"  (b) left alone (plist now references it): {', '.join(still_referenced)}")

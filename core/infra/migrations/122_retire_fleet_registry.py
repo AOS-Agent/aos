@@ -43,9 +43,18 @@ DESCRIPTION = "Retire the fleet.yaml node registry (single-node cleanup)"
 import time
 from pathlib import Path
 
-HOME = Path.home()
-CONFIG_DIR = HOME / ".aos" / "config"
-ARCHIVE_DIR = HOME / ".aos" / "backups" / "retired-config"
+
+# Resolved on every call, never captured at import — see default_off.py's own
+# docstring (core/infra/lib/default_off.py) for why a module-level
+# `Path.home()` here would freeze whichever machine (or sandboxed test HOME)
+# happened to import this module first, for the rest of the process.
+def _config_dir() -> Path:
+    return Path.home() / ".aos" / "config"
+
+
+def _archive_dir() -> Path:
+    return Path.home() / ".aos" / "backups" / "retired-config"
+
 
 # Literal names. Never a glob over ~/.aos/config — that directory holds
 # operator.yaml, accounts.yaml, channel, channel-update.yaml and every
@@ -57,7 +66,8 @@ RETIRED_FILES = (
 
 
 def _present() -> list[Path]:
-    return [CONFIG_DIR / n for n in RETIRED_FILES if (CONFIG_DIR / n).exists()]
+    config_dir = _config_dir()
+    return [config_dir / n for n in RETIRED_FILES if (config_dir / n).exists()]
 
 
 def check() -> bool:
@@ -71,15 +81,16 @@ def up() -> bool:
         print("  Nothing to retire — no fleet.yaml in ~/.aos/config")
         return True
 
-    ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
+    archive_dir = _archive_dir()
+    archive_dir.mkdir(parents=True, exist_ok=True)
     stamp = time.strftime("%Y%m%d-%H%M%S")
 
     for src in targets:
-        dest = ARCHIVE_DIR / f"{src.name}.{stamp}"
+        dest = archive_dir / f"{src.name}.{stamp}"
         # A same-second replay would otherwise overwrite the first archive.
         n = 1
         while dest.exists():
-            dest = ARCHIVE_DIR / f"{src.name}.{stamp}-{n}"
+            dest = archive_dir / f"{src.name}.{stamp}-{n}"
             n += 1
         try:
             src.rename(dest)

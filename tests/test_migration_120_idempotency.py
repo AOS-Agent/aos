@@ -24,6 +24,11 @@ import pytest
 REPO = Path(__file__).resolve().parent.parent
 MIGRATIONS = REPO / "core" / "infra" / "migrations"
 
+# Captured at module-collection time — before any fixture has ever patched
+# Path.home() — so this is the one place in this file that can reliably name
+# "the operator's real home" to check load_migration() against.
+_REAL_HOME = Path.home()
+
 
 def load_migration(name: str, home: Path):
     """Import a migration with Path.home() already pointing at the sandbox.
@@ -31,7 +36,16 @@ def load_migration(name: str, home: Path):
     Mirrors tests/test_migrations_111_116_idempotency.py's loader: migrations
     resolve HOME = Path.home() at module scope, so the patch must be in place
     before exec_module, and the module must be re-imported per test.
+
+    Defensive: refuses to exec a migration at all unless Path.home() is
+    already sandboxed by the caller's own `home` fixture — see the identical
+    guard (and its full rationale) in test_migrations_111_116_idempotency.py.
     """
+    assert Path.home() != _REAL_HOME, (
+        "Path.home() still resolves to the operator's real home right before "
+        "load_migration() was about to exec a migration module — refusing to "
+        f"run migration {name!r} against the live instance."
+    )
     path = next(MIGRATIONS.glob(f"{name}*.py"))
     real_home = Path.home
     Path.home = staticmethod(lambda: home)  # type: ignore[method-assign]

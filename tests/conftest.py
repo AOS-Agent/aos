@@ -7,6 +7,8 @@ pointed away from ~/.aos/ via the AOS_WORK_DB override. No test ever touches
 real operator data.
 """
 
+import hashlib
+import os
 import sqlite3
 import subprocess
 import sys
@@ -67,6 +69,74 @@ def no_gh_subprocess(monkeypatch):
         return _REAL_SUBPROCESS_RUN(*args, **kwargs)
 
     monkeypatch.setattr(subprocess, "run", guarded_run)
+
+
+# ---------------------------------------------------------------------------
+# Suite-wide tripwire: the real operator instance must never move.
+#
+# On 2026-09-13 a dev-checkout test run wrote migration 111's header comment
+# and `work-runner` into the operator's real ~/.aos/config/services.yaml — a
+# module-level `Path.home()` (core/infra/migrations/111_work_runner_default_
+# off.py and friends) had been resolved before a test's sandbox patch was in
+# place, so disable_service() (which correctly re-resolves Path.home() on
+# every call — see core/infra/lib/default_off.py) wrote to the live file
+# instead of the tmp_path sandbox. See tests/test_migrations_111_116_
+# idempotency.py's load_migration() for the fix and the full story.
+#
+# This fixture is the backstop: it snapshots sha256 + mtime of the handful of
+# real files a leaking test has actually clobbered (or could), and fails the
+# whole session if any of them moved. Read-only — it never creates, writes,
+# or restores anything; a path that doesn't exist is skipped, not treated as
+# a failure, and never brought into existence by this fixture.
+# ---------------------------------------------------------------------------
+
+_LIVE_INSTANCE_GUARDED_PATHS = (
+    Path(os.path.expanduser("~")) / ".aos" / "config" / "services.yaml",
+    Path(os.path.expanduser("~")) / ".aos" / "config" / "integrations.yaml",
+    Path(os.path.expanduser("~")) / ".claude.json",
+    Path(os.path.expanduser("~")) / ".aos" / "data" / "work.db",
+)
+
+
+def _live_instance_snapshot() -> dict[Path, tuple[str, int]]:
+    """{path: (sha256, mtime_ns)} for every guarded path that currently exists.
+
+    A path that is absent is simply omitted — "skip cleanly if a path is
+    absent" — so this never fails just because a machine (or CI) has no
+    ~/.claude.json, no work.db yet, etc.
+    """
+    snapshot = {}
+    for path in _LIVE_INSTANCE_GUARDED_PATHS:
+        try:
+            if not path.is_file():
+                continue
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            snapshot[path] = (digest, path.stat().st_mtime_ns)
+        except OSError:
+            continue  # unreadable is not this fixture's problem to diagnose
+    return snapshot
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _live_instance_is_never_touched():
+    """Session-wide backstop: fail loudly if any test wrote to the real
+    operator instance instead of a sandbox. See the block comment above."""
+    before = _live_instance_snapshot()
+    yield
+    after = _live_instance_snapshot()
+
+    moved = sorted(str(p) for p in before if before.get(p) != after.get(p))
+    appeared = sorted(str(p) for p in after if p not in before)
+    changed = moved + appeared
+
+    assert not changed, (
+        "A test in this session wrote to the operator's REAL instance data, "
+        f"not a sandbox: {changed}. Every test that loads a migration or any "
+        "module deriving paths from Path.home() must sandbox Path.home() "
+        "(or $HOME) *before* that module is imported/exec'd, and must keep "
+        "the patch active for as long as the module might resolve a path "
+        "again — see tests/test_migrations_111_116_idempotency.py."
+    )
 
 
 # ---------------------------------------------------------------------------

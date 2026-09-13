@@ -32,6 +32,11 @@ REPO = Path(__file__).resolve().parent.parent
 MIGRATIONS = REPO / "core" / "infra" / "migrations"
 LIVE_WORK_DB = Path.home() / ".aos" / "data" / "work.db"
 
+# Captured at module-collection time — before any fixture has ever patched
+# Path.home() — so this is the one place in this file that can reliably name
+# "the operator's real home" to check load_migration() against.
+_REAL_HOME = Path.home()
+
 FIXTURE_TITLES = (
     "Fix the login bug",
     "Deploy the bridge service",
@@ -51,7 +56,25 @@ def load_migration(name: str, home: Path):
     Migrations resolve their paths at import time (HOME = Path.home() at module
     scope), so the patch has to be in place before exec_module, and the module
     has to be re-imported per test rather than cached.
+
+    Defensive: refuses to exec a migration at all unless Path.home() is
+    already sandboxed — i.e. unless the caller's own `home` fixture applied
+    its patch first. This is not decorative. A migration whose own frozen
+    constants are correctly sandboxed can still leak: migrations 111/112 call
+    into core/infra/lib/default_off.py, which re-resolves Path.home() on
+    *every* call (that is its own fix for the same class of bug) rather than
+    once at import — so if the patch below were the only one in effect, it
+    would already be gone by the time check()/up() run, and disable_service()
+    would write to whatever Path.home() has moved on to. On 2026-09-13 that
+    was the operator's real ~/.aos/config/services.yaml.
     """
+    assert Path.home() != _REAL_HOME, (
+        "Path.home() still resolves to the operator's real home right before "
+        "load_migration() was about to exec a migration module. The calling "
+        "test's `home` fixture must patch Path.home() (persistently, for the "
+        "whole test) before calling load_migration() — refusing to run "
+        f"migration {name!r} against the live instance."
+    )
     path = next(MIGRATIONS.glob(f"{name}*.py"))
     real_home = Path.home
     Path.home = staticmethod(lambda: home)  # type: ignore[method-assign]
