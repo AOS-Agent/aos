@@ -1,0 +1,42 @@
+# ~/.aos/config/projects.yaml — FRAMEWORK TEMPLATE (example values only).
+#
+# Optional. The bridge runs fine without this file at all — every Telegram
+# message goes through the default handler, with no per-project topic
+# routing ("flat mode"). This file only matters once you want the bridge to
+# route messages by Telegram forum topic (one topic per project, plus system
+# topics for daily/alerts/work/knowledge).
+#
+# This file is never written with a live token or bot secret — the bot token
+# lives in the macOS Keychain (`agent-secret get/set TELEGRAM_BOT_TOKEN`) and
+# is read directly by the bridge process, never stored in config.
+#
+# ── Setup ─────────────────────────────────────────────────────────────
+#
+# 1. Create a Telegram supergroup with Topics (forum mode) enabled.
+# 2. Add your bridge bot to it as admin, with "Manage Topics" permission.
+# 3. Get the group's chat ID — a negative number, e.g. -1001234567890.
+#    (Forward any message from the group to @userinfobot, or check the
+#    bridge's own logs after it receives one message from the group.)
+# 4. Fill in `forum_group_id` below (uncomment the `system:` block, or add
+#    it under a project — either satisfies the bootstrap).
+# 5. Run:  aos bridge-topics init
+#    This writes ~/.aos/config/bridge-topics.yaml with the system topic
+#    slots (daily/alerts/work/knowledge/system). The bridge's TopicManager
+#    creates each Telegram topic progressively at runtime, the first time
+#    it is needed — this file only has to declare the group.
+#
+# ── Minimal form — just the shared group, no per-project routing ──────
+#
+# system:
+#   telegram:
+#     forum_group_id: -1001234567890
+
+# ── Full form — route specific projects to their own topic ────────────
+#
+# projects:
+#   my-project:
+#     path: ~/project/my-project
+#     status: active                 # only "active" projects are routed
+#     telegram:
+#       forum_group_id: -1001234567890   # same group for every project
+#       forum_topic_id: null             # filled in once the topic exists

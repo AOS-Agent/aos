@@ -13,6 +13,7 @@
 #   aos self-test       Validate system health
 #   aos deploy [svc]    Deploy service venv (all or specific)
 #   aos arm             Arms: status / list / plan / remove
+#   aos bridge-topics init   Bootstrap projects.yaml / bridge-topics.yaml
 
 set -euo pipefail
 
@@ -104,6 +105,22 @@ case "${1:-help}" in
     reconcile)
         # Run invariant checks — fixes drift from wrong installs, brew updates, etc.
         "$AOS_DIR/core/bin/internal/aos-python" "$AOS_DIR/core/infra/reconcile/runner.py" "${2:-run}"
+        ;;
+
+    bridge-topics)
+        # Bootstrap ~/.aos/config/projects.yaml + bridge-topics.yaml so the
+        # bridge can route Telegram forum topics instead of running flat.
+        # The one-line fix self-test and the bridge_topics_config reconcile
+        # check both point at when either file is missing.
+        case "${2:-init}" in
+            init)
+                "$AOS_PY" "$AOS_DIR/core/bin/internal/bridge-topics-init"
+                ;;
+            *)
+                echo "Usage: aos bridge-topics init"
+                exit 1
+                ;;
+        esac
         ;;
 
     sync-skills)
@@ -447,11 +464,16 @@ except SyntaxError as e:
             ((errors++))
         fi
 
-        # Check bridge topics config
+        # Check bridge topics config. Not an error — the bridge runs fine
+        # flat — but "created on first use" used to be the whole message,
+        # with no first use that ever actually created it. Point at the
+        # exact command instead.
         if [ -f "$HOME/.aos/config/bridge-topics.yaml" ]; then
             echo "  ✓ Bridge topics config exists"
+        elif [ -f "$HOME/.aos/config/projects.yaml" ]; then
+            echo "  ~ Bridge topics config missing — run: aos bridge-topics init"
         else
-            echo "  ~ Bridge topics config missing (created on first use)"
+            echo "  ~ Bridge running flat (no per-project topics) — run: aos bridge-topics init"
         fi
 
         # Check initiative infrastructure
