@@ -1,7 +1,7 @@
 """Work Adapter — Tasks, Projects, Goals, Inbox, Threads.
 
 Maps between the ontology's typed objects (Task, Project, Goal) and
-the qareen.db SQLite storage. Handles all CRUD, link management,
+the work.db SQLite storage. Handles all CRUD, link management,
 and full-text search via the tasks_fts FTS5 table.
 """
 
@@ -145,63 +145,32 @@ def _to_status(val: str | None) -> TaskStatus:
         return TaskStatus.TODO
 
 
-# ── Work DB resolution (aos#130 phase 2) ────────────────────────────────
+# ── Work DB resolution ──────────────────────────────────────────────────
 #
-# The kernel owns work/task state in its own ~/.aos/data/work.db (see
-# core/infra/migrations/050_work_db_ownership.py and
-# core/engine/work/backend.py on the main lineage). Qareen used to read
-# qareen.db directly for work tables; this resolves the same DB the kernel
-# resolves to, so both surfaces agree. Sessions/session_tasks are NOT part
-# of the cutover — they stay Qareen-owned in qareen.db until aos#131 (see
-# WorkAdapter._session_conn).
-
-def _is_seeded_work_db(path: Path) -> bool:
-    """True only if ``path`` is a real work database (has the ``tasks`` table).
-
-    Guards the implicit cutover: a 0-byte or half-initialized work.db must NOT
-    trigger a switch away from qareen.db — the kernel store is only
-    authoritative once migration 050 has seeded it. Any error (missing, locked,
-    not a database) is treated as "not seeded" so resolution falls back safely.
-    """
-    try:
-        if not path.exists() or path.stat().st_size == 0:
-            return False
-        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-        try:
-            return (
-                conn.execute(
-                    "SELECT 1 FROM sqlite_master "
-                    "WHERE type='table' AND name='tasks'"
-                ).fetchone()
-                is not None
-            )
-        finally:
-            conn.close()
-    except Exception:
-        return False
-
+# One database. ~/.aos/data/work.db owns every work table — tasks, projects,
+# goals, inbox, threads, and, since migration 123, sessions and session_tasks.
+# There is no second store to fall back to: the old fallback existed for
+# machines that predated the migration-050 cutover, and the session tables were
+# the last thing still living elsewhere.
 
 def resolve_work_db_path() -> Path:
-    """Locate the work/task database.
+    """Locate the work database.
 
-    Resolution order (mirrors core/engine/work/backend.py._resolve_db_path):
+    Mirrors core/engine/work/backend.py._resolve_db_path:
       1. AOS_WORK_DB env var — explicit override; also makes tests injectable.
-      2. ~/.aos/data/work.db — the kernel-owned store, once it has been seeded
-         (a bare/empty file does not count — see _is_seeded_work_db).
-      3. ~/.aos/data/qareen.db — fall back so machines that predate the
-         migration keep working unchanged.
+      2. ~/.aos/data/work.db.
+
+    The adapter creates what is missing (_ensure_aux_schema), so a fresh machine
+    and a migrated one converge on the same schema.
     """
     env = os.environ.get("AOS_WORK_DB")
     if env:
         return Path(env).expanduser()
-    work_db = Path.home() / ".aos" / "data" / "work.db"
-    if _is_seeded_work_db(work_db):
-        return work_db
-    return Path.home() / ".aos" / "data" / "qareen.db"
+    return Path.home() / ".aos" / "data" / "work.db"
 
 
 class WorkAdapter(Adapter):
-    """Handles Task, Project, Goal, Inbox, Thread objects in qareen.db.
+    """Handles Task, Project, Goal, Inbox, Thread objects in work.db.
 
     One adapter for multiple types. The ``_type`` filter key or explicit
     type parameters control which table is queried.  Default operations
@@ -301,6 +270,54 @@ class WorkAdapter(Adapter):
                 );
                 CREATE INDEX IF NOT EXISTS idx_activity_task
                     ON task_activity(task_id, id);
+
+                -- sessions / session_tasks: work.db's since migration 123.
+                -- They stayed in the old companion store through the 050
+                -- cutover, which made every task<->session link a cross-file
+                -- join with no foreign key and no transaction spanning
+                -- both — see migration 123. Created here
+                -- so a fresh install and the test fixture have them without
+                -- depending on the migration having run, the same contract
+                -- migration 121 has with threads.cwd.
+                --
+                -- No REFERENCES clauses, deliberately: this connection runs
+                -- with foreign_keys=ON, and the live data already breaks those
+                -- constraints (79 session_tasks rows point at a session id that
+                -- is not in sessions; sessions.task_id points at tasks migration
+                -- 114 purged). The links were always by convention — declaring
+                -- a rule the data does not keep would only reject the rows.
+                CREATE TABLE IF NOT EXISTS sessions (
+                    id              TEXT PRIMARY KEY,
+                    agent_id        TEXT,
+                    operator_id     TEXT,
+                    status          TEXT NOT NULL DEFAULT 'active',
+                    started_at      TEXT NOT NULL,
+                    ended_at        TEXT,
+                    project_id      TEXT,
+                    task_id         TEXT,
+                    thread_id       TEXT,
+                    outcome         TEXT,
+                    transcript_summary TEXT,
+                    utterance_count INTEGER DEFAULT 0,
+                    tokens_in       INTEGER DEFAULT 0,
+                    tokens_out      INTEGER DEFAULT 0,
+                    cost_usd        REAL DEFAULT 0
+                );
+                CREATE INDEX IF NOT EXISTS idx_sessions_started
+                    ON sessions(started_at);
+                CREATE INDEX IF NOT EXISTS idx_sessions_agent
+                    ON sessions(agent_id);
+                CREATE INDEX IF NOT EXISTS idx_sessions_task
+                    ON sessions(task_id);
+
+                CREATE TABLE IF NOT EXISTS session_tasks (
+                    session_id      TEXT NOT NULL,
+                    task_id         TEXT NOT NULL,
+                    relation        TEXT NOT NULL,
+                    PRIMARY KEY (session_id, task_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_session_tasks_task
+                    ON session_tasks(task_id);
                 CREATE TRIGGER IF NOT EXISTS task_activity_no_update
                     BEFORE UPDATE ON task_activity
                     BEGIN SELECT RAISE(ABORT, 'task_activity is append-only'); END;
@@ -354,7 +371,7 @@ class WorkAdapter(Adapter):
                         "ALTER TABLE inbox ADD COLUMN snoozed_until TEXT"
                     )
             # Thread-cwd association (aos#223). threads lost its cwd column
-            # somewhere in the qareen.db -> work.db port, which made
+            # somewhere in the work.db port, which made
             # find_thread_by_cwd a permanent no-op ("DB has no cwd column")
             # and turned every "find or create a thread for this directory"
             # call into an unconditional create — 4,635 auto-generated
@@ -1086,27 +1103,23 @@ class WorkAdapter(Adapter):
         return task
 
     def _session_conn(self):
-        """Connection containing sessions/session_tasks (Qareen-owned until aos#131).
+        """Connection holding sessions/session_tasks: this one, or none.
 
-        Post-cutover (work.db) the session tables live only in qareen.db; route
-        session reads/writes there so session linking keeps working and is only
-        ever written in one place.
+        Kept as a named seam rather than inlined, because every session read and
+        write in this class goes through it and the "which database" question is
+        worth having exactly one answer to. That answer used to be two: work.db
+        for the work tables, a second connection to the old companion store for
+        the session tables, routed per statement. Migration 123 moved the
+        tables, so this is
+        always ``self._conn`` — and returns None only on a store so old it has
+        no ``session_tasks`` table, where callers skip the bookkeeping instead of
+        raising "no such table: sessions" out of a hook.
         """
         try:
             self._conn.execute("SELECT 1 FROM session_tasks LIMIT 1")
-            return self._conn
         except sqlite3.OperationalError:
-            pass
-        if os.environ.get("AOS_WORK_DB"):
-            return None  # injected environment — never escape to the real instance DB
-        if getattr(self, "_session_fallback", None) is None:
-            qdb = Path.home() / ".aos" / "data" / "qareen.db"
-            if not qdb.exists():
-                return None
-            c = sqlite3.connect(str(qdb))
-            c.row_factory = sqlite3.Row
-            self._session_fallback = c
-        return self._session_fallback
+            return None
+        return self._conn
 
     def _row_to_task(self, row: sqlite3.Row) -> Task:
         """Convert a tasks table row to a Task dataclass."""
@@ -2923,7 +2936,6 @@ class WorkAdapter(Adapter):
 
         now = _now()
 
-        # Sessions are Qareen-owned until aos#131 — route to the DB that has them.
         _sc = self._session_conn()
         if _sc is None:
             self._conn.commit()
@@ -2980,14 +2992,14 @@ class WorkAdapter(Adapter):
 
         Returns the thread dict or None if thread not found.
 
-        Sessions are Qareen-owned until aos#131 (see link_session_to_task) —
-        route through _session_conn() the same way, and skip the bookkeeping
-        entirely when no session store is reachable rather than querying a
-        `sessions` table that work.db does not have. Without this guard, the
-        very first reuse of a "found" thread (aos#223's find_thread_by_cwd
-        fix) raised sqlite3.OperationalError: no such table: sessions and
-        crashed the SessionEnd hook — this path was previously unreachable
-        because find_thread_by_cwd always returned None.
+        Goes through _session_conn() like link_session_to_task, and skips the
+        bookkeeping entirely when no session store is reachable rather than
+        querying a `sessions` table that is not there. Without that guard the
+        very first reuse of a "found" thread (aos#223's find_thread_by_cwd fix)
+        raised sqlite3.OperationalError: no such table: sessions and crashed the
+        SessionEnd hook — the path had been unreachable while find_thread_by_cwd
+        always returned None. Since migration 123 the table is in work.db and
+        the guard is a floor, not the normal case.
         """
         row = self._conn.execute(
             "SELECT * FROM threads WHERE id = ?", (thread_id,)

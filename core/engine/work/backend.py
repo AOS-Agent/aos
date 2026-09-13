@@ -23,7 +23,6 @@ import json
 import logging
 import os
 import re
-import sqlite3
 import subprocess
 
 # ── Path setup for ontology imports ─────────────────────
@@ -80,50 +79,24 @@ _gh_log = logging.getLogger("work.github")
 
 # ── Constants ───────────────────────────────────────────
 
-def _is_seeded_work_db(path: Path) -> bool:
-    """True only if ``path`` is a real work database (has the ``tasks`` table).
-
-    Guards the implicit cutover: a 0-byte or half-initialized work.db must NOT
-    trigger a switch away from qareen.db — the kernel store is only
-    authoritative once migration 050 has seeded it. Any error (missing, locked,
-    not a database) is treated as "not seeded" so resolution falls back safely.
-    """
-    try:
-        if not path.exists() or path.stat().st_size == 0:
-            return False
-        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-        try:
-            return (
-                conn.execute(
-                    "SELECT 1 FROM sqlite_master "
-                    "WHERE type='table' AND name='tasks'"
-                ).fetchone()
-                is not None
-            )
-        finally:
-            conn.close()
-    except Exception:
-        return False
-
-
 def _resolve_db_path() -> Path:
-    """Locate the work/task database.
+    """Locate the work database. There is one.
 
-    The kernel owns work state in its own ~/.aos/data/work.db (see migration
-    050). Resolution order:
       1. AOS_WORK_DB env var — explicit override; also makes tests injectable.
-      2. ~/.aos/data/work.db — the kernel-owned store, once it has been seeded
-         (a bare/empty file does not count — see _is_seeded_work_db).
-      3. ~/.aos/data/qareen.db — fall back so machines that predate the
-         migration keep working unchanged.
+      2. ~/.aos/data/work.db.
+
+    This used to fall back to a second store when work.db looked unseeded, a
+    guard from the migration-050 cutover. Migration 123 moved the last tables
+    that still lived there (sessions, session_tasks), so the fallback had
+    nothing left to protect — and kept the split alive by making "which
+    database" a runtime question with two possible answers. The adapter creates
+    whatever schema is missing, so an empty file is not a reason to go
+    elsewhere.
     """
     env = os.environ.get("AOS_WORK_DB")
     if env:
         return Path(env).expanduser()
-    work_db = Path.home() / ".aos" / "data" / "work.db"
-    if _is_seeded_work_db(work_db):
-        return work_db
-    return Path.home() / ".aos" / "data" / "qareen.db"
+    return Path.home() / ".aos" / "data" / "work.db"
 
 
 DB_PATH = _resolve_db_path()
