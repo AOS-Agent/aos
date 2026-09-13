@@ -37,11 +37,7 @@ else
     echo "Skipping session-analysis (Sunday — scheduler already ran weekly version)"
 fi
 
-# Step 2: Stale detector
-echo "Running stale detector..."
-run_step "stale-detector" ~/aos/core/bin/aos-python ~/aos/core/bin/stale-detector
-
-# Step 3: Compile daily summary (ensure it ran)
+# Step 2: Compile daily summary (ensure it ran)
 echo "Running compile-daily..."
 run_step "compile-daily" ~/aos/core/bin/aos-python ~/aos/core/bin/compile-daily
 

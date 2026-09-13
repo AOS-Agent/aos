@@ -118,13 +118,6 @@ jobs:
     tier: 2
     description: Delivers notifications held back by quiet hours, as one digest
 
-  inbox-collect:
-    command: python3 ~/aos/core/bin/crons/inbox-collect
-    every: 30m
-    timeout: 120
-    tier: 2
-    description: Collects loose items into inbox for triage
-
   session-analysis:
     command: python3 ~/aos/core/bin/crons/session-analysis
     at: "22:00"
@@ -158,13 +151,6 @@ jobs:
     # job's 5-minute window has closed by the time the scheduler is free. It ran
     # only on days enrich-comms crashed early — 1 run in 28 days.
     catch_up: true
-  stale-detector:
-    command: python3 ~/aos/core/bin/crons/stale-detector
-    at: "08:00"
-    timeout: 60
-    tier: 2
-    description: Flags stale tasks and goals that need attention
-
   contact-sync:
     command: python3 ~/aos/core/engine/comms/sync_contacts.py
     at: "05:30"
