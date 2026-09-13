@@ -1,5 +1,5 @@
 """
-Migration 120: retire stalled launchers and dead MCP entries (v0.8.0 cleanup,
+Migration 120: retire dead MCP entries and the slack-lite orphan (v0.8.0 cleanup,
 operator-approved, aos#221).
 
 Four actions, each independently idempotent.
@@ -60,7 +60,7 @@ b. Orphaned instance service dirs.
        were generalized into core/engine/comms/channels/slack_session.py and
        core/engine/comms/converse/reauth.py months ago (both modules say so
        in their own docstrings) — the directory is a superseded reference
-       copy, not a running service. Migration 109 (2026-08-18) explicitly
+       copy, not a running service. Migration 109, from 2026-08-18, explicitly
        chose not to touch it ("sana-watch and slack-lite are NOT touched");
        this migration acts on a fresh, separate operator approval, and moves
        rather than deletes, so the one unresolved thread it contains (a
@@ -74,7 +74,7 @@ b. Orphaned instance service dirs.
 c. Dead entries in ~/.claude.json's global `mcpServers`.
 
    memory, crawler, xcode all fail to connect at every session start.
-   `memory` was already retired in code by migration 110 (2026-08-18), which
+   `memory` was already retired in code by migration 110, from 2026-08-18, which
    removed core/services/memory but — per that migration's own scope — only
    ever deregistered the entry on machines it actually ran on; a machine that
    updated past 110 without running it (or an entry restored some other way)

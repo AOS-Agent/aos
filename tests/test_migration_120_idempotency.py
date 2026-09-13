@@ -1,4 +1,4 @@
-"""Migration 120 — retire stalled launchers and dead MCP entries — run twice,
+"""Migration 120 — dead MCP entries and the slack-lite orphan — run twice,
 against a sandboxed HOME, with launchctl and the obsidian check stubbed.
 
 Same contract as 111-118: check()/up() run twice, the second run changes
