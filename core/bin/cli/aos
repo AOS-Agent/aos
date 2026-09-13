@@ -212,6 +212,17 @@ case "${1:-help}" in
         # registers gws). The old target ~/.claude/mcp.json is only read for
         # sessions whose cwd is ~/.claude/, so AOS sessions never saw
         # crawler registered there.
+        #
+        # aos_servers is intentionally empty (migration 120, aos#221): crawler
+        # never worked as an MCP server (fails to connect at every session
+        # start) and was pulled from ~/.claude.json fleet-wide in the same
+        # commit. Leaving its entry here would have sync-mcp silently
+        # re-register it on the next `aos sync`/update, undoing that cleanup.
+        # The crawler service venv and core/services/crawler/crawl_cli.py are
+        # untouched — core/engine/intelligence/content/backends/crawler.py
+        # still shells out to them directly as a content-extraction backend,
+        # entirely outside MCP. memory and xcode were never registered here;
+        # see migration 110 and migration 120 respectively.
         MCP_FILE="$HOME/.claude.json"
 
         "$AOS_PY" - "$AOS_DIR" "$MCP_FILE" << 'SYNCMCP'
@@ -233,16 +244,9 @@ else:
 
 servers = config.setdefault("mcpServers", {})
 
-# AOS MCP servers — defined here, single source of truth
-aos_servers = {
-    "crawler": {
-        "type": "stdio",
-        "command": str(home / ".aos/services/crawler/.venv/bin/python"),
-        "args": [str(aos_dir / "core/services/crawler/main.py")],
-        "cwd": str(aos_dir / "core/services/crawler"),
-        "env": {}
-    }
-}
+# AOS MCP servers — defined here, single source of truth.
+# Empty as of migration 120 (aos#221) — see the comment above.
+aos_servers = {}
 
 changed = 0
 for name, spec in aos_servers.items():
