@@ -246,8 +246,20 @@ def test_123_is_a_noop_without_a_work_db(home):
     assert m.up() is True
 
 
+# Captured at collection time, before any test can patch Path.home(): what the
+# real instance's pre-merge backup dir held when the suite started. Since 0.7.7
+# installed here, migration 123 HAS run for real, so the dir legitimately
+# exists — the invariant is that this suite adds nothing to it, not that it is
+# absent.
+_PRE_MERGE_DIR = Path("~").expanduser() / ".aos" / "backups" / "pre-merge"
+_PRE_MERGE_BEFORE = (
+    sorted(q.name for q in _PRE_MERGE_DIR.iterdir()) if _PRE_MERGE_DIR.exists() else None
+)
+
+
 def test_live_instance_is_untouched_by_this_suite():
     assert Path.home() == Path("~").expanduser(), "Path.home patch leaked out of a test"
-    assert not (Path.home() / ".aos" / "backups" / "pre-merge").exists(), (
+    after = sorted(q.name for q in _PRE_MERGE_DIR.iterdir()) if _PRE_MERGE_DIR.exists() else None
+    assert after == _PRE_MERGE_BEFORE, (
         "the suite wrote a pre-merge backup into the real instance"
     )
