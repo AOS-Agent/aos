@@ -25,6 +25,7 @@ Input JSON fields:
     duplicate_of:   Issue number if this is a dupe — will comment instead (optional)
 """
 
+import importlib.util
 import json
 import re
 import socket
@@ -44,6 +45,31 @@ REPORT_LOG = USER_DIR / "logs" / "reports.jsonl"
 # a dev checkout would let it (aos#2323). This is the one place that names
 # the repo for every `gh` call this script makes.
 GH_REPO = "AOS-Agent/aos"
+
+# The bridge's PII redactor, loaded by file path — same trick
+# core/engine/notify/router.py uses for this exact module, since a bare CLI
+# script isn't on anyone's sys.path. One phone/email scrubber shared with the
+# bridge's conversation store instead of a second regex drifting out of sync
+# (aos#2349).
+_STORE_PATH = (Path(__file__).resolve().parents[3]
+               / "core" / "services" / "bridge" / "conversation_store.py")
+_redact = None
+
+
+def _load_redact():
+    """Return the bridge's `redact()`, or None if it cannot be loaded."""
+    global _redact
+    if _redact is None:
+        try:
+            spec = importlib.util.spec_from_file_location(
+                "aos_conversation_store", _STORE_PATH
+            )
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            _redact = mod.redact
+        except Exception:
+            _redact = False
+    return _redact or None
 
 
 # ── System context ────────────────────────────────────────────────────────
@@ -143,11 +169,20 @@ def scrub(text: str) -> str:
     text = text.replace(home, "~")
     text = re.sub(r'\b' + re.escape(username) + r'\b', '<user>', text)
 
-    # Email addresses
-    text = re.sub(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', '<email>', text)
-
-    # Phone numbers (10+ digits with optional separators)
-    text = re.sub(r'[\+]?[\d\s\-\(\)]{10,}', '<phone>', text)
+    # Phone numbers + email addresses: reuse the bridge's own redactor
+    # (core/services/bridge/conversation_store.py:redact, shipped 0.7.7)
+    # instead of a second regex here. The old pattern here —
+    # `r'[\+]?[\d\s\-\(\)]{10,}'` — matched any 10+ run of digits, whitespace,
+    # hyphens or parens, so it ate indented code, markdown tables, and ISO
+    # dates (aos#2349). The bridge's version already excludes ISO dates and
+    # requires a phone-shaped token boundary on both ends.
+    redact = _load_redact()
+    if redact is not None:
+        text = redact(text)
+    else:
+        # Bridge module unavailable (should not happen) — email-only
+        # fallback; never reintroduce a second phone pattern here.
+        text = re.sub(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', '<email>', text)
 
     # IP addresses (except localhost)
     text = re.sub(
