@@ -841,6 +841,18 @@ def cmd_inbox(args):
             print(f"  {item['id']:4s}  {item['text']}  ({item['source']}, {item['captured'][:10]})")
         return
 
+    if args[0] == "drop":
+        if len(args) < 2:
+            print("Usage: inbox drop <inbox_id>")
+            sys.exit(1)
+        inbox_id = args[1]
+        if engine.delete_inbox(inbox_id):
+            print(f"Dropped {inbox_id}")
+        else:
+            print(f"Inbox item {inbox_id} not found")
+            sys.exit(1)
+        return
+
     # Add to inbox
     text = " ".join(args)
     item = engine.add_inbox(text)
@@ -1996,6 +2008,43 @@ COMMANDS = {
 }
 
 
+# Per-command usage text, reused verbatim from each cmd_*'s own "Usage: ..."
+# message. Needed so `-h`/`--help` can be answered in main() BEFORE dispatch —
+# every cmd_* only checked `if not args`, which is truthy for ["--help"], so
+# help fell straight into real command logic (`work inbox --help` captured a
+# real inbox item, `work done --help` / `work cancel --help` fuzzy-matched a
+# task literally titled "--help" and flipped its status). See
+# tests/engine/work/test_cli_help_never_mutates.py for the regression.
+USAGE = {
+    "add": "Usage: add <title> [--priority N] [--project ID] [--tags t1,t2] [--due DATE] [--energy low|medium|high] [--actor WHO]",
+    "done": "Usage: done <task_id or search> [--actor WHO]",
+    "start": "Usage: start <task_id or search> [--actor WHO]",
+    "cancel": "Usage: cancel <task_id or search> [--actor WHO]",
+    "delegate": "Usage: delegate <task_id or search> --to <agent> [--actor WHO]",
+    "hold": "Usage: hold <task_id or search> [--actor WHO]",
+    "runner": "Usage: runner [status | cancel <task> | enable | disable]",
+    "activity": "Usage: activity <task> [--kind K --body \"...\" [--data '{...}'] [--actor A]]",
+    "show": "Usage: show <task_id or search>",
+    "inbox": "Usage: inbox [text to capture] | inbox drop <inbox_id>   (no args shows the inbox)",
+    "subtask": "Usage: subtask <parent_id or search> <title> [--done] [--active] [--actor WHO]",
+    "handoff": "Usage: handoff <task_id or search> --state '...' [--next '...'] [--files f1,f2] [--decisions d1,d2] [--blockers b1,b2] [--actor WHO]",
+    "dispatch": "Usage: dispatch <task_id or search>",
+    "search": "Usage: search <query>",
+    "link": "Usage: link <task_id|thread_id> [--session ID] [--outcome TEXT]",
+    "thread": "Usage: thread [title]   (no args lists active threads)",
+    "promote": "Usage: promote <thread_id> [--title PROJECT_TITLE] [--goal GOAL_ID]",
+    "move": "Usage: move <task_id> [task_id ...] --to <project_id> [--actor WHO]",
+    "who": "Usage: who <task_id or search>",
+    "brief": "Usage: brief <project> [--json]   |   brief --all [--json]",
+    "enrich": "Usage: enrich <project> [--dry-run]",
+}
+
+
+def _usage_for(cmd: str) -> str:
+    """Usage text for `-h`/`--help`, without dispatching into the command."""
+    return USAGE.get(cmd, f"Usage: {cmd} [args]   (see 'work --help' for the command list)")
+
+
 def main():
     if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help"):
         print("Usage: work <command> [args]")
@@ -2008,7 +2057,14 @@ def main():
         print(f"Available: {', '.join(sorted(COMMANDS.keys()))}")
         sys.exit(1)
 
-    COMMANDS[cmd](sys.argv[2:])
+    cmd_args = sys.argv[2:]
+    if "-h" in cmd_args or "--help" in cmd_args:
+        # Answered here, before dispatch — a cmd_* body must never run for
+        # a bare help request (it would otherwise treat "--help" as data).
+        print(_usage_for(cmd))
+        sys.exit(0)
+
+    COMMANDS[cmd](cmd_args)
 
 
 if __name__ == "__main__":
