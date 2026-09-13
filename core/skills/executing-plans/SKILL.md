@@ -72,7 +72,7 @@ After all tasks complete and verified:
 
 **Required workflow steps:**
 - **Git worktree isolation** - REQUIRED: Set up an isolated workspace (worktree or branch) before starting
-- **The writing-plans skill** - Creates the plan this skill executes
+- **A written plan** - A plan document (from a spec, a design discussion, or hand-written) is what this skill executes
 - **Branch completion workflow** - Verify tests, present options, and merge after all tasks complete
 
 ## Initiative Integration

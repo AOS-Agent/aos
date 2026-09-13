@@ -27,8 +27,10 @@ TARGET_DIR = Path.home() / ".claude" / "skills"
 DEPRECATED = {"instagram", "youtube"}
 
 # Core skills that must be present (subset — full list managed by sync-skills)
+# "review" retired in the skills-diet pass (aos#220): zero invocations, and its
+# daily/weekly/monthly work-review protocol has no equivalent successor skill.
 CORE_SKILLS = [
-    "recall", "work", "review", "step-by-step",
+    "recall", "work", "step-by-step",
 ]
 
 
