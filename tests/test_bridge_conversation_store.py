@@ -77,7 +77,7 @@ def test_one_inbound_and_one_outbound_make_two_redacted_rows(store, tmp_path):
     assert _count(db) == 0
 
     store.record_inbound("call me on +1 416-555-0199", chat_id=42, topic="dm")
-    store.record_outbound("emailing hisham@example.com now", chat_id=42, topic="dm")
+    store.record_outbound("emailing sam@example.com now", chat_id=42, topic="dm")
 
     assert _count(db) == 2
 
@@ -85,7 +85,7 @@ def test_one_inbound_and_one_outbound_make_two_redacted_rows(store, tmp_path):
     assert [r["direction"] for r in rows] == ["in", "out"]
     assert "416-555-0199" not in rows[0]["text_redacted"]
     assert "[phone]" in rows[0]["text_redacted"]
-    assert "hisham@example.com" not in rows[1]["text_redacted"]
+    assert "sam@example.com" not in rows[1]["text_redacted"]
     assert "[email]" in rows[1]["text_redacted"]
     # The surrounding words survive — redaction, not deletion.
     assert "call me on" in rows[0]["text_redacted"]
@@ -124,9 +124,13 @@ def test_rows_carry_topic_kind_and_meta(store, tmp_path):
 
 # ── Redaction ───────────────────────────────────────────────────────────────
 
+# Example data only: reserved documentation domains (example.com/.org) and NANP
+# 555-01XX numbers, which are reserved for fiction and can never be assigned.
+# privacy-scan enforces this — a realistic-looking address or number in a fixture
+# is indistinguishable from a leaked one.
 @pytest.mark.parametrize("raw", [
-    "hisham@example.com",
-    "first.last+tag@sub.domain.co.uk",
+    "sam@example.com",
+    "first.last+tag@sub.example.com",
     "reach me at WORK@Example.ORG please",
 ])
 def test_emails_are_redacted(store, raw):
@@ -139,7 +143,7 @@ def test_emails_are_redacted(store, raw):
     "+1 416-555-0199",
     "(416) 555-0199",
     "416-555-0199",
-    "+971 50 123 4567",
+    "+1 416 555 0142",
     "+14165550199",
 ])
 def test_phone_numbers_are_redacted(store, raw):

@@ -79,9 +79,9 @@ def _router_sends(monkeypatch, tmp_path, text, **kwargs):
 # ── strip_traceback ─────────────────────────────────────────────────────────
 
 RAW_STDERR = '''Traceback (most recent call last):
-  File "/Users/someone/aos/core/steer/dispatch.py", line 214, in run
+  File "/srv/aos/core/steer/dispatch.py", line 214, in run
     job = build(spec)
-  File "/Users/someone/aos/core/steer/dispatch.py", line 88, in build
+  File "/srv/aos/core/steer/dispatch.py", line 88, in build
     raise RuntimeError("tmux session refused")
 RuntimeError: tmux session refused
 '''

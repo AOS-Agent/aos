@@ -32,7 +32,7 @@ if str(BRIDGE) not in sys.path:
 import telegram_channel as tc  # noqa: E402
 
 RAW_STDERR = '''Traceback (most recent call last):
-  File "/Users/someone/aos/core/steer/dispatch.py", line 214, in run
+  File "/srv/aos/core/steer/dispatch.py", line 214, in run
     job = build(spec)
 RuntimeError: tmux session refused
 '''
@@ -159,7 +159,7 @@ def test_progress_updates_do_not_echo_internal_strings(monkeypatch):
         if polls["n"] < 4:
             return _completed(stdout=json.dumps({
                 "status": "running",
-                "updates": ["exec_tool(read_file /Users/someone/aos/core/steer/dispatch.py)"],
+                "updates": ["exec_tool(read_file /srv/aos/core/steer/dispatch.py)"],
             }))
         return _completed(stdout=json.dumps({"status": "completed", "summary": "Done."}))
 
