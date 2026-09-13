@@ -86,6 +86,30 @@ _TASK_KEYWORDS = [
     "set up ", "configure ", "install ",
 ]
 
+# ── Voice notes ────────────────────────────────────────────────────────
+# A voice note is someone thinking out loud, which is exactly what the ramble
+# skill is for — and `core/skills/ramble/SKILL.md` has claimed "Also called by
+# bridge after voice note transcription" since it was written, while this module
+# piped transcripts into the same generic chat path as typed text. Whether ramble
+# engaged depended on Claude spotting its own trigger phrases in an open-ended
+# session: no forced routing, no confirm, no guarantee anything was captured.
+#
+# The routing is forced here rather than hoped for. The skill itself is unchanged
+# — it already holds task creation behind its own "Ready to commit?" gate, so the
+# bridge's job is to get the operator there and say so.
+_RAMBLE_PROMPT = (
+    "Use the ramble skill for this. It came in as a voice note, so treat it as the "
+    "operator thinking out loud: organize what they said into tasks, ideas, thoughts "
+    "and notes, cross-reference their existing work, and show them the summary for "
+    "approval before creating anything.\n\n"
+    "[Voice transcript: {text}]"
+)
+
+# One line, no skill names, says plainly that nothing has happened yet.
+_RAMBLE_CONFIRM = ("🎙 Got it — organizing that now. I'll show you what I caught "
+                   "before anything gets created.")
+
+
 def _is_task_dispatch(text: str) -> bool:
     """Detect if a message is a TASK (needs tmux dispatch) vs CHAT (stream response).
 
@@ -984,13 +1008,23 @@ class TelegramChannel:
                 f"<i>{_esc(text)}</i>", parse_mode="HTML", **reply_kwargs,
             )
 
-        # Prepend transcript as context for Claude (it sees what you said).
-        transcript_prefix = f"[Voice transcript: {text}]\n\n"
-        prompt = transcript_prefix + text
-
-        # If topic has a dedicated agent, prepend dispatch
         if topic_agent and not text.lower().startswith(("ask ", "tell ", "@")):
+            # A voice note in a project topic belongs to that project's agent —
+            # someone talking into the nuchay thread wants nuchay, not a brain
+            # dump. The ramble force-route is for the DM, which is where
+            # thinking out loud actually happens.
             prompt = f"ask {topic_agent} to {text}"
+        else:
+            prompt = _RAMBLE_PROMPT.format(text=text)
+            # Confirm BEFORE the session starts: the operator should know their
+            # words landed and that nothing has been created yet, without having
+            # to wait for a turn to finish.
+            try:
+                await update.message.reply_text(_RAMBLE_CONFIRM, **reply_kwargs)
+            except Exception as e:
+                logger.warning(f"Ramble confirm failed: {e}")
+            record_outbound(_RAMBLE_CONFIRM, chat_id=chat_id, kind="ramble_confirm")
+            logger.info(f"Voice note routed to ramble [{user_key}]")
 
         # Stream Claude's response
         response = await self._stream_response(
