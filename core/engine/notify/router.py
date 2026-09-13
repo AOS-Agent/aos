@@ -12,6 +12,14 @@ Routing tiers (deterministic — no content analysis):
     3. Fallback chain on delivery: forum topic -> group General -> operator
        DM. A disabled-Topics toggle or deleted topic never drops a message.
 
+Every message is also run through the one humanization layer
+(``core/infra/reconcile/alert_copy.py`` -> ``humanize_notice``) on the way out.
+Before aos#235 only reconcile did that, and the 2026-09-13 review found the
+other senders arriving with a single emoji prefix bolted onto raw internal
+text: paths, slugs, stack traces. A sender that composes its own phone-ready
+copy can pass ``humanize=False`` -- an opt-out rather than the default, because
+forgetting is what got us here.
+
 Config: ``~/.aos/config/bridge-topics.yaml`` (written by the bridge's
 TopicManager). Credentials: macOS Keychain via agent-secret. Stdlib only.
 """
@@ -74,6 +82,33 @@ _THREAD_GONE_MARKERS = (
 )
 
 _KIND_PREFIX = {"alert": "⚠️", "success": "✅", "info": "ℹ️"}
+
+# The humanization layer, loaded by file path rather than by import: this module
+# is itself loaded by path from `aos-notify`, so there is no package to import
+# through, and `core/infra/reconcile` is on nobody's sys.path.
+_ALERT_COPY = (Path(__file__).resolve().parents[3]
+               / "core" / "infra" / "reconcile" / "alert_copy.py")
+_humanizer = None
+
+
+def _load_humanizer():
+    """Return `humanize_notice`, or None if the module cannot be loaded.
+
+    A missing humanizer must never cost the operator a message -- an unpolished
+    notice beats a dropped one.
+    """
+    global _humanizer
+    if _humanizer is None:
+        try:
+            import importlib.util
+            spec = importlib.util.spec_from_file_location("aos_alert_copy", _ALERT_COPY)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            _humanizer = mod.humanize_notice
+        except Exception as e:  # noqa: BLE001 - any failure means "send it raw"
+            log.warning("Could not load the message humanizer (%s) - sending raw", e)
+            _humanizer = False
+    return _humanizer or None
 
 
 def _get_secret(name: str) -> str | None:
@@ -263,7 +298,8 @@ def _send_with_retry(token: str, chat_id: int | str, text: str,
 
 def send_notification(text: str, topic: str | None = None, kind: str = "info",
                       parse_mode: str | None = "HTML",
-                      silent: bool = False, no_preview: bool = False) -> dict:
+                      silent: bool = False, no_preview: bool = False,
+                      humanize: bool = True) -> dict:
     """Deliver a notification, never silently dropping it.
 
     Messages over Telegram's 4096-char limit are split and delivered in
@@ -281,6 +317,13 @@ def send_notification(text: str, topic: str | None = None, kind: str = "info",
     if not token:
         log.info("Notification (no Telegram configured): %s", text[:100])
         return {"delivered": False, "target": None, "error": "no bot token"}
+
+    if humanize:
+        humanizer = _load_humanizer()
+        if humanizer:
+            cleaned = humanizer(text, kind=kind)
+            if cleaned:
+                text = cleaned
 
     prefix = _KIND_PREFIX.get(kind)
     if prefix and not text.startswith(prefix):

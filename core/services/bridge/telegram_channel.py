@@ -28,6 +28,7 @@ from interactive_buttons import (
     detect_options,
     resolve_callback,
 )
+from message_copy import humanize_job_report, humanize_tool_status
 from message_renderer import render_stream
 from session_manager import (
     cancel_stream,
@@ -111,10 +112,11 @@ async def _dispatch_steer_and_report(chat, message, text: str, thread_id=None):
             capture_output=True, text=True, timeout=15,
         )
         if result.returncode != 0:
-            await message.reply_text(
-                f"❌ Failed to dispatch STEER job: {result.stderr[:200]}",
-                message_thread_id=thread_id,
-            )
+            # The stderr is genuinely useful — to whoever reads the log.
+            logger.error(f"STEER dispatch failed: {result.stderr[:500]}")
+            reply = humanize_job_report("dispatch_failed")
+            await message.reply_text(reply, message_thread_id=thread_id)
+            record_outbound(reply, kind="job_report")
             return ""
 
         job_data = json.loads(result.stdout)
@@ -124,9 +126,9 @@ async def _dispatch_steer_and_report(chat, message, text: str, thread_id=None):
         send_kwargs = {}
         if thread_id:
             send_kwargs["message_thread_id"] = thread_id
+        logger.info(f"STEER job dispatched: {job_id}")
         status_msg = await chat.send_message(
-            f"🔄 Working on it...\n<code>job: {job_id}</code>",
-            parse_mode="HTML", **send_kwargs,
+            humanize_job_report("started"), parse_mode="HTML", **send_kwargs,
         )
 
         # Poll for completion (async, non-blocking)
@@ -154,7 +156,7 @@ async def _dispatch_steer_and_report(chat, message, text: str, thread_id=None):
                 apps = job_status.get("apps_opened", [])
                 updates = job_status.get("updates", [])
 
-                response_text = f"✅ <b>Done</b>\n\n{_esc(summary)}"
+                response_text = _esc(humanize_job_report("done", summary))
                 if apps:
                     response_text += ("\n\n<i>Apps used: "
                                       + ", ".join(_esc(a) for a in apps) + "</i>")
@@ -174,52 +176,53 @@ async def _dispatch_steer_and_report(chat, message, text: str, thread_id=None):
 
             elif status == "failed":
                 error = job_status.get("error", "Unknown error")
+                # The raw error belongs in the log. It also routinely embeds task
+                # titles that arrived from email/WhatsApp intake, so even the
+                # escaped form was an injection surface in a message the operator
+                # trusts because their own system sent it — now nothing from the
+                # job reaches the wire at all.
+                logger.error(f"STEER job {job_id} failed: {error[:500]}")
+                failure_text = humanize_job_report("failed")
                 try:
-                    # esc() the error: exception strings routinely embed task titles,
-                    # and titles arrive from email/WhatsApp intake. Unescaped, an
-                    # injected <a href> renders as a real link in a message the
-                    # operator trusts because their own system sent it.
-                    await status_msg.edit_text(
-                        f"❌ <b>Failed</b>\n\n{_esc(error)}", parse_mode="HTML")
+                    await status_msg.edit_text(failure_text, parse_mode="HTML")
                 except Exception:
-                    await chat.send_message(f"❌ Failed: {error}", **send_kwargs)
+                    await chat.send_message(failure_text, **send_kwargs)
 
                 subprocess.run(
                     ["python3", poll_script, "cleanup", job_id],
                     capture_output=True, text=True,
                 )
-                record_outbound(error, kind="job_failed")
+                record_outbound(failure_text, kind="job_report")
                 return f"Failed: {error}"
 
             # Still running — update progress if there are new updates
             updates = job_status.get("updates", [])
             if updates and elapsed % 15 == 0:  # Update every 15s
                 latest = updates[-1] if updates else ""
+                logger.debug(f"STEER job {job_id} progress: {latest[:200]}")
                 try:
                     await status_msg.edit_text(
-                        f"🔄 Working...\n<code>{latest[:100]}</code>",
-                        parse_mode="HTML",
+                        humanize_job_report("working"), parse_mode="HTML",
                     )
                 except Exception:
                     pass
 
         # Timeout
+        logger.warning(f"STEER job {job_id} timed out after {max_wait}s")
+        timeout_text = humanize_job_report("timeout")
         try:
-            await status_msg.edit_text(
-                f"⏰ Job timed out after {max_wait}s.\n<code>job: {job_id}</code>",
-                parse_mode="HTML",
-            )
+            await status_msg.edit_text(timeout_text, parse_mode="HTML")
         except Exception:
             pass
+        record_outbound(timeout_text, kind="job_report")
         subprocess.run(["python3", poll_script, "cleanup", job_id], capture_output=True, text=True)
         return "Job timed out"
 
     except Exception as e:
-        logger.error(f"STEER dispatch error: {e}")
-        await message.reply_text(
-            f"❌ STEER dispatch error: {str(e)[:200]}",
-            message_thread_id=thread_id,
-        )
+        logger.error(f"STEER dispatch error: {e}", exc_info=True)
+        reply = humanize_job_report("error")
+        await message.reply_text(reply, message_thread_id=thread_id)
+        record_outbound(reply, kind="job_report")
         return f"Error: {e}"
 
 # In-flight message persistence — survives bridge restarts
@@ -554,8 +557,13 @@ class TelegramChannel:
             logger.debug(f"Edit failed: {e}")
 
     async def _send_tool_status(self, chat, status_msg, description: str, thread_id: int = None):
-        """Send or edit a tool status message (italic, lightweight)."""
-        text = f"<i>{description}</i>"
+        """Send or edit a tool status message (italic, lightweight).
+
+        The description arrives from the renderer as an arbitrary string — a tool
+        name, a file path, sometimes an error — and lands in the middle of a
+        conversation, so it goes through the same humanizer as everything else.
+        """
+        text = f"<i>{_esc(humanize_tool_status(description))}</i>"
         if status_msg is None:
             try:
                 kwargs = {"parse_mode": "HTML"}

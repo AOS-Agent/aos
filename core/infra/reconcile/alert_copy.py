@@ -1,8 +1,18 @@
-"""Human copy for reconcile alerts (aos#170 — Telegram message quality).
+"""Human copy for everything the machine sends the operator (aos#170, aos#235).
 
 Reconcile checks speak in slugs, paths, and CI jargon — good for logs, wrong
 for a phone. This module is the single place that translates a check finding
 into the plain-English one-liner the operator actually reads on Telegram.
+
+Since aos#235 it is the single place for the *other* machine-written senders
+too. The 2026-09-13 bridge review graded the eleven live outbound generators
+and found four that never came through here: STEER job reports (raw `job_id`,
+raw `stderr[:200]`, raw internal "latest update" strings in `<code>`),
+tool-status pings (an arbitrary, unscrubbed description), every non-reconcile
+`aos-notify` caller (one emoji prefix and nothing else), and `channel-update`.
+`humanize_job_report`, `humanize_tool_status` and `humanize_notice` close those
+gaps; `core/engine/notify/router.py` calls the last one on the way out, so a
+sender cannot forget.
 
 The rest of the runner keeps its raw `CheckResult.message`/`detail` (those go
 to the JSONL log and `aos reconcile` terminal output untouched). Only the
@@ -350,3 +360,190 @@ def render_report(findings: list[tuple[str, str, str, str | None]],
         parts.append(cl)
 
     return "\n\n".join(parts) if parts else None
+
+
+# --------------------------------------------------------------------------
+# The other senders (aos#235). Same contract as humanize_finding: the raw
+# string goes to the log, a human line goes to the phone.
+# --------------------------------------------------------------------------
+
+MAX_ITEMS = 4  # MESSAGE_STYLE.md: four items max, a phone screen fills up fast.
+
+_TB_START_RE = re.compile(r"^\s*Traceback \(most recent call last\)")
+_TB_FRAME_RE = re.compile(r'^\s*(?:File [\"~/\'].*|at \S+.*|\.\.\. \d+ more)\s*$')
+_TB_EXC_RE = re.compile(r"^\s*[A-Za-z_][\w.]*(?:Error|Exception|Warning)\b.*$")
+_LINE_WS_RE = re.compile(r"[ \t]{2,}")
+
+
+def strip_traceback(text: str | None) -> str:
+    """Drop stack-trace machinery, keep any human sentence around it.
+
+    A traceback is the single most common way a raw internal string reaches the
+    operator's phone, and it is never the thing they need to read — the log has
+    it in full.
+    """
+    if not text:
+        return ""
+    kept: list[str] = []
+    in_tb = False
+    for line in text.splitlines():
+        if _TB_START_RE.match(line):
+            in_tb = True
+            continue
+        if in_tb:
+            if not line.strip():
+                in_tb = False
+                continue
+            if line.startswith((" ", "\t")) or _TB_EXC_RE.match(line):
+                continue
+            in_tb = False
+        if _TB_FRAME_RE.match(line) or _TB_EXC_RE.match(line):
+            continue
+        kept.append(line)
+    return "\n".join(kept).strip()
+
+
+def scrub_lines(text: str | None, keep_html: bool = True) -> str:
+    """`strip_jargon`, but per line, so a multi-line message keeps its shape.
+
+    `strip_jargon` collapses all whitespace — right for a one-line finding,
+    wrong for a digest, which would arrive as one long paragraph. HTML is kept
+    by default: Telegram senders use `<b>` deliberately.
+    """
+    if not text:
+        return ""
+    out_lines = []
+    for line in strip_traceback(text).splitlines():
+        if not line.strip():
+            out_lines.append("")
+            continue
+        if keep_html:
+            # Mask tags before scrubbing: `</b>` contains `/b`, which the path
+            # pattern would eat, leaving `<>` behind in the operator's message.
+            tags: list[str] = []
+
+            def _mask(m, _tags=tags):
+                _tags.append(m.group(0))
+                return f"\x00{len(_tags) - 1}\x00"
+
+            cleaned = _HTML_RE.sub(_mask, line)
+        else:
+            tags = []
+            cleaned = _HTML_RE.sub("", line)
+        cleaned = _PATH_RE.sub("", cleaned)
+        cleaned = _FILE_RE.sub("", cleaned)
+        cleaned = _VERSION_RE.sub("", cleaned)
+        cleaned = _MIGRATION_RE.sub("", cleaned)
+        cleaned = _TASKID_RE.sub("", cleaned)
+        cleaned = _COMMIT_RE.sub("", cleaned)
+        cleaned = _SLUG_RE.sub(lambda m: m.group(0).replace("_", " "), cleaned)
+        cleaned = re.sub(r"\s+([,.;:])", r"\1", cleaned)
+        cleaned = _LINE_WS_RE.sub(" ", cleaned)
+        for i, tag in enumerate(tags):
+            cleaned = cleaned.replace(f"\x00{i}\x00", tag)
+        out_lines.append(cleaned.rstrip())
+    # Collapse the runs of blank lines that removals can leave behind, but keep
+    # single blank lines: they are the paragraph breaks the reader scans by.
+    result: list[str] = []
+    for line in out_lines:
+        if not line and result and not result[-1]:
+            continue
+        result.append(line)
+    return "\n".join(result).strip()
+
+
+def cap_items(text: str | None, max_items: int = MAX_ITEMS) -> str:
+    """Keep at most `max_items` lines, then say how many were left out.
+
+    The count is the useful part of a long list; the list itself belongs in the
+    log. Blank lines do not count as items.
+    """
+    if not text:
+        return ""
+    lines = text.splitlines()
+    items = [ln for ln in lines if ln.strip()]
+    if len(items) <= max_items:
+        return text
+    kept: list[str] = []
+    seen = 0
+    for line in lines:
+        if line.strip():
+            if seen == max_items:
+                break
+            seen += 1
+        kept.append(line)
+    left = len(items) - max_items
+    kept.append(f"…and {left} more. Details are in the log.")
+    return "\n".join(kept).strip()
+
+
+# ── STEER job reports ──────────────────────────────────────────────────────
+
+_JOB_COPY = {
+    "dispatch_failed": "😕 Couldn't start that job — I'll try again in a moment.",
+    "started": "🔄 On it.",
+    "working": "🔄 Still working on it.",
+    "failed": "😕 That job didn't finish. Details are in the log.",
+    "timeout": ("⏰ That job is taking much longer than it should, so I've stopped "
+                "waiting on it. Details are in the log."),
+    "error": "😕 Something went wrong starting that job. Details are in the log.",
+}
+
+
+def humanize_job_report(stage: str, detail: str | None = None) -> str:
+    """Copy for a dispatched job, by stage.
+
+    `detail` is accepted and deliberately *not* interpolated for any failure
+    stage — stderr, job ids and internal step strings are what the log is for.
+    The one stage that uses it is "done", where the summary is the whole point;
+    it is scrubbed and capped like anything else.
+    """
+    if stage == "done":
+        summary = cap_items(scrub_lines(detail, keep_html=False))
+        return f"✅ Done.\n\n{summary}" if summary else "✅ Done."
+    return _JOB_COPY.get(stage, _JOB_COPY["working"])
+
+
+# ── Tool-status pings ──────────────────────────────────────────────────────
+
+_TOOL_STATUS_LIMIT = 120
+
+
+def humanize_tool_status(description: str | None) -> str:
+    """One short line for the "what am I doing right now" ping.
+
+    The description arrives from the streaming renderer as an arbitrary string
+    — a tool name, a file path, sometimes an error. It is shown to the operator
+    mid-conversation, so it gets scrubbed like any other outbound copy, and
+    always says something rather than rendering an empty `<i></i>`.
+    """
+    cleaned = strip_jargon(strip_traceback(description or ""))
+    if not cleaned:
+        return "Working on it…"
+    if len(cleaned) > _TOOL_STATUS_LIMIT:
+        cleaned = cleaned[: _TOOL_STATUS_LIMIT - 1].rstrip() + "…"
+    return cleaned
+
+
+# ── Generic notices (aos-notify, crons, bus consumers) ─────────────────────
+
+_NOTICE_FALLBACK = "Something needs a look on my end. Details are in the log."
+
+
+def humanize_notice(text: str | None, kind: str = "info") -> str:
+    """Last stop for any sender that writes its own copy.
+
+    Scrubs tracebacks, paths, filenames and version/commit/task refs from every
+    notice. Item-capping applies to alerts only: an alert that is a long list is
+    a raw dump, while a digest is a list on purpose, and truncating the weekly
+    summary to four lines would be a regression dressed as a style fix.
+
+    Idempotent by construction — copy that is already clean passes through
+    unchanged, so reconcile humanizing before it sends costs nothing here.
+    """
+    if not text:
+        return ""
+    out = scrub_lines(text, keep_html=True)
+    if kind == "alert":
+        out = cap_items(out)
+    return out or _NOTICE_FALLBACK

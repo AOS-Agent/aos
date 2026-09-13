@@ -103,3 +103,35 @@ fallback that at least strips slugs and paths. For reconcile that's
 runner keeps the raw message for the log and routes only the phone-facing copy
 through it. New check? Add a template there — and if you forget, the fallback
 still scrubs the raw string so nothing lands verbatim.
+
+## The five rules (aos#235)
+
+Everything above is the detail. These five are the whole law, and they now cover
+**every** sender — not just the briefing and reconcile. The 2026-09-13 review
+graded the eleven live outbound generators and found four that broke them:
+STEER job reports, tool-status pings, every non-reconcile `aos-notify` caller,
+and the `channel-update` cron (since removed).
+
+1. **Plain English. No IDs, paths or stack traces — ever.** Not in a job report,
+   not in a tool-status ping, not in a cron's alert. `job: a1b2c3d4` tells the
+   operator nothing they can act on, and a stack trace on a phone is noise with
+   a scrollbar.
+2. **Bottom line first. One emoji per section. Four items max.** If there are
+   nine things, say "nine" and list four. A phone screen and a tired brain both
+   fill up fast.
+3. **One humanization layer for every sender.** `core/infra/reconcile/alert_copy.py`
+   is it — `humanize_finding` for reconcile, `humanize_job_report` for dispatched
+   jobs, `humanize_tool_status` for the mid-stream pings, `humanize_notice` for
+   everything that goes out through `aos-notify`. The notify router calls
+   `humanize_notice` itself, so a new sender is covered before anyone remembers
+   to think about it. New kind of message? Add a function there, not a template
+   in the sender.
+4. **Warm, not robotic — and say whether the operator needs to do anything.**
+   "I've restarted it, it's healthy again" and "Two-minute fix: System Settings
+   → …" are both complete. "Nothing urgent" is a complete answer too. What is
+   never acceptable is leaving them to guess.
+5. **Detail goes in the log; the message points at it.** Every alert with more
+   behind it ends with where to look — "Details are in the log." The raw
+   `CheckResult.message`, the stderr, the job id and the full list all still
+   exist; they are written to `~/.aos/logs/` where they are useful, and they do
+   not travel.
