@@ -43,15 +43,21 @@ DESCRIPTION = "Add threads.cwd so get_or_create_thread_for_cwd can dedupe (aos#2
 import sqlite3
 from pathlib import Path
 
-HOME = Path.home()
-WORK_DB = HOME / ".aos" / "data" / "work.db"
+
+# Resolved on every call, never captured at import — see default_off.py's own
+# docstring (core/infra/lib/default_off.py) for why a module-level
+# `Path.home()` here would freeze whichever machine (or sandboxed test HOME)
+# happened to import this module first, for the rest of the process.
+def _work_db() -> Path:
+    return Path.home() / ".aos" / "data" / "work.db"
 
 
 def _connect() -> sqlite3.Connection | None:
-    if not WORK_DB.exists():
+    work_db = _work_db()
+    if not work_db.exists():
         return None
     try:
-        return sqlite3.connect(str(WORK_DB))
+        return sqlite3.connect(str(work_db))
     except sqlite3.Error:
         return None
 

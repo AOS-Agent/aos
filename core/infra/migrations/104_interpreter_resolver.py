@@ -27,15 +27,31 @@ import re
 import subprocess
 from pathlib import Path
 
-HOME = Path.home()
 HARDCODED = "/opt/homebrew/bin/python3"
-RESOLVER = str(HOME / "aos" / "core" / "bin" / "internal" / "aos-python")
-LAUNCHAGENTS = HOME / "Library" / "LaunchAgents"
-LAUNCHERS = HOME / ".aos" / "launchers"
+
+
+# Resolved on every call, never captured at import — see default_off.py's own
+# docstring (core/infra/lib/default_off.py) for why a module-level
+# `Path.home()` here would freeze whichever machine (or sandboxed test HOME)
+# happened to import this module first, for the rest of the process.
+def _home() -> Path:
+    return Path.home()
+
+
+def _resolver() -> str:
+    return str(_home() / "aos" / "core" / "bin" / "internal" / "aos-python")
+
+
+def _launchagents() -> Path:
+    return _home() / "Library" / "LaunchAgents"
+
+
+def _launchers() -> Path:
+    return _home() / ".aos" / "launchers"
 
 
 def _aos_plists():
-    return sorted(LAUNCHAGENTS.glob("com.aos.*.plist"))
+    return sorted(_launchagents().glob("com.aos.*.plist"))
 
 
 def _launcher_for(plist_path: Path):
@@ -45,7 +61,7 @@ def _launcher_for(plist_path: Path):
     except Exception:
         return None, None
     args = pl.get("ProgramArguments") or ([pl["Program"]] if pl.get("Program") else [])
-    if args and args[0].startswith(str(LAUNCHERS) + "/"):
+    if args and args[0].startswith(str(_launchers()) + "/"):
         return pl, Path(args[0])
     return pl, None
 
@@ -77,8 +93,9 @@ def check() -> bool:
 
 
 def up() -> bool:
-    if not Path(RESOLVER).exists():
-        print(f"  ERROR: resolver missing at {RESOLVER} — aborting without changes")
+    resolver = _resolver()
+    if not Path(resolver).exists():
+        print(f"  ERROR: resolver missing at {resolver} — aborting without changes")
         return False
 
     uid = subprocess.run(["id", "-u"], capture_output=True, text=True).stdout.strip()
@@ -92,13 +109,13 @@ def up() -> bool:
         # 1. Plist args (direct-exec plists, pre-launcher layouts)
         args = pl.get("ProgramArguments") or []
         if HARDCODED in args:
-            pl["ProgramArguments"] = [RESOLVER if a == HARDCODED else a for a in args]
+            pl["ProgramArguments"] = [resolver if a == HARDCODED else a for a in args]
             plist_path.write_bytes(plistlib.dumps(pl))
 
         # 2. Launcher wrapper script
         if launcher and launcher.exists() and HARDCODED in launcher.read_text():
             launcher.write_text(
-                re.sub(re.escape(HARDCODED), RESOLVER, launcher.read_text())
+                re.sub(re.escape(HARDCODED), resolver, launcher.read_text())
             )
 
         # 3. Restart ONLY if it is currently running — never start stopped,

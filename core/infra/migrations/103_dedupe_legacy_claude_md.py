@@ -28,7 +28,13 @@ import re
 import sys
 from pathlib import Path
 
-TARGET = Path.home() / ".claude" / "CLAUDE.md"
+
+# Resolved on every call, never captured at import — see default_off.py's own
+# docstring (core/infra/lib/default_off.py) for why a module-level
+# `Path.home()` here would freeze whichever machine (or sandboxed test HOME)
+# happened to import this module first, for the rest of the process.
+def _target() -> Path:
+    return Path.home() / ".claude" / "CLAUDE.md"
 
 BLOCK_RE = re.compile(
     r'<!-- AOS:MANAGED name="(?P<name>[^"]+)" version="(?P<version>\d+)" -->\n'
@@ -81,13 +87,15 @@ def _legacy_dup_spans(text: str):
 
 def check() -> bool:
     """Applied when no strippable legacy duplicate remains."""
-    if not TARGET.exists():
+    target = _target()
+    if not target.exists():
         return True
-    return not _legacy_dup_spans(TARGET.read_text())
+    return not _legacy_dup_spans(target.read_text())
 
 
 def up() -> bool:
-    if not TARGET.exists():
+    target = _target()
+    if not target.exists():
         print("  no ~/.claude/CLAUDE.md — nothing to do")
         return True
 
@@ -103,7 +111,7 @@ def up() -> bool:
     except Exception as e:  # non-fatal: version gate below still protects content
         print(f"  WARNING: managed-block refresh failed ({e}) — version gate applies")
 
-    text = TARGET.read_text()
+    text = target.read_text()
     dups = _legacy_dup_spans(text)
     if not dups:
         print("  no legacy duplicates found")
@@ -114,6 +122,6 @@ def up() -> bool:
         removed.append(text[start:end].splitlines()[0].lstrip("# ").strip())
         text = text[:start] + text[end:]
     text = re.sub(r"\n{3,}", "\n\n", text)
-    TARGET.write_text(text)
+    target.write_text(text)
     print(f"  removed legacy duplicate sections: {', '.join(reversed(removed))}")
     return True

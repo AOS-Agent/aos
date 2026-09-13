@@ -51,11 +51,30 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-HOME = Path.home()
-AOS_ROOT = HOME / "aos"
-DATA_DIR = HOME / ".aos" / "data"
-REPORT = DATA_DIR / "qren-readiness.json"
-CONFIG_DIR = HOME / ".aos" / "config"
+
+# Resolved on every call, never captured at import — see default_off.py's own
+# docstring (core/infra/lib/default_off.py) for why a module-level
+# `Path.home()` here would freeze whichever machine (or sandboxed test HOME)
+# happened to import this module first, for the rest of the process.
+def _home() -> Path:
+    return Path.home()
+
+
+def _aos_root() -> Path:
+    return _home() / "aos"
+
+
+def _data_dir() -> Path:
+    return _home() / ".aos" / "data"
+
+
+def _report() -> Path:
+    return _data_dir() / "qren-readiness.json"
+
+
+def _config_dir() -> Path:
+    return _home() / ".aos" / "config"
+
 
 SCHEMA_VERSION = 1
 
@@ -105,28 +124,31 @@ def _engines() -> dict:
 
 
 def _aos_info() -> dict:
+    aos_root = _aos_root()
+    home = _home()
+    data_dir = _data_dir()
     version = None
-    vf = AOS_ROOT / "VERSION"
+    vf = aos_root / "VERSION"
     if vf.exists():
         version = vf.read_text().strip()
 
     migration_level = None
-    mf = HOME / ".aos" / ".version"
+    mf = home / ".aos" / ".version"
     if mf.exists():
         try:
             migration_level = int(mf.read_text().strip())
         except ValueError:
             pass
 
-    if AOS_ROOT.is_symlink():
+    if aos_root.is_symlink():
         shape = "release"
-    elif (AOS_ROOT / ".git").exists():
+    elif (aos_root / ".git").exists():
         shape = "git-clone"
     else:
         shape = "unknown"
 
     deployed_hash = None
-    dh = DATA_DIR / "deployed-hash"
+    dh = data_dir / "deployed-hash"
     if dh.exists():
         deployed_hash = dh.read_text().strip() or None
 
@@ -135,12 +157,12 @@ def _aos_info() -> dict:
         "migration_level": migration_level,
         "install_shape": shape,
         "deployed_hash": deployed_hash,
-        "root": str(AOS_ROOT.resolve()) if AOS_ROOT.exists() else None,
+        "root": str(aos_root.resolve()) if aos_root.exists() else None,
     }
 
 
 def _services() -> list[dict]:
-    sys.path.insert(0, str(AOS_ROOT / "core" / "infra" / "lib"))
+    sys.path.insert(0, str(_aos_root() / "core" / "infra" / "lib"))
     try:
         from service_registry import disabled_services, load_registry
     except Exception:  # noqa: BLE001 — no registry is a finding, not a crash
@@ -164,7 +186,7 @@ def _services() -> list[dict]:
 
 
 def _modules() -> list[dict]:
-    path = AOS_ROOT / "config" / "modules.yaml"
+    path = _aos_root() / "config" / "modules.yaml"
     if not path.exists():
         return []
     try:
@@ -183,9 +205,10 @@ def _modules() -> list[dict]:
 
 def _data_sizes() -> dict:
     sizes = {}
-    if not DATA_DIR.exists():
+    data_dir = _data_dir()
+    if not data_dir.exists():
         return sizes
-    for p in sorted(DATA_DIR.glob("*.db")):
+    for p in sorted(data_dir.glob("*.db")):
         try:
             sizes[p.name] = p.stat().st_size
         except OSError:
@@ -221,26 +244,28 @@ def _build_report() -> dict:
 
 
 def check() -> bool:
-    if not REPORT.exists():
+    report = _report()
+    if not report.exists():
         return False
     try:
-        raw = json.loads(REPORT.read_text())
+        raw = json.loads(report.read_text())
     except (json.JSONDecodeError, OSError):
         return False
     return raw.get("schema_version") == SCHEMA_VERSION
 
 
 def up() -> bool:
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    _data_dir().mkdir(parents=True, exist_ok=True)
+    report_path = _report()
     report = _build_report()
 
-    tmp = REPORT.with_suffix(".json.tmp")
+    tmp = report_path.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(report, indent=2) + "\n")
-    os.replace(tmp, REPORT)
+    os.replace(tmp, report_path)
 
     engines = [f"{n} {d['version'] or '?'}" for n, d in report["engines"].items()
                if d["installed"]]
-    print(f"  ✓ Wrote {REPORT}")
+    print(f"  ✓ Wrote {report_path}")
     print(f"     Engines:  {', '.join(engines) if engines else 'none detected'}")
     print(f"     Services: {len(report['services'])} declared, "
           f"{sum(1 for s in report['services'] if s['operator_disabled'])} disabled")

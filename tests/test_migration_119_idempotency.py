@@ -1,16 +1,15 @@
 """Migration 119 — the project layer reaches the instance — run twice, against a
 sandboxed HOME.
 
-Why this file exists when `tests/test_project_layer.py` already exercises the
-migration: that suite patches the module's path constants *after* import. This
-one patches `Path.home()` *before* `exec_module`, the way
-`test_migrations_111_116_idempotency.py` does, so the test covers the real
-failure mode of a migration that resolves `HOME = Path.home()` at module scope.
-If a future edit moves a path out of the patched set — a new `~/.claude/...`
-target, say — the attribute-patching fixture would quietly write to the
-operator's own home and pass. This one cannot: the only home it knows is in
-`tmp_path`, and the last test in the file asserts the live instance is clean
-afterwards.
+Why this file exists alongside `tests/test_project_layer.py`'s own migration
+coverage: both suites now sandbox `Path.home()` persistently for the whole
+test (matching `test_migrations_111_116_idempotency.py`'s pattern) rather than
+patching the module's path constants after import — the migration no longer
+HAS path constants to patch, only functions (`_home()`, `_project_root()`,
+`_rule_link()`, …) that re-resolve `Path.home()` on every call. This file
+covers the repoint/backup shapes end to end; `test_project_layer.py` covers
+the same migration against the real framework tree in place, plus the
+surrounding zone/reconcile/steward-check machinery.
 
 The other half of the job here is the **repoint**. On the machine this feature
 was developed on, `~/.local/bin/project` and
@@ -43,8 +42,8 @@ def home(tmp_path, monkeypatch):
     """A sandbox HOME with the framework tree symlinked in, and nothing else real.
 
     `~/aos` is a symlink to the repo under test, which is the shape of a real
-    instance (`~/aos` is the runtime copy) and means `RULE_SOURCE` and
-    `CLI_SOURCE` resolve to files that actually exist — without which the
+    instance (`~/aos` is the runtime copy) and means `_rule_source()` and
+    `_cli_source()` resolve to files that actually exist — without which the
     migration's `if source.exists()` guards would make every assertion here
     vacuously true.
     """
@@ -68,7 +67,7 @@ def m(home):
                                                   MIGRATION)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
-    assert mod.HOME == home, "the migration resolved HOME outside the sandbox"
+    assert mod._home() == home, "the migration resolved HOME outside the sandbox"
     return mod
 
 
@@ -85,19 +84,21 @@ def _worktree(home: Path) -> tuple[Path, Path]:
 
 
 def _links(m) -> dict[str, Path]:
-    return {"rule": m.RULE_LINK, "cli": m.CLI_LINK}
+    return {"rule": m._rule_link(), "cli": m._cli_link()}
 
 
 def _points_at_runtime(m) -> None:
     """Both links are symlinks resolving to the framework copies under ~/aos."""
-    assert m.RULE_LINK.is_symlink()
-    assert m.RULE_LINK.resolve() == m.RULE_SOURCE.resolve()
-    assert m.CLI_LINK.is_symlink()
-    assert m.CLI_LINK.resolve() == m.CLI_SOURCE.resolve()
+    rule_link, rule_source = m._rule_link(), m._rule_source()
+    cli_link, cli_source = m._cli_link(), m._cli_source()
+    assert rule_link.is_symlink()
+    assert rule_link.resolve() == rule_source.resolve()
+    assert cli_link.is_symlink()
+    assert cli_link.resolve() == cli_source.resolve()
     # Stored literally as the runtime path, not the release directory it
     # happens to resolve to today: `aos update` swaps that out from under us.
-    assert os.readlink(m.RULE_LINK) == str(m.RULE_SOURCE)
-    assert os.readlink(m.CLI_LINK) == str(m.CLI_SOURCE)
+    assert os.readlink(rule_link) == str(rule_source)
+    assert os.readlink(cli_link) == str(cli_source)
 
 
 # ── Idempotency: the contract the runner relies on ───────────────────────────
@@ -105,13 +106,13 @@ def _points_at_runtime(m) -> None:
 
 def test_runs_twice_with_no_project_dir(m):
     """A fresh machine: nothing to install zones into, links still get made."""
-    assert not m.PROJECT_ROOT.exists()
+    assert not m._project_root().exists()
     assert m.check() is False
 
     assert m.up() is True
     assert m.check() is True
     _points_at_runtime(m)
-    assert not m.PROJECT_ROOT.exists(), "a projects directory is never conjured"
+    assert not m._project_root().exists(), "a projects directory is never conjured"
 
     before = {k: os.readlink(v) for k, v in _links(m).items()}
     assert m.up() is True
@@ -120,44 +121,45 @@ def test_runs_twice_with_no_project_dir(m):
 
 
 def test_runs_twice_with_a_project_dir(m):
-    m.PROJECT_ROOT.mkdir(parents=True)
+    m._project_root().mkdir(parents=True)
     assert m.check() is False
 
     assert m.up() is True
     assert m.check() is True
 
     import project_zones
+    project_root = m._project_root()
     for zone in project_zones.ZONES:
-        assert (m.PROJECT_ROOT / zone).is_dir()
-        assert (m.PROJECT_ROOT / zone / "README.md").exists()
-    assert m.POLICY.exists()
+        assert (project_root / zone).is_dir()
+        assert (project_root / zone / "README.md").exists()
+    assert m._policy().exists()
 
-    world = sorted(str(p.relative_to(m.PROJECT_ROOT))
-                   for p in m.PROJECT_ROOT.rglob("*"))
-    policy = m.POLICY.read_text()
+    world = sorted(str(p.relative_to(project_root))
+                   for p in project_root.rglob("*"))
+    policy = m._policy().read_text()
 
     assert m.up() is True
     assert m.check() is True
-    assert sorted(str(p.relative_to(m.PROJECT_ROOT))
-                  for p in m.PROJECT_ROOT.rglob("*")) == world
-    assert m.POLICY.read_text() == policy
+    assert sorted(str(p.relative_to(project_root))
+                  for p in project_root.rglob("*")) == world
+    assert m._policy().read_text() == policy
 
 
 def test_first_run_actually_does_something(m):
     """A migration that does nothing is trivially idempotent and useless."""
-    m.PROJECT_ROOT.mkdir(parents=True)
-    assert not m.RULE_LINK.exists() and not m.CLI_LINK.exists()
+    m._project_root().mkdir(parents=True)
+    assert not m._rule_link().exists() and not m._cli_link().exists()
     m.up()
-    assert m.POLICY.exists()
-    assert m.RULE_LINK.is_symlink() and m.CLI_LINK.is_symlink()
+    assert m._policy().exists()
+    assert m._rule_link().is_symlink() and m._cli_link().is_symlink()
 
 
 def test_an_edited_policy_file_survives_both_runs(m):
-    m.PROJECT_ROOT.mkdir(parents=True)
-    m.POLICY.write_text("# my own conventions\n")
+    m._project_root().mkdir(parents=True)
+    m._policy().write_text("# my own conventions\n")
     m.up()
     m.up()
-    assert m.POLICY.read_text() == "# my own conventions\n"
+    assert m._policy().read_text() == "# my own conventions\n"
 
 
 # ── The repoint: worktree → runtime ──────────────────────────────────────────
@@ -166,10 +168,11 @@ def test_an_edited_policy_file_survives_both_runs(m):
 def test_repoints_links_from_a_dev_worktree(m):
     """The live-instance case. Both links point into a branch checkout that
     `aos update` does not own; after the migration both point at `~/aos/`."""
-    wt_cli, wt_rule = _worktree(m.HOME)
-    m.CLI_LINK.parent.mkdir(parents=True, exist_ok=True)
-    m.CLI_LINK.symlink_to(wt_cli)
-    m.RULE_LINK.symlink_to(wt_rule)
+    wt_cli, wt_rule = _worktree(m._home())
+    cli_link, rule_link = m._cli_link(), m._rule_link()
+    cli_link.parent.mkdir(parents=True, exist_ok=True)
+    cli_link.symlink_to(wt_cli)
+    rule_link.symlink_to(wt_rule)
 
     assert m.check() is False, "a worktree link is not the installed state"
     assert m.up() is True
@@ -185,24 +188,26 @@ def test_repoints_links_from_a_dev_worktree(m):
 
 def test_already_correct_links_are_not_touched(m):
     """The idempotent path: no unlink, no relink, no backup, same inode."""
-    m.CLI_LINK.parent.mkdir(parents=True, exist_ok=True)
-    m.CLI_LINK.symlink_to(m.CLI_SOURCE)
-    m.RULE_LINK.symlink_to(m.RULE_SOURCE)
+    cli_link, rule_link = m._cli_link(), m._rule_link()
+    cli_link.parent.mkdir(parents=True, exist_ok=True)
+    cli_link.symlink_to(m._cli_source())
+    rule_link.symlink_to(m._rule_source())
     stamps = {k: v.lstat().st_ino for k, v in _links(m).items()}
 
     assert m.up() is True
     assert {k: v.lstat().st_ino for k, v in _links(m).items()} == stamps
-    assert not list(m.RULE_LINK.parent.glob("*.pre-reconcile*"))
-    assert not list(m.CLI_LINK.parent.glob("*.pre-reconcile*"))
+    assert not list(rule_link.parent.glob("*.pre-reconcile*"))
+    assert not list(cli_link.parent.glob("*.pre-reconcile*"))
 
 
 def test_repoints_a_dangling_link(m):
     """The worktree was deleted. The link is broken, not absent — and a broken
     `project` command is the exact failure this repoint exists to prevent."""
-    gone = m.HOME / "project" / "aos" / ".claude" / "worktrees" / "deleted" / "project"
-    m.CLI_LINK.parent.mkdir(parents=True, exist_ok=True)
-    m.CLI_LINK.symlink_to(gone)
-    assert m.CLI_LINK.is_symlink() and not m.CLI_LINK.exists()
+    gone = m._home() / "project" / "aos" / ".claude" / "worktrees" / "deleted" / "project"
+    cli_link = m._cli_link()
+    cli_link.parent.mkdir(parents=True, exist_ok=True)
+    cli_link.symlink_to(gone)
+    assert cli_link.is_symlink() and not cli_link.exists()
 
     assert m.check() is False
     assert m.up() is True
@@ -212,12 +217,13 @@ def test_repoints_a_dangling_link(m):
 def test_a_real_file_is_backed_up_never_clobbered(m):
     """The operator wrote their own rule by hand. Nothing here is entitled to
     throw that away, so it is renamed rather than removed."""
-    m.RULE_LINK.write_text("# hand-written rule, not ours\n")
-    assert not m.RULE_LINK.is_symlink()
+    rule_link = m._rule_link()
+    rule_link.write_text("# hand-written rule, not ours\n")
+    assert not rule_link.is_symlink()
 
     assert m.up() is True
     _points_at_runtime(m)
-    backups = list(m.RULE_LINK.parent.glob("project-structure.md.pre-reconcile*"))
+    backups = list(rule_link.parent.glob("project-structure.md.pre-reconcile*"))
     assert len(backups) == 1
     assert backups[0].read_text() == "# hand-written rule, not ours\n"
 
@@ -226,21 +232,22 @@ def test_a_second_relink_does_not_overwrite_the_first_backup(m):
     """Two passes, two hand-written files, two surviving backups. The obvious
     implementation deletes the old backup to make room — on exactly the file the
     backup exists to protect."""
-    m.RULE_LINK.write_text("first\n")
+    rule_link = m._rule_link()
+    rule_link.write_text("first\n")
     m.up()
-    m.RULE_LINK.unlink()
-    m.RULE_LINK.write_text("second\n")
+    rule_link.unlink()
+    rule_link.write_text("second\n")
     m.up()
 
     bodies = sorted(p.read_text() for p in
-                    m.RULE_LINK.parent.glob("project-structure.md.pre-reconcile*"))
+                    rule_link.parent.glob("project-structure.md.pre-reconcile*"))
     assert bodies == ["first\n", "second\n"]
     _points_at_runtime(m)
 
 
 def test_links_are_made_even_when_the_project_root_is_unreachable(m):
     """An unmounted volume blocks the zones, not the command on PATH."""
-    m.PROJECT_ROOT.symlink_to(m.HOME / "nowhere" / "project")
+    m._project_root().symlink_to(m._home() / "nowhere" / "project")
     assert m.up() is False, "an unreachable root must leave the migration pending"
     _points_at_runtime(m)
     assert m.check() is False
@@ -254,8 +261,8 @@ def test_unreachable_root_retries_and_then_completes(m):
     like a machine that never had one. The two want opposite answers, and
     answering "complete" for this one is unrecoverable: the runner records the
     watermark and never offers the migration again."""
-    target = m.HOME / "volume" / "project"
-    m.PROJECT_ROOT.symlink_to(target)
+    target = m._home() / "volume" / "project"
+    m._project_root().symlink_to(target)
 
     assert m.check() is False
     assert m.up() is False
@@ -265,9 +272,10 @@ def test_unreachable_root_retries_and_then_completes(m):
     assert m.check() is True
 
     import project_zones
+    project_root = m._project_root()
     for zone in project_zones.ZONES:
-        assert (m.PROJECT_ROOT / zone).is_dir()
-    assert m.POLICY.exists()
+        assert (project_root / zone).is_dir()
+    assert m._policy().exists()
 
     assert m.up() is True                           # and still idempotent
 

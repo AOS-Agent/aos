@@ -36,12 +36,33 @@ import sqlite3
 import subprocess
 from pathlib import Path
 
-HOME = Path.home()
-LA_DIR = HOME / "Library" / "LaunchAgents"
-SERVICE_DIR = HOME / ".aos" / "services" / "qareen"
-STATE_YAML = HOME / ".aos" / "config" / "state.yaml"
-QAREEN_DB = HOME / ".aos" / "data" / "qareen.db"
-SKILLS_DIR = HOME / ".claude" / "skills"
+
+# Resolved on every call, never captured at import — see default_off.py's own
+# docstring (core/infra/lib/default_off.py) for why a module-level
+# `Path.home()` here would freeze whichever machine (or sandboxed test HOME)
+# happened to import this module first, for the rest of the process.
+def _home() -> Path:
+    return Path.home()
+
+
+def _la_dir() -> Path:
+    return _home() / "Library" / "LaunchAgents"
+
+
+def _service_dir() -> Path:
+    return _home() / ".aos" / "services" / "qareen"
+
+
+def _state_yaml() -> Path:
+    return _home() / ".aos" / "config" / "state.yaml"
+
+
+def _qareen_db() -> Path:
+    return _home() / ".aos" / "data" / "qareen.db"
+
+
+def _skills_dir() -> Path:
+    return _home() / ".claude" / "skills"
 
 LABELS = {
     "com.aos.qareen": "AOS Qareen",
@@ -76,11 +97,11 @@ def _remove_launchagents() -> list[str]:
     removed = []
     for label, launcher_name in LABELS.items():
         _bootout(label)
-        plist = LA_DIR / f"{label}.plist"
+        plist = _la_dir() / f"{label}.plist"
         if plist.exists():
             plist.unlink()
             removed.append(str(plist))
-        launcher = HOME / ".aos" / "launchers" / launcher_name
+        launcher = _home() / ".aos" / "launchers" / launcher_name
         if launcher.exists():
             launcher.unlink()
             removed.append(str(launcher))
@@ -91,17 +112,17 @@ def _kill_strays() -> None:
     """Deploy loops / vite watchers the agents left behind. Targeted by path
     so nothing outside qareen's tooling can match."""
     for pattern in (
-        str(SERVICE_DIR / "live-deploy.sh"),
+        str(_service_dir() / "live-deploy.sh"),
         "core/qareen/screen/node_modules/.bin/vite",
     ):
         subprocess.run(["pkill", "-f", pattern], capture_output=True, timeout=15)
 
 
 def _drop_dead_tables() -> list[str]:
-    if not QAREEN_DB.exists():
+    if not _qareen_db().exists():
         return []
     dropped = []
-    con = sqlite3.connect(str(QAREEN_DB), timeout=30)
+    con = sqlite3.connect(str(_qareen_db()), timeout=30)
     try:
         for table in DEAD_TABLES:
             row = con.execute(
@@ -119,8 +140,8 @@ def _drop_dead_tables() -> list[str]:
 
 
 def _remove_service_dir() -> bool:
-    if SERVICE_DIR.exists():
-        shutil.rmtree(SERVICE_DIR, ignore_errors=True)
+    if _service_dir().exists():
+        shutil.rmtree(_service_dir(), ignore_errors=True)
         return True
     return False
 
@@ -128,7 +149,7 @@ def _remove_service_dir() -> bool:
 def _remove_skill_links() -> list[str]:
     removed = []
     for name in COMPANION_SKILLS:
-        link = SKILLS_DIR / name
+        link = _skills_dir() / name
         # islink() also covers now-dangling symlinks (target left the framework)
         if link.is_symlink() or link.exists():
             try:
@@ -143,32 +164,32 @@ def _remove_skill_links() -> list[str]:
 
 
 def _clean_state_yaml() -> bool:
-    if not STATE_YAML.exists():
+    if not _state_yaml().exists():
         return False
     try:
         import yaml
     except ImportError:
         return False
     try:
-        state = yaml.safe_load(STATE_YAML.read_text()) or {}
+        state = yaml.safe_load(_state_yaml().read_text()) or {}
     except Exception:
         return False
     services = state.get("services") or {}
     if "qareen" not in services:
         return False
     del services["qareen"]
-    STATE_YAML.write_text(yaml.dump(state, default_flow_style=False, sort_keys=False))
+    _state_yaml().write_text(yaml.dump(state, default_flow_style=False, sort_keys=False))
     return True
 
 
 def check() -> bool:
     """True when nothing qareen-shaped remains on the instance."""
-    if any((LA_DIR / f"{label}.plist").exists() for label in LABELS):
+    if any((_la_dir() / f"{label}.plist").exists() for label in LABELS):
         return False
-    if SERVICE_DIR.exists():
+    if _service_dir().exists():
         return False
-    if QAREEN_DB.exists():
-        con = sqlite3.connect(str(QAREEN_DB), timeout=30)
+    if _qareen_db().exists():
+        con = sqlite3.connect(str(_qareen_db()), timeout=30)
         try:
             for table in DEAD_TABLES:
                 if con.execute(

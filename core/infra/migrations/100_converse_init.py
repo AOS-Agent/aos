@@ -43,16 +43,45 @@ from pathlib import Path
 
 DESCRIPTION = "Converse engine: schema (3 tables) + config + dirs (Wave 0 foundation)"
 
-HOME = Path.home()
-AOS_ROOT = HOME / "aos"
-DATA_DIR = HOME / ".aos" / "data"
-COMMS_DB = DATA_DIR / "comms.db"
-WORK_DIR = HOME / ".aos" / "work" / "converse"
-LOG_DIR = HOME / ".aos" / "logs" / "converse"
-CONFIG_PATH = HOME / ".aos" / "config" / "converse.yaml"
-DEFAULT_CONFIG = AOS_ROOT / "config" / "defaults" / "converse.yaml"
+# Resolved on every call, never captured at import — see default_off.py's own
+# docstring (core/infra/lib/default_off.py) for why a module-level
+# `Path.home()` here would freeze whichever machine (or sandboxed test HOME)
+# happened to import this module first, for the rest of the process.
+def _home() -> Path:
+    return Path.home()
 
-DIRS = [WORK_DIR, LOG_DIR]
+
+def _aos_root() -> Path:
+    return _home() / "aos"
+
+
+def _data_dir() -> Path:
+    return _home() / ".aos" / "data"
+
+
+def _comms_db() -> Path:
+    return _data_dir() / "comms.db"
+
+
+def _work_dir() -> Path:
+    return _home() / ".aos" / "work" / "converse"
+
+
+def _log_dir() -> Path:
+    return _home() / ".aos" / "logs" / "converse"
+
+
+def _config_path() -> Path:
+    return _home() / ".aos" / "config" / "converse.yaml"
+
+
+def _default_config() -> Path:
+    return _aos_root() / "config" / "defaults" / "converse.yaml"
+
+
+def _dirs() -> list[Path]:
+    return [_work_dir(), _log_dir()]
+
 
 REQUIRED_TABLES = {"conversation_sessions", "session_messages", "session_actions"}
 
@@ -110,14 +139,15 @@ def check() -> bool:
     converse tables are present. A schema-exists check, not a
     file-exists-on-comms.db check — a comms.db that predates converse but
     lacks the tables must not read as already-migrated."""
-    if not all(d.exists() for d in DIRS):
+    if not all(d.exists() for d in _dirs()):
         return False
-    if not CONFIG_PATH.exists():
+    if not _config_path().exists():
         return False
-    if not COMMS_DB.exists():
+    comms_db = _comms_db()
+    if not comms_db.exists():
         return False
     try:
-        conn = sqlite3.connect(str(COMMS_DB))
+        conn = sqlite3.connect(str(comms_db))
         try:
             return REQUIRED_TABLES.issubset(_existing_tables(conn))
         finally:
@@ -129,7 +159,7 @@ def check() -> bool:
 def up() -> bool:
     """Create dirs, config, and schema. Idempotent."""
     # 1. Directories
-    for d in DIRS:
+    for d in _dirs():
         if not d.exists():
             d.mkdir(parents=True, exist_ok=True)
             print(f"       Created {d}")
@@ -137,16 +167,18 @@ def up() -> bool:
             print(f"       Exists:  {d}")
 
     # 2. Config
-    if not CONFIG_PATH.exists():
-        CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-        if DEFAULT_CONFIG.exists():
-            CONFIG_PATH.write_text(DEFAULT_CONFIG.read_text())
-            print(f"       Wrote   {CONFIG_PATH} (from framework default)")
+    config_path = _config_path()
+    default_config = _default_config()
+    if not config_path.exists():
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        if default_config.exists():
+            config_path.write_text(default_config.read_text())
+            print(f"       Wrote   {config_path} (from framework default)")
         else:
-            CONFIG_PATH.write_text(_FALLBACK_CONFIG)
-            print(f"       Wrote   {CONFIG_PATH} (fallback — framework default not found)")
+            config_path.write_text(_FALLBACK_CONFIG)
+            print(f"       Wrote   {config_path} (fallback — framework default not found)")
     else:
-        print(f"       Exists:  {CONFIG_PATH}")
+        print(f"       Exists:  {config_path}")
 
     # 3. Schema — via converse/db.py's connect(), which lazily applies
     #    schema.sql (CREATE TABLE/INDEX IF NOT EXISTS). Creates comms.db
@@ -159,15 +191,16 @@ def up() -> bool:
         return False
 
     try:
-        DATA_DIR.mkdir(parents=True, exist_ok=True)
-        conn = converse_db.connect(COMMS_DB)
+        comms_db = _comms_db()
+        _data_dir().mkdir(parents=True, exist_ok=True)
+        conn = converse_db.connect(comms_db)
         try:
             missing = REQUIRED_TABLES - _existing_tables(conn)
             if missing:
                 raise RuntimeError(f"tables missing after connect(): {sorted(missing)}")
         finally:
             conn.close()
-        print(f"       Schema applied to {COMMS_DB} ({', '.join(sorted(REQUIRED_TABLES))})")
+        print(f"       Schema applied to {comms_db} ({', '.join(sorted(REQUIRED_TABLES))})")
     except Exception as e:
         print(f"       ERROR applying schema: {e}")
         return False

@@ -51,9 +51,18 @@ import sqlite3
 import time
 from pathlib import Path
 
-HOME = Path.home()
-WORK_DB = HOME / ".aos" / "data" / "work.db"
-BACKUP_DIR = HOME / ".aos" / "backups" / "pre-purge"
+
+# Resolved on every call, never captured at import — see default_off.py's own
+# docstring (core/infra/lib/default_off.py) for why a module-level
+# `Path.home()` here would freeze whichever machine (or sandboxed test HOME)
+# happened to import this module first, for the rest of the process.
+def _work_db() -> Path:
+    return Path.home() / ".aos" / "data" / "work.db"
+
+
+def _backup_dir() -> Path:
+    return Path.home() / ".aos" / "backups" / "pre-purge"
+
 
 STALE_DAYS = 7
 
@@ -69,12 +78,13 @@ _PARAMS = (f"-{STALE_DAYS} days",)
 
 
 def _connect(readonly: bool = False) -> sqlite3.Connection | None:
-    if not WORK_DB.exists():
+    work_db = _work_db()
+    if not work_db.exists():
         return None
     try:
         if readonly:
-            return sqlite3.connect(f"file:{WORK_DB}?mode=ro", uri=True)
-        return sqlite3.connect(str(WORK_DB))
+            return sqlite3.connect(f"file:{work_db}?mode=ro", uri=True)
+        return sqlite3.connect(str(work_db))
     except sqlite3.Error:
         return None
 
@@ -128,10 +138,11 @@ def up() -> bool:
 
     print(f"  {matched} of {total} thread(s) match; {kept} exploring thread(s) stay open")
 
-    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
-    dest = BACKUP_DIR / f"work.db.bak-{time.strftime('%Y%m%d-%H%M%S')}"
+    backup_dir = _backup_dir()
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    dest = backup_dir / f"work.db.bak-{time.strftime('%Y%m%d-%H%M%S')}"
     try:
-        shutil.copy2(WORK_DB, dest)
+        shutil.copy2(_work_db(), dest)
         print(f"  ✓ Backed up work.db → {dest}")
     except OSError as e:
         print(f"  ✗ Could not back up work.db ({e}) — refusing to update")

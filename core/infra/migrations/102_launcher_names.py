@@ -30,10 +30,23 @@ check() reports done when no registry plist still execs a bare interpreter.
 import sys
 from pathlib import Path
 
-HOME = Path.home()
-LA_DIR = HOME / "Library" / "LaunchAgents"
 
-sys.path.insert(0, str(HOME / "aos"))
+# Resolved on every call, never captured at import — see default_off.py's own
+# docstring (core/infra/lib/default_off.py) for why a module-level
+# `Path.home()` here would freeze whichever machine (or sandboxed test HOME)
+# happened to import this module first, for the rest of the process.
+def _home() -> Path:
+    return Path.home()
+
+
+def _la_dir() -> Path:
+    return _home() / "Library" / "LaunchAgents"
+
+
+# One-time, import-time sys.path bootstrap — see migration 119's identical
+# comment: this runs once, right now, and is never consulted again by
+# check()/up() after a test's sandbox patch has expired.
+sys.path.insert(0, str(_home() / "aos"))
 
 
 def _targets():
@@ -48,10 +61,11 @@ def _targets():
             names[svc.label] = svc.display_name
     except Exception:
         pass
-    labels = set(names) | {p.stem for p in LA_DIR.glob("com.aos.*.plist")}
+    la_dir = _la_dir()
+    labels = set(names) | {p.stem for p in la_dir.glob("com.aos.*.plist")}
     out = []
     for label in sorted(labels):
-        plist = LA_DIR / f"{label}.plist"
+        plist = la_dir / f"{label}.plist"
         if not plist.exists():
             continue
         name = names.get(label) or launchers.derive_display_name(label)
@@ -78,7 +92,7 @@ def _unwrapped():
 
 def check() -> bool:
     """Done when no deployed registry plist still execs a bare interpreter."""
-    if not LA_DIR.exists():
+    if not _la_dir().exists():
         return True  # nothing deployed on this machine — nothing to rename
     return not _unwrapped()
 

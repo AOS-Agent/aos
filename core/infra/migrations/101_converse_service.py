@@ -59,23 +59,46 @@ from pathlib import Path
 
 DESCRIPTION = "Register Converse supervisor service (LaunchAgent installed disabled — ships OFF)"
 
-HOME = Path.home()
-AOS_ROOT = HOME / "aos"
+# Resolved on every call, never captured at import — see default_off.py's own
+# docstring (core/infra/lib/default_off.py) for why a module-level
+# `Path.home()` here would freeze whichever machine (or sandboxed test HOME)
+# happened to import this module first, for the rest of the process.
+def _home() -> Path:
+    return Path.home()
 
-SERVICE_DIR = AOS_ROOT / "core" / "services" / "converse"
-TEMPLATE_PATH = SERVICE_DIR / "com.aos.converse.plist.template"
-SERVICE_MANIFEST = SERVICE_DIR / "service.yaml"
+
+def _aos_root() -> Path:
+    return _home() / "aos"
+
+
+def _service_dir() -> Path:
+    return _aos_root() / "core" / "services" / "converse"
+
+
+def _template_path() -> Path:
+    return _service_dir() / "com.aos.converse.plist.template"
+
+
+def _service_manifest() -> Path:
+    return _service_dir() / "service.yaml"
+
 
 PLIST_NAME = "com.aos.converse"
-PLIST_PATH = HOME / "Library" / "LaunchAgents" / f"{PLIST_NAME}.plist"
 
-LOG_DIR = HOME / ".aos" / "logs" / "converse"
+
+def _plist_path() -> Path:
+    return _home() / "Library" / "LaunchAgents" / f"{PLIST_NAME}.plist"
+
+
+def _log_dir() -> Path:
+    return _home() / ".aos" / "logs" / "converse"
 
 
 def _render() -> str | None:
-    if not TEMPLATE_PATH.exists():
+    template_path = _template_path()
+    if not template_path.exists():
         return None
-    return TEMPLATE_PATH.read_text().replace("__HOME__", str(HOME))
+    return template_path.read_text().replace("__HOME__", str(_home()))
 
 
 def _is_loaded() -> bool:
@@ -116,9 +139,9 @@ def check() -> bool:
     (disabled) template, the log dir exists, and the service manifest is
     present and parses through the registry. Does NOT check launchd load
     state — see module docstring."""
-    if not LOG_DIR.exists():
+    if not _log_dir().exists():
         return False
-    if not SERVICE_MANIFEST.exists():
+    if not _service_manifest().exists():
         return False
 
     expected = _render()
@@ -127,9 +150,10 @@ def check() -> bool:
         # do; treat as not-yet-applied so a re-run surfaces the problem
         # loudly via up() rather than silently reporting success.
         return False
-    if not PLIST_PATH.exists():
+    plist_path = _plist_path()
+    if not plist_path.exists():
         return False
-    if PLIST_PATH.read_text() != expected:
+    if plist_path.read_text() != expected:
         return False
 
     registry = _load_service_registry()
@@ -147,20 +171,23 @@ def check() -> bool:
 
 
 def up() -> bool:
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
-    print(f"       Dir:    {LOG_DIR}")
+    log_dir = _log_dir()
+    log_dir.mkdir(parents=True, exist_ok=True)
+    print(f"       Dir:    {log_dir}")
 
     content = _render()
     if content is None:
-        print(f"  ✗ Converse plist template not found at {TEMPLATE_PATH}")
+        print(f"  ✗ Converse plist template not found at {_template_path()}")
         return False
 
-    PLIST_PATH.parent.mkdir(parents=True, exist_ok=True)
-    PLIST_PATH.write_text(content)
-    print(f"  ✓ Deployed {PLIST_PATH} (RunAtLoad=false, Disabled=true — NOT bootstrapped)")
+    plist_path = _plist_path()
+    plist_path.parent.mkdir(parents=True, exist_ok=True)
+    plist_path.write_text(content)
+    print(f"  ✓ Deployed {plist_path} (RunAtLoad=false, Disabled=true — NOT bootstrapped)")
 
-    if not SERVICE_MANIFEST.exists():
-        print(f"  ✗ Missing {SERVICE_MANIFEST} (should ship with this code change)")
+    service_manifest = _service_manifest()
+    if not service_manifest.exists():
+        print(f"  ✗ Missing {service_manifest} (should ship with this code change)")
         return False
 
     registry = _load_service_registry()

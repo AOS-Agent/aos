@@ -23,16 +23,34 @@ import shutil
 import subprocess
 from pathlib import Path
 
-HOME = Path.home()
-VENV_DIR = HOME / ".aos" / "services" / "memory"
-DATA_DIR = HOME / ".aos" / "data" / "memory"
-MCP_FILES = [HOME / ".claude.json", HOME / ".claude" / "mcp.json"]
-PLIST = HOME / "Library" / "LaunchAgents" / "com.aos.memory.plist"
+
+# Resolved on every call, never captured at import — see default_off.py's own
+# docstring (core/infra/lib/default_off.py) for why a module-level
+# `Path.home()` here would freeze whichever machine (or sandboxed test HOME)
+# happened to import this module first, for the rest of the process.
+def _home() -> Path:
+    return Path.home()
+
+
+def _venv_dir() -> Path:
+    return _home() / ".aos" / "services" / "memory"
+
+
+def _data_dir() -> Path:
+    return _home() / ".aos" / "data" / "memory"
+
+
+def _mcp_files() -> list[Path]:
+    return [_home() / ".claude.json", _home() / ".claude" / "mcp.json"]
+
+
+def _plist() -> Path:
+    return _home() / "Library" / "LaunchAgents" / "com.aos.memory.plist"
 
 
 def _deregister() -> list[str]:
     cleaned = []
-    for f in MCP_FILES:
+    for f in _mcp_files():
         if not f.exists():
             continue
         try:
@@ -52,9 +70,9 @@ def _deregister() -> list[str]:
 
 
 def check() -> bool:
-    if VENV_DIR.exists() or DATA_DIR.exists():
+    if _venv_dir().exists() or _data_dir().exists():
         return False
-    for f in MCP_FILES:
+    for f in _mcp_files():
         if f.exists():
             try:
                 if "memory" in (json.loads(f.read_text()).get("mcpServers") or {}):
@@ -67,17 +85,18 @@ def check() -> bool:
 def up() -> bool:
     cleaned = _deregister()
     removed = []
-    for d in (VENV_DIR, DATA_DIR):
+    for d in (_venv_dir(), _data_dir()):
         if d.exists():
             shutil.rmtree(d, ignore_errors=True)
             removed.append(str(d))
-    if PLIST.exists():
+    plist = _plist()
+    if plist.exists():
         subprocess.run(
             ["launchctl", "bootout", f"gui/{os.getuid()}/com.aos.memory"],
             capture_output=True, timeout=30,
         )
-        PLIST.unlink()
-        removed.append(str(PLIST))
+        plist.unlink()
+        removed.append(str(plist))
     print(f"  MCP registrations cleaned: {', '.join(cleaned) if cleaned else 'none'}")
     print(f"  Removed: {', '.join(removed) if removed else 'nothing on disk'}")
     return check()

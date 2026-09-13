@@ -35,9 +35,17 @@ import shutil
 import time
 from pathlib import Path
 
-HOME = Path.home()
-DATA_DIR = HOME / ".aos" / "data"
-BACKUP_DIR = HOME / ".aos" / "backups" / "pre-purge"
+
+# Resolved on every call, never captured at import — see default_off.py's own
+# docstring (core/infra/lib/default_off.py) for why a module-level
+# `Path.home()` here would freeze whichever machine (or sandboxed test HOME)
+# happened to import this module first, for the rest of the process.
+def _data_dir() -> Path:
+    return Path.home() / ".aos" / "data"
+
+
+def _backup_dir() -> Path:
+    return Path.home() / ".aos" / "backups" / "pre-purge"
 
 # Literal names only. Never a glob — see module docstring.
 STALE_BACKUPS = (
@@ -48,14 +56,16 @@ STALE_BACKUPS = (
 
 
 def _present() -> list[Path]:
-    return [DATA_DIR / n for n in STALE_BACKUPS if (DATA_DIR / n).exists()]
+    data_dir = _data_dir()
+    return [data_dir / n for n in STALE_BACKUPS if (data_dir / n).exists()]
 
 
 def _already_copied(name: str) -> bool:
     """True if a safety copy of this file already sits in the backup dir."""
-    if not BACKUP_DIR.exists():
+    backup_dir = _backup_dir()
+    if not backup_dir.exists():
         return False
-    return any(p.name.startswith(name + ".") for p in BACKUP_DIR.iterdir())
+    return any(p.name.startswith(name + ".") for p in backup_dir.iterdir())
 
 
 def _free_bytes(path: Path) -> int:
@@ -76,7 +86,8 @@ def up() -> bool:
         print("  Nothing to purge — none of the three named backups are present")
         return True
 
-    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    backup_dir = _backup_dir()
+    backup_dir.mkdir(parents=True, exist_ok=True)
     stamp = time.strftime("%Y%m%d-%H%M%S")
     freed = 0
 
@@ -86,10 +97,10 @@ def up() -> bool:
         if _already_copied(src.name):
             print(f"  · Safety copy already exists for {src.name}")
         else:
-            if _free_bytes(BACKUP_DIR) < size * 1.1:
+            if _free_bytes(backup_dir) < size * 1.1:
                 print(f"  ⚠ Not enough free space to safety-copy {src.name} — KEEPING it")
                 continue
-            dest = BACKUP_DIR / f"{src.name}.{stamp}"
+            dest = backup_dir / f"{src.name}.{stamp}"
             try:
                 shutil.copy2(src, dest)
             except OSError as e:
@@ -105,7 +116,7 @@ def up() -> bool:
         freed += size
         print(f"  ✓ Removed {src} ({size / 1e6:.1f} MB)")
 
-    print(f"  Reclaimed {freed / 1e6:.1f} MB; copies retained in {BACKUP_DIR}")
+    print(f"  Reclaimed {freed / 1e6:.1f} MB; copies retained in {backup_dir}")
     return check()
 
 

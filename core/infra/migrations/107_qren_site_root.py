@@ -25,8 +25,13 @@ DESCRIPTION = "Move the app publish root out of release.sh into instance config"
 import glob
 from pathlib import Path
 
-HOME = Path.home()
-CONFIG_PATH = HOME / ".aos" / "config" / "qren-site-root"
+
+# Resolved on every call, never captured at import — see default_off.py's own
+# docstring (core/infra/lib/default_off.py) for why a module-level
+# `Path.home()` here would freeze whichever machine (or sandboxed test HOME)
+# happened to import this module first, for the rest of the process.
+def _config_path() -> Path:
+    return Path.home() / ".aos" / "config" / "qren-site-root"
 
 
 def _discover() -> Path | None:
@@ -36,7 +41,8 @@ def _discover() -> Path | None:
 
 
 def check() -> bool:
-    if CONFIG_PATH.is_file() and CONFIG_PATH.read_text().strip():
+    config_path = _config_path()
+    if config_path.is_file() and config_path.read_text().strip():
         return True
     return _discover() is None
 
@@ -45,6 +51,7 @@ def up():
     root = _discover()
     if root is None:
         return "no unambiguous publish root on this machine; nothing to seed"
-    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    CONFIG_PATH.write_text(str(root) + "\n")
-    return f"seeded {CONFIG_PATH} from existing publish root"
+    config_path = _config_path()
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(str(root) + "\n")
+    return f"seeded {config_path} from existing publish root"

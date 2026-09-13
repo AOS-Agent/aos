@@ -90,19 +90,48 @@ import os
 import sys
 from pathlib import Path
 
-HOME = Path.home()
-AOS_DIR = HOME / "aos"
-PROJECT_ROOT = HOME / "project"
+
+# Resolved on every call, never captured at import — see default_off.py's own
+# docstring (core/infra/lib/default_off.py) for why a module-level
+# `Path.home()` here would freeze whichever machine (or sandboxed test HOME)
+# happened to import this module first, for the rest of the process.
+def _home() -> Path:
+    return Path.home()
+
+
+def _aos_dir() -> Path:
+    return _home() / "aos"
+
+
+def _project_root() -> Path:
+    return _home() / "project"
+
 
 RULE_NAME = "project-structure.md"
-RULE_SOURCE = AOS_DIR / ".claude" / "rules" / RULE_NAME
-RULE_LINK = HOME / ".claude" / "rules" / RULE_NAME
+
+
+def _rule_source() -> Path:
+    return _aos_dir() / ".claude" / "rules" / RULE_NAME
+
+
+def _rule_link() -> Path:
+    return _home() / ".claude" / "rules" / RULE_NAME
+
 
 CLI_NAME = "project"
-CLI_SOURCE = AOS_DIR / "core" / "bin" / "cli" / CLI_NAME
-CLI_LINK = HOME / ".local" / "bin" / CLI_NAME
 
-POLICY = PROJECT_ROOT / "CLAUDE.md"
+
+def _cli_source() -> Path:
+    return _aos_dir() / "core" / "bin" / "cli" / CLI_NAME
+
+
+def _cli_link() -> Path:
+    return _home() / ".local" / "bin" / CLI_NAME
+
+
+def _policy() -> Path:
+    return _project_root() / "CLAUDE.md"
+
 
 # Migration files are loaded by path (runner.py), not as part of the core
 # package, so the import root goes on sys.path before importing the zone module.
@@ -110,9 +139,16 @@ POLICY = PROJECT_ROOT / "CLAUDE.md"
 # here: one definition of what a zone is, shared with `project new`, so the
 # structure a migration produces and the structure the CLI produces cannot
 # drift apart.
-_WORK_DIR = AOS_DIR / "core" / "engine" / "work"
-if str(_WORK_DIR) not in sys.path:
-    sys.path.insert(0, str(_WORK_DIR))
+#
+# This sys.path insertion is a one-time, import-time bootstrap — it runs once,
+# right now, under whatever Path.home() is active at that moment (real or
+# sandboxed), and is never consulted again afterward. That is a different
+# shape from the frozen-constant bug this module is otherwise being fixed for:
+# nothing here is read again later by check()/up() after a test's sandbox
+# patch has expired.
+_work_dir = _aos_dir() / "core" / "engine" / "work"
+if str(_work_dir) not in sys.path:
+    sys.path.insert(0, str(_work_dir))
 
 
 def _zones():
@@ -182,9 +218,10 @@ def _relink(link: Path, source: Path) -> str | None:
 #               cannot be written into. See the module docstring: this is the
 #               unmounted-volume case, and it must not be mistaken for `absent`.
 def _project_root_state() -> str:
-    if PROJECT_ROOT.is_dir():
+    project_root = _project_root()
+    if project_root.is_dir():
         return "present"
-    if PROJECT_ROOT.is_symlink() or PROJECT_ROOT.exists():
+    if project_root.is_symlink() or project_root.exists():
         return "unreachable"
     return "absent"
 
@@ -199,15 +236,17 @@ def check() -> bool:
     if state == "unreachable":
         return False            # nothing could have been installed there yet
     if state == "present":
-        for d in z.zone_dirs(PROJECT_ROOT).values():
+        for d in z.zone_dirs(_project_root()).values():
             if not d.is_dir():
                 return False
-        if not POLICY.exists():
+        if not _policy().exists():
             return False
 
-    if RULE_SOURCE.exists() and not _linked(RULE_LINK, RULE_SOURCE):
+    rule_source = _rule_source()
+    if rule_source.exists() and not _linked(_rule_link(), rule_source):
         return False
-    if CLI_SOURCE.exists() and not _linked(CLI_LINK, CLI_SOURCE):
+    cli_source = _cli_source()
+    if cli_source.exists() and not _linked(_cli_link(), cli_source):
         return False
     return True
 
@@ -225,9 +264,11 @@ def up() -> bool:
     # 1. Zones + policy file. Only for a ~/project/ that already exists; a
     #    machine without one gets the whole structure from its first
     #    `project new`, through this same function.
+    project_root = _project_root()
+    policy = _policy()
     state = _project_root_state()
     if state == "present":
-        created = z.ensure_zones(PROJECT_ROOT)
+        created = z.ensure_zones(project_root)
         for c in created:
             done.append(f"created {Path(c).name}/")
         if not created:
@@ -236,22 +277,23 @@ def up() -> bool:
         done.append("no ~/project/ — zones deferred to the first `project new`")
     else:
         incomplete.append(
-            f"{PROJECT_ROOT} exists but cannot be written into — most likely a "
-            f"symlink to a volume that is not mounted. Zones, {POLICY.name} and "
+            f"{project_root} exists but cannot be written into — most likely a "
+            f"symlink to a volume that is not mounted. Zones, {policy.name} and "
             f"the policy file were NOT installed. Mount the volume and re-run "
             f"`aos update` (this migration stays pending until it succeeds).")
 
     # 2. The global rule.
-    if _relink(RULE_LINK, RULE_SOURCE):
+    if _relink(_rule_link(), _rule_source()):
         done.append(f"linked {RULE_NAME}")
 
     # 3. The CLI on PATH.
-    if CLI_SOURCE.exists():
+    cli_source = _cli_source()
+    if cli_source.exists():
         try:
-            CLI_SOURCE.chmod(CLI_SOURCE.stat().st_mode | 0o111)
+            cli_source.chmod(cli_source.stat().st_mode | 0o111)
         except OSError:
             pass
-        if _relink(CLI_LINK, CLI_SOURCE):
+        if _relink(_cli_link(), cli_source):
             done.append(f"linked {CLI_NAME} into ~/.local/bin")
 
     for line in done:

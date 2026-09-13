@@ -1263,28 +1263,33 @@ def test_check_is_registered(check_cls):
 # ── migration 119 ───────────────────────────────────────────────────
 
 @pytest.fixture()
-def migration(tmp_path):
-    """Load migration 119 with every path it writes redirected into tmp_path."""
+def migration(tmp_path, monkeypatch):
+    """Load migration 119 with Path.home() sandboxed to tmp_path/home.
+
+    The migration's paths are all functions now (`_home()`, `_project_root()`,
+    `_rule_link()`, …) that re-resolve `Path.home()` on every call — there are
+    no more module-level path constants to overwrite after import. So this
+    fixture sandboxes `Path.home()` itself, persistently, for the whole test
+    (monkeypatch reverts it at teardown), the same shape as
+    `tests/test_migration_119_idempotency.py`'s `home` fixture. `~/aos` is
+    symlinked to REPO_ROOT (the framework tree under test) so `_rule_source()`
+    and `_cli_source()` resolve to real files.
+    """
     import importlib.util
+    home = tmp_path / "home"
+    home.mkdir(parents=True)
+    (home / "aos").symlink_to(REPO_ROOT)
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: home))
+
     path = REPO_ROOT / "core" / "infra" / "migrations" / "119_project_layer.py"
     spec = importlib.util.spec_from_file_location("m119", path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
-
-    home = tmp_path / "home"
-    mod.HOME = home
-    mod.AOS_DIR = REPO_ROOT                     # the framework tree under test
-    mod.PROJECT_ROOT = home / "project"
-    mod.POLICY = mod.PROJECT_ROOT / "CLAUDE.md"
-    mod.RULE_SOURCE = REPO_ROOT / ".claude" / "rules" / mod.RULE_NAME
-    mod.RULE_LINK = home / ".claude" / "rules" / mod.RULE_NAME
-    mod.CLI_SOURCE = REPO_ROOT / "core" / "bin" / "cli" / mod.CLI_NAME
-    mod.CLI_LINK = home / ".local" / "bin" / mod.CLI_NAME
     return mod
 
 
 def test_migration_is_idempotent(migration):
-    migration.PROJECT_ROOT.mkdir(parents=True)
+    migration._project_root().mkdir(parents=True)
     assert migration.check() is False
     assert migration.up() is True
     assert migration.check() is True
@@ -1293,35 +1298,35 @@ def test_migration_is_idempotent(migration):
 
 
 def test_migration_installs_zones_rule_and_cli(migration):
-    migration.PROJECT_ROOT.mkdir(parents=True)
+    migration._project_root().mkdir(parents=True)
     migration.up()
 
     for zone in zones.ZONES:
-        assert (migration.PROJECT_ROOT / zone).is_dir()
-    assert migration.POLICY.exists()
-    assert migration.RULE_LINK.is_symlink()
-    assert migration.RULE_LINK.resolve() == migration.RULE_SOURCE.resolve()
-    assert migration.CLI_LINK.is_symlink()
-    assert os.access(migration.CLI_SOURCE, os.X_OK)
+        assert (migration._project_root() / zone).is_dir()
+    assert migration._policy().exists()
+    assert migration._rule_link().is_symlink()
+    assert migration._rule_link().resolve() == migration._rule_source().resolve()
+    assert migration._cli_link().is_symlink()
+    assert os.access(migration._cli_source(), os.X_OK)
 
 
 def test_migration_skips_zones_when_there_is_no_project_dir(migration):
     """A machine that has never had a projects directory does not get one
     created for it; the first `project new` does that."""
-    assert not migration.PROJECT_ROOT.exists()
+    assert not migration._project_root().exists()
     assert migration.up() is True
-    assert not migration.PROJECT_ROOT.exists()
+    assert not migration._project_root().exists()
 
 
 def test_migration_touches_no_existing_directory(migration):
     """The council's lock: migrating contents is an operator-supervised triage
     session, never automated. Here that means a 30GB unversioned directory
     comes out the other side unversioned, unmoved and unmarked."""
-    migration.PROJECT_ROOT.mkdir(parents=True)
-    heavy = migration.PROJECT_ROOT / "elora-greens"
+    migration._project_root().mkdir(parents=True)
+    heavy = migration._project_root() / "elora-greens"
     heavy.mkdir()
     (heavy / "mirror.dat").write_text("30GB, pretend")
-    repo = _repo(migration.PROJECT_ROOT / "real-project")
+    repo = _repo(migration._project_root() / "real-project")
     before = _git(repo, "rev-parse", "HEAD").stdout.strip()
 
     migration.up()
@@ -1335,40 +1340,39 @@ def test_migration_touches_no_existing_directory(migration):
 
 
 def test_migration_preserves_an_existing_policy_file(migration):
-    migration.PROJECT_ROOT.mkdir(parents=True)
-    migration.POLICY.write_text("# the operator's own version")
+    migration._project_root().mkdir(parents=True)
+    migration._policy().write_text("# the operator's own version")
     migration.up()
-    assert migration.POLICY.read_text() == "# the operator's own version"
+    assert migration._policy().read_text() == "# the operator's own version"
 
 
 def test_migration_backs_up_a_handwritten_rule(migration):
-    migration.RULE_LINK.parent.mkdir(parents=True)
-    migration.RULE_LINK.write_text("# my own rule, written by hand")
+    rule_link = migration._rule_link()
+    rule_link.parent.mkdir(parents=True)
+    rule_link.write_text("# my own rule, written by hand")
     migration.up()
 
-    backup = migration.RULE_LINK.with_name(migration.RULE_LINK.name
-                                           + ".pre-reconcile")
+    backup = rule_link.with_name(rule_link.name + ".pre-reconcile")
     assert backup.read_text() == "# my own rule, written by hand"
-    assert migration.RULE_LINK.is_symlink()
+    assert rule_link.is_symlink()
 
 
 def test_migration_never_deletes_an_earlier_backup(migration):
     """Nothing in this repo auto-deletes, and the old version broke that rule on
     exactly the file the backup exists to protect: it unlinked any existing
     `.pre-reconcile` to make room for a new one."""
-    migration.RULE_LINK.parent.mkdir(parents=True)
-    first = migration.RULE_LINK.with_name(migration.RULE_LINK.name
-                                          + ".pre-reconcile")
+    rule_link = migration._rule_link()
+    rule_link.parent.mkdir(parents=True)
+    first = rule_link.with_name(rule_link.name + ".pre-reconcile")
     first.write_text("# the version I actually care about")
-    migration.RULE_LINK.write_text("# a later hand-edit")
+    rule_link.write_text("# a later hand-edit")
 
     migration.up()
 
     assert first.read_text() == "# the version I actually care about"
-    second = migration.RULE_LINK.with_name(migration.RULE_LINK.name
-                                           + ".pre-reconcile.2")
+    second = rule_link.with_name(rule_link.name + ".pre-reconcile.2")
     assert second.read_text() == "# a later hand-edit"
-    assert migration.RULE_LINK.is_symlink()
+    assert rule_link.is_symlink()
 
 
 def test_migration_stays_pending_when_project_root_is_unreachable(migration):
@@ -1377,10 +1381,11 @@ def test_migration_stays_pending_when_project_root_is_unreachable(migration):
     no projects directory reports. Answering "complete" there is unrecoverable:
     the runner records the watermark and never offers the migration again.
     """
-    migration.PROJECT_ROOT.parent.mkdir(parents=True, exist_ok=True)
-    os.symlink(migration.HOME / "not-mounted", migration.PROJECT_ROOT)
-    assert migration.PROJECT_ROOT.is_symlink()
-    assert not migration.PROJECT_ROOT.exists(), "the link dangles"
+    project_root = migration._project_root()
+    project_root.parent.mkdir(parents=True, exist_ok=True)
+    os.symlink(migration._home() / "not-mounted", project_root)
+    assert project_root.is_symlink()
+    assert not project_root.exists(), "the link dangles"
 
     assert migration.check() is False, "nothing was installed there"
     # runner.py:112-133 — anything other than True/None leaves the watermark
@@ -1389,23 +1394,24 @@ def test_migration_stays_pending_when_project_root_is_unreachable(migration):
 
     # The parts that live on the internal disk still went in: the operator gets
     # the CLI and the rule now, and the zones when the volume comes back.
-    assert migration.RULE_LINK.is_symlink()
-    assert migration.CLI_LINK.is_symlink()
+    assert migration._rule_link().is_symlink()
+    assert migration._cli_link().is_symlink()
 
 
 def test_migration_completes_once_the_volume_is_back(migration):
     """The retry has to actually converge, or 'stays pending' is just broken."""
-    migration.PROJECT_ROOT.parent.mkdir(parents=True, exist_ok=True)
-    target = migration.HOME / "volume" / "project"
-    os.symlink(target, migration.PROJECT_ROOT)
+    project_root = migration._project_root()
+    project_root.parent.mkdir(parents=True, exist_ok=True)
+    target = migration._home() / "volume" / "project"
+    os.symlink(target, project_root)
     assert migration.up() is False
 
     target.mkdir(parents=True)                  # volume mounted
     assert migration.up() is True
     assert migration.check() is True
     for zone in zones.ZONES:
-        assert (migration.PROJECT_ROOT / zone).is_dir()
-    assert migration.POLICY.exists()
+        assert (project_root / zone).is_dir()
+    assert migration._policy().exists()
 
 
 def test_migration_imports_under_the_system_python(migration):

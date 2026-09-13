@@ -34,12 +34,34 @@ and settings.json points at the symlink; up() re-run is then a no-op.
 import json
 from pathlib import Path
 
-HOME = Path.home()
-CLAUDE_DIR = HOME / ".claude"
-LINK = CLAUDE_DIR / "statusline.sh"
-TARGET = HOME / "aos" / "core" / "bin" / "cli" / "statusline"
-SETTINGS = CLAUDE_DIR / "settings.json"
-BACKUP = CLAUDE_DIR / "statusline.sh.pre-106.bak"
+
+# Resolved on every call, never captured at import — see default_off.py's own
+# docstring (core/infra/lib/default_off.py) for why a module-level
+# `Path.home()` here would freeze whichever machine (or sandboxed test HOME)
+# happened to import this module first, for the rest of the process.
+def _home() -> Path:
+    return Path.home()
+
+
+def _claude_dir() -> Path:
+    return _home() / ".claude"
+
+
+def _link() -> Path:
+    return _claude_dir() / "statusline.sh"
+
+
+def _target() -> Path:
+    return _home() / "aos" / "core" / "bin" / "cli" / "statusline"
+
+
+def _settings() -> Path:
+    return _claude_dir() / "settings.json"
+
+
+def _backup() -> Path:
+    return _claude_dir() / "statusline.sh.pre-106.bak"
+
 
 STATUSLINE_ENTRY = {
     "type": "command",
@@ -50,7 +72,7 @@ STATUSLINE_ENTRY = {
 
 def _settings_ok() -> bool:
     try:
-        cfg = json.loads(SETTINGS.read_text())
+        cfg = json.loads(_settings().read_text())
     except Exception:
         return False
     sl = cfg.get("statusLine")
@@ -62,45 +84,50 @@ def _settings_ok() -> bool:
 
 
 def _link_ok() -> bool:
-    return LINK.is_symlink() and LINK.resolve() == TARGET.resolve()
+    link = _link()
+    return link.is_symlink() and link.resolve() == _target().resolve()
 
 
 def check() -> bool:
     """Done when the symlink resolves to the framework binary and
     settings.json routes the statusline through it."""
-    if not SETTINGS.exists():
+    if not _settings().exists():
         return True  # harness never set up here — onboarding's job
     return _link_ok() and _settings_ok()
 
 
 def up() -> bool:
-    if not SETTINGS.exists():
+    settings = _settings()
+    if not settings.exists():
         print("  ~/.claude/settings.json not found — harness not set up on "
               "this machine; skipping (onboarding owns first-time setup)")
         return True
 
-    if not TARGET.exists():
-        print(f"  FAILED: framework statusline missing at {TARGET} — "
+    target = _target()
+    if not target.exists():
+        print(f"  FAILED: framework statusline missing at {target} — "
               "refusing to symlink to nothing (run `aos update` first)")
         return False
 
     # 1. Symlink, backing up whatever was there.
     if not _link_ok():
-        if LINK.is_symlink():
-            old = str(LINK.readlink())
-            LINK.unlink()
+        link = _link()
+        if link.is_symlink():
+            old = str(link.readlink())
+            link.unlink()
             print(f"  repointed symlink (was → {old})")
-        elif LINK.exists():
-            LINK.replace(BACKUP)
-            print(f"  backed up stale real file → {BACKUP.name}")
-        LINK.symlink_to(TARGET)
-        print(f"  statusline.sh → {TARGET}")
+        elif link.exists():
+            backup = _backup()
+            link.replace(backup)
+            print(f"  backed up stale real file → {backup.name}")
+        link.symlink_to(target)
+        print(f"  statusline.sh → {target}")
 
     # 2. settings.json — surgical: touch only the statusLine key.
     try:
-        cfg = json.loads(SETTINGS.read_text())
+        cfg = json.loads(settings.read_text())
     except Exception as e:
-        print(f"  FAILED: could not parse {SETTINGS}: {e}")
+        print(f"  FAILED: could not parse {settings}: {e}")
         return False
     if not _settings_ok():
         old = cfg.get("statusLine")
@@ -108,7 +135,7 @@ def up() -> bool:
             print(f"  replacing previous statusLine config: {old!r} "
                   "(old script file, if any, left on disk)")
         cfg["statusLine"] = dict(STATUSLINE_ENTRY)
-        SETTINGS.write_text(json.dumps(cfg, indent=2) + "\n")
+        settings.write_text(json.dumps(cfg, indent=2) + "\n")
         print("  settings.json: statusLine → ~/.claude/statusline.sh")
 
     return check()

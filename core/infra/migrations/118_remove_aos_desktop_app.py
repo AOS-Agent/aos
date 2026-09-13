@@ -49,10 +49,19 @@ import shutil
 import sys
 from pathlib import Path
 
-HOME = Path.home()
-
+# Absolute, and deliberately NOT derived from Path.home() — every operator
+# account on this Mac shares one /Applications, so this is not a per-call
+# helper the way the rest of this migration's paths are.
 APP = Path("/Applications/AOS.app")
-CACHE = HOME / "Library" / "Caches" / "am.hish.aos"
+
+
+# Resolved on every call, never captured at import — see default_off.py's own
+# docstring (core/infra/lib/default_off.py) for why a module-level
+# `Path.home()` here would freeze whichever machine (or sandboxed test HOME)
+# happened to import this module first, for the rest of the process.
+def _cache() -> Path:
+    return Path.home() / "Library" / "Caches" / "am.hish.aos"
+
 
 BUNDLE_ID = b"am.hish.aos"
 
@@ -88,7 +97,7 @@ def check() -> bool:
     """True when there is nothing left to do."""
     if not _is_macos():
         return True
-    if CACHE.exists():
+    if _cache().exists():
         return False
     if APP.exists() and _is_our_app(APP):
         return False
@@ -108,9 +117,10 @@ def up() -> bool:
             removed.append(str(APP))
         else:
             print(f"  {APP} is not {BUNDLE_ID.decode()} — left alone")
-    if CACHE.exists():
-        shutil.rmtree(CACHE, ignore_errors=True)
-        removed.append(str(CACHE))
+    cache = _cache()
+    if cache.exists():
+        shutil.rmtree(cache, ignore_errors=True)
+        removed.append(str(cache))
 
     print(f"  removed: {', '.join(removed) if removed else 'nothing (already clean)'}")
     return check()

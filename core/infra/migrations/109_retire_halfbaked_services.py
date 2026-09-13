@@ -25,10 +25,25 @@ import shutil
 import subprocess
 from pathlib import Path
 
-HOME = Path.home()
-LA_DIR = HOME / "Library" / "LaunchAgents"
-SERVICES = HOME / ".aos" / "services"
-STATE_YAML = HOME / ".aos" / "config" / "state.yaml"
+
+# Resolved on every call, never captured at import — see default_off.py's own
+# docstring (core/infra/lib/default_off.py) for why a module-level
+# `Path.home()` here would freeze whichever machine (or sandboxed test HOME)
+# happened to import this module first, for the rest of the process.
+def _home() -> Path:
+    return Path.home()
+
+
+def _la_dir() -> Path:
+    return _home() / "Library" / "LaunchAgents"
+
+
+def _services() -> Path:
+    return _home() / ".aos" / "services"
+
+
+def _state_yaml() -> Path:
+    return _home() / ".aos" / "config" / "state.yaml"
 
 # label -> launcher display name (None = no launcher wrapper ever existed)
 LABELS = {
@@ -53,12 +68,12 @@ def _remove_launchagents() -> list[str]:
     removed = []
     for label, launcher_name in LABELS.items():
         _bootout(label)
-        plist = LA_DIR / f"{label}.plist"
+        plist = _la_dir() / f"{label}.plist"
         if plist.exists():
             plist.unlink()
             removed.append(label)
         if launcher_name:
-            launcher = HOME / ".aos" / "launchers" / launcher_name
+            launcher = _home() / ".aos" / "launchers" / launcher_name
             if launcher.exists():
                 launcher.unlink()
     return removed
@@ -67,7 +82,7 @@ def _remove_launchagents() -> list[str]:
 def _remove_service_dirs() -> list[str]:
     removed = []
     for name in VENV_DIRS:
-        d = SERVICES / name
+        d = _services() / name
         if d.exists():
             shutil.rmtree(d, ignore_errors=True)
             removed.append(name)
@@ -75,14 +90,14 @@ def _remove_service_dirs() -> list[str]:
 
 
 def _clean_state_yaml() -> bool:
-    if not STATE_YAML.exists():
+    if not _state_yaml().exists():
         return False
     try:
         import yaml
     except ImportError:
         return False
     try:
-        state = yaml.safe_load(STATE_YAML.read_text()) or {}
+        state = yaml.safe_load(_state_yaml().read_text()) or {}
     except Exception:
         return False
     services = state.get("services") or {}
@@ -92,16 +107,16 @@ def _clean_state_yaml() -> bool:
             del services[name]
             changed = True
     if changed:
-        STATE_YAML.write_text(
+        _state_yaml().write_text(
             yaml.dump(state, default_flow_style=False, sort_keys=False)
         )
     return changed
 
 
 def check() -> bool:
-    if any((LA_DIR / f"{label}.plist").exists() for label in LABELS):
+    if any((_la_dir() / f"{label}.plist").exists() for label in LABELS):
         return False
-    if any((SERVICES / name).exists() for name in VENV_DIRS):
+    if any((_services() / name).exists() for name in VENV_DIRS):
         return False
     return True
 
