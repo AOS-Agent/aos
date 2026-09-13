@@ -49,9 +49,7 @@ from __future__ import annotations
 import importlib.machinery
 import importlib.util
 import json
-import stat
 import sys
-import time
 from pathlib import Path
 
 import pytest
