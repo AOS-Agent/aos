@@ -42,6 +42,43 @@ def _log(msg: str):
         pass
 
 
+def _iter_tool_uses(transcript_path: str):
+    """Yield (tool_name, input_dict) for every tool_use block in the transcript.
+
+    Claude Code's Stop hook payload does NOT include a `tool_use_results`
+    field (verified against the installed CLI binary's string table -- it
+    has no occurrence anywhere). What it does provide is `transcript_path`,
+    the session's own JSONL history: one line per message, assistant
+    messages carry a `content` list, and any block with
+    `type == "tool_use"` is a tool call this session made. That is the real
+    source for "what files did this turn touch."
+    """
+    if not transcript_path:
+        return
+    path = Path(transcript_path)
+    if not path.is_file():
+        return
+    try:
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                message = entry.get("message") if isinstance(entry, dict) else None
+                content = message.get("content") if isinstance(message, dict) else None
+                if not isinstance(content, list):
+                    continue
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "tool_use":
+                        yield block.get("name", ""), (block.get("input") or {})
+    except OSError:
+        return
+
+
 def main():
     # Read hook input
     try:
@@ -52,7 +89,7 @@ def main():
 
     session_id = hook_input.get("session_id", "")
     hook_input.get("cwd", os.getcwd())
-    tool_results = hook_input.get("tool_use_results", [])
+    tool_uses = list(_iter_tool_uses(hook_input.get("transcript_path", "")))
 
     if not session_id:
         return
@@ -71,10 +108,7 @@ def main():
     files_modified = []
     already_completed = set()
 
-    for result in tool_results:
-        tool_name = result.get("tool_name", "")
-        inp = result.get("input", {})
-
+    for tool_name, inp in tool_uses:
         # Track file modifications
         if tool_name in ("Write", "Edit", "NotebookEdit"):
             if isinstance(inp, dict):
