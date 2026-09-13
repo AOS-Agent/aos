@@ -21,7 +21,6 @@ idempotent and useless.
 from __future__ import annotations
 
 import importlib.util
-import shutil
 import sqlite3
 import sys
 from pathlib import Path
@@ -141,12 +140,16 @@ def _seed_fixture_db(path: Path) -> None:
 
 @pytest.fixture
 def work_db(home):
-    """A throwaway copy of the live work.db, or an equivalent fixture."""
+    """A synthetic work.db with the shapes these migrations act on.
+
+    This used to copy the operator's live work.db when present, which made
+    every assertion here depend on whatever the real database held that day
+    (a lone-title test failed because the live DB carried 60 fixture rows of
+    the same title, and `copy2` of a WAL-mode database misses the WAL). Tests
+    are hermetic now; the live DB is exercised by the release dry-run, not here.
+    """
     dest = home / ".aos" / "data" / "work.db"
-    if LIVE_WORK_DB.exists():
-        shutil.copy2(LIVE_WORK_DB, dest)
-    else:
-        _seed_fixture_db(dest)
+    _seed_fixture_db(dest)
     return dest
 
 
@@ -326,6 +329,28 @@ def test_114_spares_a_fixture_title_outside_the_window(work_db, home):
 
     load_migration("114", home).up()
     assert count(work_db, "SELECT COUNT(*) FROM tasks WHERE id='t#guard2'") == 1
+
+
+def test_114_spares_a_lone_task_with_a_fixture_title(work_db, home):
+    """Bulk is the fixture signature. One untouched in-window task whose title
+    happens to match (a person really can 'Write quarterly report') survives;
+    three identical ones are the suite's doing and go."""
+    conn = sqlite3.connect(str(work_db))
+    conn.execute(
+        "INSERT INTO tasks (id, title, status, created_at) "
+        "VALUES ('t#lone', 'Write quarterly report', 'todo', '2026-05-02')"
+    )
+    for i in range(3):
+        conn.execute(
+            "INSERT INTO tasks (id, title, status, created_at) "
+            f"VALUES ('t#bulk{i}', 'Update dashboard CSS styles', 'todo', '2026-05-02')"
+        )
+    conn.commit()
+    conn.close()
+
+    load_migration("114", home).up()
+    assert count(work_db, "SELECT COUNT(*) FROM tasks WHERE id='t#lone'") == 1
+    assert count(work_db, "SELECT COUNT(*) FROM tasks WHERE title='Update dashboard CSS styles'") == 0
 
 
 def test_114_spares_a_similar_but_different_title(work_db, home):

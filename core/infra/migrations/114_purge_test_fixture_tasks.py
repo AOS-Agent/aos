@@ -81,14 +81,29 @@ _PLACEHOLDERS = ",".join("?" for _ in FIXTURE_TITLES)
 
 # All three conditions in one predicate, used by count, list and delete alike so
 # they can never drift apart.
-_MATCH = f"""
+# A fixture title is purged only when it appears in bulk: the test suite seeds
+# dozens of identical rows per run, a person writes one. MIN_DUPLICATES spares
+# a genuine, untouched "Write quarterly report" that happens to share a title.
+MIN_DUPLICATES = 3
+
+_BASE = f"""
     title IN ({_PLACEHOLDERS})
     AND date(created_at) BETWEEN ? AND ?
     AND NOT EXISTS (
         SELECT 1 FROM task_activity a WHERE a.task_id = tasks.id
     )
 """
-_PARAMS = (*FIXTURE_TITLES, WINDOW_START, WINDOW_END)
+_MATCH = f"""
+    {_BASE}
+    AND title IN (
+        SELECT t2.title FROM tasks t2
+        WHERE t2.title IN ({_PLACEHOLDERS})
+          AND date(t2.created_at) BETWEEN ? AND ?
+          AND NOT EXISTS (SELECT 1 FROM task_activity a2 WHERE a2.task_id = t2.id)
+        GROUP BY t2.title HAVING COUNT(*) >= {MIN_DUPLICATES}
+    )
+"""
+_PARAMS = (*FIXTURE_TITLES, WINDOW_START, WINDOW_END, *FIXTURE_TITLES, WINDOW_START, WINDOW_END)
 
 
 def _connect(readonly: bool = False) -> sqlite3.Connection | None:
