@@ -5,7 +5,6 @@ globs:
   - "core/services/comms_bus/**"
   - "core/bin/cli/message-person"
   - "core/bin/crons/enrich-comms"
-  - "core/qareen/schemas/comms.sql"
 description: Comms pipeline architecture — unified message store, bus, trust cascade, messaging
 ---
 
@@ -20,7 +19,9 @@ people.db (~/.aos/data/people.db)   — IDENTITY: 1,148 people, aliases, identif
 
 **comms.db** is the unified cross-channel message store. Every message (WhatsApp,
 iMessage, email, Slack, SMS, Telegram) lives here with full content, resolved
-`person_id`, and FTS5 full-text search index. Schema: `core/qareen/schemas/comms.sql`.
+`person_id`, and FTS5 full-text search index. Schema built incrementally via
+`core/infra/migrations/` (no single schema file — the old `core/qareen/schemas/comms.sql`
+was removed with the Qareen decommission sweep).
 
 **people.db** is the identity layer. Maps any handle (phone, JID, email, Slack ID)
 to a canonical person via a 5-tier resolver (alias → exact → frequency → phonetic → fuzzy).

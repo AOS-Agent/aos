@@ -1,7 +1,7 @@
 ---
 globs:
   - "core/engine/people/**"
-  - "core/qareen/ontology/**"
+  - "core/engine/work/ontology/**"
 description: People DB and ontology — contact resolution, identity, relationships, social graph
 ---
 
@@ -35,7 +35,7 @@ resolve_contact("my mom")
 
 Returns: `{resolved: bool, person_id, contact: dict, confidence, tier}`
 
-## Ontology (`core/qareen/ontology/`)
+## Ontology (`core/engine/work/ontology/`)
 
 Semantic layer connecting all entities. Types defined in `types.py`:
 - ObjectType: PERSON, TASK, PROJECT, GOAL, MESSAGE, CONVERSATION, etc.
@@ -53,5 +53,5 @@ Storage is heterogeneous — the ontology doesn't own storage, it connects SQLit
 | `core/engine/people/resolver.py` | 5-tier contact resolution (994 lines) |
 | `core/engine/people/profile.py` | Profile compilation (SQL → markdown) |
 | `core/engine/people/graph.py` | Social graph + Louvain community detection |
-| `core/qareen/ontology/types.py` | All data types and enums |
-| `core/qareen/ontology/model.py` | Ontology adapter/action registry |
+| `core/engine/work/ontology/types.py` | All data types and enums |
+| `core/engine/work/ontology/base.py` | Ontology adapter/action registry |
