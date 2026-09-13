@@ -42,18 +42,35 @@ import subprocess
 import sys
 from pathlib import Path
 
-HOME = Path.home()
-AOS_ROOT = HOME / "aos"
-SERVICES_CONFIG = HOME / ".aos" / "config" / "services.yaml"
-RUNNER_CONFIG = HOME / ".aos" / "config" / "work-runner.yaml"
 LABEL = "com.aos.work-runner"
-PLIST = HOME / "Library" / "LaunchAgents" / f"{LABEL}.plist"
-
 SERVICE = "work-runner"
 
+# Resolved on every call, never captured at import — see default_off.py's own
+# docstring for why. A module-level `Path.home()` here would freeze whichever
+# machine happened to import this module first (including a sandboxed test
+# HOME) for the rest of the process; every later caller — including a
+# production `aos migrate` run on a different machine, or this migration's own
+# check()/up() called after a test's Path.home() patch has moved on — must
+# re-resolve HOME itself rather than trust a stale constant.
+def _services_config_path() -> Path:
+    return Path.home() / ".aos" / "config" / "services.yaml"
+
+
+def _runner_config_path() -> Path:
+    return Path.home() / ".aos" / "config" / "work-runner.yaml"
+
+
+def _plist_path() -> Path:
+    return Path.home() / "Library" / "LaunchAgents" / f"{LABEL}.plist"
+
+
 # Shared with migration 112 and the reconcile check — one implementation of
-# "record this service as default-off unless the operator opted in".
-sys.path.insert(0, str(AOS_ROOT / "core" / "infra" / "lib"))
+# "record this service as default-off unless the operator opted in". The
+# import itself must happen at module scope (so `from default_off import
+# ...` binds these names once), but note that disable_service()/is_opted_in()/
+# is_recorded_off() themselves resolve Path.home() fresh on every call — they
+# do not inherit whatever HOME was current when this module was imported.
+sys.path.insert(0, str(Path.home() / "aos" / "core" / "infra" / "lib"))
 try:
     from default_off import disable_service, is_opted_in, is_recorded_off
 except Exception:  # noqa: BLE001 — pre-update tree; fall back to no-op guards
@@ -75,29 +92,31 @@ def _loaded() -> bool:
 
 def _flip_runner_config() -> bool:
     """Set `enabled: false` in work-runner.yaml. True if the file now says so."""
-    if not RUNNER_CONFIG.exists():
+    runner_config = _runner_config_path()
+    if not runner_config.exists():
         return True
     try:
         import yaml
     except Exception:  # noqa: BLE001
         return True  # can't parse; the opt-out + missing plist already hold it off
     try:
-        raw = yaml.safe_load(RUNNER_CONFIG.read_text())
+        raw = yaml.safe_load(runner_config.read_text())
     except Exception:  # noqa: BLE001
         return True
     if not isinstance(raw, dict) or raw.get("enabled") is False:
         return True
     raw["enabled"] = False
-    RUNNER_CONFIG.write_text(yaml.safe_dump(raw, sort_keys=False))
+    runner_config.write_text(yaml.safe_dump(raw, sort_keys=False))
     return True
 
 
 def _runner_config_enabled() -> bool:
-    if not RUNNER_CONFIG.exists():
+    runner_config = _runner_config_path()
+    if not runner_config.exists():
         return False
     try:
         import yaml
-        raw = yaml.safe_load(RUNNER_CONFIG.read_text())
+        raw = yaml.safe_load(runner_config.read_text())
     except Exception:  # noqa: BLE001
         return False
     return isinstance(raw, dict) and raw.get("enabled") is True
@@ -111,7 +130,7 @@ def check() -> bool:
         return True  # operator's declaration wins — nothing for us to do
     if not is_recorded_off(SERVICE):
         return False
-    if PLIST.exists() or _loaded():
+    if _plist_path().exists() or _loaded():
         return False
     return not _runner_config_enabled()
 
@@ -126,7 +145,7 @@ def up() -> bool:
         return True
 
     added = disable_service(SERVICE)
-    print(f"  {'✓ Recorded' if added else '·  Already recorded'} {SERVICE} in {SERVICES_CONFIG}")
+    print(f"  {'✓ Recorded' if added else '·  Already recorded'} {SERVICE} in {_services_config_path()}")
 
     if _loaded():
         subprocess.run(
@@ -134,12 +153,13 @@ def up() -> bool:
             capture_output=True, timeout=30,
         )
         print(f"  ✓ Booted out {LABEL}")
-    if PLIST.exists():
-        PLIST.unlink()
-        print(f"  ✓ Removed {PLIST}")
+    plist = _plist_path()
+    if plist.exists():
+        plist.unlink()
+        print(f"  ✓ Removed {plist}")
 
     _flip_runner_config()
-    print(f"  ✓ {RUNNER_CONFIG.name}: enabled: false")
+    print(f"  ✓ {_runner_config_path().name}: enabled: false")
     print("     Reversible: `work runner enable` (or list it under `enabled:` in services.yaml)")
     return check()
 

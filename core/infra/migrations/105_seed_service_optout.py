@@ -35,9 +35,18 @@ import subprocess
 import sys
 from pathlib import Path
 
-HOME = Path.home()
-AOS_ROOT = HOME / "aos"
-CONFIG_PATH = HOME / ".aos" / "config" / "services.yaml"
+
+# Resolved on every call, never captured at import — see default_off.py's own
+# docstring (core/infra/lib/default_off.py). A module-level `Path.home()`
+# here would freeze whichever machine (or sandboxed test HOME) happened to
+# import this module first for the rest of the process.
+def _aos_root() -> Path:
+    return Path.home() / "aos"
+
+
+def _config_path() -> Path:
+    return Path.home() / ".aos" / "config" / "services.yaml"
+
 
 _HEADER = """\
 # Operator service preferences for THIS machine.
@@ -68,7 +77,7 @@ def _yaml():
 
 def _registry():
     """The service registry module, or None if it can't be loaded."""
-    lib = AOS_ROOT / "core" / "infra" / "lib"
+    lib = _aos_root() / "core" / "infra" / "lib"
     if str(lib) not in sys.path:
         sys.path.insert(0, str(lib))
     try:
@@ -124,10 +133,10 @@ def _disabled_service_names() -> set[str]:
 
 def _existing_disabled() -> set[str]:
     yaml = _yaml()
-    if yaml is None or not CONFIG_PATH.exists():
+    if yaml is None or not _config_path().exists():
         return set()
     try:
-        raw = yaml.safe_load(CONFIG_PATH.read_text())
+        raw = yaml.safe_load(_config_path().read_text())
     except Exception:  # noqa: BLE001
         return set()
     if not isinstance(raw, dict):
@@ -156,19 +165,19 @@ def up() -> bool:
     existing = _existing_disabled()
     merged = sorted(existing | from_launchctl)
 
-    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    _config_path().parent.mkdir(parents=True, exist_ok=True)
 
     if merged:
         body = "disabled:\n" + "".join(f"  - {n}\n" for n in merged)
     else:
         body = "disabled: []\n"
 
-    CONFIG_PATH.write_text(_HEADER + "\n" + body)
+    _config_path().write_text(_HEADER + "\n" + body)
 
     added = sorted(from_launchctl - existing)
     if added:
         print(f"  ✓ Carried over launchctl-disabled service(s): {', '.join(added)}")
     else:
         print("  ✓ No launchctl-disabled AOS services to carry over")
-    print(f"  ✓ Wrote {CONFIG_PATH}")
+    print(f"  ✓ Wrote {_config_path()}")
     return True

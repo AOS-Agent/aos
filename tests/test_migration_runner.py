@@ -29,7 +29,17 @@ RUNNER_PATH = Path(__file__).parent.parent / "core" / "infra" / "migrations" / "
 def runner(tmp_path, monkeypatch):
     """Load runner.py fresh per test, with VERSION_FILE/MIGRATION_LOG/find_migrations
     redirected to an isolated tmp_path so no test ever touches ~/.aos/.
+
+    Path.home() is sandboxed *before* exec_module runs. runner.py resolves
+    AOS_DIR/USER_DIR/MIGRATION_DIR (and the VERSION_FILE/MIGRATION_LOG default
+    values below, before they're overridden) from Path.home() at module scope
+    — the same class of bug default_off.py's docstring warns about. No test
+    here currently calls a path through those two unpatched-by-default names
+    for real, but that has been true by accident before (see migration 122's
+    test file, which relied on it until this release): the patch belongs here,
+    not on each test's memory to add it.
     """
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
     spec = importlib.util.spec_from_file_location("migration_runner", RUNNER_PATH)
     mod = importlib.util.module_from_spec(spec)
     sys.modules["migration_runner"] = mod

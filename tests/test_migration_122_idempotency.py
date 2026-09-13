@@ -26,6 +26,11 @@ MIGRATIONS = REPO / "core" / "infra" / "migrations"
 
 FLEET_YAML = "nodes:\n  - name: local\n    auto_update: true\n"
 
+# Captured at module-collection time — before any fixture has ever patched
+# Path.home() — so this is the one place in this file that can reliably name
+# "the operator's real home" to check load_migration() against.
+_REAL_HOME = Path.home()
+
 
 def load_migration(name: str, home: Path):
     """Import a migration with Path.home() already pointing at the sandbox.
@@ -33,7 +38,24 @@ def load_migration(name: str, home: Path):
     Migrations resolve their paths at import time (HOME = Path.home() at module
     scope), so the patch has to be in place before exec_module, and the module
     has to be re-imported per test rather than cached.
+
+    Defensive: refuses to exec a migration at all unless Path.home() is
+    already sandboxed by the caller's own `home` fixture — see the identical
+    guard (and its full rationale) in test_migrations_111_116_idempotency.py.
+    Migration 122 itself never re-resolves Path.home() after this function
+    returns, so historically this file's `home` fixture got away without a
+    persistent monkeypatch of its own — but that made it a silent trap for
+    the next migration test copied from this one that *does* call something
+    which re-resolves Path.home() per call (as 111/112 do via default_off.py).
+    `home` now patches persistently too, so this assert should never fire in
+    practice; it stays as the same tripwire every other migration test file
+    carries.
     """
+    assert Path.home() != _REAL_HOME, (
+        "Path.home() still resolves to the operator's real home right before "
+        "load_migration() was about to exec a migration module — refusing to "
+        f"run migration {name!r} against the live instance."
+    )
     path = next(MIGRATIONS.glob(f"{name}*.py"))
     real_home = Path.home
     Path.home = staticmethod(lambda: home)  # type: ignore[method-assign]
@@ -47,10 +69,11 @@ def load_migration(name: str, home: Path):
 
 
 @pytest.fixture
-def home(tmp_path):
+def home(tmp_path, monkeypatch):
     """A sandbox HOME with an empty ~/.aos/config and nothing else real."""
     h = tmp_path / "home"
     (h / ".aos" / "config").mkdir(parents=True)
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: h))
     return h
 
 

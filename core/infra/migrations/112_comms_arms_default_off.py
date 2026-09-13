@@ -42,14 +42,18 @@ import subprocess
 import sys
 from pathlib import Path
 
-HOME = Path.home()
-AOS_ROOT = HOME / "aos"
-SERVICES_CONFIG = HOME / ".aos" / "config" / "services.yaml"
-
 ARMS = ("sentinel", "converse", "envoy")
 LABELS = {name: f"com.aos.{name}" for name in ARMS}
 
-sys.path.insert(0, str(AOS_ROOT / "core" / "infra" / "lib"))
+
+# Resolved on every call, never captured at import — see default_off.py's own
+# docstring and migration 111's. Only used for the print in up(); the actual
+# write goes through disable_service(), which resolves Path.home() itself.
+def _services_config_path() -> Path:
+    return Path.home() / ".aos" / "config" / "services.yaml"
+
+
+sys.path.insert(0, str(Path.home() / "aos" / "core" / "infra" / "lib"))
 try:
     from default_off import disable_service, is_opted_in, needs_disabling
 except Exception:  # noqa: BLE001 — pre-update tree
@@ -114,7 +118,7 @@ def up() -> bool:
         else:
             print(f"  ✓ {name}: {state} (not loaded)")
 
-    print(f"     Declaration: {SERVICES_CONFIG}")
+    print(f"     Declaration: {_services_config_path()}")
     print("     Opt back in: list the name under `enabled:` and reload its plist")
     return check()
 
