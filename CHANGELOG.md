@@ -4,10 +4,15 @@ All notable changes to AOS. Release notes sent via Telegram after each 4am updat
 
 ## v0.7.9 — the reporter finally reports — 2026-09-13
 
-Summary: `aos-report` — the tool `/report` files bugs through — was silently
-failing on every release install, discarding the diagnosis on the rare
-occasion it did admit failure, and corrupting any report that contained code,
-a table, or a date. All three fixed.
+Summary: The seven "do now" issues from the GitHub triage that closed 131
+stale ones. `aos-report` — the tool `/report` files bugs through — had been
+failing silently on every release install, discarding the diagnosis when it
+queued, and corrupting any report with code, a table or a date; all three
+fixed. The weekly digest had counted zero sessions for three months (wrong
+path). `datetime.UTC` crashed three tools on every run. The Google OAuth
+credential file is hardened (migration 134). `generate-connect-script` now
+replaces its managed SSH block. The `steer` GUI-automation capability, never
+installed on any machine, is removed.
 
 - Fixed aos-report's `gh` calls silently failing on every release install (aos#2323). `file_issue()`/`comment_on_issue()`/`search_existing_issues()` (`core/bin/cli/aos-report`) ran `gh` with `cwd=str(AOS_DIR)` and no `--repo` — on a release install `~/aos` is a symlink into an unpacked tarball with no `.git`, so `gh` could never infer a target repo, and every report silently fell back to the local queue. All three calls now pass `--repo AOS-Agent/aos` explicitly (one constant, `GH_REPO`) and never depend on `cwd`. A failed `gh` call now surfaces instead of looking like success: `file_issue`/`comment_on_issue` return `(result, error)` rather than swallowing the failure, and the queue-fallback path now exits non-zero with a plain-English notice in addition to the JSON the `/report` skill parses.
 - Fixed `log_report()` discarding the report body when queueing (aos#2338): the log entry (`core/bin/cli/aos-report:268`, pre-fix) carried title/labels/issue_url but never the body, so a report that got queued because filing failed had nothing left to file later — the promise "it'll be filed when connectivity is restored" was never true. The queue entry now carries the full body (and, for a duplicate-of comment, the target issue number), and a new `aos-report --drain` files every still-queued entry exactly as it was queued, marking each one `drained_from` so `--queued` stops listing it once filed.
