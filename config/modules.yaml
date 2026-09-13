@@ -269,36 +269,23 @@ modules:
     detect:
       services: ["com.aos.converse"]
 
-  - id: envoy
-    name: Envoy
-    tier: experimental
-    kind: periodic          # StartInterval 300 — idle between ticks is HEALTHY
-    category: arm
-    tagline: Runs delegated outbound conversations on your behalf.
-    ask: "Let the system hold delegated conversations with other people?"
-    consent: "Sends messages to third parties introducing itself as your agent."
-    costs: { resident_ram: "0 (runs every 5 min)" }
-    services: ["com.aos.envoy"]
-    status_note: "instance-only, not installable; off by default since v0.8.0"
-    detect:
-      services: ["com.aos.envoy"]
-    health:
-      max_silence: 900
-
-  - id: sana-watch
-    name: Sana Watch
-    tier: experimental
-    kind: periodic          # StartInterval 90
-    category: arm
-    tagline: Watches a Sana source and reacts to changes.
-    ask: null
-    costs: { resident_ram: "0 (runs every 90s)" }
-    services: ["com.aos.sana-watch"]
-    status_note: "instance-only, not installable"
-    detect:
-      services: ["com.aos.sana-watch"]
-    health:
-      max_silence: 300
+  # envoy (aos#236.8): removed 2026-09-13 — this entry described a
+  # `kind: periodic` LaunchAgent (com.aos.envoy) that has never been
+  # installed anywhere: no config/launchagents/ template, no deployed
+  # plist, no launchctl load. Envoy's real, current shape is a skill/CLI
+  # (core/engine/comms/envoy/) invoked on demand, not a resident daemon —
+  # this module entry was aspirational, not descriptive. Its CLI does carry
+  # a self-installing `cmd_install_daemon` for a future daemon mode; that
+  # label is now protected against false-orphan reports via
+  # config/preserved-services.yaml instead, so removing this entry does not
+  # reopen the coverage gap instance_hygiene.py's _manifest_labels() exists
+  # to prevent.
+  #
+  # sana-watch (aos#236.8): removed 2026-09-13 — zero framework code
+  # anywhere backs `com.aos.sana-watch` (no core/services/ dir, no script,
+  # confirmed by grep). Whatever this was, it is instance-only on one
+  # machine, outside this repo's ownership — the same verdict as
+  # qareen-deploy below.
 
   - id: ios-deploy
     name: iOS Deploy
