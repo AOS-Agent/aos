@@ -85,3 +85,23 @@ def test_candidate_keys_prioritizes_full_name():
     keys = hook._candidate_keys("Talk to Abu Bakr about it")
     assert keys[0] == "abu bakr"  # multi-word run first
     assert "abu" in keys and "bakr" in keys
+
+
+def test_cache_dir_entirely_absent_does_not_raise(tmp_path):
+    """enrich-comms is parked (migration 131, aos#240) — its `comms-ambient
+    nightly` step is what refreshes these snapshots, so a machine that never
+    ran it (or hasn't in days) has no ~/.aos/cache/ambient/ at all, not just
+    a stale one. The hook must degrade to "nothing to inject", not crash a
+    prompt."""
+    never_created = tmp_path / "never-created"
+    assert not never_created.exists()
+    assert hook.resolve_and_render("Following up with Faisal Khan", never_created) == ""
+
+
+def test_stale_snapshot_missing_expected_fields_renders_without_raising(tmp_path):
+    """A snapshot frozen many nights ago (before enrich-comms was parked) may
+    predate fields a newer renderer expects. Partial/old data must still
+    render, not raise."""
+    cache = _cache(tmp_path, {"faisal": "p1"}, {"p1": {"person_id": "p1"}})
+    out = hook.resolve_and_render("Any news from Faisal?", cache)
+    assert "p1" in out  # falls back to person_id when name/history are absent

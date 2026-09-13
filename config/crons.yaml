@@ -231,6 +231,17 @@ jobs:
     description: Snapshots comms.db to AOS-X (rotating 7) before nightly enrichment
 
   enrich-comms:
+    # Default-off (v0.7.7, migration 131, operator decision — aos#240):
+    # ~46 min/night of Haiku entity extraction, the single heaviest job on
+    # the schedule and the scheduling-contention culprit that starves
+    # loop-sensors/compile-patterns of their catch_up windows most nights it
+    # runs long. Cron audit's own per-job verdict was KEEP (real consumer:
+    # comms.db entities feed ambient nudges) — the operator chose to pause
+    # the whole comms-intelligence nightly stack rather than run four
+    # back-to-back comms-DB jobs nightly for marginal refresh value.
+    # backup-comms (03:15) is untouched — comms.db's snapshot keeps running.
+    # Re-enable with `enabled: true` to resume nightly entity extraction.
+    enabled: false
     command: bash ~/aos/core/bin/crons/enrich-comms
     at: "03:30"
     timeout: 3000
@@ -250,6 +261,12 @@ jobs:
     description: Extracts insights from communications
 
   comms-patterns:
+    # Default-off (v0.7.7, migration 131, operator decision — aos#240):
+    # parked alongside enrich-comms — computes per-person response
+    # patterns/importance downstream of enrich-comms's entities, so parking
+    # one without the other leaves a half-fed job running for no reason.
+    # Re-enable with `enabled: true` (after re-enabling enrich-comms too).
+    enabled: false
     command: python3 ~/aos/core/engine/comms/patterns/compute.py
     at: "05:30"
     timeout: 180
@@ -257,6 +274,11 @@ jobs:
     description: Computes communication patterns and trends
 
   comms-graduation:
+    # Default-off (v0.7.7, migration 131, operator decision — aos#240):
+    # parked alongside enrich-comms/comms-patterns — graduates contacts
+    # through trust levels downstream of comms-patterns' output. Re-enable
+    # with `enabled: true` (after re-enabling the two jobs above it).
+    enabled: false
     command: python3 ~/aos/core/engine/comms/graduation/runner.py
     at: "06:00"
     timeout: 120
