@@ -149,6 +149,104 @@ check_health() {
     curl -sf --max-time 5 "$url" > /dev/null 2>&1
 }
 
+# ── Network checks (aos#2354) ───────────────────────────────────────────────
+#
+# Internet: HTTPS reachability across two independent hosts, not ICMP. ICMP
+# is filtered by policy on many consumer/corporate networks and VPNs; the
+# system already depends on outbound HTTPS to deliver the alert at all, so
+# HTTPS is both the more accurate signal and the more relevant one. A DOWN
+# state is only ever declared (and only ever alerted) after the probe fails
+# on INTERNET_FAIL_THRESHOLD consecutive ticks — debounce state lives in
+# $STATE_DIR/internet.fails — so a single blip never pages the operator.
+# Recovery is single-sample and clears the debounce immediately.
+INTERNET_PROBE_HOSTS=(https://1.1.1.1 https://www.google.com)
+INTERNET_FAIL_THRESHOLD=2
+
+internet_up() {
+    local host
+    for host in "${INTERNET_PROBE_HOSTS[@]}"; do
+        curl -sf --max-time 6 -o /dev/null "$host" 2>/dev/null && return 0
+    done
+    return 1
+}
+
+check_internet() {
+    local fails_file="$STATE_DIR/internet.fails"
+
+    if internet_up; then
+        rm -f "$fails_file" 2>/dev/null || true
+        if check_state_change "internet" "up"; then
+            notify "🟢 Internet is back."
+            log "Internet recovered"
+        fi
+        return 0
+    fi
+
+    local streak=0
+    [[ -f "$fails_file" ]] && streak=$(cat "$fails_file" 2>/dev/null || echo 0)
+    streak=$(( streak + 1 ))
+    echo "$streak" > "$fails_file"
+
+    if (( streak < INTERNET_FAIL_THRESHOLD )); then
+        log "Internet probe failed (streak: $streak) — below alert threshold"
+        return 0
+    fi
+
+    if check_state_change "internet" "down"; then
+        notify "🔴 Internet connection is down."
+    fi
+    log "Internet is DOWN (streak: $streak)"
+    return 1
+}
+
+# Tailscale: read the supported `BackendState` field from `status --json`
+# instead of scraping text. `tailscale status --self` ignores `--self` and
+# prints every peer, so a line-position assumption ("self is line 1") can
+# read a peer's state instead; matching only the literal substring "stopped"
+# also misses NeedsLogin / a logged-out backend entirely. BackendState is the
+# one field the CLI actually documents for this.
+tailscale_backend_state() {
+    "$AOS_PY" -c '
+import json, sys
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    print("")
+else:
+    print(data.get("BackendState") or "")
+' 2>/dev/null
+}
+
+check_tailscale() {
+    command -v tailscale > /dev/null 2>&1 || return 0
+
+    local ts_state
+    ts_state=$(tailscale status --json 2>/dev/null | tailscale_backend_state)
+
+    if [[ "$ts_state" == "Running" ]]; then
+        if check_state_change "tailscale" "up"; then
+            notify "🟢 Remote access is back up."
+            log "Tailscale recovered"
+        fi
+        return 0
+    fi
+
+    if check_state_change "tailscale" "down"; then
+        notify "🔴 Remote access is down — you won't be able to reach this Mac from away."
+    fi
+    log "Tailscale is DOWN (state: ${ts_state:-unknown})"
+    return 1
+}
+
+# Sourcing this file with WATCHDOG_UNDER_TEST=1 defines every function above
+# without running the service/network/disk checks below, so tests can call
+# check_internet / check_tailscale / tailscale_backend_state directly against
+# a stubbed curl/tailscale/notify and a sandboxed $STATE_DIR. Never set by the
+# real cron invocation (crons.yaml just runs `bash .../watchdog`).
+if [[ -n "${WATCHDOG_UNDER_TEST:-}" ]]; then
+    return 0 2>/dev/null || exit 0
+fi
+
 # ── Parse services from state.yaml using Python (bash 3.2 safe) ───────────
 #
 # The service map lives in the INSTANCE layer (~/.aos/config/state.yaml),
@@ -283,37 +381,11 @@ done < "$SERVICES_TMP"
 rm -f "$SERVICES_TMP"
 
 # ── Network checks ─────────────────────────────────────────────────────────
+# Implementations (HTTPS internet probe with debounce, Tailscale --json
+# parse) live above with the other helpers, near check_health().
 
-# Internet connectivity
-if ping -c1 -W3 1.1.1.1 > /dev/null 2>&1; then
-    if check_state_change "internet" "up"; then
-        notify "🟢 Internet is back."
-        log "Internet recovered"
-    fi
-else
-    if check_state_change "internet" "down"; then
-        notify "🔴 Internet connection is down."
-    fi
-    log "Internet is DOWN"
-    issues=$(( issues + 1 ))
-fi
-
-# Tailscale
-if command -v tailscale > /dev/null 2>&1; then
-    ts_status=$(tailscale status --self 2>/dev/null | head -1)
-    if [[ -n "$ts_status" && ! "$ts_status" =~ "stopped" ]]; then
-        if check_state_change "tailscale" "up"; then
-            notify "🟢 Remote access is back up."
-            log "Tailscale recovered"
-        fi
-    else
-        if check_state_change "tailscale" "down"; then
-            notify "🔴 Remote access is down — you won't be able to reach this Mac from away."
-        fi
-        log "Tailscale is DOWN"
-        issues=$(( issues + 1 ))
-    fi
-fi
+check_internet || issues=$(( issues + 1 ))
+check_tailscale || issues=$(( issues + 1 ))
 
 # ── Disk space check ──────────────────────────────────────────────────────
 
