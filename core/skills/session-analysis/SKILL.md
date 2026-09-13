@@ -13,7 +13,7 @@ Mine session history for friction patterns and generate actionable CLAUDE.md imp
 Run the analysis script:
 
 ```bash
-python3 ~/aos/bin/session-analysis --days 7
+python3 ~/aos/core/bin/session-analysis --days 7
 ```
 
 This scans all JSONL session files from the last 7 days and writes a categorized report to `~/vault/log/friction/session-friction-{date}.md`.
