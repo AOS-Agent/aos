@@ -8,10 +8,12 @@ Takes structured JSON on stdin, files to GitHub, sends Telegram.
 Usage:
     echo '{"title":"...","body":"...","labels":["bug"]}' | python3 aos-report
     python3 aos-report --context   # just dump system context as JSON (for skill to use)
+    python3 aos-report --queued    # list reports still queued locally
+    python3 aos-report --drain     # retry filing every still-queued report
 
-Exit codes: 0 on success (created/commented). Non-zero whenever a `gh` call
-fails — a report that only got queued locally is never reported as a silent
-success (aos#2323).
+Exit codes: 0 on success (created/commented, or nothing left queued after a
+--drain). Non-zero whenever a `gh` call fails — a report that only got queued
+locally is never reported as a silent success (aos#2323).
 
 Input JSON fields:
     title:          Issue title (required)
@@ -28,6 +30,7 @@ import re
 import socket
 import subprocess
 import sys
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -292,40 +295,119 @@ def notify_developer(title: str, severity: str, operator: str,
 
 # ── Log ────────────────────────────────────────────────────────────────────
 
-def log_report(title: str, labels: list, issue_url: str | None, action: str):
-    """Append to local report log."""
+def log_report(title: str, labels: list, issue_url: str | None, action: str,
+                *, body: str = "", duplicate_of: int | None = None,
+                error: str | None = None, drained_from: str | None = None) -> str:
+    """Append to local report log. Returns the new entry's id.
+
+    `body` carries the full markdown body that was (or would be) filed.
+    Before aos#2338 this was never persisted, so a report that got queued
+    because filing failed had no content anywhere — nothing could ever file
+    it later. The queue entry now carries everything a drain needs to file
+    exactly what was queued: title, labels, body, and — for a duplicate-of
+    comment — the issue it was headed for.
+    """
     REPORT_LOG.parent.mkdir(parents=True, exist_ok=True)
+    entry_id = uuid.uuid4().hex[:12]
     entry = {
+        "id": entry_id,
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "title": title,
         "labels": labels,
+        "body": body,
+        "duplicate_of": duplicate_of,
         "issue_url": issue_url,
         "action": action,
+        "error": error,
+        "drained_from": drained_from,
     }
     with open(REPORT_LOG, "a") as f:
         f.write(json.dumps(entry) + "\n")
+    return entry_id
 
 
 # ── Main ───────────────────────────────────────────────────────────────────
 
-def list_queued():
-    """Show locally queued reports that haven't been filed to GitHub."""
+def _read_log_entries() -> list[dict]:
+    """Every entry ever appended to the report log, oldest first."""
     if not REPORT_LOG.exists():
-        print(json.dumps({"queued": [], "count": 0}))
-        return
-
-    queued = []
+        return []
+    entries = []
     for line in REPORT_LOG.read_text().splitlines():
         if not line.strip():
             continue
         try:
-            entry = json.loads(line)
-            if entry.get("action") == "queued":
-                queued.append(entry)
+            entries.append(json.loads(line))
         except json.JSONDecodeError:
             continue
+    return entries
 
-    print(json.dumps({"queued": queued, "count": len(queued)}, indent=2))
+
+def _pending_queue_entries() -> list[dict]:
+    """Queued entries that no later log entry has drained.
+
+    The log is append-only, so a drained entry is never edited or removed —
+    a later entry's `drained_from` pointing back at it is what marks it
+    resolved.
+    """
+    entries = _read_log_entries()
+    drained_ids = {e["drained_from"] for e in entries if e.get("drained_from")}
+    return [
+        e for e in entries
+        if e.get("action") == "queued" and e.get("id") and e["id"] not in drained_ids
+    ]
+
+
+def list_queued():
+    """Show locally queued reports that haven't been filed to GitHub."""
+    pending = _pending_queue_entries()
+    print(json.dumps({"queued": pending, "count": len(pending)}, indent=2))
+
+
+def drain_queue() -> dict:
+    """Attempt to file every still-pending queued report (aos#2338).
+
+    Files exactly what was queued: the same title/body/labels (and, for a
+    duplicate-of comment, the same target issue) that `log_report` captured
+    when filing first failed. Returns a summary; never raises.
+    """
+    pending = _pending_queue_entries()
+    filed, still_queued, errors = [], [], []
+
+    for entry in pending:
+        entry_id = entry.get("id")
+        title = entry.get("title", "")
+        body = entry.get("body", "")
+        labels = entry.get("labels") or ["bug"]
+        duplicate_of = entry.get("duplicate_of")
+
+        if duplicate_of:
+            ok, err = comment_on_issue(duplicate_of, body)
+            if ok:
+                issue_url = f"https://github.com/{GH_REPO}/issues/{duplicate_of}"
+                log_report(title, labels, issue_url, f"commented on #{duplicate_of}",
+                           body=body, duplicate_of=duplicate_of, drained_from=entry_id)
+                filed.append({"title": title, "issue_url": issue_url})
+            else:
+                errors.append({"title": title, "error": err})
+                still_queued.append(title)
+            continue
+
+        result, err = file_issue(title, body, labels)
+        if result:
+            log_report(title, labels, result["url"], "created",
+                       body=body, drained_from=entry_id)
+            filed.append({"title": title, "issue_url": result["url"]})
+        else:
+            errors.append({"title": title, "error": err})
+            still_queued.append(title)
+
+    return {
+        "attempted": len(pending),
+        "filed": filed,
+        "still_queued": still_queued,
+        "errors": errors,
+    }
 
 
 def main():
@@ -335,6 +417,19 @@ def main():
 
     if len(sys.argv) > 1 and sys.argv[1] == "--queued":
         list_queued()
+        return
+
+    if len(sys.argv) > 1 and sys.argv[1] == "--drain":
+        summary = drain_queue()
+        print(json.dumps(summary, indent=2))
+        if summary["still_queued"]:
+            print(
+                f"aos-report: {len(summary['still_queued'])} of "
+                f"{summary['attempted']} queued report(s) still could not be "
+                "filed — see 'errors' above.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
         return
 
     # Read structured input from stdin
@@ -419,14 +514,19 @@ def main():
         issue_url = f"https://github.com/{GH_REPO}/issues/{duplicate_of}"
         if ok:
             action = f"commented on #{duplicate_of}"
-            log_report(title, labels, issue_url, action)
+            log_report(title, labels, issue_url, action, body=comment_body,
+                       duplicate_of=duplicate_of)
             print(json.dumps({"action": action, "issue_url": issue_url}))
             notify_developer(title, severity, operator, bool(proposed_fix), issue_url)
             return
         # A failed gh call must surface, never look like success (aos#2323).
-        log_report(title, labels, None, "queued")
+        # The full body is persisted so `--drain` can file exactly this later
+        # (aos#2338) — before this fix only the title/labels ever survived.
+        log_report(title, labels, None, "queued", body=comment_body,
+                   duplicate_of=duplicate_of, error=err)
         print(
-            f"aos-report: GitHub filing failed ({err}) — saved locally.",
+            f"aos-report: GitHub filing failed ({err}) — saved locally. "
+            "Retry with `aos-report --drain`.",
             file=sys.stderr,
         )
         print(json.dumps({
@@ -439,16 +539,20 @@ def main():
     result, err = file_issue(title, full_body, labels)
     if result:
         issue_url = result["url"]
-        log_report(title, labels, issue_url, "created")
+        log_report(title, labels, issue_url, "created", body=full_body)
         notify_developer(title, severity, operator, bool(proposed_fix), issue_url)
         print(json.dumps({"action": "created", "issue_url": issue_url, "number": result["number"]}))
     else:
         # Queue locally if GitHub fails — but a failed gh call must surface,
         # never look like a silent success (aos#2323): non-zero exit plus a
         # humanized notice, in addition to the JSON contract callers parse.
-        log_report(title, labels, None, "queued")
+        # The full body is persisted so `--drain` can file exactly this
+        # later (aos#2338) — before this fix a queued report lost its body
+        # forever, so it could never actually be filed.
+        log_report(title, labels, None, "queued", body=full_body, error=err)
         print(
-            f"aos-report: GitHub filing failed ({err}) — saved locally.",
+            f"aos-report: GitHub filing failed ({err}) — saved locally. "
+            "Retry with `aos-report --drain`.",
             file=sys.stderr,
         )
         print(json.dumps({
