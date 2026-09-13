@@ -1338,19 +1338,47 @@ def find_thread_by_cwd(cwd: str) -> dict | None:
 
 # ── Inbox ───────────────────────────────────────────────
 
-def get_inbox() -> list:
-    """Get all inbox items."""
-    items = _get_adapter().list(filters={"_type": "inbox"}, limit=10000)
+def get_inbox(include_snoozed: bool = False) -> list:
+    """Get inbox items. Snoozed items are hidden by default — pass
+    ``include_snoozed=True`` for callers (e.g. reconcile's dedup lookup) that
+    need to find a deferred item rather than only what a human would see."""
+    filters = {"_type": "inbox"}
+    if include_snoozed:
+        filters["include_snoozed"] = True
+    items = _get_adapter().list(filters=filters, limit=10000)
     return [_to_dict(i) for i in items]
 
 
-def add_inbox(text: str, source: str = "manual", confidence: float = None) -> dict:
-    """Add an inbox item."""
+def add_inbox(text: str, source: str = "manual", confidence: float = None,
+              fingerprint: str = None) -> dict:
+    """Add an inbox item.
+
+    ``fingerprint`` is the reconcile dedup key (source + fingerprint together
+    identify "the same standing finding" — see reconcile/inbox_sink.py).
+    """
     obj = {"text": text, "source": source}
     if confidence is not None:
         obj["confidence"] = confidence
+    if fingerprint is not None:
+        obj["fingerprint"] = fingerprint
     result = _get_adapter().create(obj)
     return _to_dict(result) if not isinstance(result, dict) else result
+
+
+def find_inbox_by_fingerprint(source: str, fingerprint: str) -> dict | None:
+    """Find a standing inbox item by (source, fingerprint) — used to update a
+    re-notified finding instead of creating a duplicate row. Snoozed items are
+    included: a deferred finding should still be recognized, not doubled."""
+    for item in get_inbox(include_snoozed=True):
+        if item.get("source") == source and item.get("fingerprint") == fingerprint:
+            return item
+    return None
+
+
+def touch_inbox(inbox_id: str, text: str = None) -> dict | None:
+    """Re-notify an existing inbox item: bump its count, refresh last_seen,
+    and (optionally) replace its text with the latest rendering."""
+    return _get_adapter().touch_inbox(inbox_id, text=text)
 
 
 def promote_inbox(inbox_id: str, as_title: str = None,

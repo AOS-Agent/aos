@@ -287,6 +287,18 @@ def run_all(dry_run: bool = False, periodic: bool = False) -> list[CheckResult]:
     _log_results(results)
     _write_state(results)
 
+    # Give every NOTIFY a consumer (aos#239): sync it into the work inbox (deduplicated,
+    # auto-closed once the check resolves) so it is a to-do, not just a log
+    # line. dry_run is a preview ("what would this run do") and must not
+    # mutate the inbox any more than it mutates anything else. Best-effort —
+    # a broken work.db must never take the reconcile run down with it.
+    if not dry_run:
+        try:
+            import inbox_sink
+            inbox_sink.sync(results)
+        except Exception:
+            pass
+
     # Consolidated Telegram notification — but only for NEW or CHANGED
     # findings. Standing warnings (dead code awaiting review, storage
     # drift, vault debt) used to re-ping the operator every cycle with an
