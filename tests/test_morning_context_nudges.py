@@ -13,8 +13,8 @@ where the populating job has never run).
 from __future__ import annotations
 
 import importlib.util
-from importlib.machinery import SourceFileLoader
 import sqlite3
+from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
