@@ -112,10 +112,15 @@ class BridgeTopicsCheck(ReconcileCheck):
         """
         forum_group_id = self._get_forum_group_id()
         if forum_group_id is None:
+            if not self.PROJECTS_YAML.exists():
+                fix = "run `aos bridge-topics init` to scaffold ~/.aos/config/projects.yaml"
+            else:
+                fix = ("set forum_group_id in ~/.aos/config/projects.yaml, then run "
+                       "`aos bridge-topics init`")
             return CheckResult(
                 name=self.name,
                 status=Status.NOTIFY,
-                message="bridge-topics.yaml missing and no forum_group_id in projects.yaml — configure Telegram first",
+                message=f"bridge-topics.yaml missing — {fix}",
                 notify=True,
             )
 
@@ -125,7 +130,8 @@ class BridgeTopicsCheck(ReconcileCheck):
             return CheckResult(
                 name=self.name,
                 status=Status.NOTIFY,
-                message="bridge-topics.yaml missing — pyyaml not available to auto-create",
+                message="bridge-topics.yaml missing — pyyaml not available; "
+                        "run `aos bridge-topics init` after installing pyyaml",
                 notify=True,
             )
 

@@ -44,6 +44,10 @@ _OPERATOR_KNOWN = _OPERATOR_REQUIRED | {
     "prayer",         # calculation method / madhab for the Adhan schedule
     "nickname",       # how the system addresses the operator
     "notifications",  # per-topic notification preferences
+    # Found via the aos#237 second-operator parity audit: real operators use
+    # these two, and the allowlist had never caught up.
+    "email",          # operator's own address — attribution, contact lookup
+    "businesses",     # named businesses the operator runs — briefing context
 }
 
 

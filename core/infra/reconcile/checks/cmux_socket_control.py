@@ -41,6 +41,16 @@ from infra.cmux_config import (  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
+# The .app bundle, derived from CMUX_BIN (…/cmux.app/Contents/Resources/bin/cmux).
+# `_cmux_present()` below also accepts a bare `cmux` on PATH — the brew CLI
+# formula, installable without the cask — which satisfies precondition() but
+# cannot serve socket commands or be driven by `aos start`. That gap is
+# exactly what put a second-operator machine here: CLI on PATH, no app, no
+# cmux.json for `ensure()` to make sufficient. A module-level constant (not a
+# literal inside fix()) so tests can point it at a sandbox instead of the
+# real /Applications.
+CMUX_APP_DIR = CMUX_BIN.parents[3]
+
 
 class CmuxSocketControlCheck(ReconcileCheck):
     name = "cmux_socket_control"
@@ -84,6 +94,20 @@ class CmuxSocketControlCheck(ReconcileCheck):
                 status=Status.FIXED if changed else Status.OK,
                 message=status,
                 detail=f"{CONFIG_FILE} — was: {was}",
+            )
+
+        if not CMUX_APP_DIR.exists():
+            return CheckResult(
+                name=self.name,
+                status=Status.NOTIFY,
+                message="cmux .app bundle not installed — the CLI alone is not enough",
+                detail=(
+                    f"Only a `cmux` CLI is on PATH; {CMUX_APP_DIR} does not exist. "
+                    "`aos start` needs the .app bundle itself — the CLI formula "
+                    "cannot serve socket commands or be driven by `aos start`. "
+                    "Install it with: brew install --cask cmux"
+                ),
+                notify=True,
             )
 
         return CheckResult(

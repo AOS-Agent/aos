@@ -1,0 +1,121 @@
+#!/usr/bin/env python3
+"""
+aos bridge-topics init — bootstrap the bridge's forum-topic config.
+
+Second-operator machines (and any fresh install) have no
+~/.aos/config/projects.yaml and no ~/.aos/config/bridge-topics.yaml, so the
+bridge quietly runs "flat" — one log line
+(`projects.yaml not found — no topic routes loaded`, core/services/bridge/
+main.py) is the only signal, and the `bridge_topics_config` reconcile check
+(core/infra/reconcile/checks/initiatives.py) can only NOTIFY, not fix,
+because it has no forum_group_id to work from. This is the one-line fix
+both of those now point at.
+
+Idempotent, and never writes a token or bot secret — the bot token lives in
+the macOS Keychain and is read only by the bridge process itself.
+
+  Run 1 (no projects.yaml yet):
+    Copies config/templates/projects.yaml to ~/.aos/config/projects.yaml
+    verbatim (fully commented — nothing in it is live until a human edits
+    it) and stops, telling the operator what to fill in.
+
+  Run 2 (projects.yaml edited, forum_group_id set):
+    Writes ~/.aos/config/bridge-topics.yaml — the same scaffold shape
+    migration 017 and the bridge_topics_config reconcile check produce
+    (system topic slots: daily/alerts/work/knowledge/system, thread IDs
+    null). The bridge's TopicManager creates each Telegram topic
+    progressively at runtime, the first time it's needed.
+
+  Already bootstrapped:
+    Says so and exits 0. Never overwrites either file — both may hold
+    live Telegram thread IDs a rewrite would throw away.
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+import yaml
+
+HOME = Path.home()
+AOS_DIR = HOME / "aos"
+CONFIG_DIR = HOME / ".aos" / "config"
+PROJECTS_YAML = CONFIG_DIR / "projects.yaml"
+BRIDGE_TOPICS_YAML = CONFIG_DIR / "bridge-topics.yaml"
+TEMPLATE = AOS_DIR / "config" / "templates" / "projects.yaml"
+
+# Must match migration 017's TOPIC slots and the bridge_topics_config
+# reconcile check's scaffold — same shape, different caller.
+TOPIC_SLOTS = ("daily", "alerts", "work", "knowledge", "system")
+
+
+def _forum_group_id(data: dict) -> int | None:
+    """Same extraction migration 017 and the reconcile check use."""
+    for proj in (data.get("projects") or {}).values():
+        if isinstance(proj, dict):
+            tg = proj.get("telegram") or {}
+            if isinstance(tg, dict) and tg.get("forum_group_id"):
+                return tg["forum_group_id"]
+    system = data.get("system") or {}
+    if isinstance(system, dict):
+        tg = system.get("telegram") or {}
+        if isinstance(tg, dict) and tg.get("forum_group_id"):
+            return tg["forum_group_id"]
+    return None
+
+
+def main() -> int:
+    if not PROJECTS_YAML.exists():
+        if not TEMPLATE.exists():
+            print(f"  Template missing: {TEMPLATE} — nothing to scaffold from")
+            return 1
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        PROJECTS_YAML.write_text(TEMPLATE.read_text())
+        print(f"  Created {PROJECTS_YAML} from the framework template.")
+        print("  Fill in forum_group_id (see the comments in that file), "
+              "then run `aos bridge-topics init` again.")
+        return 0
+
+    if BRIDGE_TOPICS_YAML.exists():
+        print(f"  {BRIDGE_TOPICS_YAML} already exists — nothing to do.")
+        return 0
+
+    try:
+        data = yaml.safe_load(PROJECTS_YAML.read_text()) or {}
+    except yaml.YAMLError as e:
+        print(f"  {PROJECTS_YAML} does not parse: {e}")
+        return 1
+
+    if not isinstance(data, dict):
+        print(f"  {PROJECTS_YAML} is empty or still fully commented out.")
+        print("  Fill in forum_group_id, then re-run `aos bridge-topics init`.")
+        return 1
+
+    forum_group_id = _forum_group_id(data)
+    if forum_group_id is None:
+        print(f"  {PROJECTS_YAML} has no forum_group_id set yet.")
+        print("  Uncomment and fill in `system.telegram.forum_group_id` "
+              "(or a project's), then re-run `aos bridge-topics init`.")
+        return 1
+
+    config = {
+        "forum_group_id": forum_group_id,
+        "topics": {
+            slot: {"thread_id": None, "created": None, "pinned_message_id": None}
+            for slot in TOPIC_SLOTS
+        },
+        "projects": {},
+    }
+    BRIDGE_TOPICS_YAML.parent.mkdir(parents=True, exist_ok=True)
+    BRIDGE_TOPICS_YAML.write_text(
+        yaml.dump(config, default_flow_style=False, sort_keys=False)
+    )
+    print(f"  Created {BRIDGE_TOPICS_YAML} (forum_group_id={forum_group_id}).")
+    print("  Topics are created progressively at runtime by the bridge's "
+          "TopicManager — restart the bridge to pick this up.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
