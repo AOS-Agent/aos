@@ -98,10 +98,6 @@ case "${1:-help}" in
         bash "$AOS_DIR/core/bin/internal/release-manager" list
         ;;
 
-    convert-to-releases)
-        bash "$AOS_DIR/core/bin/internal/release-manager" convert
-        ;;
-
     reconcile)
         # Run invariant checks — fixes drift from wrong installs, brew updates, etc.
         "$AOS_DIR/core/bin/internal/aos-python" "$AOS_DIR/core/infra/reconcile/runner.py" "${2:-run}"
@@ -135,7 +131,7 @@ case "${1:-help}" in
         mkdir -p "$TARGET"
 
         # Deprecated — never install (remove if found)
-        DEPRECATED="instagram youtube"
+        DEPRECATED="instagram youtube deliberate"
 
         synced=0
         for src in "$SOURCE"/*/; do
@@ -1194,7 +1190,7 @@ PYEOF
         echo ""
         ;;
 
-    arm|arms)
+    arm)
         # Arms — what capabilities exist on this machine and whether they work.
         # The engine is the single authority on module state; the desktop app
         # shells out to `aos arm status --json` rather than reimplementing it.
