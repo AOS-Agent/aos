@@ -1,5 +1,5 @@
 """
-Migration 111: work-runner is off by default (v0.8.0 freeze).
+Migration 111: work-runner is off by default, fleet-wide (v0.8.0 freeze).
 
 The work runner (905 lines + a resident LaunchAgent) has **zero rows in
 `task_runs`, ever** — built, deployed, KeepAlive'd, and never once used to
@@ -35,7 +35,7 @@ declaration true on later runs.
 
 from __future__ import annotations
 
-DESCRIPTION = "work-runner off by default (0 recorded runs, ever)"
+DESCRIPTION = "work-runner off by default fleet-wide (0 recorded runs, ever)"
 
 import os
 import subprocess

@@ -6,11 +6,14 @@ replays on any machine whose recorded level is behind, a release can be
 activated, rolled back and activated again, and an operator can run
 `aos migrate` by hand.
 
-122 moves operator-written config out of ~/.aos/config. That makes two failure
-modes worth asserting rather than assuming: a replay must not lose the archive
-the first run made, and the migration must never touch a config file it was not
-named for. Every test runs in a sandbox HOME; nothing reads or writes the live
-instance.
+122 moves operator-written config out of ~/.aos/config. That makes three
+failure modes worth asserting rather than assuming: a replay must not lose the
+archive the first run made; the migration must never touch a config file it was
+not named for; and `allow-updates` in particular must survive, because it is the
+companion to the host scope guard this release KEEPS — it is how the owner of an
+excluded machine opts their own machine back in, and retiring it would quietly
+take that choice away from someone whose computer this is. Every test runs in a
+sandbox HOME; nothing reads or writes the live instance.
 """
 
 from __future__ import annotations
@@ -83,24 +86,29 @@ def test_122_archives_fleet_yaml_then_is_a_noop(home):
     assert archived[0].read_text() == FLEET_YAML
 
 
-def test_122_archives_the_allow_updates_override(home):
+def test_122_leaves_the_allow_updates_override_alone(home):
+    """The host scope guard stays, so its override must stay with it.
+
+    `allow-updates` is how the owner of an excluded machine opts their own
+    machine back in. It is not ours to retire.
+    """
     marker = home / ".aos" / "config" / "allow-updates"
     marker.write_text("")
-
-    m = load_migration("122", home)
-    assert m.up() is True
-    assert not marker.exists()
-    assert [p.name.split(".")[0] for p in _archives(home)] == ["allow-updates"]
-
-
-def test_122_handles_both_files_in_one_run(home):
     (home / ".aos" / "config" / "fleet.yaml").write_text(FLEET_YAML)
-    (home / ".aos" / "config" / "allow-updates").write_text("")
 
     m = load_migration("122", home)
     assert m.up() is True
-    assert m.check() is True
-    assert len(_archives(home)) == 2
+
+    assert marker.exists(), "allow-updates was retired — it must not be"
+    archived = _archives(home)
+    assert len(archived) == 1
+    assert archived[0].name.startswith("fleet.yaml.")
+
+
+def test_122_only_ever_targets_fleet_yaml(home):
+    """The retirement list is one literal filename, and that is deliberate."""
+    m = load_migration("122", home)
+    assert m.RETIRED_FILES == ("fleet.yaml",)
 
 
 # ── Safety ───────────────────────────────────────────────────────────────────
@@ -123,6 +131,7 @@ def test_122_never_touches_config_it_was_not_named_for(home):
         "update-policy.yaml": "frozen: true\n",
         "channel-update.yaml": "forum_topic_id: 88\n",
         "channel": "edge\n",
+        "allow-updates": "",
         "fleet.yaml.bak": "a hand-made copy\n",
     }
     for name, body in neighbours.items():

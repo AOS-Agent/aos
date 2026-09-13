@@ -130,8 +130,8 @@ modules:
     kind: daemon
     category: standard
     tagline: Executes queued work in the background so tasks move without you.
-    # v0.8.0: OFF by default (migration 111). `task_runs` held zero rows on
-    # every machine audited — built, deployed, never once used. The
+    # v0.8.0: OFF by default fleet-wide (migration 111). `task_runs` held zero
+    # rows on every machine audited — built, deployed, never once used. The
     # service registry has always called this `optional`; `tier: core` here was
     # the drift the registry exists to prevent. Opt in with `work runner enable`.
     ask: "Run delegated tasks in the background? (off by default — autonomous agent spawning)"

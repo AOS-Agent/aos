@@ -1,43 +1,49 @@
 """
-Migration 122: retire the fleet node registry and the host-scope override.
+Migration 122: retire the fleet node registry.
 
 The single-node cleanup deleted `core/bin/cli/fleet` and the `aos fleet`
-subcommand. Two instance files outlive their only consumer, and a config file
+subcommand. Its instance config outlives its only consumer, and a config file
 whose reader no longer exists is worse than no file at all: the next operator
-reads `nodes:` and believes this machine verifies three others after every ship.
+reads `nodes:` and believes this machine verifies others after every ship.
 
-  a. ~/.aos/config/fleet.yaml — the SSH node registry. On the reference machine
-     it listed `local` and `faisal-mini`. Nothing reads it any more.
+  ~/.aos/config/fleet.yaml — the SSH node registry. On the reference machine it
+  listed `local` and `faisal-mini`, both `auto_update: true`.
 
-  b. ~/.aos/config/allow-updates — the host-scope override marker. It meant
-     "this excluded machine may update itself after all". With no exclusion
-     list there is nothing to override, so the file is now a statement about a
-     gate that does not exist. Absent on the reference machine; handled anyway,
-     because a machine that has one is exactly the machine that would be
-     confused by it.
+That second entry is the reason this file is retired rather than trimmed.
+`faisal-mini` is another operator's Mac mini, running its own live AOS install
+(v0.7.6, migration level 107, its own agents, Qareen resident). `aos fleet
+update all` would have pushed `check-update --apply` onto it over SSH, which is
+exactly what must never happen — that machine takes an update only when its own
+operator asks for one. The host scope guard in core/infra/lib/channels.py
+already refuses the update on the machine itself; removing the registry removes
+the other half, the command here that would have reached for it.
 
-Why the fleet registry is retired rather than kept "in case": probed
-2026-09-13, none of the three other nodes on this tailnet has an AOS install
-that could be verified. pi5 has no ~/aos and no ~/.aos. mbp has ~/.aos/config
-and nothing else — no framework, no LaunchAgents. imac has a partial ~/aos/core
-with no git history and no ~/.aos at all. A registry of nodes that cannot
-report a version is not a fleet; it is a list.
+**The `allow-updates` override is NOT touched.** It is the companion to the host
+scope guard, which this release keeps: it is how the owner of an excluded
+machine opts their own machine back in. Retiring it would quietly take that
+choice away from someone whose computer this is.
 
-**Moved, never deleted**, following 120's precedent: each file goes to
-~/.aos/backups/retired-config/<name>.<timestamp>. The content is two lines of
-YAML the operator wrote by hand, and restoring it is `mv` — but only if it
-still exists somewhere. A migration that deletes the only copy of an operator's
-config is the one shape of this change that cannot be undone.
+The three nodes this registry would otherwise imply are installs — pi5, mbp,
+imac — have no AOS install at all (probed 2026-09-13): no `~/aos` and no
+`~/.aos` on pi5; `~/.aos/config` and nothing under it on mbp; a partial
+`~/aos/core` with no git history and no `~/.aos` on imac. A registry of nodes
+that cannot report a version is not a fleet; it is a list.
 
-Idempotent: check() passes once neither file is in ~/.aos/config. A second run
-finds nothing to move and says so. The archive directory is never swept, so
+**Moved, never deleted**, following 120's precedent: the file goes to
+~/.aos/backups/retired-config/fleet.yaml.<timestamp>. It is config the operator
+wrote by hand, and restoring it is `mv` — but only if it still exists somewhere.
+A migration that deletes the only copy of an operator's config is the one shape
+of this change that cannot be undone.
+
+Idempotent: check() passes once the file is gone from ~/.aos/config. A second
+run finds nothing to move and says so. The archive directory is never swept, so
 replaying after a manual restore archives the restored copy under a new
 timestamp rather than clobbering the first one.
 """
 
 from __future__ import annotations
 
-DESCRIPTION = "Retire fleet.yaml and the allow-updates override (single-node cleanup)"
+DESCRIPTION = "Retire the fleet.yaml node registry (single-node cleanup)"
 
 import time
 from pathlib import Path
@@ -47,11 +53,11 @@ CONFIG_DIR = HOME / ".aos" / "config"
 ARCHIVE_DIR = HOME / ".aos" / "backups" / "retired-config"
 
 # Literal names. Never a glob over ~/.aos/config — that directory holds
-# operator.yaml, accounts.yaml and every integration's settings, and a pattern
-# loose enough to catch a typo'd filename is loose enough to catch one of those.
+# operator.yaml, accounts.yaml, update-policy.yaml, the allow-updates override
+# and every integration's settings, and a pattern loose enough to catch a typo'd
+# filename is loose enough to catch one of those.
 RETIRED_FILES = (
-    "fleet.yaml",       # node registry for the deleted `aos fleet` CLI
-    "allow-updates",    # override marker for the deleted host-scope guard
+    "fleet.yaml",    # node registry for the deleted `aos fleet` CLI
 )
 
 
@@ -60,14 +66,14 @@ def _present() -> list[Path]:
 
 
 def check() -> bool:
-    """Applied when neither retired file remains in ~/.aos/config."""
+    """Applied when the retired registry no longer sits in ~/.aos/config."""
     return not _present()
 
 
 def up() -> bool:
     targets = _present()
     if not targets:
-        print("  Nothing to retire — neither file is present")
+        print("  Nothing to retire — no fleet.yaml in ~/.aos/config")
         return True
 
     ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)

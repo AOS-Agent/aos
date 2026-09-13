@@ -12,9 +12,14 @@ allowed-tools: Bash, Read, Glob, Grep, Edit, Write, Agent
 
 Ship changes from `~/project/aos/` (dev workspace) to main.
 
-AOS runs on one machine. Shipping pushes to main and then applies the
-update to this machine's runtime — there is no second node that picks it
-up later, and a ship is not finished until the local runtime is on it.
+Shipping pushes to main and then applies the update to this machine's
+runtime. A ship is not finished until the local runtime is on it.
+
+One other machine runs AOS and pulls from main: another operator's Mac
+mini, with its own install and its own agents. It is not ours to push to
+or verify — it updates on its own schedule and its own operator's terms.
+Our own other tailnet nodes (pi5, mbp, imac) have no AOS install at all
+(probed 2026-09-13), so there is nothing to roll out across them.
 
 ## Pre-flight Checks
 
