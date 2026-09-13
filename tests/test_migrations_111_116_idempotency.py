@@ -458,14 +458,19 @@ def test_live_instance_is_untouched_by_this_suite():
 
     services = Path.home() / ".aos" / "config" / "services.yaml"
     if services.exists():
-        # A *key*, not the substring. The framework's own header comment
-        # (default_off.py `_HEADER`) explains `enabled:` in prose, and a real
-        # migration run writes that header to this file — so a substring test
-        # fails on any machine where 111/112 were legitimately applied,
-        # including the operator's own after this release installs.
+        # A *key*, parsed — never the substring. The framework's own header
+        # comment (default_off.py `_HEADER`) explains `enabled:` in prose, and a
+        # real migration run writes that header to this file, so a substring
+        # test fails on any machine where 111/112 were legitimately applied.
+        # And an *empty* `enabled: []` is fine: migration 128 leaves one behind
+        # when it clears the work-runner opt-in. Only a populated list means a
+        # sandboxed migration wrote an opt-in to the real instance.
         import yaml
-        data = yaml.safe_load(services.read_text()) or {}
-        assert "enabled" not in data, (
-            "the live services.yaml gained an `enabled:` key — a sandboxed "
-            "migration wrote to the real instance"
+        try:
+            raw = yaml.safe_load(services.read_text()) or {}
+        except Exception:  # noqa: BLE001
+            raw = {}
+        assert not (isinstance(raw, dict) and raw.get("enabled")), (
+            "the live services.yaml gained a populated `enabled:` list — a "
+            "sandboxed migration wrote an opt-in to the real instance"
         )

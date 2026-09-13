@@ -1,10 +1,13 @@
 """
 Invariant: the v0.7.7 default-off services stay declared off.
 
-Four services ship off as of v0.7.7 — `work-runner` (zero recorded runs, ever)
-and the three autonomous-comms arms `sentinel`, `converse`, `envoy`. Migrations
-111 and 112 record that on each machine by writing the names into
-~/.aos/config/services.yaml under `disabled:`.
+Three services ship off as of v0.7.7 — the autonomous-comms arms `sentinel`,
+`converse` and `envoy`. Migration 112 records that on each machine by writing
+the names into ~/.aos/config/services.yaml under `disabled:`. (`work-runner`
+was the fourth, recorded by migration 111; the same release then deleted the
+service outright and migration 128 clears its declaration, so this check no
+longer carries the name — re-declaring a service that cannot run is drift, not
+an invariant.)
 
 That declaration is load-bearing, and it is a plain text file the operator
 edits. If the name goes missing — a hand-edit, a merge, a restored config from

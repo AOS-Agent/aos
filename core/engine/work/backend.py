@@ -1,8 +1,10 @@
 """
 AOS Work Backend — Ontology-backed work engine for CLI use.
 
-Replaces the old engine.py with ontology-based access.
-Provides the same function signatures so cli.py needs minimal changes.
+The single work engine: SQLite-backed task/project/thread access for the CLI,
+the hooks and the bridge. A predecessor flat module sat beside this one until
+v0.7.7, when it was deleted — nothing imported it and its copy of the
+thread-creation logic had diverged.
 
 All functions return plain dicts (not dataclasses) because query.py and
 cli.py expect dict access via .get(). The _to_dict() conversion is the
@@ -21,7 +23,6 @@ import json
 import logging
 import os
 import re
-import sqlite3
 import subprocess
 
 # ── Path setup for ontology imports ─────────────────────
@@ -78,50 +79,24 @@ _gh_log = logging.getLogger("work.github")
 
 # ── Constants ───────────────────────────────────────────
 
-def _is_seeded_work_db(path: Path) -> bool:
-    """True only if ``path`` is a real work database (has the ``tasks`` table).
-
-    Guards the implicit cutover: a 0-byte or half-initialized work.db must NOT
-    trigger a switch away from qareen.db — the kernel store is only
-    authoritative once migration 050 has seeded it. Any error (missing, locked,
-    not a database) is treated as "not seeded" so resolution falls back safely.
-    """
-    try:
-        if not path.exists() or path.stat().st_size == 0:
-            return False
-        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-        try:
-            return (
-                conn.execute(
-                    "SELECT 1 FROM sqlite_master "
-                    "WHERE type='table' AND name='tasks'"
-                ).fetchone()
-                is not None
-            )
-        finally:
-            conn.close()
-    except Exception:
-        return False
-
-
 def _resolve_db_path() -> Path:
-    """Locate the work/task database.
+    """Locate the work database. There is one.
 
-    The kernel owns work state in its own ~/.aos/data/work.db (see migration
-    050). Resolution order:
       1. AOS_WORK_DB env var — explicit override; also makes tests injectable.
-      2. ~/.aos/data/work.db — the kernel-owned store, once it has been seeded
-         (a bare/empty file does not count — see _is_seeded_work_db).
-      3. ~/.aos/data/qareen.db — fall back so machines that predate the
-         migration keep working unchanged.
+      2. ~/.aos/data/work.db.
+
+    This used to fall back to a second store when work.db looked unseeded, a
+    guard from the migration-050 cutover. Migration 123 moved the last tables
+    that still lived there (sessions, session_tasks), so the fallback had
+    nothing left to protect — and kept the split alive by making "which
+    database" a runtime question with two possible answers. The adapter creates
+    whatever schema is missing, so an empty file is not a reason to go
+    elsewhere.
     """
     env = os.environ.get("AOS_WORK_DB")
     if env:
         return Path(env).expanduser()
-    work_db = Path.home() / ".aos" / "data" / "work.db"
-    if _is_seeded_work_db(work_db):
-        return work_db
-    return Path.home() / ".aos" / "data" / "qareen.db"
+    return Path.home() / ".aos" / "data" / "work.db"
 
 
 DB_PATH = _resolve_db_path()
@@ -129,6 +104,21 @@ WORK_DIR = Path.home() / ".aos" / "work"
 ACTIVITY_FILE = WORK_DIR / "activity.yaml"
 AOS_REPO = "hishamalhadi/aos"
 MAX_ACTIVITY = 100
+
+# The title the SessionEnd hook generates, and therefore the one shape that
+# tells an auto thread apart from one the operator typed. Migration 115 used
+# the same discriminator to close 3,574 of them; keeping one definition means
+# the sweep and the generator can never disagree about what they mean.
+AUTO_THREAD_PREFIX = "Work in "
+
+# The AOS framework's own project id. ~/aos is a release symlink whose target
+# is ~/aos-releases/<version> — a different directory name on every update —
+# so that tree cannot be matched by a recorded project path the way an ordinary
+# checkout can. Named here rather than inferred because the work engine already
+# keys GitHub issue sync off this same id (see _gh_sync_enabled / AOS_REPO).
+FRAMEWORK_PROJECT = "aos"
+RELEASE_DIR_NAME = "aos-releases"
+WORKTREE_SEGMENTS = (".claude", "worktrees")
 
 
 # ── Lazy singletons ────────────────────────────────────
@@ -683,7 +673,7 @@ def _today() -> str:
     return date.today().isoformat()
 
 
-# ── Public API (matches engine.py function signatures) ──
+# ── Public API (the function surface cli.py and the hooks call) ──
 
 
 # ── Context Detection ───────────────────────────────────
@@ -702,6 +692,18 @@ def resolve_task(query_str: str, tasks: list = None) -> dict | None:
         # (query.py compatibility path)
         return _get_resolver().resolve(query_str)
     return _to_dict(_get_resolver().resolve(query_str))
+
+
+def resolve_task_for_mutation(query_str: str, project_id: str = None):
+    """Resolve a task that is about to be CHANGED.
+
+    Returns (task, []) for one answer, (None, candidates) when a title matches
+    several tasks indistinguishably, and (None, []) when nothing matches. See
+    TaskResolver.resolve_for_mutation — the short version is that `resolve`
+    returns the best fuzzy hit, and on tied scores "best" is whatever the
+    adapter listed first.
+    """
+    return _get_resolver().resolve_for_mutation(query_str, project_id)
 
 
 def resolve_task_in_project(query_str: str, project_id: str = None) -> dict | None:
@@ -1266,13 +1268,15 @@ def get_thread(thread_id: str) -> dict | None:
     return _to_dict(result)
 
 
-def add_thread(title: str, session_id: str = None, cwd: str = None) -> dict:
+def add_thread(title: str, session_id: str = None, cwd: str = None,
+               project: str = None) -> dict:
     """Create a new thread."""
     result = _get_adapter().create({
         "_type": "thread",
         "title": title,
         "session_id": session_id,
         "cwd": cwd,
+        "project": project,
     })
     return _to_dict(result) if not isinstance(result, dict) else result
 
@@ -1311,6 +1315,140 @@ def promote_thread(thread_id: str, project_title: str = None,
     if result is None:
         return None
     return _to_dict(result)
+
+
+def _strip_worktree(path: Path) -> Path:
+    """A worktree path collapsed to the project it is a checkout of.
+
+    `<project>/.claude/worktrees/<branch-slug>` is the sanctioned layout
+    (rules/project-structure.md), so the project root is everything above the
+    `.claude` segment. Matching against the project's recorded `path` already
+    covers this — but only when the project HAS a path recorded; this makes the
+    name fallback work for worktrees too.
+    """
+    parts = path.parts
+    for i in range(len(parts) - 1):
+        if (parts[i], parts[i + 1]) == WORKTREE_SEGMENTS:
+            return Path(*parts[:i]) if i else path
+    return path
+
+
+def _framework_project() -> str | None:
+    """FRAMEWORK_PROJECT, but only if this machine actually tracks it."""
+    try:
+        row = _get_adapter()._conn.execute(
+            "SELECT id FROM projects WHERE id = ?", (FRAMEWORK_PROJECT,)
+        ).fetchone()
+    except Exception:  # noqa: BLE001
+        return None
+    return row["id"] if row else None
+
+
+def project_for_cwd(cwd: str | None) -> str | None:
+    """The project a directory belongs to, seeing through the spellings.
+
+    `detect_project_from_cwd` matches a directory against recorded project
+    paths, which is right but literal. One logical checkout answers to several
+    directory names, and each one used to mint its own thread:
+
+      ~/project/aos                                 the project root
+      ~/project/aos/.claude/worktrees/feat-x        a worktree of it
+      /Volumes/AOS-X/project/aos/...                the same thing, unsymlinked
+      ~/aos  ->  ~/aos-releases/v0.7.6-dff5c0d      the release symlink target,
+                                                    renamed on every update
+
+    The release case is the one that did the damage: the live DB held 2,015
+    threads under the single title "Work in v0.7.1-bdd0739", because the version
+    directory changes name every release (aos#223, migrations 115 and 121).
+
+    Returns None when nothing resolves — callers then fall back to the raw
+    directory, which is the pre-v0.7.7 behaviour for untracked dirs.
+    """
+    if not cwd:
+        return None
+    raw = Path(cwd).expanduser()
+    try:
+        resolved = raw.resolve()
+    except OSError:
+        resolved = raw
+
+    candidates = [resolved] if resolved == raw else [resolved, raw]
+    for candidate in candidates:
+        if RELEASE_DIR_NAME in candidate.parts:
+            framework = _framework_project()
+            if framework:
+                return framework
+        found = detect_project_from_cwd(str(_strip_worktree(candidate)))
+        if found:
+            return found
+    return None
+
+
+def is_auto_thread(thread: dict) -> bool:
+    """True if this thread was generated by a SessionEnd, not opened by anyone.
+
+    The discriminator is the generated title shape, which is also what migration
+    115 used to close 3,574 of them and what migration 129 uses to close the
+    rest — one definition, three readers, so they cannot disagree about what
+    they are talking about.
+
+    A promoted thread is never "auto", whatever its title: promotion is the
+    operator saying this one matters, and it is the only signal in the table
+    that anybody ever looked at a thread (2 of 4,641 rows, live).
+    """
+    if not thread:
+        return False
+    if thread.get("status") == "promoted":
+        return False
+    return str(thread.get("title") or "").startswith(AUTO_THREAD_PREFIX)
+
+
+def curated_threads(limit: int = 3, project_id: str | None = None) -> list[dict]:
+    """Open threads a human actually opened or promoted, best first.
+
+    The briefing renders these and nothing else. 4,639 of the live DB's 4,641
+    threads are auto-generated "Work in <dir>" rows; a line per directory the
+    operator happened to hold a session in is a changelog of the filesystem, not
+    context worth paying tokens for on every session.
+
+    ``project_id`` floats this directory's project to the front — continuity
+    here is worth more than continuity elsewhere — without hiding the handful of
+    curated threads from other projects.
+    """
+    threads = [
+        t for t in get_all_threads()
+        if t.get("status") != "closed" and not is_auto_thread(t)
+    ]
+    # Two stable passes rather than one key: date descending cannot be expressed
+    # in the same tuple as the ascending group keys without negating a string.
+    threads.sort(key=lambda t: t.get("started") or "", reverse=True)
+    threads.sort(
+        key=lambda t: (
+            0 if project_id and t.get("project") == project_id else 1,
+            0 if t.get("status") == "promoted" else 1,
+        )
+    )
+    return threads[:limit]
+
+
+def find_thread_by_project(project_id: str) -> dict | None:
+    """The project's one open thread, if it has one.
+
+    Most recent first, and `rowid` breaks the tie because `threads.created_at`
+    holds a bare date — several threads a day share a value, and an ordering
+    that is not total is an ordering that can move between calls.
+    """
+    if not project_id:
+        return None
+    adapter = _get_adapter()
+    row = adapter._conn.execute(
+        "SELECT id FROM threads WHERE project_id = ? AND status != 'closed' "
+        "ORDER BY created_at DESC, rowid DESC LIMIT 1",
+        (project_id,),
+    ).fetchone()
+    if not row:
+        return None
+    return get_thread(row["id"])
 
 
 def find_thread_by_cwd(cwd: str) -> dict | None:
@@ -1447,24 +1585,45 @@ def link_session_to_thread(thread_id: str, session_id: str,
 
 def get_or_create_thread_for_cwd(cwd: str, session_id: str,
                                   title: str = None) -> dict:
-    """Find the thread already associated with this directory, or create the
-    one and only thread for it.
+    """Find this project's open thread, or create the one and only one for it.
 
-    aos#223: at most one "Work in <dir>" thread per cwd, ever. Repeated
-    SessionEnds in the same directory must link to the existing thread, not
-    mint another — see find_thread_by_cwd.
+    **Keyed on project, not cwd (v0.7.7).** aos#223 made this find-or-create
+    instead of always-create, which fixed repeated SessionEnds in the *same*
+    directory — and left the actual flood in place, because one project answers
+    to many directory names: three worktrees, the ~/project symlink, and ~/aos,
+    whose release target is renamed on every update. Keying on the cwd string
+    gave each spelling its own thread (4,635 rows across 23 titles in the live
+    DB, 2,015 of them under one title).
+
+    A project's thread is whatever open thread it already has, including one the
+    operator wrote or promoted: reusing it is the point. Minting an auto thread
+    beside a hand-written one for the same project is how "at most one" becomes
+    two. A *closed* thread is never resurrected — migration 115 closed 3,574 of
+    these deliberately, and the next session in that project starts fresh.
+
+    Falls back to the raw cwd when no project resolves, which is the behaviour
+    every untracked directory had before.
     """
+    project = project_for_cwd(cwd)
+
+    if project:
+        thread = find_thread_by_project(project)
+        if thread:
+            link_session_to_thread(thread["id"], session_id, cwd=cwd,
+                                   project=project)
+            return thread
+        if not title:
+            title = f"{AUTO_THREAD_PREFIX}{project}"
+        return add_thread(title, session_id=session_id, cwd=cwd, project=project)
+
     thread = find_thread_by_cwd(cwd)
     if thread:
-        link_session_to_thread(thread["id"], session_id)
+        link_session_to_thread(thread["id"], session_id, cwd=cwd)
         return thread
 
     if not title:
-        dir_name = Path(cwd).name
-        title = f"Work in {dir_name}"
-
-    thread = add_thread(title, session_id=session_id, cwd=cwd)
-    return thread
+        title = f"{AUTO_THREAD_PREFIX}{Path(cwd).name}"
+    return add_thread(title, session_id=session_id, cwd=cwd)
 
 
 def find_tasks_by_project_or_cwd(cwd: str) -> list:
@@ -1650,53 +1809,52 @@ def move_tasks_to_project(task_ids: list[str], target_project: str,
 def migrate_task_ids() -> dict:
     """Migrate old t1, t2, ... IDs to new project-scoped IDs.
 
-    Delegates to old engine for this one-time migration tool.
+    One-time tool behind `work migrate`. It used to try the predecessor work
+    module first (`import engine as _old_engine`) and fall back to the
+    implementation below; that module was deleted in v0.7.7, so the fallback is
+    now the only path — which is the code that already ran on every machine
+    where the optional import failed.
     """
-    try:
-        import engine as _old_engine
-        return _old_engine.migrate_task_ids()
-    except ImportError:
-        # Old engine not available, perform migration directly
-        adapter = _get_adapter()
-        conn = adapter._conn
-        rows = conn.execute("SELECT * FROM tasks").fetchall()
-        id_map = {}
+    adapter = _get_adapter()
+    conn = adapter._conn
+    rows = conn.execute("SELECT * FROM tasks").fetchall()
+    id_map = {}
 
-        for row in rows:
-            old_id = row["id"]
-            if "#" in old_id:
-                continue
+    for row in rows:
+        old_id = row["id"]
+        if "#" in old_id:
+            continue
 
-            project = row["project_id"]
-            prefix = adapter._project_prefix(project)
-            new_id = adapter._next_scoped_id(prefix)
+        project = row["project_id"]
+        prefix = adapter._project_prefix(project)
+        new_id = adapter._next_scoped_id(prefix)
 
-            conn.execute(
-                "INSERT INTO tasks "
-                "(id, title, status, priority, project_id, description, "
-                " assigned_to, created_by, created_at, started_at, completed_at, "
-                " due_at, parent_id, pipeline, pipeline_stage, recurrence, tags, "
-                " version, modified_at) "
-                "SELECT ?, title, status, priority, project_id, description, "
-                " assigned_to, created_by, created_at, started_at, completed_at, "
-                " due_at, parent_id, pipeline, pipeline_stage, recurrence, tags, "
-                " version, ? "
-                "FROM tasks WHERE id = ?",
-                (new_id, _now(), old_id),
-            )
-            conn.execute(
-                "UPDATE task_handoffs SET task_id = ? WHERE task_id = ?",
-                (new_id, old_id),
-            )
-            conn.execute("DELETE FROM tasks WHERE id = ?", (old_id,))
-            id_map[old_id] = new_id
+        conn.execute(
+            "INSERT INTO tasks "
+            "(id, title, status, priority, project_id, description, "
+            " assigned_to, created_by, created_at, started_at, completed_at, "
+            " due_at, parent_id, pipeline, pipeline_stage, recurrence, tags, "
+            " version, modified_at) "
+            "SELECT ?, title, status, priority, project_id, description, "
+            " assigned_to, created_by, created_at, started_at, completed_at, "
+            " due_at, parent_id, pipeline, pipeline_stage, recurrence, tags, "
+            " version, ? "
+            "FROM tasks WHERE id = ?",
+            (new_id, _now(), old_id),
+        )
+        conn.execute(
+            "UPDATE task_handoffs SET task_id = ? WHERE task_id = ?",
+            (new_id, old_id),
+        )
+        conn.execute("DELETE FROM tasks WHERE id = ?", (old_id,))
+        id_map[old_id] = new_id
 
-        # Update parent references
-        for old, new in id_map.items():
-            conn.execute(
-                "UPDATE tasks SET parent_id = ? WHERE parent_id = ?",
-                (new, old),
-            )
+    # Update parent references
+    for old, new in id_map.items():
+        conn.execute(
+            "UPDATE tasks SET parent_id = ? WHERE parent_id = ?",
+            (new, old),
+        )
 
-        conn.commit()
-        return id_map
+    conn.commit()
+    return id_map

@@ -38,6 +38,13 @@ python3 ~/aos/core/engine/work/cli.py done t1
 python3 ~/aos/core/engine/work/cli.py start t2
 python3 ~/aos/core/engine/work/cli.py cancel t3
 
+# A title works too — but `done`, `start`, `cancel`, `subtask`, `handoff` and
+# `move` never guess. If the title matches several tasks equally well they
+# print the candidates, exit 2, and change nothing. Re-run with the ID they
+# printed; do not retry with different wording. `show`, `search`, `dispatch`
+# and `who` stay loosely fuzzy.
+python3 ~/aos/core/engine/work/cli.py done "sse push"
+
 # Show details
 python3 ~/aos/core/engine/work/cli.py show t1
 

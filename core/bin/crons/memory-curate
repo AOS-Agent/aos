@@ -16,11 +16,11 @@ except the one file it is allowed to write:
      contract) — plus tasks closed in that window from the work DB (a
      read-only sqlite query; this cron never writes to work.db).
   2. Dispatch the Advisor headlessly (Sentinel-shaped spawn — see
-     core/engine/comms/sentinel/spawner.py._invoke_claude and
-     core/engine/work/runner.py.build_command, the two existing places
-     that already run `claude --print --agent <name> --dangerously-
-     skip-permissions` — this copies that pattern rather than inventing a
-     third one) with a prompt asking it to propose promotions: which log
+     core/engine/comms/sentinel/spawner.py._invoke_claude, which already
+     runs `claude --print --agent <name> --dangerously-skip-permissions`;
+     this copies that pattern rather than inventing a second one. The work
+     runner was the other place until v0.7.7 deleted it) with a prompt
+     asking it to propose promotions: which log
      entries contain a durable fact/decision/reference, a target_path
      under ~/vault/knowledge/ per SCHEMA.md, and proposed frontmatter.
   3. Merge the Advisor's proposals into ~/.aos/work/memory-proposals.yaml,
@@ -311,10 +311,9 @@ def build_prompt(log_entries: list[dict], closed_tasks: list[dict], today: date 
 
 def dispatch_advisor(prompt: str, model: str = DEFAULT_MODEL, timeout: int = DEFAULT_TIMEOUT_S) -> str:
     """Run the Advisor headlessly — the Sentinel-shaped spawn (same pattern
-    as core/engine/comms/sentinel/spawner.py._invoke_claude and
-    core/engine/work/runner.py.build_command): `claude --print --agent
-    advisor --dangerously-skip-permissions`, a bounded read-only tool set,
-    prompt on stdin. Returns raw stdout text.
+    as core/engine/comms/sentinel/spawner.py._invoke_claude): `claude
+    --print --agent advisor --dangerously-skip-permissions`, a bounded
+    read-only tool set, prompt on stdin. Returns raw stdout text.
 
     This is the one function tests stub out — it is the only place this
     module shells out to another process."""

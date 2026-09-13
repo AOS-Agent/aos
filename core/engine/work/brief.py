@@ -233,21 +233,19 @@ def _work_db_path() -> Path:
         return Path(_backend2._resolve_db_path())
     except Exception:
         pass
-    work_db = Path.home() / ".aos" / "data" / "work.db"
-    return work_db if work_db.exists() else Path.home() / ".aos" / "data" / "qareen.db"
+    return Path.home() / ".aos" / "data" / "work.db"
 
 
 def _session_db_path() -> Path | None:
-    """Where sessions/session_tasks live.
+    """Where sessions/session_tasks live: the work database.
 
-    They live in qareen.db until aos#131, so after the work.db cutover they are
-    only in qareen.db. When AOS_WORK_DB is injected (tests) we never escape to
-    the real instance DB — same rule the adapter follows.
+    They were in a separate store until migration 123, which is why this was
+    ever its own function. It stays one because the brief reads sessions through
+    a distinct read-only connection, and a caller that asks "where are the
+    sessions" should get an answer rather than an assumption.
     """
-    if os.environ.get("AOS_WORK_DB"):
-        return None
-    path = Path.home() / ".aos" / "data" / "qareen.db"
-    return path if path.exists() else None
+    path = _work_db_path()
+    return path if path and Path(path).exists() else None
 
 
 def _connect_ro(path: Path) -> sqlite3.Connection | None:

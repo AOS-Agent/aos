@@ -15,7 +15,7 @@ one long-lived checkout — and asserts the DB ends up with exactly one
 "Work in ..." thread, not two.
 
 Never touches ~/.aos or the real work.db: HOME is monkeypatched to tmp_path
-(so session_close.py's known_project_dirs gate matches a directory under
+(so session_close.py's legacy-directory fallback matches a directory under
 tmp_path instead of the operator's real ~/aos), and the work_env fixture
 points AOS_WORK_DB / the cached backend module at a throwaway DB.
 """
@@ -56,8 +56,8 @@ def _run_hook_once(mod, monkeypatch, *, cwd: str, session_id: str):
 
 
 def test_two_session_ends_in_same_directory_create_one_thread(work_env, monkeypatch, tmp_path):
-    # known_project_dirs is built from Path.home() fresh on every main() call,
-    # so redirecting HOME is enough to make a tmp_path directory qualify.
+    # The legacy-directory fallback is built from Path.home() fresh on every
+    # main() call, so redirecting HOME is enough to make a tmp_path dir qualify.
     monkeypatch.setenv("HOME", str(tmp_path))
 
     project_dir = tmp_path / "aos"
@@ -100,9 +100,9 @@ def test_ten_session_ends_in_same_directory_create_one_thread(work_env, monkeypa
     assert len(threads) == 1
 
 
-def test_session_end_outside_known_project_dirs_creates_no_thread(work_env, monkeypatch, tmp_path):
-    """Directories outside known_project_dirs never got a thread before this
-    fix and must not gain one now — the fix is dedup, not new scope."""
+def test_session_end_outside_tracked_work_creates_no_thread(work_env, monkeypatch, tmp_path):
+    """A directory that is neither a tracked project nor one of the legacy
+    three got no thread before this fix and must not gain one now."""
     monkeypatch.setenv("HOME", str(tmp_path))
 
     other_dir = tmp_path / "some-scratch-project"
@@ -118,3 +118,84 @@ def test_session_end_outside_known_project_dirs_creates_no_thread(work_env, monk
     eng = work_env["engine"]
     threads = [t for t in eng.get_all_threads() if t["title"].startswith("Work in ")]
     assert len(threads) == 0
+
+
+# ===========================================================================
+# Project-keyed dedup through the real hook (v0.7.7)
+#
+# The backend-level contract lives in test_thread_cwd.py. This drives
+# session_close.main() — the wiring — because the hook had its own half of the
+# bug: the gate matched `cwd.startswith(home + "/aos")`, so every
+# ~/aos-releases/<version> directory qualified under a name that changes on
+# every update, and none of the ~/project/<name> worktrees qualified at all.
+# ===========================================================================
+
+import sqlite3
+
+
+def _seed_project(work_env, project_id: str, path) -> None:
+    conn = sqlite3.connect(str(work_env["db_path"]))
+    conn.execute(
+        "INSERT OR REPLACE INTO projects (id, title, path) VALUES (?, ?, ?)",
+        (project_id, project_id, str(path)),
+    )
+    conn.commit()
+    conn.close()
+
+
+def _hook(mod, monkeypatch, tmp_path):
+    log_dir = tmp_path / ".aos" / "logs"
+    monkeypatch.setattr(mod, "LOG_DIR", log_dir)
+    monkeypatch.setattr(mod, "LOG_FILE", log_dir / "sessions.jsonl")
+
+
+def test_ten_session_ends_across_worktrees_and_release_target_make_one_thread(
+    work_env, monkeypatch, tmp_path
+):
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    project_root = tmp_path / "project" / "aos"
+    worktrees = [
+        project_root / ".claude" / "worktrees" / slug
+        for slug in ("feat-work-10x", "chore-single-node", "feat-telegram")
+    ]
+    release_target = tmp_path / "aos-releases" / "v0.7.7-abc1234"
+    for d in (project_root, *worktrees, release_target):
+        d.mkdir(parents=True, exist_ok=True)
+    _seed_project(work_env, "aos", project_root)
+
+    mod = _load_session_close_fresh()
+    _hook(mod, monkeypatch, tmp_path)
+
+    cwds = [*map(str, worktrees), str(release_target)]
+    for i in range(10):
+        _run_hook_once(mod, monkeypatch, cwd=cwds[i % len(cwds)],
+                       session_id=f"hook-session-{i}")
+
+    eng = work_env["engine"]
+    open_threads = [t for t in eng.get_all_threads() if t["status"] != "closed"]
+    assert len(open_threads) <= 1, (
+        f"10 SessionEnds across three worktrees and the release target produced "
+        f"{len(open_threads)} open threads: "
+        f"{[(t['id'], t['title'], t['cwd']) for t in open_threads]}"
+    )
+    assert open_threads[0]["title"] == "Work in aos"
+    assert open_threads[0]["project"] == "aos"
+
+
+def test_release_sibling_directory_no_longer_sneaks_through_the_gate(
+    work_env, monkeypatch, tmp_path
+):
+    """With no `aos` project tracked, ~/aos-releases/<v> must NOT qualify: it is
+    a sibling of ~/aos, not a subdirectory of it. The old bare startswith let it
+    in, which is the whole origin of the flood."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    release_target = tmp_path / "aos-releases" / "v0.7.7-abc1234"
+    release_target.mkdir(parents=True)
+
+    mod = _load_session_close_fresh()
+    _hook(mod, monkeypatch, tmp_path)
+    _run_hook_once(mod, monkeypatch, cwd=str(release_target), session_id="s1")
+
+    eng = work_env["engine"]
+    assert [t for t in eng.get_all_threads()] == []

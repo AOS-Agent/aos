@@ -19,6 +19,11 @@ You can resolve tasks by:
 
 When in a project directory, new tasks auto-assign to that project.
 
+**Mutations never guess.** `done/start/cancel/subtask/handoff/move` take a
+title, but one matching several tasks equally well prints the candidates,
+**exits 2, and changes nothing** — re-run with the ID it printed, don't reword.
+`show/search/dispatch/who` stay loosely fuzzy.
+
 ## When to Act
 
 **Complete a task** — When you finish work that matches an active task:
@@ -81,11 +86,6 @@ python3 ~/aos/core/engine/work/cli.py link aos#4 --session <session_id> --outcom
 
 ```bash
 python3 ~/aos/core/engine/work/cli.py add "Title" --priority N
-python3 ~/aos/core/engine/work/cli.py done "fuzzy title or exact id"
-python3 ~/aos/core/engine/work/cli.py start "task"
-python3 ~/aos/core/engine/work/cli.py subtask "parent" "Subtask title"
-python3 ~/aos/core/engine/work/cli.py handoff "task" --state "..." --next "..."
-python3 ~/aos/core/engine/work/cli.py dispatch "task"
 python3 ~/aos/core/engine/work/cli.py show "task"
 python3 ~/aos/core/engine/work/cli.py list
 python3 ~/aos/core/engine/work/cli.py today

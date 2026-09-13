@@ -424,8 +424,23 @@ def main():
     project_tasks = engine.find_tasks_by_project_or_cwd(cwd)
     project_active = [t for t in project_tasks if t.get("status") == "active"]
 
-    # Find active thread for this directory
-    current_thread = engine.find_thread_by_cwd(cwd)
+    # Threads worth a line: the ones a human opened or promoted. An auto
+    # "Work in <dir>" thread never renders — see backend.curated_threads.
+    try:
+        cwd_project = engine.project_for_cwd(cwd)
+    except Exception:
+        cwd_project = None
+    try:
+        briefing_threads = engine.curated_threads(limit=3, project_id=cwd_project)
+        all_open_threads = [
+            th for th in engine.get_all_threads() if th.get("status") != "closed"
+        ]
+        threads_suppressed = len(all_open_threads) - len(
+            [th for th in all_open_threads if not engine.is_auto_thread(th)]
+        )
+    except Exception:
+        briefing_threads, threads_suppressed = [], 0
+    current_thread = briefing_threads[0] if briefing_threads else None
 
     summary = engine.summary()
     inbox_count = summary["inbox"]
@@ -440,7 +455,16 @@ def main():
     # sections register their span + drop_rank (higher = dropped first);
     # if the assembled briefing exceeds the budget, whole sections are
     # removed and replaced by a pointer to the command that shows them.
-    BRIEFING_BUDGET = 4000  # bytes
+    # The delivered ceiling is 900 tokens ~= 3,600 chars at 4 chars/token
+    # (measured live at 4,487 chars / ~1,120 tokens before the thread section
+    # was cut). This constant budgets the SECTIONS only, and the header
+    # ("[Work System]\n", 14), the separator ("\n---\n", 5) and the guidance
+    # block are appended after the drop loop — so it is set 400 below the
+    # ceiling to pay for them. The guidance block is bounded for the same
+    # reason: an unbounded id list would spend the headroom it is there to
+    # protect. Budget in bytes because that is what this code can count; stated
+    # in tokens because that is what it costs.
+    BRIEFING_BUDGET = 3200  # bytes of sections; ~900 tokens delivered
     _sections = []
 
     def _mark(name, start, rank, fallback=None):
@@ -450,16 +474,15 @@ def main():
                 "rank": rank, "fallback": fallback,
             })
 
-    # Current thread (continuity)
-    if current_thread:
-        session_count = len(current_thread.get("sessions", []))
-        lines.append(f"**Current thread**: {current_thread['id']} — {current_thread['title']} ({session_count} sessions)")
-        if current_thread.get("notes"):
-            # Show last note only
-            last_note = current_thread["notes"].strip().split("\n\n")[-1]
-            if len(last_note) > 200:
-                last_note = last_note[:200] + "..."
-            lines.append(f"  Last note: {last_note}")
+    # Threads (continuity) — curated only, one line each, never more than 3.
+    # This used to be a single "Current thread" line taken from whatever thread
+    # shared this cwd, which in practice meant an auto-generated "Work in
+    # v0.7.1-bdd0739" row: a name from a release that no longer exists, spending
+    # a line of every briefing to say a directory was visited.
+    for _i, _th in enumerate(briefing_threads):
+        _label = "**Current thread**" if _i == 0 else "  also"
+        _promoted = " (promoted)" if _th.get("status") == "promoted" else ""
+        lines.append(f"{_label}: {_th['id']} — {_th['title']}{_promoted}")
 
     # Helper: subtask progress for a task
     def _subtask_info(parent_task, all_tasks):
@@ -907,18 +930,55 @@ def main():
     guidance_lines = []
     guidance_lines.append("If this session involves substantial work: start a task, create subtasks as you go, write a handoff at the end, mark tasks done when complete.")
     if project_active:
-        task_ids = ", ".join(t["id"] for t in project_active)
+        # Bounded: this line is appended after the section budget is enforced,
+        # so a project with thirty active tasks would quietly spend the headroom
+        # the budget left for it. Eight ids is enough to act on; the count
+        # carries the rest.
+        _shown = project_active[:8]
+        task_ids = ", ".join(t["id"] for t in _shown)
+        if len(project_active) > len(_shown):
+            task_ids += f" (+{len(project_active) - len(_shown)} more)"
         guidance_lines.append(f"Active tasks in this project: {task_ids}")
     if due:
         guidance_lines.append("Overdue tasks exist — flag them to the operator if relevant.")
 
     guidance = "\n".join(guidance_lines)
 
-    output = {
-        "additionalContext": f"[Work System]\n{context}\n---\n{guidance}"
-    }
+    rendered = f"[Work System]\n{context}\n---\n{guidance}"
 
-    print(json.dumps(output))
+    # What it cost, recorded where the next audit will look. A budget nobody
+    # measures is a wish: the 1,120-token figure that motivated this diet had to
+    # be derived by hand from a live run. One JSONL line per session, on the
+    # instance log path (never ~/vault — this runs on every session start, and
+    # the vault lives on a removable volume).
+    try:
+        from datetime import datetime as _dt_now
+
+        def _now_iso():
+            return _dt_now.now().isoformat(timespec="seconds")
+
+        _log = os.environ.get("AOS_MAINTENANCE_LOG") or str(
+            Path.home() / ".aos" / "logs" / "maintenance.jsonl"
+        )
+        _log_path = Path(_log)
+        _log_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(_log_path, "a") as _fh:
+            _fh.write(json.dumps({
+                "ts": _now_iso(),
+                "event": "briefing_rendered",
+                "session_id": session_id,
+                "cwd": cwd,
+                "chars": len(rendered),
+                "est_tokens": len(rendered) // 4,
+                "budget_bytes": BRIEFING_BUDGET,
+                "sections_dropped": dropped,
+                "threads_rendered": len(briefing_threads),
+                "threads_suppressed": threads_suppressed,
+            }) + "\n")
+    except Exception:
+        pass  # A hook must always emit valid JSON and exit 0
+
+    print(json.dumps({"additionalContext": rendered}))
 
 
 if __name__ == "__main__":

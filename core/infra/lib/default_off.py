@@ -8,6 +8,12 @@ three autonomous-comms arms — sentinel, converse, envoy. Autonomous outbound
 communication becomes a future Qren arm; until then it does not ship switched
 on, on a machine that never asked for it.
 
+Later in the same release the work runner left the framework outright, which
+is why it is absent below: a name here is a service that exists and ships off,
+and migration 128 clears the runner out of both lists on machines where 111
+recorded it. Keeping a deleted service in DEFAULT_OFF would have reconcile
+re-declaring, forever, that something which cannot run is switched off.
+
 Two lists, one file (~/.aos/config/services.yaml), and a clear precedence:
 
     enabled:   the operator's explicit opt-in. NOTHING here is ever
@@ -68,9 +74,10 @@ class _ConfigPath:
 
 SERVICES_CONFIG = _ConfigPath()
 
-# The v0.7.7 default-off set. work-runner: 0 rows in task_runs, ever.
-# sentinel/converse/envoy: autonomous comms, deferred to Qren.
-DEFAULT_OFF = ("work-runner", "sentinel", "converse", "envoy")
+# The v0.7.7 default-off set: sentinel/converse/envoy — autonomous comms,
+# deferred to Qren. work-runner was in it until the same release deleted the
+# service (migration 128 removes its leftover declaration).
+DEFAULT_OFF = ("sentinel", "converse", "envoy")
 
 _HEADER = """\
 # Operator service preferences for THIS machine.
@@ -80,9 +87,8 @@ _HEADER = """\
 # enabled:   services you explicitly want ON. Nothing in AOS ever auto-disables
 #            a name in this list — it outranks any framework default.
 #
-# As of v0.7.7 these ship off by default: work-runner, sentinel, converse,
-# envoy. To run one anyway, add it under `enabled:` and remove it from
-# `disabled:`.
+# As of v0.7.7 these ship off by default: sentinel, converse, envoy. To run
+# one anyway, add it under `enabled:` and remove it from `disabled:`.
 #
 # Instance data — never committed, never shared between machines.
 """
@@ -169,8 +175,8 @@ def disable_service(name: str) -> bool:
 def enable_service(name: str) -> bool:
     """Opt `name` in: add to `enabled:`, drop from `disabled:`. The reversal.
 
-    This is what an operator (or `work runner enable`) calls to override the
-    v0.7.7 default. Returns True if anything changed.
+    This is what an operator calls to override a framework default.
+    Returns True if anything changed.
     """
     yaml = _yaml()
     if yaml is None:
