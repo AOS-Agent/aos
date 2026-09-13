@@ -29,10 +29,6 @@ apps:
         api_key: "bin/agent-secret get OBSIDIAN_REST_API_KEY"
         cost: zero
         notes: "JSON responses, good for scripts/crons. Use -sk with curl (self-signed cert). Auth: Bearer token."
-      - method: steer-ocr
-        command: 'steer see --app Obsidian --ocr --json'
-        cost: high
-        notes: "Last resort — Electron app, must use OCR"
 
   Calendar:
     type: native
@@ -41,10 +37,6 @@ apps:
       - method: applescript
         cost: low
         notes: "Apple Calendar CRUD via AppleScript — works offline, syncs to iCloud/Google"
-      - method: steer
-        command: 'steer see --app Calendar --json'
-        cost: medium
-        notes: "Native app — good accessibility tree"
       - method: chrome
         target: "calendar.google.com"
         cost: high
@@ -61,10 +53,6 @@ apps:
         target: "gmail.com"
         cost: medium
         notes: "Chrome MCP on Gmail web — full functionality"
-      - method: steer
-        command: 'steer see --app Mail --json'
-        cost: medium
-        notes: "Mail.app GUI — native, good accessibility"
 
   Mail:
     type: native
@@ -72,25 +60,18 @@ apps:
       - method: applescript
         cost: low
         notes: "Read, compose, search via AppleScript — all accounts in Mail.app"
-      - method: steer
-        cost: medium
-        notes: "Native app — good accessibility tree"
 
   Notes:
     type: native
     approaches:
       - method: applescript
         cost: low
-      - method: steer
-        cost: medium
 
   Reminders:
     type: native
     approaches:
       - method: applescript
         cost: low
-      - method: steer
-        cost: medium
 
   Safari:
     type: native
@@ -98,8 +79,6 @@ apps:
       - method: applescript
         cost: low
         notes: "Can execute JS in tabs, read URLs, manage tabs"
-      - method: steer
-        cost: medium
 
   Finder:
     type: native
@@ -109,8 +88,6 @@ apps:
         notes: "ls, cp, mv, open — prefer CLI over GUI"
       - method: applescript
         cost: low
-      - method: steer
-        cost: medium
 
   Terminal:
     type: native
@@ -128,9 +105,6 @@ apps:
       - method: applescript
         cost: low
         notes: "Can open specific panes via 'reveal anchor'"
-      - method: steer
-        cost: medium
-        notes: "103 elements typically — good accessibility"
       - method: bash
         cost: zero
         notes: "Some settings via 'defaults write' commands"
@@ -144,8 +118,6 @@ apps:
       - method: applescript
         cost: low
         notes: "Tab management, URL navigation, JS execution"
-      - method: steer-ocr
-        cost: high
 
   "Visual Studio Code":
     type: electron
@@ -154,9 +126,6 @@ apps:
         command: "code --goto {file}:{line}"
         cost: zero
         notes: "CLI for file ops, extensions, diff"
-      - method: steer-ocr
-        cost: high
-        notes: "Electron — empty accessibility tree"
 
   Slack:
     type: electron
@@ -168,8 +137,6 @@ apps:
         target: "app.slack.com"
         cost: medium
         notes: "Full web version — use Chrome MCP"
-      - method: steer-ocr
-        cost: high
 
   Notion:
     type: electron
@@ -180,8 +147,6 @@ apps:
       - method: chrome
         target: "notion.so"
         cost: medium
-      - method: steer-ocr
-        cost: high
 
   Telegram:
     type: native
@@ -189,11 +154,6 @@ apps:
       - method: api
         cost: zero
         notes: "Telegram Bot API via bridge"
-      - method: steer
-        cost: medium
-        notes: "Native macOS app — decent accessibility"
-      - method: steer-ocr
-        cost: high
 
   "Google Drive":
     type: service
@@ -226,10 +186,6 @@ apps:
       - method: applescript
         cost: low
         notes: "Read and send iMessages via AppleScript. Full conversation access."
-      - method: steer
-        command: 'steer see --app Messages --json'
-        cost: medium
-        notes: "Native app — good accessibility tree"
 
   Contacts:
     type: native
@@ -238,8 +194,6 @@ apps:
       - method: applescript
         cost: low
         notes: "Apple Contacts app — all synced accounts"
-      - method: steer
-        cost: medium
 
   Discord:
     type: electron
@@ -250,8 +204,6 @@ apps:
       - method: chrome
         target: "discord.com"
         cost: medium
-      - method: steer-ocr
-        cost: high
 
   WhatsApp:
     type: electron
@@ -261,10 +213,6 @@ apps:
         target: "web.whatsapp.com"
         cost: medium
         notes: "Chrome MCP on WhatsApp Web — full chat interaction"
-      - method: steer-ocr
-        command: 'steer see --app WhatsApp --ocr --json'
-        cost: high
-        notes: "WhatsApp desktop — Electron, needs OCR"
 
 # Interaction types (not app-specific)
 interactions:
@@ -273,9 +221,6 @@ interactions:
       - method: chrome-mcp
         cost: medium
         notes: "Claude-in-Chrome for any web page"
-      - method: steer-ocr
-        cost: high
-        notes: "Fallback if Chrome MCP can't reach the page"
 
   file_operation:
     approaches:
@@ -296,17 +241,11 @@ interactions:
       - method: applescript
         cost: low
         notes: "Read Notification Center via System Events"
-      - method: steer
-        cost: medium
-        notes: "Click notification elements"
 
   clipboard:
     approaches:
       - method: bash
         command: "pbcopy / pbpaste"
-        cost: zero
-      - method: steer
-        command: "steer clipboard read/write"
         cost: zero
 
 # Generic fallback chain for unknown apps
@@ -318,12 +257,6 @@ _default:
     - method: applescript
       cost: low
       notes: "Is it a native macOS app?"
-    - method: steer
-      cost: medium
-      notes: "Can we read the accessibility tree?"
-    - method: steer-ocr
-      cost: high
-      notes: "Can we see and click via OCR?"
     - method: chrome
       cost: medium
       notes: "Does a web version exist?"

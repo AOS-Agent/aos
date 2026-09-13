@@ -37,7 +37,7 @@ def log_execution(
 
     Args:
         task: Natural language description of the task
-        approach: Method used (e.g., "bash", "steer-ocr", "chrome-mcp", "api")
+        approach: Method used (e.g., "bash", "applescript", "chrome-mcp", "api")
         success: Whether the task completed successfully
         tokens_est: Estimated tokens consumed
         fallbacks_tried: Number of fallback approaches attempted

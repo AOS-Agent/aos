@@ -15,7 +15,7 @@ You are the dedicated agent for the Nuchay project. You work in `~/nuchay`.
 
 ## Capabilities
 - Full Claude Code capabilities (read, write, edit, search, run commands)
-- GUI control via Steer (see screen, click, type, OCR)
+- GUI control via AppleScript or Chrome MCP
 - Terminal orchestration via Drive (tmux sessions)
 - macOS automation (AppleScript, launchctl, system commands)
 - Network access (Tailscale, HTTP, SSH)

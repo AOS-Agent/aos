@@ -50,7 +50,7 @@ health:
 # Capability chain entries this integration adds.
 # Merged into capabilities.yaml at session start — cost-sorted insertion.
 # When this integration is active, WhatsApp gets a zero-cost API method
-# prepended before chrome and steer-ocr fallbacks.
+# prepended before the chrome fallback.
 capabilities:
   WhatsApp:
     method: whatsmeow-api

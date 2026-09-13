@@ -24,7 +24,7 @@ _ALERT_COPY = (Path(__file__).resolve().parents[3]
 
 # Conservative copy for the (unexpected) case where the layer cannot be loaded.
 _FALLBACK_JOB = {
-    "dispatch_failed": "😕 Couldn't start that job — I'll try again in a moment.",
+    "dispatch_failed": "😕 GUI automation isn't available on this machine. Details are in the log.",
     "started": "🔄 On it.",
     "working": "🔄 Still working on it.",
     "done": "✅ Done.",

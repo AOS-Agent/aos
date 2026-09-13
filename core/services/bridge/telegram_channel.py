@@ -70,13 +70,13 @@ def _esc(value) -> str:
 
 # ── Task dispatch ──────────────────────────────────────
 # Tasks that should run in tmux (non-blocking) instead of streaming.
-# The agent in the tmux session decides which tools to use (STEER, obsidian CLI,
+# The agent in the tmux session decides which tools to use (obsidian CLI,
 # Drive, AppleScript, etc.) — the bridge doesn't guess.
 _TASK_KEYWORDS = [
     # Explicit triggers
-    "/do ", "/task ", "/steer ",
-    # Desktop/GUI automation (agent will pick STEER vs CLI)
-    "open ", "launch ", "use steer", "use computer",
+    "/do ", "/task ",
+    # Desktop/GUI automation (agent will pick AppleScript vs CLI)
+    "open ", "launch ", "use computer",
     "click ", "navigate to ",
     "on the desktop", "on my screen", "screenshot",
     "graph view", "open the app", "switch to ",
@@ -116,12 +116,13 @@ def _is_task_dispatch(text: str) -> bool:
     Tasks: multi-step work, GUI automation, file operations, etc.
     Chat: questions, quick answers, code help, conversation.
 
-    The agent in the tmux session picks the right tools — STEER for GUI,
-    obsidian CLI for vault ops, Drive for terminal, APIs for services.
+    The agent in the tmux session picks the right tools — AppleScript/Chrome
+    MCP for GUI, obsidian CLI for vault ops, Drive for terminal, APIs for
+    services.
     """
     lower = text.lower().strip()
     # Explicit triggers
-    if lower.startswith(("/do ", "/task ", "/steer ", "steer:")):
+    if lower.startswith(("/do ", "/task ")):
         return True
     # Keyword matching
     return any(kw in lower for kw in _TASK_KEYWORDS)
