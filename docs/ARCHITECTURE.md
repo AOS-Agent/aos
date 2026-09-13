@@ -14,7 +14,6 @@ core/
     dashboard/                  Web UI :4096
     eventd/                     Event daemon :4097
     listen/                     Job queue server :7600
-    memory/                     ChromaDB MCP server (stdio)
     transcriber/                Voice-to-text :7602
     whatsmeow/                  WhatsApp adapter :7601
   engine/
@@ -70,11 +69,40 @@ Claude Code session closes
 | listen      | 7600  | Async job queue and workers          |
 | whatsmeow   | 7601  | WhatsApp adapter                     |
 | transcriber | 7602  | Local voice-to-text (mlx-whisper)    |
-| memory      | stdio | ChromaDB semantic memory (MCP)       |
 
 All services bind `127.0.0.1`. Remote access goes through `tailscale serve`
 or the Cloudflare tunnel — never a wildcard bind. See [networking.md](networking.md)
 before adding a service or touching a bind address.
+
+## Memory & Search
+
+QMD is the memory/search layer over `~/vault` (the ChromaDB `memory` MCP
+server it replaced was retired in migration 110 — it never indexed a
+document on the reference machine, and the vault has thousands). `qmd
+query "<topic>"` is the read path, used interactively and by the `recall`
+skill. Curation — deciding what from the log is worth keeping permanently
+— is a separate, weekly loop:
+
+```
+~/vault/log/**                    what happened (dailies, sessions, meetings)
+        │
+        ▼  memory-curate (weekly, Sunday 06:00, config/crons.yaml)
+        │   gathers the last 7 days of log/** + tasks closed in that
+        │   window, dispatches the Advisor headlessly to propose
+        │   promotions per SCHEMA.md (target path, frontmatter)
+        ▼
+~/.aos/work/memory-proposals.yaml       proposals awaiting review
+        │
+        ▼  SessionStart nudge (inject_context.py) surfaces the count
+        ▼  operator reviews and promotes by hand
+        ▼
+~/vault/knowledge/**               what we know — durable, QMD-indexed
+```
+
+`memory-curate` never writes into `knowledge/` itself; promotion is always
+an operator action. Once a fact lands in `knowledge/`, the next `qmd-reindex`
+cron picks it up like any other vault document — no separate registration
+step.
 
 ## Key Commands
 

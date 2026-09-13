@@ -1,0 +1,460 @@
+#!/usr/bin/env python3
+"""memory-curate — weekly memory curation pass.
+
+The ChromaDB "memory" MCP server was retired (migration 110) with nothing
+built to replace its curation half. QMD over ~/vault is the search layer now,
+but nothing was proposing *what* should be promoted from the log into
+knowledge/ — core/engine/work/inject_context.py has nudged the operator to
+review ~/.aos/work/memory-proposals.yaml since it was written, but nothing
+has written that file since 2026-08-15.
+
+This job closes that loop, read-only on the operator's data at every step
+except the one file it is allowed to write:
+
+  1. Gather the last 7 days of ~/vault/log/** entries — dailies, session
+     exports, meeting transcripts (see SCHEMA.md for the log/ vs knowledge/
+     contract) — plus tasks closed in that window from the work DB (a
+     read-only sqlite query; this cron never writes to work.db).
+  2. Dispatch the Advisor headlessly (Sentinel-shaped spawn — see
+     core/engine/comms/sentinel/spawner.py._invoke_claude and
+     core/engine/work/runner.py.build_command, the two existing places
+     that already run `claude --print --agent <name> --dangerously-
+     skip-permissions` — this copies that pattern rather than inventing a
+     third one) with a prompt asking it to propose promotions: which log
+     entries contain a durable fact/decision/reference, a target_path
+     under ~/vault/knowledge/ per SCHEMA.md, and proposed frontmatter.
+  3. Merge the Advisor's proposals into ~/.aos/work/memory-proposals.yaml,
+     in the plain-list shape inject_context.py already expects (it only
+     checks `len(proposals) > 0` — see build_context() there) so the
+     existing SessionStart nudge lights back up.
+
+This cron NEVER writes into ~/vault/knowledge/ itself. Promotion is always
+an operator action — reviewing the proposals file and creating (or asking
+an agent to create) the knowledge doc by hand.
+
+Runs weekly, Sunday 06:00 local, via config/crons.yaml. Safe to run
+manually:
+  python3 ~/aos/core/bin/crons/memory-curate --dry-run
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import re
+import shutil
+import sqlite3
+import subprocess
+import sys
+from datetime import date, datetime, timedelta
+from pathlib import Path
+
+import yaml
+
+# ── Paths & config ──────────────────────────────────────────────────────────
+
+VAULT_DIR = Path.home() / "vault"
+WORK_DB = Path(os.environ.get("AOS_WORK_DB", str(Path.home() / ".aos" / "data" / "work.db")))
+PROPOSALS_FILE = Path.home() / ".aos" / "work" / "memory-proposals.yaml"
+
+LOOKBACK_DAYS = 7
+DEFAULT_MODEL = "sonnet"
+DEFAULT_TIMEOUT_S = 900
+
+# Log entry types this pass considers (see SCHEMA.md "Types" table). Weeklies,
+# reviews, friction reports, vault-maintenance logs, etc. are out of scope —
+# the operator asked specifically for sessions, meetings, and dailies.
+LOG_ENTRY_TYPES = {"daily", "session", "session-export"}
+
+CLAUDE_BIN = shutil.which("claude") or "claude"
+
+_FRONTMATTER_RE = re.compile(r"\A---\s*\n(.*?)\n---\s*\n?(.*)\Z", re.DOTALL)
+_DATE_PREFIX_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})")
+
+
+# ── Frontmatter parsing ─────────────────────────────────────────────────────
+
+def _parse_frontmatter(text: str) -> tuple[dict, str]:
+    """Split a vault markdown file into (frontmatter dict, body). Best-effort:
+    any parse failure returns an empty dict rather than raising — a cron that
+    skips one malformed file is fine, one that crashes on it is not."""
+    m = _FRONTMATTER_RE.match(text)
+    if not m:
+        return {}, text
+    fm_text, body = m.group(1), m.group(2)
+    try:
+        fm = yaml.safe_load(fm_text)
+    except yaml.YAMLError:
+        fm = None
+    if not isinstance(fm, dict):
+        fm = {}
+    return fm, body
+
+
+def _entry_date(fm: dict, path: Path) -> date | None:
+    """Resolve an entry's date: frontmatter `date` field first, else the
+    YYYY-MM-DD prefix on the filename (both conventions appear in the vault)."""
+    raw = fm.get("date")
+    if raw:
+        try:
+            return datetime.strptime(str(raw)[:10], "%Y-%m-%d").date()
+        except ValueError:
+            pass
+    match = _DATE_PREFIX_RE.match(path.name)
+    if match:
+        try:
+            return datetime.strptime(match.group(1), "%Y-%m-%d").date()
+        except ValueError:
+            return None
+    return None
+
+
+def _excerpt(body: str, max_chars: int = 600) -> str:
+    text = body.strip()
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars].rstrip() + "…"
+
+
+# ── Step 1a: gather vault log entries ───────────────────────────────────────
+
+def gather_log_entries(
+    vault_dir: Path | None = None,
+    days: int = LOOKBACK_DAYS,
+    today: date | None = None,
+) -> list[dict]:
+    """Collect vault log entries (dailies, session exports, meeting
+    transcripts) dated within the last `days` days. Read-only.
+
+    Only ~/vault/log/ is scanned — per SCHEMA.md, log/ is "what happened"
+    and the only thing this pass reads; knowledge/ is "what we know" and is
+    never touched here (the whole point is proposing *into* it, not out of
+    it). Only the three kinds the operator asked for: top-level dailies,
+    log/sessions/, and log/meetings/ — friction reports, weeklies,
+    vault-maintenance logs, and batches/handoffs are out of scope.
+    """
+    vault_dir = Path(vault_dir) if vault_dir is not None else VAULT_DIR
+    today = today or date.today()
+    cutoff = today - timedelta(days=days)
+    log_dir = vault_dir / "log"
+    if not log_dir.is_dir():
+        return []
+
+    candidates: list[Path] = sorted(log_dir.glob("*.md"))  # dailies — direct children only
+    sessions_dir = log_dir / "sessions"
+    if sessions_dir.is_dir():
+        candidates += sorted(sessions_dir.rglob("*.md"))
+    meetings_dir = log_dir / "meetings"
+    if meetings_dir.is_dir():
+        candidates += sorted(meetings_dir.rglob("*.md"))
+
+    entries: list[dict] = []
+    for path in candidates:
+        try:
+            text = path.read_text(errors="replace")
+        except OSError:
+            continue
+        fm, body = _parse_frontmatter(text)
+        entry_type = str(fm.get("type") or "")
+        is_meeting_dir = path.parent.name == "meetings" or meetings_dir in path.parents
+        if entry_type not in LOG_ENTRY_TYPES and not is_meeting_dir:
+            continue
+        d = _entry_date(fm, path)
+        if d is None or d < cutoff or d > today:
+            continue
+        entries.append(
+            {
+                "source": str(path.relative_to(vault_dir)),
+                "type": entry_type or ("meeting" if is_meeting_dir else "unknown"),
+                "date": d.isoformat(),
+                "title": str(fm.get("title") or path.stem),
+                "tags": fm.get("tags") or [],
+                "excerpt": _excerpt(body),
+            }
+        )
+
+    entries.sort(key=lambda e: e["date"], reverse=True)
+    return entries
+
+
+# ── Step 1b: gather closed tasks (read-only) ────────────────────────────────
+
+def gather_closed_tasks(
+    db_path: Path | None = None,
+    days: int = LOOKBACK_DAYS,
+    today: date | None = None,
+) -> list[dict]:
+    """Read-only query: tasks closed (done/cancelled) in the last `days`
+    days, from the work DB. Opens sqlite in `mode=ro` — this cron has no
+    write path to work.db. Missing DB, missing table, or any sqlite error
+    returns [] rather than raising."""
+    path = Path(db_path) if db_path is not None else WORK_DB
+    if not path.exists():
+        return []
+    today = today or date.today()
+    cutoff = (today - timedelta(days=days)).isoformat()
+
+    try:
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    except sqlite3.OperationalError:
+        return []
+    try:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """
+            SELECT id, title, status, project_id, completed_at, description
+            FROM tasks
+            WHERE status IN ('done', 'cancelled')
+              AND completed_at IS NOT NULL
+              AND substr(completed_at, 1, 10) >= ?
+            ORDER BY completed_at DESC
+            """,
+            (cutoff,),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return []
+    finally:
+        conn.close()
+
+    return [
+        {
+            "id": r["id"],
+            "title": r["title"],
+            "status": r["status"],
+            "project": r["project_id"],
+            "completed_at": r["completed_at"],
+            "notes": (r["description"] or "")[:400],
+        }
+        for r in rows
+    ]
+
+
+# ── Step 2: build the Advisor prompt ────────────────────────────────────────
+
+def build_prompt(log_entries: list[dict], closed_tasks: list[dict], today: date | None = None) -> str:
+    """Pure function (no I/O) — builds the text handed to the Advisor on
+    stdin. Kept separate from dispatch_advisor() so the prompt shape is
+    unit-testable without ever shelling out."""
+    today = today or date.today()
+    lines = [
+        "You are running headlessly as the weekly memory-curation pass (cron: memory-curate).",
+        "",
+        f"Window: the {LOOKBACK_DAYS} days ending {today.isoformat()}.",
+        "",
+        "Read ~/vault/SCHEMA.md first — it is the frontmatter contract for",
+        "everything under ~/vault/knowledge/ (types, pipeline stages 1-6,",
+        "naming conventions). Every target_path and proposed_frontmatter you",
+        "propose below must follow it exactly.",
+        "",
+        "Your job: look at the log entries and closed tasks listed below",
+        "(the excerpts here are truncated — open the source files yourself",
+        "with Read for the full text) and decide which ones contain a",
+        "durable fact, decision, or reference worth promoting out of",
+        "~/vault/log/ into ~/vault/knowledge/. Most sessions contain nothing",
+        "durable — do not force a promotion just to have one.",
+        "",
+        "IMPORTANT: you propose only. Do NOT write, edit, or create anything",
+        "under ~/vault/knowledge/ (or anywhere else) — promotion is an",
+        "operator approval step. Your only output is the YAML list below.",
+        "",
+        f"## Log entries ({len(log_entries)})",
+        "",
+    ]
+    for e in log_entries:
+        lines.append(f"- source: {e['source']}")
+        lines.append(f"  type: {e['type']} | date: {e['date']} | title: {e['title']}")
+        if e.get("tags"):
+            lines.append(f"  tags: {e['tags']}")
+        if e.get("excerpt"):
+            snippet = e["excerpt"].replace("\n", " ")[:300]
+            lines.append(f"  excerpt: {snippet}")
+    if not log_entries:
+        lines.append("(none in window)")
+
+    lines += ["", f"## Closed tasks ({len(closed_tasks)})", ""]
+    for t in closed_tasks:
+        proj = f" [{t['project']}]" if t.get("project") else ""
+        lines.append(
+            f"- {t['id']}: {t['title']}{proj} (closed {t.get('completed_at', '')}, status {t['status']})"
+        )
+    if not closed_tasks:
+        lines.append("(none in window)")
+
+    lines += [
+        "",
+        "## Output contract",
+        "",
+        "Respond with ONLY a YAML list (no prose, no markdown fences) — one",
+        "entry per proposed promotion, or an empty list `[]` if nothing this",
+        "week clears the bar. Each entry:",
+        "",
+        "- source: \"<path the fact came from, relative to ~/vault, or task:<id>>\"",
+        "  source_type: daily | session | meeting | task",
+        "  date: \"YYYY-MM-DD\"",
+        "  summary: \"<one line: the durable fact/decision/reference itself>\"",
+        "  target_path: \"knowledge/<folder>/<kebab-case-name>.md\"",
+        "  target_type: capture | research | reference | synthesis | decision | expertise",
+        "  stage: <1-6 per SCHEMA.md; omit for reference>",
+        "  proposed_frontmatter:",
+        "    title: \"...\"",
+        "    type: \"...\"",
+        "    date: \"YYYY-MM-DD\"",
+        "    tags: [...]",
+        "    source_ref: \"<same as source>\"",
+        "    stage: <int, if applicable>",
+        "  rationale: \"<why this is durable and worth the promotion>\"",
+    ]
+    return "\n".join(lines)
+
+
+# ── Step 3: dispatch the Advisor headlessly ─────────────────────────────────
+
+def dispatch_advisor(prompt: str, model: str = DEFAULT_MODEL, timeout: int = DEFAULT_TIMEOUT_S) -> str:
+    """Run the Advisor headlessly — the Sentinel-shaped spawn (same pattern
+    as core/engine/comms/sentinel/spawner.py._invoke_claude and
+    core/engine/work/runner.py.build_command): `claude --print --agent
+    advisor --dangerously-skip-permissions`, a bounded read-only tool set,
+    prompt on stdin. Returns raw stdout text.
+
+    This is the one function tests stub out — it is the only place this
+    module shells out to another process."""
+    cmd = [
+        CLAUDE_BIN,
+        "--print",
+        "--agent", "advisor",
+        "--model", model,
+        "--dangerously-skip-permissions",
+        "--allowedTools", "Read,Grep,Glob,Bash",
+    ]
+    proc = subprocess.run(
+        cmd,
+        input=prompt,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"advisor dispatch failed rc={proc.returncode}: {(proc.stderr or proc.stdout or '')[:400]}"
+        )
+    return proc.stdout
+
+
+# ── Step 4: parse + merge proposals ─────────────────────────────────────────
+
+def parse_proposals(raw_text: str) -> list[dict]:
+    """Parse the Advisor's YAML output into a list of proposal dicts.
+    Tolerant of a ```yaml fenced block (models wrap output in one even when
+    told not to). Any parse failure, or a result that isn't a list of
+    dicts, returns [] — a curation pass that proposes nothing is fine; one
+    that corrupts memory-proposals.yaml is not."""
+    text = raw_text.strip()
+    fence = re.search(r"```(?:yaml)?\s*\n(.*?)```", text, re.DOTALL)
+    if fence:
+        text = fence.group(1)
+    if not text.strip():
+        return []
+    try:
+        data = yaml.safe_load(text)
+    except yaml.YAMLError:
+        return []
+    if not isinstance(data, list):
+        return []
+    return [item for item in data if isinstance(item, dict)]
+
+
+def write_proposals(
+    proposals: list[dict],
+    out_path: Path | None = None,
+    generated_at: str | None = None,
+) -> list[dict]:
+    """Merge freshly-proposed entries into memory-proposals.yaml and return
+    the merged list.
+
+    Contract with inject_context.py (core/engine/work/inject_context.py,
+    the "Memory proposals from reconciler" block): the file is a plain
+    YAML list; the SessionStart nudge only checks `len(proposals) > 0`
+    after `yaml.safe_load(...) or []`, so item shape beyond "a list of
+    mappings" is this module's to define — kept as a plain list rather
+    than e.g. {"proposals": [...]} because that is exactly what the
+    existing `or []` fallback already assumes.
+
+    Merge, not overwrite: an entry from a previous run survives until this
+    run proposes a fresher one for the same `source` (the operator may not
+    have reviewed last week's yet, and promotion never deletes from this
+    file automatically — only the operator, by hand, once promoted).
+    """
+    out_path = Path(out_path) if out_path is not None else PROPOSALS_FILE
+    generated_at = generated_at or datetime.now().isoformat(timespec="seconds")
+
+    existing: list[dict] = []
+    if out_path.exists():
+        try:
+            loaded = yaml.safe_load(out_path.read_text()) or []
+            if isinstance(loaded, list):
+                existing = [e for e in loaded if isinstance(e, dict)]
+        except Exception:
+            existing = []
+
+    by_key: dict[str, dict] = {}
+    for e in existing:
+        key = e.get("source") or f"_unkeyed_{len(by_key)}"
+        by_key[key] = e
+    for p in proposals:
+        p = dict(p)
+        p.setdefault("proposed_at", generated_at)
+        key = p.get("source") or f"_unkeyed_new_{len(by_key)}"
+        by_key[key] = p
+
+    merged = sorted(by_key.values(), key=lambda e: str(e.get("date") or ""), reverse=True)
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = out_path.with_suffix(out_path.suffix + ".tmp")
+    tmp.write_text(yaml.safe_dump(merged, sort_keys=False, allow_unicode=True))
+    os.replace(tmp, out_path)
+    return merged
+
+
+# ── Entry point ──────────────────────────────────────────────────────────────
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--days", type=int, default=LOOKBACK_DAYS)
+    ap.add_argument("--model", default=DEFAULT_MODEL)
+    ap.add_argument(
+        "--dry-run", action="store_true",
+        help="Gather and print the prompt, but do not dispatch the Advisor or touch memory-proposals.yaml.",
+    )
+    args = ap.parse_args(argv)
+
+    log_entries = gather_log_entries(days=args.days)
+    closed_tasks = gather_closed_tasks(days=args.days)
+    print(f"[memory-curate] gathered {len(log_entries)} log entries, {len(closed_tasks)} closed tasks")
+
+    if not log_entries and not closed_tasks:
+        print("[memory-curate] nothing in window — skipping Advisor dispatch")
+        return 0
+
+    prompt = build_prompt(log_entries, closed_tasks)
+
+    if args.dry_run:
+        print(prompt)
+        return 0
+
+    try:
+        raw = dispatch_advisor(prompt, model=args.model)
+    except Exception as e:  # noqa: BLE001 — a cron must report, never traceback-crash
+        print(f"[memory-curate] advisor dispatch failed: {e}", file=sys.stderr)
+        return 1
+
+    proposals = parse_proposals(raw)
+    merged = write_proposals(proposals)
+    print(
+        f"[memory-curate] {len(proposals)} new proposal(s) this run, "
+        f"{len(merged)} total pending in {PROPOSALS_FILE}"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
