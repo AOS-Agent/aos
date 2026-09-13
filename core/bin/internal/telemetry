@@ -82,7 +82,7 @@ _record_event() {
     TEL_LOG="$TELEMETRY_LOG" \
     "$AOS_PY" -c "
 import json, os, platform
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 user_dir = os.environ['TEL_USER_DIR']
@@ -97,7 +97,7 @@ event = {
     'phase': os.environ['TEL_PHASE'],
     'action': os.environ['TEL_ACTION'],
     'duration_ms': int(os.environ.get('TEL_DURATION', '0')),
-    'ts': datetime.now(datetime.UTC).isoformat() + 'Z',
+    'ts': datetime.now(timezone.utc).isoformat() + 'Z',
 }
 
 log_path = Path(os.environ['TEL_LOG'])
