@@ -11,7 +11,11 @@ Anything in instance space that doesn't trace back to the framework is
 potentially orphaned. This check REPORTS orphans — it never deletes.
 Cleanup requires explicit operator approval via `aos hygiene --apply`.
 
-Runs every update cycle. Only flags AOS-namespaced items.
+Runs every update cycle. Only flags AOS-namespaced items: a LaunchAgent
+must carry a com.aos.* or com.agent.* label to even be a candidate for
+orphan classification (aos#2346) — the operator's own business tooling
+or personal automation is never ours to judge, whatever the framework
+does or doesn't declare about it.
 """
 
 import subprocess
@@ -171,14 +175,34 @@ def _loaded_labels():
     }
 
 
+# LaunchAgent label prefixes AOS treats as its own namespace. A plist
+# outside this namespace — the operator's own business tooling
+# (nearpay-*, oaks-*, sales-coach-*), a personal portal agent under
+# am.hish.*, or any other app's plist — is not ours to have an opinion
+# about, whatever the framework does or doesn't declare (aos#2346). It
+# must never be classified as an orphan, dismissed, or even listed.
+AOS_LABEL_PREFIXES = ("com.aos.", "com.agent.")
+
+
+def _is_aos_label(label: str) -> bool:
+    """True when a LaunchAgent label carries an AOS namespace prefix."""
+    return label.startswith(AOS_LABEL_PREFIXES)
+
+
 def _installed_launchagents():
-    """com.aos.* LaunchAgent labels actually installed."""
+    """AOS-namespaced (com.aos.*, com.agent.*) LaunchAgent labels actually
+    installed. Anything outside that namespace is never a candidate for
+    orphan classification — "not shipped by the framework" and "orphaned"
+    are not the same thing, and collapsing them is exactly how `aos
+    hygiene --apply` ended up offering to delete the operator's live
+    briefings and email sequences (aos#2346)."""
     la_dir = Path.home() / "Library" / "LaunchAgents"
     if not la_dir.is_dir():
         return set()
     return {
         f.name.removesuffix(".plist")
-        for f in la_dir.glob("com.aos.*.plist")
+        for f in la_dir.glob("*.plist")
+        if _is_aos_label(f.stem)
     }
 
 
@@ -306,6 +330,11 @@ def find_orphans():
     loaded = _loaded_labels()
     la_orphans = []
     for label in inst_agents - fw_agents:
+        # Belt and suspenders on top of _installed_launchagents()'s own
+        # filter: a label outside the AOS namespace is never our call to
+        # make, whatever else is true about it.
+        if not _is_aos_label(label):
+            continue
         if f"launchagent:{label}" in known:
             continue
         # Never offer to delete something launchd is running. A missing
