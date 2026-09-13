@@ -25,7 +25,7 @@ validates, and returns manifests from:
 - `core/services/*/service.yaml` — one per service directory (required; a guard
   test fails CI if a service dir has no manifest)
 - `config/services.d/*.yaml` — services with a framework launchd presence but no
-  code dir here (e.g. `n8n`, an external tool AOS wraps)
+  code dir here, including retired tombstones (e.g. `listen` — see below)
 
 ### Schema
 
@@ -54,8 +54,8 @@ itself correctly or it does not ship.
 - **active** — should be deployed and monitored on every node. `service_loaded`
   enforces that an active resident is loaded (and, for `liveness: http`, healthy).
 - **optional** — may be deployed (feature-gated, per-node, or an initiative
-  still rolling out: `mesh`, `companion`, and the MCP-stdio servers `crawler`
-  and `memory`). Never flagged as an orphan; never force-restarted if absent.
+  still rolling out: `mesh`, `work-runner`, `converse`, and the MCP-stdio
+  server `crawler`). Never flagged as an orphan; never force-restarted if absent.
 - **retired** — must **not** be loaded. Its directory is kept as an archive.
   Monitoring must never probe it or report it DOWN. Flipping a service to
   `retired` (and letting consumers derive) is how `listen` and `eventd` were
@@ -70,7 +70,7 @@ itself correctly or it does not ship.
   optional (it was *missing* during aos#180) and must never be the liveness
   signal — so `service_loaded` only asserts the bridge job is loaded.
 - **keepalive** — the launchd `KeepAlive` restart is the only signal;
-  "loaded" is enough (`companion` — a resident with no `/health` route).
+  "loaded" is enough (`work-runner` — a resident with no `/health` route).
 - **interval** — a periodic job; "loaded" is enough.
 - **none** — no out-of-band signal (the MCP-stdio servers, launched by a client).
 
@@ -84,10 +84,9 @@ Not everything with a plist is a resident service:
 - **`com.aos.scheduler`** is a *calendar* cron (`StartCalendarInterval`, every
   5 min) — it is declared by its plist, not the registry, and is intentionally
   out of the resident-monitoring set.
-- **`slack-watch`** is an instance-layer (`~/.aos/services/slack-watch`)
-  single-shot poller (`StartInterval` + `RunAtLoad`, no `KeepAlive`). It is
-  declared by its own instance plist; "exits immediately" is its by-design
-  behavior, not a death. It is not — and must not be — monitored as a resident.
+- **`slack-watch`** was this kind of instance-layer single-shot poller; it was
+  retired in the v0.8.0 decommission sweep (migration 109), superseded by
+  `sana-watch`, which is instance-only and not shipped as a framework manifest.
 
 ## Consumers that derive from the registry
 
@@ -101,7 +100,7 @@ Not everything with a plist is a resident service:
   `083` regenerates **from the registry** (active + deployed only).
 - `core/services/bridge/heartbeat.py` and `intent_classifier.py` — the service
   summary and the "check services" menu.
-- `core/infra/reconcile/checks/context_freshness.py`, `transcriber.py`, `n8n.py`
+- `core/infra/reconcile/checks/context_freshness.py`, `transcriber.py`
   — ports and health URLs.
 - `core/infra/reconcile/checks/instance_hygiene.py` — an `active`/`optional`
   service dir is never an orphan; a `retired` dir is expected-archived.

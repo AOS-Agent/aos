@@ -12,7 +12,6 @@
 #   aos version         Show current version
 #   aos self-test       Validate system health
 #   aos deploy [svc]    Deploy service venv (all or specific)
-#   aos track           Auto Tracker: shipments + carrier onboarding
 #   aos arm             Arms: status / list / plan / remove
 
 set -euo pipefail
@@ -1165,7 +1164,6 @@ PYEOF
         echo "  repair           Pull latest, rebuild venvs, reload everything"
         echo "  telemetry        Anonymous usage telemetry (opt-in/out/report)"
         echo "  sessions         View recorded onboarding/setup sessions"
-        echo "  track            Auto Tracker: shipments + carrier onboarding (aos track help)"
         echo "  arm              Arms: what is installed, what works, what to remove"
         echo "  snapshot        What this system consists of, read live (--json)"
         echo "  discover        Scan machine for existing setup"
@@ -1277,12 +1275,6 @@ if dismiss_list:
         # ~/.aos/config/fleet.yaml.
         shift
         "$AOS_DIR/core/bin/internal/aos-python" "$AOS_DIR/core/bin/cli/fleet" "$@"
-        ;;
-
-    track)
-        # Auto Tracker — shipments + new-carrier onboarding pipeline
-        shift
-        "$AOS_DIR/core/bin/internal/aos-python" "$AOS_DIR/core/bin/cli/aos-track" "$@"
         ;;
 
     snapshot)

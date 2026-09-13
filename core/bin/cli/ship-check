@@ -477,13 +477,13 @@ unmanifested=""
 while IFS= read -r plist_path; do
     [[ -n "$plist_path" ]] || continue
     base=$(basename "$plist_path")
-    if ! grep -rqF "$base" "$DEV"/core/services/*/service.yaml "$DEV"/core/qareen/service.yaml "$DEV"/config/services.d/*.yaml 2>/dev/null; then
+    if ! grep -rqF "$base" "$DEV"/core/services/*/service.yaml "$DEV"/config/services.d/*.yaml 2>/dev/null; then
         unmanifested="$unmanifested $base"
     fi
 done < <(find "$DEV/config/launchagents" -name 'com.aos.*' 2>/dev/null)
 # The harness itself (scheduler, sentinel, claude-remote) has a launchd presence
 # but is not a service; it is allowlisted in install.sh as INFRA_PLISTS.
-for infra in com.aos.scheduler com.aos.sentinel com.aos.claude-remote com.aos.qareen-tunnel; do
+for infra in com.aos.scheduler com.aos.sentinel com.aos.claude-remote; do
     unmanifested=$(echo "$unmanifested" | tr ' ' '\n' | grep -v "^${infra}\." | tr '\n' ' ')
 done
 unmanifested=$(echo "$unmanifested" | xargs 2>/dev/null || true)

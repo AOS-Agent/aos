@@ -13,12 +13,14 @@ services: {}
 
 launchagents:
   com.aos.eventd:
-    reason: "Event daemon — runs the comms bus, watchers, and consumers on port 4097"
+    # core/services/eventd/ itself was removed (retired since April, no plist,
+    # 0 in launchctl — "Prune: remove n8n/automations, eventd, and
+    # never-deployed remnants"); this entry only guards against a stray
+    # LaunchAgent surviving on an older machine from before that prune.
+    reason: "Event daemon — runs the comms bus, watchers, and consumers on port 4097 (source removed; live importer is engine/comms/consumers)"
     referenced_by:
-      - core/services/eventd/
       - core/engine/comms/bus.py
   com.aos.whatsmeow:
     reason: "WhatsApp bridge — Go-based relay on port 7601, used by comms WhatsApp adapter"
     referenced_by:
       - core/engine/comms/channels/whatsapp.py
-      - core/services/eventd/watchers/whatsapp.py

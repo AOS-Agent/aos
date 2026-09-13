@@ -2,7 +2,7 @@
   <img src="https://img.shields.io/badge/status-beta-F5A623?style=flat-square" alt="Beta" />
   <img src="https://img.shields.io/badge/platform-macOS-000?style=flat-square&logo=apple" alt="macOS" />
   <img src="https://img.shields.io/badge/runtime-Claude_Code-D9730D?style=flat-square" alt="Claude Code" />
-  <img src="https://img.shields.io/badge/version-0.7.1-blue?style=flat-square" alt="v0.7.1" />
+  <img src="https://img.shields.io/badge/version-0.8.0-blue?style=flat-square" alt="v0.8.0" />
   <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="MIT" />
 </p>
 
@@ -64,7 +64,7 @@ markdown with frontmatter. Most things are files.
 ## The Stack
 
 ```
-INTERFACE ──── Qareen (web)  ·  Telegram  ·  cmux + CLI  ·  Mobile
+INTERFACE ──── Telegram  ·  cmux + CLI  ·  Mobile
      |
 AGENTS ─────── Chief  ·  Steward  ·  Advisor  ·  Catalog  ·  Councils
      |
@@ -74,7 +74,7 @@ KNOWLEDGE ──── Vault  ·  QMD search  ·  Sessions  ·  Patterns
      |
 PEOPLE ─────── Contacts  ·  Comms history  ·  Trust cascade
      |
-SERVICES ───── Qareen  ·  Bridge  ·  Transcriber  ·  WhatsApp  ·  n8n
+SERVICES ───── Bridge  ·  Transcriber  ·  WhatsApp  ·  Mesh  ·  Crawler
      |
 HARNESS ────── CLAUDE.md  ·  Agents  ·  Skills  ·  Hooks  ·  Reconcile
      |
@@ -104,7 +104,7 @@ Three tiers. Start with the system agents, activate from the catalog, or write y
 so your edits survive updates.
 
 **Councils** convene several agents to argue a high-stakes decision from different
-angles, then write a verdict with the dissent preserved. `council background "<question>"`.
+angles, then write a verdict with the dissent preserved. `~/aos/core/bin/cli/council background "<question>"`.
 
 ### Trust Ramp
 
@@ -157,16 +157,14 @@ Always-on processes via LaunchAgents. Survive reboots. Bound to loopback.
 
 | Service | What | Port |
 |:--------|:-----|:-----|
-| **Qareen** | The web UI + ontology backend — board, knowledge, shipments, health | `:4096` |
 | **Bridge** | Telegram messaging, voice transcription, agent dispatch | daemon |
 | **Transcriber** | Local speech-to-text (mlx-whisper) | `:7602` |
-| **WhatsApp** | WhatsApp relay for the comms pipeline | `:7601` |
-| **n8n** | Workflow automation behind integrations | `:5678` |
+| **WhatsApp** (whatsmeow) | WhatsApp relay for the comms pipeline | `:7601` |
 
-Optional, opt-in: `companion`, `mesh`, `work-runner`, and the `crawler` / `memory` MCP
-servers. Each service declares itself in a manifest (`core/services/*/service.yaml`), and
-the installer, watchdog, and health checks all read that manifest rather than a
-hardcoded list.
+Optional, opt-in: `mesh`, `work-runner`, `converse` (the Sentinel/Envoy runtime),
+and the `crawler` MCP server. Each service declares itself in a manifest
+(`core/services/*/service.yaml`), and the installer, watchdog, and health
+checks all read that manifest rather than a hardcoded list.
 
 Remote access exclusively through **Tailscale** — authenticated, encrypted, zero config.
 
@@ -218,11 +216,10 @@ Four boundaries. Never crossed.
 │   ├── agents/            System agent definitions
 │   ├── engine/            Work, comms, people, intelligence engines
 │   ├── infra/             Migrations, reconcile checks, integrations
-│   ├── qareen/            Qareen backend, ontology, tracking
 │   ├── services/          Long-running service code + manifests
 │   ├── skills/            Skill definitions
 │   └── bin/               CLIs and cron entrypoints
-├── apps/                  Qareen UI, content engine
+├── apps/                  content-engine
 ├── config/                System configuration, LaunchAgent templates
 ├── templates/             Agent catalog + project scaffold
 └── docs/                  Architecture documentation
@@ -307,7 +304,6 @@ aos self-test          # Verify the installation
 aos update             # Pull latest + migrate + sync
 aos reconcile          # Run invariant checks, repair drift
 aos activate <agent>   # Activate a catalog agent
-aos track              # Package tracking
 ```
 
 ---
