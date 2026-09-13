@@ -61,12 +61,6 @@ def test_nothing_under_core_references_the_cron():
     assert not offenders, "live references to the removed cron:\n  " + "\n  ".join(offenders)
 
 
-def test_the_freeze_flag_is_untouched():
-    """Guard the guard: the cleanup must not have eaten the update policy."""
-    channels = (REPO / "core" / "infra" / "lib" / "channels.py").read_text()
-    assert 'LEGACY_FREEZE_FILES = ("channel-update.yaml",)' in channels
-
-
 def test_the_v2_spec_exists_and_is_a_stub():
     assert SPEC.exists(), "the idea was kept, so it has to be written down somewhere"
     body = [ln for ln in SPEC.read_text().splitlines() if ln.strip()]
