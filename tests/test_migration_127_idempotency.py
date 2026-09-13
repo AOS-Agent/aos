@@ -63,6 +63,19 @@ def m(tmp_path, monkeypatch):
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     monkeypatch.setattr(mod, "CRONS_YAML", tmp_path / "aos" / "config" / "crons.yaml")
+    # Redirect the dead-config-key targets into the sandbox too — none of
+    # these exist by default, matching a machine that never had them.
+    accounts = tmp_path / ".aos" / "config" / "accounts.yaml"
+    goals = tmp_path / ".aos" / "config" / "goals.yaml"
+    state = tmp_path / ".aos" / "config" / "state.yaml"
+    monkeypatch.setattr(mod, "ACCOUNTS_YAML", accounts)
+    monkeypatch.setattr(mod, "GOALS_YAML", goals)
+    monkeypatch.setattr(mod, "STATE_YAML", state)
+    monkeypatch.setattr(mod, "DEAD_KEYS", {
+        accounts: ["schema_version"],
+        goals: ["recurring_responsibilities"],
+        state: ["machine_user", "voice_models"],
+    })
     return mod
 
 
@@ -154,3 +167,102 @@ def test_job_missing_from_crons_yaml_is_skipped_not_blocking(m):
     assert m.check() is False  # comms-extract / people-intel-refresh still unpatched
     assert m.up() is True
     assert m.check() is True
+
+
+# ── Dead config keys (accounts.schema_version, goals.recurring_responsibilities,
+#    state.machine_user/voice_models) ─────────────────────────────────────────
+
+GOALS_SAMPLE = """\
+quarterly_objectives:
+  - name: "Telegram Pipeline"
+    weight: 30
+
+recurring_responsibilities:
+  - "Morning briefing at 08:00"
+  - "Heartbeat monitoring every 30 minutes"
+
+boundaries:
+  - "Never send external emails without confirmation"
+"""
+
+STATE_SAMPLE = """\
+last_updated: '2026-03-31'
+machine_user: agentalhadi
+services:
+  bridge:
+    health: ''
+    launchagent: com.aos.bridge
+tailscale_ip: 100.112.113.53
+voice_models:
+  stt:
+    whisper:
+      size_gb: 1.4
+"""
+
+ACCOUNTS_SAMPLE = """\
+operator:
+  name: ""
+discovered: []
+schema_version: 1
+"""
+
+
+def test_no_instance_config_files_is_already_applied(m):
+    """A machine that never had these files (or never had these keys) is clean."""
+    assert m.check() is True
+    assert m.up() is True
+    assert m.check() is True
+
+
+def test_strips_all_four_dead_keys_and_leaves_everything_else_intact(m):
+    m.ACCOUNTS_YAML.parent.mkdir(parents=True, exist_ok=True)
+    m.ACCOUNTS_YAML.write_text(ACCOUNTS_SAMPLE)
+    m.GOALS_YAML.write_text(GOALS_SAMPLE)
+    m.STATE_YAML.write_text(STATE_SAMPLE)
+
+    assert m.check() is False
+    assert m.up() is True
+    assert m.check() is True
+
+    accounts = m.ACCOUNTS_YAML.read_text()
+    assert "schema_version" not in accounts
+    assert 'operator:\n  name: ""\n' in accounts
+    assert "discovered: []\n" in accounts
+
+    goals = m.GOALS_YAML.read_text()
+    assert "recurring_responsibilities" not in goals
+    assert "Morning briefing" not in goals
+    assert 'quarterly_objectives:\n  - name: "Telegram Pipeline"\n    weight: 30\n' in goals
+    assert 'boundaries:\n  - "Never send external emails without confirmation"\n' in goals
+
+    state = m.STATE_YAML.read_text()
+    assert "machine_user" not in state
+    assert "voice_models" not in state
+    assert "whisper" not in state
+    assert "last_updated: '2026-03-31'\n" in state
+    assert "services:\n  bridge:\n    health: ''\n    launchagent: com.aos.bridge\n" in state
+    assert "tailscale_ip: 100.112.113.53\n" in state
+
+    # Idempotent: a second run makes no further changes.
+    before = (accounts, goals, state)
+    assert m.up() is True
+    after = (
+        m.ACCOUNTS_YAML.read_text(),
+        m.GOALS_YAML.read_text(),
+        m.STATE_YAML.read_text(),
+    )
+    assert before == after
+
+
+def test_partial_cleanup_is_idempotent_too(m):
+    """A file with only SOME dead keys already stripped (e.g. by hand) is fine."""
+    m.STATE_YAML.parent.mkdir(parents=True, exist_ok=True)
+    m.STATE_YAML.write_text(STATE_SAMPLE.replace("machine_user: agentalhadi\n", ""))
+    assert "machine_user" not in m.STATE_YAML.read_text()
+
+    assert m.check() is False  # voice_models still present
+    assert m.up() is True
+    assert m.check() is True
+    state = m.STATE_YAML.read_text()
+    assert "machine_user" not in state
+    assert "voice_models" not in state

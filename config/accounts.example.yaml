@@ -55,5 +55,3 @@ accounts:
 
 # Accounts found mid-session are appended here for operator review.
 discovered: []
-
-schema_version: 1
