@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 
 import httpx
 import yaml
-from conversation_store import record_outbound
+from conversation_store import record_notice_sent, record_outbound, should_send_notice
 
 logger = logging.getLogger("aos.bridge.heartbeat")
 
@@ -306,61 +306,111 @@ def _alert(bot_token: str, chat_id: int, msg: str) -> None:
         logger.error(f"Heartbeat alert undeliverable: {e}")
 
 
+# How long a persisted notice suppresses a repeat send of the exact same
+# problem text. This is the fix for aos#2324: every bridge restart used to
+# re-send every still-open problem because the old dedupe (`last_reported`)
+# was a plain local that died with the thread. A restart minutes later must
+# not resend what a previous run already reported — but a problem that has
+# genuinely stuck around for hours deserves a reminder eventually, so this is
+# a window, not a permanent mute.
+NOTICE_TTL_SECONDS = 6 * 60 * 60  # 6 hours
+
+
+class Heartbeat:
+    """One dedupe session for the life of a single bridge process.
+
+    `last_reported` is process-local on purpose — within one run, a problem
+    that clears and immediately recurs is treated as new (see
+    `run_once`'s all-clear reset), which is the responsive behaviour the
+    original code had. What it never had is anything that survived the
+    process itself dying: that's `notice_state` in conversation_store.py,
+    consulted via `should_send_notice`/`record_notice_sent` on every send, so
+    a fresh instance after a restart still knows what the last one already
+    told the operator.
+    """
+
+    def __init__(self, bot_token: str, chat_id: int,
+                 ttl_seconds: float = NOTICE_TTL_SECONDS):
+        self.bot_token = bot_token
+        self.chat_id = chat_id
+        self.ttl_seconds = ttl_seconds
+        self.last_reported: set[str] = set()
+
+    def run_once(self) -> list[str]:
+        """Run a single heartbeat cycle. Returns the alert texts actually sent
+        (empty during quiet hours, when nothing is wrong, or when everything
+        currently wrong was already reported and is still within its TTL)."""
+        if not _is_active_hours():
+            logger.debug("Heartbeat: quiet hours, skipping")
+            return []
+
+        health = _check_health(self.bot_token)
+        problems = _find_problems(health)
+        svc_summary = " ".join(
+            f"{n}:{'ok' if s.get('ok') else 'DOWN'}"
+            for n, s in health.get("services", {}).items()
+        ) or "no-http-services"
+        # A health sample, not a message — it belongs in the log, not the
+        # conversation store.
+        logger.debug(
+            f"Heartbeat: disk:{health.get('disk_pct', '?')}% "
+            f"ram:{health.get('ram_pct', '?')}% {svc_summary}"
+        )
+
+        if not problems:
+            # All clear — reset the in-run tracker so a recovered issue that
+            # recurs later in this same process is reported promptly.
+            self.last_reported.clear()
+            logger.debug("Heartbeat: all clear")
+            return []
+
+        # Only consider problems not already flagged earlier in this run.
+        new_problems = [p for p in problems if p not in self.last_reported]
+        self.last_reported = set(problems)
+        if not new_problems:
+            return []
+
+        # Cross-restart dedupe: skip anything the persisted state says was
+        # already sent, recently, unchanged.
+        due = [p for p in new_problems
+               if should_send_notice(f"heartbeat:{p}", p, self.ttl_seconds)]
+        if not due:
+            return []
+
+        # Each line is already emoji-led and human. Add a soft lead only when
+        # there's more than one.
+        if len(due) > 1:
+            msg = "A couple of things worth knowing:\n\n" + "\n".join(due)
+        else:
+            msg = due[0]
+        _alert(self.bot_token, self.chat_id, msg)
+        record_outbound(msg, chat_id=self.chat_id, topic="alerts",
+                        kind="heartbeat_alert")
+        for p in due:
+            record_notice_sent(f"heartbeat:{p}", p)
+        logger.info(f"Heartbeat alert (new): {due}")
+        return due
+
+
 def start_heartbeat(bot_token: str, chat_id: int, interval_minutes: int = 30):
     """Start heartbeat as a daemon thread.
 
     - Delays first check by 60s to let other services start
     - Only messages when something is wrong
-    - Only reports NEW problems (deduplicates across cycles)
+    - Only reports NEW problems, deduplicated both within this run and across
+      restarts (`Heartbeat.run_once`)
     - Logs every check to dashboard (silent or not)
     """
 
     def _loop():
-        # Track which problems were already reported to avoid spam
-        last_reported: set[str] = set()
+        hb = Heartbeat(bot_token, chat_id)
 
         # Wait for other services to start before first check
         threading.Event().wait(STARTUP_DELAY_SECS)
 
         while True:
             try:
-                if _is_active_hours():
-                    health = _check_health(bot_token)
-                    problems = _find_problems(health)
-                    svc_summary = " ".join(
-                        f"{n}:{'ok' if s.get('ok') else 'DOWN'}"
-                        for n, s in health.get("services", {}).items()
-                    ) or "no-http-services"
-                    summary = f"disk:{health['disk_pct']}% ram:{health['ram_pct']}% {svc_summary}"
-
-                    # A health sample, not a message — it belongs in the log,
-                    # not in the conversation store.
-                    logger.debug(f"Heartbeat: {summary}")
-
-                    if problems:
-                        # Only report NEW problems (not already flagged)
-                        new_problems = [p for p in problems if p not in last_reported]
-
-                        if new_problems:
-                            # Each line is already emoji-led and human. Add a
-                            # soft lead only when there's more than one.
-                            if len(new_problems) > 1:
-                                msg = "A couple of things worth knowing:\n\n" + "\n".join(new_problems)
-                            else:
-                                msg = new_problems[0]
-                            _alert(bot_token, chat_id, msg)
-                            record_outbound(msg, chat_id=chat_id, topic="alerts",
-                                            kind="heartbeat_alert")
-                            logger.info(f"Heartbeat alert (new): {new_problems}")
-
-                        # Update tracked problems
-                        last_reported = set(problems)
-                    else:
-                        # All clear — reset tracker so recovered issues can re-alert
-                        last_reported.clear()
-                        logger.debug("Heartbeat: all clear")
-                else:
-                    logger.debug("Heartbeat: quiet hours, skipping")
+                hb.run_once()
             except Exception as e:
                 logger.error(f"Heartbeat error: {e}")
 

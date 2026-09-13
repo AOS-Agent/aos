@@ -65,6 +65,21 @@ CREATE INDEX IF NOT EXISTS idx_messages_ts ON messages (ts);
 CREATE INDEX IF NOT EXISTS idx_messages_status ON messages (status);
 """
 
+# One row per deduped notice (aos#2324): heartbeat alerts, and anything else
+# that wants "don't resend this until it changes or goes stale" semantics,
+# without a bespoke JSON file each. `key` identifies what the notice is about
+# (a heartbeat alert's own text, currently — see heartbeat.py), `fingerprint`
+# is what changed-or-not is judged against, and `last_sent` is when it was
+# last actually delivered. This is what survives a bridge restart; the old
+# bug was keeping this only in a thread-local set that died with the process.
+NOTICE_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS notice_state (
+    key         TEXT PRIMARY KEY,
+    last_sent   TEXT NOT NULL,
+    fingerprint TEXT NOT NULL
+);
+"""
+
 # ── Redaction ───────────────────────────────────────────────────────────────
 
 _EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
@@ -126,6 +141,7 @@ def _ensure(conn: sqlite3.Connection) -> None:
     if "status" not in cols:
         conn.execute("ALTER TABLE messages ADD COLUMN status TEXT NOT NULL DEFAULT 'sent'")
     conn.executescript(INDEX_SQL)
+    conn.executescript(NOTICE_TABLE_SQL)
 
 
 def ensure_schema() -> None:
@@ -257,5 +273,74 @@ def recent(limit: int = 20, direction: str | None = None) -> list[sqlite3.Row]:
         ).fetchall()
     except sqlite3.Error:
         return []
+    finally:
+        conn.close()
+
+
+# ── Notice dedupe (aos#2324) ─────────────────────────────────────────────────
+#
+# heartbeat.py's restart-storm bug: `last_reported` lived only in a thread-local
+# set, so it died with every restart and every still-open problem got re-sent
+# from scratch — 3,234 restarts, 3,234 repeats of the same alert. These two
+# functions give any notice-sender a persisted "have I already told them this,
+# recently?" that survives the process going away entirely.
+
+def should_send_notice(key: str, fingerprint: str, ttl_seconds: float) -> bool:
+    """True if a notice under `key` is due to be (re)sent right now.
+
+    Due when: it has never been recorded, its fingerprint no longer matches
+    the last one sent (the underlying condition changed, not just repeated),
+    or the last send is older than `ttl_seconds` (so a problem that never
+    goes away still gets an occasional reminder instead of going silent
+    forever after the first mention).
+
+    Does not itself record anything — call `record_notice_sent` once the send
+    actually succeeds, so a delivery failure isn't mistaken for one that went
+    out. Fails open (returns True) if the store can't be read: a duplicate
+    alert is a nuisance, a swallowed one is the outage this exists to prevent.
+    """
+    try:
+        conn = _connect()
+    except sqlite3.Error:
+        return True
+    try:
+        _ensure(conn)
+        row = conn.execute(
+            "SELECT last_sent, fingerprint FROM notice_state WHERE key = ?", (key,),
+        ).fetchone()
+        if row is None or row["fingerprint"] != fingerprint:
+            return True
+        try:
+            last_sent = datetime.strptime(row["last_sent"], "%Y-%m-%dT%H:%M:%S")
+            last_sent = last_sent.replace(tzinfo=timezone.utc)
+        except ValueError:
+            return True
+        age = (datetime.now(timezone.utc) - last_sent).total_seconds()
+        return age >= ttl_seconds
+    except sqlite3.Error:
+        return True
+    finally:
+        conn.close()
+
+
+def record_notice_sent(key: str, fingerprint: str) -> None:
+    """Record that a notice under `key` (with this `fingerprint`) just went
+    out, for `should_send_notice` to consult later — including after a
+    restart, which is the entire point."""
+    try:
+        conn = _connect()
+    except sqlite3.Error:
+        return
+    try:
+        _ensure(conn)
+        conn.execute(
+            "INSERT INTO notice_state (key, last_sent, fingerprint) VALUES (?, ?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET last_sent = excluded.last_sent, "
+            "fingerprint = excluded.fingerprint",
+            (key, _now(), fingerprint),
+        )
+        conn.commit()
+    except sqlite3.Error:
+        pass
     finally:
         conn.close()
