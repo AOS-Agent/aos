@@ -1572,12 +1572,19 @@ class TelegramChannel:
             return
 
         yt_url = yt_match.group(1)
+        # NOTE: this script path does not exist on any current install (no
+        # apps/transcriber/ directory ships — see apps/content-engine/ for
+        # what replaced it), so this call is already dead code; pre-existing,
+        # not introduced or fixed here. The --output target is still moved
+        # off WORKSPACE (~/aos, read-only at runtime) so that if this path
+        # is ever rewired to a real script, it doesn't reintroduce the
+        # write-to-read-only-tree bug (aos#2320's class).
         transcriber = WORKSPACE / "apps" / "transcriber" / "transcribe.py"
 
         try:
             proc = await asyncio.create_subprocess_exec(
                 "python3", str(transcriber), yt_url,
-                "--output", str(WORKSPACE / "apps" / "transcriber" / "output"),
+                "--output", str(Path.home() / ".aos" / "data" / "bridge" / "transcriber-output"),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )

@@ -36,6 +36,11 @@ LOG_PREFIX="[$(date '+%Y-%m-%d %H:%M:%S')]"
 # (avoids interpolating arbitrary strings like commit messages into code).
 export AOS_DIR STATE_FILE HANDOFF_FILE DEPLOYED_HASH_FILE
 
+# Downgrade guard override — set by `--apply --allow-downgrade`, or directly
+# via env (tests). Default 0: a candidate that isn't ahead of the deployed
+# commit/version is refused, never silently applied (aos#2347).
+ALLOW_DOWNGRADE="${ALLOW_DOWNGRADE:-0}"
+
 mkdir -p "$(dirname "$STATE_FILE")"
 
 log() { echo "$LOG_PREFIX $*"; }
@@ -147,9 +152,14 @@ PY
 # can answer not just "is this node behind" but WHY: which step failed, when,
 # and with what detail. (Born from the faisal-mini incident: release activated,
 # migrations failed, script exited 0, nothing recorded anywhere.)
+#
+# `result` is one of: ok | failed | noop | refused_downgrade. The last two
+# also overwrite the top-level `status` field — `aos status`'s headline must
+# say "noop"/"refused_downgrade", not leave a stale "up_to_date" or
+# "update_available" from the check that preceded this apply (aos#2347).
 _write_apply_result() {
-    # $1=result(ok|failed)  $2=step  $3=detail  $4=from_version  $5=to_version
-    RESULT="$1" STEP="$2" DETAIL="$3" FROM_V="${4:-}" TO_V="${5:-}" "$AOS_PY" - <<'PY'
+    # $1=result  $2=step  $3=detail  $4=from_version  $5=to_version  $6=candidate_hash
+    RESULT="$1" STEP="$2" DETAIL="$3" FROM_V="${4:-}" TO_V="${5:-}" CAND_HASH="${6:-}" "$AOS_PY" - <<'PY'
 import json, datetime, os
 path = os.environ["STATE_FILE"]
 try:
@@ -157,17 +167,79 @@ try:
         state = json.load(f)
 except Exception:
     state = {}
+result = os.environ.get("RESULT", "unknown")
 state["last_apply"] = {
     "time": datetime.datetime.now().isoformat(),
-    "result": os.environ.get("RESULT", "unknown"),
+    "result": result,
     "step": os.environ.get("STEP", ""),
     "detail": os.environ.get("DETAIL", ""),
     "from": os.environ.get("FROM_V", ""),
     "to": os.environ.get("TO_V", ""),
+    "candidate_hash": os.environ.get("CAND_HASH", ""),
 }
+if result in ("noop", "refused_downgrade"):
+    state["status"] = result
+    state["last_check"] = datetime.datetime.now().isoformat()
 with open(path, "w") as f:
     json.dump(state, f, indent=2)
 PY
+}
+
+# True (0) if the already-recorded last_apply is a refused-downgrade for this
+# exact candidate hash — the signal that we already notified the operator
+# about it, so a stuck channel doesn't re-notify every 2h cron cycle forever.
+_downgrade_already_flagged() {
+    # $1=candidate_hash
+    CAND="$1" "$AOS_PY" - <<'PY'
+import json, os, sys
+try:
+    state = json.load(open(os.environ["STATE_FILE"]))
+except Exception:
+    sys.exit(1)
+la = state.get("last_apply") or {}
+ok = la.get("result") == "refused_downgrade" and la.get("candidate_hash") == os.environ.get("CAND", "")
+sys.exit(0 if ok else 1)
+PY
+}
+
+# True (0) if version string $1 sorts lower than $2. Both are vX.Y.Z-style
+# VERSION file contents (leading "v" optional). Either side being unparseable
+# ("unknown", empty, garbage) means "can't tell" — never claim a downgrade
+# from a value that can't actually be compared.
+_version_lt() {
+    A="$1" B="$2" "$AOS_PY" - <<'PY'
+import os, re, sys
+
+
+def parse(v):
+    v = (v or "").strip().lstrip("vV")
+    m = re.match(r"(\d+)\.(\d+)\.(\d+)", v)
+    return tuple(int(x) for x in m.groups()) if m else None
+
+
+a = parse(os.environ.get("A", ""))
+b = parse(os.environ.get("B", ""))
+sys.exit(0 if (a is not None and b is not None and a < b) else 1)
+PY
+}
+
+# True (0) if `candidate` is not an advance over `deployed` — either its
+# VERSION file sorts lower, or its commit is an ancestor of (or equal to) the
+# deployed commit. Two independent signals because a VERSION bump and commit
+# history can each lie in isolation: aos#2347 case B was a `stable` tag moved
+# backward on the remote with no guarantee the VERSION file disagreed too.
+# $1=repo (must contain both commits)  $2=old_hash  $3=new_hash
+# $4=old_version  $5=new_version
+_is_downgrade() {
+    local repo="$1" old_hash="$2" new_hash="$3" old_version="$4" new_version="$5"
+    if _version_lt "$new_version" "$old_version"; then
+        return 0
+    fi
+    if [[ -n "$old_hash" && -n "$new_hash" ]] \
+        && git -C "$repo" merge-base --is-ancestor "$new_hash" "$old_hash" 2>/dev/null; then
+        return 0
+    fi
+    return 1
 }
 
 # ── Telegram notification (best-effort) ──────────────────────────────────────
@@ -416,13 +488,37 @@ apply_release() {
     fi
     [[ "$fellback" == "1" ]] && log "NOTE (stable): $reason"
 
+    local new_version release_name
+    new_version=$(git -C "$repo" show "$new_hash:VERSION" 2>/dev/null || echo "unknown")
+
     if [[ "$old_hash" == "$new_hash" ]]; then
         log "Already at $new_hash (channel: $channel) — nothing to apply"
+        _write_apply_result noop nothing_to_apply \
+            "candidate hash equals deployed hash — nothing to apply" \
+            "$old_version" "$new_version" "$new_hash"
         return 0
     fi
 
-    local new_version release_name
-    new_version=$(git -C "$repo" show "$new_hash:VERSION" 2>/dev/null || echo "unknown")
+    # Refuse a downgrade before touching anything — a candidate that isn't
+    # ahead of what's deployed (lower VERSION, or its commit is an ancestor of
+    # the deployed commit) never gets built or activated unless the operator
+    # explicitly opts in (aos#2347 case B: v0.7.5 → v0.7.1 via a rolled-back
+    # `stable` tag, applied and reported as an "Update" with no warning).
+    if _is_downgrade "$repo" "$old_hash" "$new_hash" "$old_version" "$new_version"; then
+        if [[ "$ALLOW_DOWNGRADE" != "1" ]]; then
+            local reason_dg="candidate $new_version ($new_hash) is not ahead of deployed $old_version ($old_hash) on channel '$channel' — refusing downgrade (use --allow-downgrade to override)"
+            local already_notified=false
+            _downgrade_already_flagged "$new_hash" && already_notified=true
+            log "REFUSED: $reason_dg"
+            _write_apply_result refused_downgrade downgrade_guard "$reason_dg" "$old_version" "$new_version" "$new_hash"
+            if [[ "$already_notified" == false ]]; then
+                notify "⛔ Update refused: $new_version would downgrade from $old_version. Run \`aos check-update --apply --allow-downgrade\` to override."
+            fi
+            return 1
+        fi
+        log "WARNING: --allow-downgrade set — proceeding with downgrade $old_version → $new_version"
+    fi
+
     # Release name matches release-manager's formula: <version>-<7-char hash>
     release_name="${new_version}-${new_hash:0:7}"
 
@@ -480,7 +576,42 @@ apply_git() {
     fi
     [[ "$fellback" == "1" ]] && log "NOTE (stable): $reason"
 
-    if [[ "$channel" == "edge" ]]; then
+    if [[ "$old_hash" == "$target_hash" ]]; then
+        log "Already at $target_hash (channel: $channel) — nothing to apply"
+        local candidate_version_noop
+        candidate_version_noop=$(git show "$target_hash:VERSION" 2>/dev/null || echo "$old_version")
+        _write_apply_result noop nothing_to_apply \
+            "candidate hash equals deployed hash — nothing to apply" \
+            "$old_version" "$candidate_version_noop" "$target_hash"
+        return 0
+    fi
+
+    # Refuse a downgrade before touching the working tree — same guard as the
+    # release path (aos#2347 case B), checked against the candidate's VERSION
+    # at $target_hash rather than the working tree (which hasn't moved yet).
+    local candidate_version allowed_downgrade=0
+    candidate_version=$(git show "$target_hash:VERSION" 2>/dev/null || echo "unknown")
+    if _is_downgrade "$AOS_DIR" "$old_hash" "$target_hash" "$old_version" "$candidate_version"; then
+        if [[ "$ALLOW_DOWNGRADE" != "1" ]]; then
+            local reason_dg="candidate $candidate_version ($target_hash) is not ahead of deployed $old_version ($old_hash) on channel '$channel' — refusing downgrade (use --allow-downgrade to override)"
+            local already_notified=false
+            _downgrade_already_flagged "$target_hash" && already_notified=true
+            log "REFUSED: $reason_dg"
+            _write_apply_result refused_downgrade downgrade_guard "$reason_dg" "$old_version" "$candidate_version" "$target_hash"
+            if [[ "$already_notified" == false ]]; then
+                notify "⛔ Update refused: $candidate_version would downgrade from $old_version. Run \`aos check-update --apply --allow-downgrade\` to override."
+            fi
+            return 1
+        fi
+        log "WARNING: --allow-downgrade set — proceeding with downgrade $old_version → $candidate_version"
+        allowed_downgrade=1
+    fi
+
+    # A fast-forward merge can never move backward — `git merge --ff-only` to
+    # an ancestor of HEAD is a silent no-op ("Already up to date"), not a
+    # downgrade. An allowed downgrade always needs the hard-reset path below,
+    # regardless of channel.
+    if [[ "$channel" == "edge" && "$allowed_downgrade" != "1" ]]; then
         # Edge tracks main — fast-forward pull, clearing any drift on retry.
         if ! git merge --ff-only "$target_hash" 2>/dev/null; then
             log "ff-only advance failed — clearing dirty state and retrying"
@@ -492,13 +623,14 @@ apply_git() {
             fi
         fi
     else
-        # Stable tracks a tag that lags main — hard-reset the framework clone to
-        # the promoted commit (~/aos is read-only at runtime, so a reset is safe
-        # and matches the existing dirty-state handling).
+        # Stable tracks a tag that lags main, and an allowed downgrade on
+        # either channel needs the same treatment — hard-reset the framework
+        # clone to the target commit (~/aos is read-only at runtime, so a
+        # reset is safe and matches the existing dirty-state handling).
         git checkout -- . 2>/dev/null
         if ! git reset --hard "$target_hash" 2>/dev/null; then
-            log "ERROR: could not reset to stable commit $target_hash"
-            notify "⚠️ System update failed (stable reset). Will retry next cycle."
+            log "ERROR: could not reset to $target_hash"
+            notify "⚠️ System update failed (reset). Will retry next cycle."
             return 1
         fi
     fi
@@ -954,12 +1086,36 @@ deploy() {
         _health_check "$uid" "$new_version" "${restarted_services[@]}"
     fi
 
+    # new_hash comes from the handoff (release installs have no .git in ~/aos).
+    [[ -z "$new_hash" ]] && new_hash=$(git rev-parse HEAD 2>/dev/null || echo "")
+
+    # ── Verify the deploy actually landed before declaring success (aos#2347) ─
+    #
+    # Every step above can exit 0 without the update actually taking effect:
+    # release-manager activate can report success without the ~/aos symlink
+    # ever moving, a git reset can silently no-op. "No step failed" is not
+    # proof of "the system is now running $new_version" — check the one thing
+    # that actually is proof: what's really on disk, compared to what phase 1
+    # resolved and handed off.
+    local actual_version actual_hash
+    actual_version=$(cat "$AOS_DIR/VERSION" 2>/dev/null || echo "unknown")
+    if [[ "$install_type" == "release" ]]; then
+        actual_hash=$(cat "$DEPLOYED_HASH_FILE" 2>/dev/null || echo "")
+    else
+        actual_hash=$(git -C "$AOS_DIR" rev-parse HEAD 2>/dev/null || echo "")
+    fi
+
+    if [[ -n "$new_hash" && ( "$actual_version" != "$new_version" || "$actual_hash" != "$new_hash" ) ]]; then
+        local noop_reason="deployed version/hash did not reach target after phase 2 (expected ${new_version}/${new_hash:0:7}, found ${actual_version}/${actual_hash:0:7}) — recording noop, not success"
+        log "WARN: $noop_reason"
+        _write_apply_result noop verify "$noop_reason" "$old_version" "$new_version" "$new_hash"
+        notify "⚠️ Update to $new_version reported complete but did not take effect (still $actual_version). Recorded as noop — will retry next cycle."
+        return 0
+    fi
+
     # Release notes + state update + notification
     local release_notes
     release_notes=$(_extract_release_notes "$new_version")
-
-    # new_hash comes from the handoff (release installs have no .git in ~/aos).
-    [[ -z "$new_hash" ]] && new_hash=$(git rev-parse HEAD 2>/dev/null || echo "")
     VERSION="$new_version" OLD_VERSION="$old_version" NEW_HASH="$new_hash" "$AOS_PY" - <<'PY'
 import json, datetime, os
 state = {
@@ -1129,6 +1285,9 @@ if s.get('last_update'):
 
 case "${1:-}" in
     --apply)
+        # --allow-downgrade is the only override for the downgrade refusal
+        # guard in apply_release/apply_git (aos#2347).
+        [[ "${2:-}" == "--allow-downgrade" ]] && ALLOW_DOWNGRADE=1
         # Apply only if an update is actually available. update_available()
         # refreshes the state file and returns 0 (true) when behind.
         if update_available; then
