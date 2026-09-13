@@ -135,6 +135,12 @@ jobs:
     description: Weekly memory curation — proposes vault log-to-knowledge promotions for operator review
 
   loop-sensors:
+    # Default-off (v0.8.0, migration 127): blocked by scheduling contention
+    # with enrich-comms (03:30) 27 of the last 28 nights — enrich-comms holds
+    # the serial tick for ~46 min, so this job's 5-minute window has almost
+    # always already closed by the time the scheduler is free. Re-enable with
+    # `enabled: true` once it has its own window (or enrich-comms shrinks).
+    enabled: false
     command: python3 ~/aos/core/bin/crons/loop-sensors
     at: "03:40"
     timeout: 1800
@@ -225,6 +231,11 @@ jobs:
     description: Nightly Haiku entity extraction into comms.db message_entities (Phase 4)
 
   comms-extract:
+    # Default-off (v0.8.0, migration 127): 27 consecutive nights failing —
+    # the whatsapp_local adapter hangs to its 302s timeout while imessage/
+    # telegram report "Not available". Re-enable with `enabled: true` once
+    # the whatsapp_local adapter is fixed or dropped.
+    enabled: false
     command: python3 ~/aos/core/engine/comms/extract/lifecycle.py
     at: "05:00"
     timeout: 300
@@ -246,6 +257,11 @@ jobs:
     description: Graduates contacts through trust levels
 
   people-intel-refresh:
+    # Default-off (v0.8.0, migration 127): 28 consecutive nights failing on
+    # "Operation not permitted: ~/Library/Mail" (TCC denial), timing out at
+    # 602s. Re-enable with `enabled: true` once Mail access is granted or the
+    # Mail adapter is dropped.
+    enabled: false
     command: bash ~/aos/core/bin/crons/people-intel-refresh
     at: "02:00"
     timeout: 600
@@ -272,28 +288,6 @@ jobs:
     timeout: 1800
     tier: 4
     description: Nightly lint pass — orphans, stale docs, topic refresh, synthesis suggestions
-
-  # ── Kanban Phase 3: islah data plane ────────────────────────────────────────
-  # RETIRED 2026-08-15 (operator decision, aos#198): islah is shelved — its
-  # LaunchAgents were removed and ascbuild-sync had been failing on every run
-  # (missing `cryptography` for the ASC JWT). Data preserved in ~/.aos/islah/.
-  # Re-enable by flipping `enabled: true` if islah is ever revived.
-
-  ascbuild-sync:
-    enabled: false
-    command: python3 ~/aos/core/bin/crons/ascbuild-sync
-    every: 1h
-    timeout: 600
-    tier: 4
-    description: App Store Connect intake — TestFlight feedback + beta crashes → bug tasks
-
-  islah-mirror:
-    enabled: false
-    command: python3 ~/aos/core/bin/crons/islah-mirror
-    every: 30m
-    timeout: 120
-    tier: 4
-    description: One-way mirror of islah bugs.yaml → work.db (reversible seam until cutover)
 
   # ── Planned (scripts not yet built) ─────────────────────────────────────────
   # These entries are placeholders. Scripts will be created when their
