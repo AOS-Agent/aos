@@ -41,20 +41,25 @@ def test_crons_yaml_has_no_inbox_collect_entry():
     assert "inbox-collect" not in text
 
 
-def test_crons_yaml_has_no_stale_detector_entry():
+def test_crons_yaml_has_no_stale_detector_job():
+    """No job header/command for it. (A later item's explanatory comment on
+    nightly-pipeline naming it as removed is fine — checked separately.)"""
     text = (REPO / "config" / "crons.yaml").read_text()
-    assert "stale-detector" not in text
+    assert "  stale-detector:\n" not in text
+    assert "core/bin/crons/stale-detector" not in text
 
 
 def test_nightly_pipeline_no_longer_calls_stale_detector():
     """A caller of the deleted script is a dead reader too — must be removed
-    in the same change, not left to fail every night."""
+    in the same change, not left to fail every night. Prose explaining that
+    it *used to* call it is fine (same convention as
+    test_channel_update_retired.py); an actual invocation path is not."""
     for path in (
         REPO / "core" / "bin" / "crons" / "nightly-pipeline",
         REPO / "core" / "bin" / "nightly-pipeline",
     ):
         if path.exists():
-            assert "stale-detector" not in path.read_text()
+            assert "bin/stale-detector" not in path.read_text()
 
 
 def test_stale_initiatives_still_covers_the_useful_half():

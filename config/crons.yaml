@@ -166,11 +166,16 @@ jobs:
     description: Flags initiative docs untouched for 3+ days
 
   nightly-pipeline:
+    # v0.7.7 (aos#240.3): narrowed to the one step nothing else owns — the
+    # DAILY session-analysis friction report (Mon-Sat; Sunday's weekly
+    # version runs via session-analysis's own cron). Used to also re-run
+    # stale-detector (retired, aos#240.2) and compile-daily (which has its
+    # own 23:30 cron) — pure redundancy, now removed.
     command: bash ~/aos/core/bin/crons/nightly-pipeline
     at: "23:00"
     timeout: 600
     tier: 2
-    description: Runs nightly data processing pipeline
+    description: Runs daily session-analysis (Mon-Sat) — the one step with no other owner
 
   morning-context:
     command: python3 ~/aos/core/bin/crons/morning-context
