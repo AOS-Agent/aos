@@ -21,7 +21,7 @@ from zoneinfo import ZoneInfo
 import httpx
 import yaml
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("aos.bridge.daily_briefing")
 
 WORKSPACE = Path.home() / "aos"
 VAULT = Path.home() / "vault"

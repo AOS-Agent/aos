@@ -15,7 +15,7 @@ from pathlib import Path
 
 from bridge_events import bridge_event
 
-logger = logging.getLogger("bridge.persistent_session")
+logger = logging.getLogger("aos.bridge.persistent_session")
 
 
 def _get_operator_name() -> str:

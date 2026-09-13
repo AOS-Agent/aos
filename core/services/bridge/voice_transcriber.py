@@ -14,7 +14,7 @@ from pathlib import Path
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("aos.bridge.voice_transcriber")
 
 # Must match `port:` in core/services/transcriber/service.yaml. :7601 is
 # whatsmeow — posting audio there silently fell through to the slow per-request

@@ -19,7 +19,7 @@ from pathlib import Path
 _LOG_DIR = Path.home() / ".aos" / "logs"
 _LOG_DIR.mkdir(parents=True, exist_ok=True)
 
-_event_logger = logging.getLogger("bridge.events")
+_event_logger = logging.getLogger("aos.bridge.events")
 _event_logger.setLevel(logging.DEBUG)
 _event_logger.propagate = False  # don't duplicate into main bridge log
 

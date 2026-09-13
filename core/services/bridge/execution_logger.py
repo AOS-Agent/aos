@@ -10,7 +10,7 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
-logger = logging.getLogger("bridge.execution_log")
+logger = logging.getLogger("aos.bridge.execution_log")
 
 EXECUTION_LOG_DIR = Path.home() / ".aos" / "logs" / "execution"
 

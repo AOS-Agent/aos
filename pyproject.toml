@@ -45,7 +45,9 @@ dependencies = [
     "pyjwt>=2.10",
     "requests>=2.32",
 
-    # HTTP client used by channel-update and several engine callers.
+    # HTTP client used across the intelligence engine (content backends, hook
+    # actions, feed fetcher). The hourly status cron that was its other caller
+    # was deleted in aos#235; the engine callers still need it.
     "httpx>=0.28",
 
     # Feed ingest (core/engine/intelligence/ingest/fetcher.py). Top-level

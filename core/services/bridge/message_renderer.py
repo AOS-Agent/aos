@@ -23,7 +23,7 @@ from telegram import Bot
 from telegram.error import BadRequest, TimedOut
 from telegram_formatter import md_to_telegram_html
 
-logger = logging.getLogger("bridge.renderer")
+logger = logging.getLogger("aos.bridge.renderer")
 
 # Telegram limits
 MAX_MESSAGE_LENGTH = 4096

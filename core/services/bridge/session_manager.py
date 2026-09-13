@@ -15,7 +15,7 @@ from pathlib import Path
 
 from bridge_events import bridge_event
 
-logger = logging.getLogger("bridge.session_manager")
+logger = logging.getLogger("aos.bridge.session_manager")
 
 WORKSPACE = Path.home() / "aos"
 SESSIONS_FILE = WORKSPACE / "data" / "bridge" / "sessions.json"

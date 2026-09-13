@@ -20,7 +20,7 @@ from pathlib import Path
 
 import yaml
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("aos.bridge.evening_checkin")
 
 
 def esc(value) -> str:
