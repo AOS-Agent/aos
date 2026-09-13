@@ -80,7 +80,8 @@ CREATE TABLE threads (
     title           TEXT NOT NULL,
     status          TEXT DEFAULT 'active',
     created_at      TEXT,
-    project_id      TEXT REFERENCES projects(id)
+    project_id      TEXT REFERENCES projects(id),
+    cwd             TEXT
 );
 CREATE TABLE inbox (
     id              TEXT PRIMARY KEY,

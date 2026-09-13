@@ -352,6 +352,18 @@ class WorkAdapter(Adapter):
                     self._conn.execute(
                         "ALTER TABLE inbox ADD COLUMN snoozed_until TEXT"
                     )
+            # Thread-cwd association (aos#223). threads lost its cwd column
+            # somewhere in the qareen.db -> work.db port, which made
+            # find_thread_by_cwd a permanent no-op ("DB has no cwd column")
+            # and turned every "find or create a thread for this directory"
+            # call into an unconditional create — 4,635 auto-generated
+            # "Work in <dir>" rows in the live DB, all status='exploring'.
+            # Restoring the column lets a directory get at most one open
+            # thread, ever. Migration 121 is the auditable instance-layer
+            # bridge for machines whose work.db predates this.
+            thread_cols = {r[1] for r in self._conn.execute("PRAGMA table_info(threads)")}
+            if thread_cols and "cwd" not in thread_cols:
+                self._conn.execute("ALTER TABLE threads ADD COLUMN cwd TEXT")
             self._conn.commit()
         except sqlite3.Error:
             # A read-only or locked DB must not crash adapter construction;
@@ -879,6 +891,7 @@ class WorkAdapter(Adapter):
                 return self._create_thread(
                     title=obj["title"],
                     session_id=obj.get("session_id"),
+                    cwd=obj.get("cwd"),
                 )
             elif "text" in obj:
                 return self._create_inbox(
@@ -1942,12 +1955,14 @@ class WorkAdapter(Adapter):
     @staticmethod
     def _row_to_thread(row: sqlite3.Row) -> dict:
         """Convert a threads table row to a normalized dict."""
+        keys = row.keys()
         return {
             "id": row["id"],
             "title": row["title"],
             "status": row["status"] or "exploring",
             "started": row["created_at"] or "",
             "project": row["project_id"] if row["project_id"] else None,
+            "cwd": row["cwd"] if "cwd" in keys else None,
         }
 
     def _list_threads(
@@ -1967,16 +1982,26 @@ class WorkAdapter(Adapter):
         return [self._row_to_thread(r) for r in rows]
 
     def _create_thread(
-        self, title: str, session_id: str | None = None
+        self, title: str, session_id: str | None = None, cwd: str | None = None
     ) -> dict:
         """Create a thread. Returns normalized dict."""
         tid = self._next_id("th")
         now = _today()
-        self._conn.execute(
-            "INSERT INTO threads (id, title, status, created_at) "
-            "VALUES (?, ?, 'exploring', ?)",
-            (tid, title, now),
-        )
+        cols = {r[1] for r in self._conn.execute("PRAGMA table_info(threads)")}
+        if "cwd" in cols:
+            self._conn.execute(
+                "INSERT INTO threads (id, title, status, created_at, cwd) "
+                "VALUES (?, ?, 'exploring', ?, ?)",
+                (tid, title, now, cwd),
+            )
+        else:
+            # Defensive fallback only — _ensure_aux_schema always adds this
+            # column at adapter construction, so this branch should be dead.
+            self._conn.execute(
+                "INSERT INTO threads (id, title, status, created_at) "
+                "VALUES (?, ?, 'exploring', ?)",
+                (tid, title, now),
+            )
         self._conn.commit()
         thread = {
             "id": tid,
@@ -1984,6 +2009,7 @@ class WorkAdapter(Adapter):
             "status": "exploring",
             "started": now,
             "project": None,
+            "cwd": cwd,
         }
         if session_id:
             thread["sessions"] = [session_id]
@@ -2944,6 +2970,15 @@ class WorkAdapter(Adapter):
         """Link a session to a thread via the sessions table.
 
         Returns the thread dict or None if thread not found.
+
+        Sessions are Qareen-owned until aos#131 (see link_session_to_task) —
+        route through _session_conn() the same way, and skip the bookkeeping
+        entirely when no session store is reachable rather than querying a
+        `sessions` table that work.db does not have. Without this guard, the
+        very first reuse of a "found" thread (aos#223's find_thread_by_cwd
+        fix) raised sqlite3.OperationalError: no such table: sessions and
+        crashed the SessionEnd hook — this path was previously unreachable
+        because find_thread_by_cwd always returned None.
         """
         row = self._conn.execute(
             "SELECT * FROM threads WHERE id = ?", (thread_id,)
@@ -2951,27 +2986,34 @@ class WorkAdapter(Adapter):
         if not row:
             return None
 
+        thread = self._row_to_thread(row)
+
+        _sc = self._session_conn()
+        if _sc is None:
+            return thread
+
         now = _now()
-        sess_exists = self._conn.execute(
+        sess_exists = _sc.execute(
             "SELECT 1 FROM sessions WHERE id = ?", (session_id,)
         ).fetchone()
         if not sess_exists:
-            self._conn.execute(
+            _sc.execute(
                 "INSERT INTO sessions (id, status, started_at, thread_id) "
                 "VALUES (?, 'active', ?, ?)",
                 (session_id, now, thread_id),
             )
         else:
-            self._conn.execute(
+            _sc.execute(
                 "UPDATE sessions SET thread_id = ? WHERE id = ?",
                 (thread_id, session_id),
             )
+        if _sc is not self._conn:
+            _sc.commit()
+        else:
+            self._conn.commit()
 
-        self._conn.commit()
-
-        thread = self._row_to_thread(row)
         # Add session count for display
-        sess_count = self._conn.execute(
+        sess_count = _sc.execute(
             "SELECT count(*) as cnt FROM sessions WHERE thread_id = ?",
             (thread_id,),
         ).fetchone()

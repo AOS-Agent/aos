@@ -129,7 +129,8 @@ CREATE TABLE threads (
     title           TEXT NOT NULL,
     status          TEXT DEFAULT 'active',
     created_at      TEXT,
-    project_id      TEXT REFERENCES projects(id)
+    project_id      TEXT REFERENCES projects(id),
+    cwd             TEXT
 );
 """
 
@@ -255,6 +256,73 @@ class TestOutputFormat:
         context = output["additionalContext"]
         assert isinstance(context, str) and len(context) > 0, \
             "Context string must be non-empty"
+
+
+# ===========================================================================
+# Thread continuity (aos#223) — the SessionStart side of the "Work in <dir>"
+# fix. find_thread_by_cwd used to always return None (no cwd column), so this
+# "Current thread" line has never rendered for anyone since the SQLite port —
+# these tests cover both the pre-existing "no thread" case (must still render
+# cleanly) and the newly-reachable "thread exists" case.
+# ===========================================================================
+
+class TestThreadContinuity:
+
+    def test_no_current_thread_renders_without_crashing(self, tmp_path):
+        """No thread for this cwd yet — the hook must still produce a clean
+        additionalContext with no 'Current thread' line."""
+        db_path = tmp_path / "work.db"
+        _make_work_db(db_path)
+
+        output = run_inject_context(
+            db_path, {"session_id": "s1", "cwd": str(tmp_path)}
+        )
+
+        assert "additionalContext" in output
+        assert "Current thread" not in output["additionalContext"]
+
+    def test_existing_thread_for_cwd_renders_current_thread_line(self, tmp_path):
+        """A thread already associated with this cwd (created by a prior
+        SessionEnd) must render as continuity context on the next SessionStart."""
+        db_path = tmp_path / "work.db"
+        _make_work_db(db_path)
+        cwd = str(tmp_path)
+
+        conn = sqlite3.connect(str(db_path))
+        conn.execute(
+            "INSERT INTO threads (id, title, status, created_at, cwd) "
+            "VALUES ('th1', 'Work in scratch', 'exploring', '2026-09-01', ?)",
+            (cwd,),
+        )
+        conn.commit()
+        conn.close()
+
+        output = run_inject_context(db_path, {"session_id": "s1", "cwd": cwd})
+
+        assert "additionalContext" in output
+        assert "Current thread" in output["additionalContext"]
+        assert "Work in scratch" in output["additionalContext"]
+
+    def test_thread_for_a_different_cwd_does_not_render(self, tmp_path):
+        """A thread that belongs to some other directory must not leak into
+        this session's continuity line."""
+        db_path = tmp_path / "work.db"
+        _make_work_db(db_path)
+
+        conn = sqlite3.connect(str(db_path))
+        conn.execute(
+            "INSERT INTO threads (id, title, status, created_at, cwd) "
+            "VALUES ('th1', 'Work in elsewhere', 'exploring', '2026-09-01', ?)",
+            ("/some/other/directory",),
+        )
+        conn.commit()
+        conn.close()
+
+        output = run_inject_context(
+            db_path, {"session_id": "s1", "cwd": str(tmp_path)}
+        )
+
+        assert "Current thread" not in output["additionalContext"]
 
 
 # ===========================================================================

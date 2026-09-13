@@ -1266,12 +1266,13 @@ def get_thread(thread_id: str) -> dict | None:
     return _to_dict(result)
 
 
-def add_thread(title: str, session_id: str = None) -> dict:
+def add_thread(title: str, session_id: str = None, cwd: str = None) -> dict:
     """Create a new thread."""
     result = _get_adapter().create({
         "_type": "thread",
         "title": title,
         "session_id": session_id,
+        "cwd": cwd,
     })
     return _to_dict(result) if not isinstance(result, dict) else result
 
@@ -1313,8 +1314,26 @@ def promote_thread(thread_id: str, project_title: str = None,
 
 
 def find_thread_by_cwd(cwd: str) -> dict | None:
-    """Find an active thread for a working directory. Always None (DB has no cwd column)."""
-    return None
+    """Find the most recent open (non-closed) thread created for this cwd.
+
+    aos#223: this used to be a permanent ``return None`` because work.db
+    predated a ``cwd`` column on ``threads`` — every call site treated that as
+    "no thread yet" and created a new one, without limit. The adapter now
+    self-heals the column (``WorkAdapter._ensure_aux_schema``), so this does
+    a real lookup: a directory that already has an open thread gets it back
+    instead of a duplicate. A thread closed by migration 115's stale-thread
+    sweep is deliberately excluded — the next session in that directory
+    starts a fresh one rather than resurrecting a closed thread.
+    """
+    adapter = _get_adapter()
+    row = adapter._conn.execute(
+        "SELECT id FROM threads WHERE cwd = ? AND status != 'closed' "
+        "ORDER BY created_at DESC LIMIT 1",
+        (cwd,),
+    ).fetchone()
+    if not row:
+        return None
+    return get_thread(row["id"])
 
 
 # ── Inbox ───────────────────────────────────────────────
@@ -1400,7 +1419,13 @@ def link_session_to_thread(thread_id: str, session_id: str,
 
 def get_or_create_thread_for_cwd(cwd: str, session_id: str,
                                   title: str = None) -> dict:
-    """Find an active thread for this working directory, or create one."""
+    """Find the thread already associated with this directory, or create the
+    one and only thread for it.
+
+    aos#223: at most one "Work in <dir>" thread per cwd, ever. Repeated
+    SessionEnds in the same directory must link to the existing thread, not
+    mint another — see find_thread_by_cwd.
+    """
     thread = find_thread_by_cwd(cwd)
     if thread:
         link_session_to_thread(thread["id"], session_id)
@@ -1410,7 +1435,7 @@ def get_or_create_thread_for_cwd(cwd: str, session_id: str,
         dir_name = Path(cwd).name
         title = f"Work in {dir_name}"
 
-    thread = add_thread(title, session_id=session_id)
+    thread = add_thread(title, session_id=session_id, cwd=cwd)
     return thread
 
 
