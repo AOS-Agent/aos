@@ -10,9 +10,17 @@ anything. This is session-log noise wearing the shape of curated exploration
 
 Closes, never deletes. `status='closed'` is reversible with one UPDATE and
 keeps the history; a DELETE would throw away the only record of which
-worktrees existed when. The thread-*generation* code is deliberately left
-alone — changing what the system records is a behaviour change, and this is a
-freeze release.
+worktrees existed when. The thread-*generation* code was deliberately left
+alone at the time this migration shipped — changing what the system records
+is a behaviour change, and this was a freeze release.
+
+**That decision is reversed as of migration 121 (aos#223), in this same
+release.** The generator itself is fixed: `find_thread_by_cwd` (core/engine/
+work/backend.py) was a permanent `return None` — the actual cause of the
+flood this migration mops up — and now does a real lookup against a restored
+`threads.cwd` column, so a directory gets at most one open thread, ever. This
+migration's one-time close is unaffected and still runs as documented below;
+it just no longer has new rows accumulating behind it.
 
 **Window: 7 days, not the 30 the release plan sketched.** 30 days was written
 before anyone looked at the age distribution: it matches 15 of 4,057 rows,
