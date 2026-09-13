@@ -35,6 +35,13 @@ class WorkAdapterProtocol(Protocol):
 class TaskResolver:
     """Resolve a task reference (ID, partial ID, or fuzzy title) to a task dict."""
 
+    # Fuzzy scoring floor: below this a title is not considered a match at all.
+    THRESHOLD = 0.3
+
+    # Two candidates this close are indistinguishable. Used only by
+    # resolve_for_mutation, which refuses rather than pick between them.
+    TIE_MARGIN = 0.1
+
     def __init__(self, adapter: WorkAdapterProtocol):
         self.adapter = adapter
 
@@ -100,21 +107,109 @@ class TaskResolver:
             )
 
         # 5. Full fuzzy match across all tasks
-        scored: list[tuple[dict, float]] = []
-        for t in tasks:
-            title_lower = t.get("title", "").lower()
-            query_words = query_lower.split()
-            word_hits = sum(1 for w in query_words if w in title_lower)
-            seq_ratio = SequenceMatcher(None, query_lower, title_lower).ratio()
-            score = (word_hits / max(len(query_words), 1)) * 0.6 + seq_ratio * 0.4
-            if score > 0.3:
-                scored.append((t, score))
-
+        scored = self._scored(tasks, query_lower)
         if scored:
-            scored.sort(key=lambda x: x[1], reverse=True)
             return scored[0][0]
 
         return None
+
+    # -----------------------------------------------------------------------
+    # Scoring, shared by the read path and the mutation path
+    # -----------------------------------------------------------------------
+
+    @classmethod
+    def score(cls, query_lower: str, title: str) -> float:
+        """Word hits (60%) + sequence similarity (40%). 0.0 - 1.0."""
+        title_lower = (title or "").lower()
+        query_words = query_lower.split()
+        word_hits = sum(1 for w in query_words if w in title_lower)
+        seq_ratio = SequenceMatcher(None, query_lower, title_lower).ratio()
+        return (word_hits / max(len(query_words), 1)) * 0.6 + seq_ratio * 0.4
+
+    def _scored(self, tasks: list[dict], query_lower: str) -> list[tuple[dict, float]]:
+        """Every task scoring above THRESHOLD, best first."""
+        scored = [
+            (t, self.score(query_lower, t.get("title", "")))
+            for t in tasks
+        ]
+        scored = [(t, s) for t, s in scored if s > self.THRESHOLD]
+        scored.sort(key=lambda x: x[1], reverse=True)
+        return scored
+
+    # -----------------------------------------------------------------------
+    # The mutation path: resolve, or name the candidates and refuse
+    # -----------------------------------------------------------------------
+
+    def resolve_for_mutation(
+        self, query_str: str, project_id: str | None = None
+    ) -> tuple[dict | None, list[dict]]:
+        """Resolve for a command that is about to CHANGE the task.
+
+        Returns ``(task, [])`` when there is exactly one answer, and
+        ``(None, candidates)`` when there is more than one — the caller prints
+        the candidates and refuses. ``(None, [])`` means nothing matched at all,
+        which is a different answer and a different exit code.
+
+        ``resolve`` ends by returning the single best fuzzy hit. With tied
+        scores, which task that is depends on the order ``adapter.list()``
+        happened to return, and the live database held 64 rows titled "Fix the
+        login bug" — so `work done "fix the login bug"` flipped one of
+        sixty-four and the operator could not know which. That is fine for
+        `show`; for `done` it silently rewrites the wrong history.
+
+        An identity always wins: exact ID, legacy ID, project-scoped shorthand.
+        A title is allowed — mutating commands stay fuzzy-friendly — but a
+        title that cannot single one task out is refused, never guessed.
+
+        **"Candidate" means "within TIE_MARGIN of the best score."** Defining it
+        as "everything above THRESHOLD" was measured against the live 2,571-row
+        table and would have refused nearly every fuzzy mutation: "sse push"
+        clears 0.3 on 49 titles, "telegram" on 17, even though the intended
+        match scores 0.85 and the runner-up 0.69. A clear winner is not an
+        ambiguity; two titles a hair apart are. That distinction is the whole
+        feature.
+        """
+        tasks = self._get_all_tasks()
+        if not query_str or not tasks:
+            return None, []
+
+        query_str = query_str.strip()
+
+        # Identities first — these are lookups, not searches.
+        for t in tasks:
+            if t["id"] == query_str:
+                return t, []
+        for t in tasks:
+            if t.get("_legacy_id") == query_str:
+                return t, []
+        if query_str.isdigit() and project_id:
+            scoped_id = f"{_project_prefix(project_id)}#{query_str}"
+            for t in tasks:
+                if t["id"] == scoped_id:
+                    return t, []
+
+        query_lower = query_str.lower()
+
+        # A literal substring is a stronger signal than a score, so substring
+        # matches form their own pool when there are any. One is an answer;
+        # several are ranked and then held to the same tie rule.
+        pool = [t for t in tasks if query_lower in t.get("title", "").lower()]
+        if len(pool) == 1:
+            return pool[0], []
+        if pool:
+            ranked = [(t, self.score(query_lower, t.get("title", ""))) for t in pool]
+            ranked.sort(key=lambda x: x[1], reverse=True)
+        else:
+            ranked = self._scored(tasks, query_lower)
+
+        if not ranked:
+            return None, []
+
+        best = ranked[0][1]
+        candidates = [t for t, s in ranked if best - s <= self.TIE_MARGIN]
+        if len(candidates) == 1:
+            return candidates[0], []
+        return None, candidates
 
     def _get_all_tasks(self) -> list[dict]:
         """Retrieve all tasks from the adapter.

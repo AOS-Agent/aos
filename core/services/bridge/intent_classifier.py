@@ -518,7 +518,10 @@ def handle_done_task(text: str) -> str:
                 title = None
 
             if title:
-                task_id = title  # work CLI handles fuzzy resolution
+                # The work CLI resolves the title. Since v0.7.7 it refuses
+                # rather than guess when several tasks match equally well
+                # (exit 2) — handled below.
+                task_id = title
             else:
                 return 'Specify a task. Examples: done aos#3, done t2, done: "fix login"'
 
@@ -541,6 +544,14 @@ def handle_done_task(text: str) -> str:
                 tasks = data.get("tasks", [])
                 remaining = len([t for t in tasks if t.get("status") in ("active", "todo")])
             return f"✅ {output} ({remaining} tasks remaining)"
+        elif result.returncode == 2:
+            # Exit 2 is "several tasks match that equally well, nothing was
+            # changed" — a different answer from "not found", and the useful
+            # part is the candidate list the CLI already printed. Passing it
+            # through under "Could not complete task" would hide the one thing
+            # the operator needs to reply with.
+            return (result.stdout.strip() or
+                    "That matches more than one task. Reply with the exact ID.")[:600]
         else:
             err = result.stdout.strip() or result.stderr.strip()
             return f"Could not complete task: {err[:200]}"

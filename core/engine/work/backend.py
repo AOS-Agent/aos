@@ -694,6 +694,18 @@ def resolve_task(query_str: str, tasks: list = None) -> dict | None:
     return _to_dict(_get_resolver().resolve(query_str))
 
 
+def resolve_task_for_mutation(query_str: str, project_id: str = None):
+    """Resolve a task that is about to be CHANGED.
+
+    Returns (task, []) for one answer, (None, candidates) when a title matches
+    several tasks indistinguishably, and (None, []) when nothing matches. See
+    TaskResolver.resolve_for_mutation — the short version is that `resolve`
+    returns the best fuzzy hit, and on tied scores "best" is whatever the
+    adapter listed first.
+    """
+    return _get_resolver().resolve_for_mutation(query_str, project_id)
+
+
 def resolve_task_in_project(query_str: str, project_id: str = None) -> dict | None:
     """Resolve with project context."""
     return _to_dict(_get_resolver().resolve(query_str, project_id))

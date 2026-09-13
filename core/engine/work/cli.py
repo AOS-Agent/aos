@@ -94,6 +94,49 @@ def _resolve(query_str: str, require: bool = True) -> dict | None:
     return task
 
 
+# Exit code for "I found several and will not choose". Distinct from 1 ("not
+# found") so a caller — the Telegram handler, a script, an agent — can tell the
+# two apart without parsing prose.
+EXIT_AMBIGUOUS = 2
+
+
+def _resolve_for_mutation(query_str: str) -> dict:
+    """Resolve a task for a command that is about to change it, or exit.
+
+    Titles still work. What stops here is the guess: `resolve` ends in a scored
+    fuzzy tier and returns the single best hit, so with tied scores the task
+    that got mutated depended on the order the adapter listed rows in. The live
+    DB held 64 tasks titled "Fix the login bug" — `work done "fix the login
+    bug"` flipped one of sixty-four, silently, and nothing recorded which.
+
+    Exact IDs always win. An ambiguous title prints every candidate and exits
+    EXIT_AMBIGUOUS, having changed nothing.
+    """
+    task, candidates = engine.resolve_task_for_mutation(
+        query_str, engine.detect_project_from_cwd()
+    )
+    if task:
+        return task
+
+    if candidates:
+        print(f"Ambiguous: '{query_str}' matches {len(candidates)} tasks equally well.")
+        print("  Nothing was changed. Re-run with the exact ID:")
+        for c in candidates:
+            project = f"  [{c.get('project')}]" if c.get("project") else ""
+            status = c.get("status", "")
+            print(f"    {c['id']:12s}  {status:10s}  {c['title']}{project}")
+        sys.exit(EXIT_AMBIGUOUS)
+
+    print(f"Could not resolve task: '{query_str}'")
+    tasks = engine.get_all_tasks()
+    matches = query.search_tasks(tasks, query_str)
+    if matches:
+        print("  Did you mean:")
+        for m in matches[:3]:
+            print(f"    {m['id']}  {m['title']}")
+    sys.exit(1)
+
+
 def _auto_project() -> str | None:
     """Auto-detect project from current directory."""
     return engine.detect_project_from_cwd()
@@ -185,7 +228,7 @@ def cmd_done(args):
         print("Usage: done <task_id or search> [--actor WHO]")
         sys.exit(1)
     query_str = " ".join(args)
-    task = _resolve(query_str)
+    task = _resolve_for_mutation(query_str)
     result = engine.complete_task(task["id"], actor=actor_spec)
     if result:
         print(f"Completed {result['id']}: {result['title']}")
@@ -203,7 +246,7 @@ def cmd_start(args):
         print("Usage: start <task_id or search> [--actor WHO]")
         sys.exit(1)
     query_str = " ".join(args)
-    task = _resolve(query_str)
+    task = _resolve_for_mutation(query_str)
 
     # Pass the session id if we're inside one. This read used to name
     # CLAUDE_SESSION_ID, which Claude Code does not set — so session linking
@@ -254,7 +297,7 @@ def cmd_cancel(args):
         print("Usage: cancel <task_id or search> [--actor WHO]")
         sys.exit(1)
     query_str = " ".join(args)
-    task = _resolve(query_str)
+    task = _resolve_for_mutation(query_str)
     result = engine.cancel_task(task["id"], actor=actor_spec)
     if result:
         print(f"Cancelled {result['id']}: {result['title']}")
@@ -589,7 +632,7 @@ def cmd_subtask(args):
         print("Error: subtask title is required")
         sys.exit(1)
 
-    parent = _resolve(parent_query)
+    parent = _resolve_for_mutation(parent_query)
     sub = engine.add_subtask(parent["id"], title, priority=priority,
                              status=status, actor=actor_spec)
     if sub:
@@ -638,7 +681,7 @@ def cmd_handoff(args):
         print("Error: --state is required")
         sys.exit(1)
 
-    task = _resolve(task_query)
+    task = _resolve_for_mutation(task_query)
     result = engine.write_handoff(
         task["id"], state=state, next_step=next_step,
         files_touched=files, decisions=decisions, blockers=blockers,
@@ -1526,6 +1569,12 @@ def cmd_move(args):
     if not task_ids or not target_project:
         print("Error: need at least one task ID and --to <project>")
         sys.exit(1)
+
+    # move only ever matched literal ids: a title silently moved nothing and
+    # reported "No tasks found to move". Each argument goes through the same
+    # gate as done/start/cancel now — titles resolve, ties refuse. A move
+    # re-IDs the task, which makes a guessed one unusually awkward to undo.
+    task_ids = [_resolve_for_mutation(tid)["id"] for tid in task_ids]
 
     # Verify target project exists
     projects = engine.get_all_projects()
