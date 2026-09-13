@@ -49,12 +49,28 @@ BACKUP_DIR = HOME / ".aos" / "backups" / "pre-purge"
 
 # The exact literals in tests/test_engine.py. Exact match only.
 FIXTURE_TITLES = (
-    "Fix the login bug",
+    "API redesign",
+    "Big feature",
+    "Complex migration",
+    "Deploy service",
     "Deploy the bridge service",
-    "Refactor the database connection pool",
-    "Real task",
     "First task",
+    "Fix the login bug",
+    "Implement SSE push",
+    "Multi-part feature",
+    "Parent one",
+    "Parent task",
+    "Parent two",
+    "Partial feature",
+    "Real task",
+    "Refactor the database connection pool",
     "Second task",
+    "Some real task",
+    "Spike: evaluate vector DBs",
+    "Third top-level",
+    "Update dashboard CSS styles",
+    "Update dashboard layout components",
+    "Write quarterly report",
 )
 
 # The leak window, one day either side of the observed first/last row.
