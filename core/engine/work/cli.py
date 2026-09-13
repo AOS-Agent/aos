@@ -838,7 +838,15 @@ def cmd_inbox(args):
             print("Inbox is empty.")
             return
         for item in items:
-            print(f"  {item['id']:4s}  {item['text']}  ({item['source']}, {item['captured'][:10]})")
+            source = item.get("source") or "manual"
+            # Reconcile-sourced items (source="reconcile:<check>") are
+            # standing system findings, not a human's own capture — tag them
+            # distinctly so they don't blend into ad hoc captures, and show
+            # how many cycles have re-fired the same finding.
+            tag = "[reconcile] " if source.startswith("reconcile") else ""
+            count = item.get("count") or 1
+            seen = f", seen {count}x" if count > 1 else ""
+            print(f"  {item['id']:4s}  {tag}{item['text']}  ({source}, {item['captured'][:10]}{seen})")
         return
 
     if args[0] == "drop":

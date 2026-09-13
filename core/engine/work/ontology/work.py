@@ -352,6 +352,21 @@ class WorkAdapter(Adapter):
                     self._conn.execute(
                         "ALTER TABLE inbox ADD COLUMN snoozed_until TEXT"
                     )
+                # Reconcile dedup (aos#239): a NOTIFY finding is deduplicated by
+                # (source, fingerprint) instead of minting a fresh row every
+                # cycle. fingerprint is a stable hash of the digit-normalized
+                # message (see reconcile/inbox_sink.py) so a byte-count or
+                # item-count drifting inside an otherwise-identical finding
+                # still counts as "the same finding". count/last_seen track how
+                # often — and how recently — a standing finding re-fired.
+                if "fingerprint" not in inbox_cols:
+                    self._conn.execute("ALTER TABLE inbox ADD COLUMN fingerprint TEXT")
+                if "count" not in inbox_cols:
+                    self._conn.execute(
+                        "ALTER TABLE inbox ADD COLUMN count INTEGER DEFAULT 1"
+                    )
+                if "last_seen" not in inbox_cols:
+                    self._conn.execute("ALTER TABLE inbox ADD COLUMN last_seen TEXT")
             # Thread-cwd association (aos#223). threads lost its cwd column
             # somewhere in the qareen.db -> work.db port, which made
             # find_thread_by_cwd a permanent no-op ("DB has no cwd column")
@@ -898,6 +913,7 @@ class WorkAdapter(Adapter):
                     text=obj["text"],
                     source=obj.get("source", "manual"),
                     confidence=obj.get("confidence"),
+                    fingerprint=obj.get("fingerprint"),
                 )
             else:
                 raise TypeError("Dict must have 'text' (inbox) or '_type'='thread' with 'title'")
@@ -1898,36 +1914,64 @@ class WorkAdapter(Adapter):
             "captured": row["captured_at"] or "",
             "source": (row["source"] if "source" in cols and row["source"] else "manual"),
             "snoozed_until": (row["snoozed_until"] if "snoozed_until" in cols else None),
+            "fingerprint": (row["fingerprint"] if "fingerprint" in cols else None),
+            "count": (row["count"] if "count" in cols and row["count"] else 1),
+            "last_seen": (
+                row["last_seen"] if "last_seen" in cols and row["last_seen"]
+                else (row["captured_at"] or "")
+            ),
         }
 
     def _create_inbox(
-        self, text: str, source: str = "manual", confidence: float | None = None
+        self,
+        text: str,
+        source: str = "manual",
+        confidence: float | None = None,
+        fingerprint: str | None = None,
     ) -> dict:
         """Create an inbox item. Returns normalized dict.
 
         ``source`` is persisted (the ambient proposer stamps
-        'ambient-commitment') so the UI can distinguish proposed work from
-        manual captures and render its provenance receipt.
+        'ambient-commitment', reconcile stamps 'reconcile:<check name>') so the
+        UI can distinguish proposed work from manual captures and render its
+        provenance receipt.
+
+        ``fingerprint`` is the reconcile dedup key (see reconcile/inbox_sink.py)
+        — a stable hash of the finding's normalized message. Paired with
+        ``source`` it lets a repeat NOTIFY find and update this row instead of
+        minting a new one every cycle.
         """
         iid = self._next_id("i")
         now = _now()
         cols = {r[1] for r in self._conn.execute("PRAGMA table_info(inbox)")}
+        fields = ["id", "text", "captured_at"]
+        values: list[Any] = [iid, text, now]
         if "source" in cols:
-            self._conn.execute(
-                "INSERT INTO inbox (id, text, captured_at, source) VALUES (?, ?, ?, ?)",
-                (iid, text, now, source),
-            )
-        else:
-            self._conn.execute(
-                "INSERT INTO inbox (id, text, captured_at) VALUES (?, ?, ?)",
-                (iid, text, now),
-            )
+            fields.append("source")
+            values.append(source)
+        if "fingerprint" in cols:
+            fields.append("fingerprint")
+            values.append(fingerprint)
+        if "count" in cols:
+            fields.append("count")
+            values.append(1)
+        if "last_seen" in cols:
+            fields.append("last_seen")
+            values.append(now)
+        placeholders = ", ".join("?" for _ in fields)
+        self._conn.execute(
+            f"INSERT INTO inbox ({', '.join(fields)}) VALUES ({placeholders})",
+            values,
+        )
         self._conn.commit()
         item = {
             "id": iid,
             "text": text,
             "captured": now,
             "source": source,
+            "fingerprint": fingerprint,
+            "count": 1,
+            "last_seen": now,
         }
         if confidence is not None:
             item["confidence"] = confidence
@@ -1940,6 +1984,44 @@ class WorkAdapter(Adapter):
         )
         self._conn.commit()
         return cur.rowcount > 0
+
+    def touch_inbox(self, inbox_id: str, text: str | None = None) -> dict | None:
+        """Re-notify an existing inbox row: bump ``count``, refresh
+        ``last_seen``, and (optionally) replace ``text`` with the latest
+        rendering of the finding — so a standing NOTIFY that changes its byte
+        count or item count each cycle still reads as current, not stale.
+
+        Used by reconcile/inbox_sink.py instead of creating a duplicate row
+        for a finding that has already been captured.
+        """
+        cols = {r[1] for r in self._conn.execute("PRAGMA table_info(inbox)")}
+        now = _now()
+        sets = []
+        params: list[Any] = []
+        if "last_seen" in cols:
+            sets.append("last_seen = ?")
+            params.append(now)
+        if "count" in cols:
+            sets.append("count = COALESCE(count, 1) + 1")
+        if text is not None:
+            sets.append("text = ?")
+            params.append(text)
+        if not sets:
+            return self._get_inbox_row(inbox_id)
+        params.append(inbox_id)
+        cur = self._conn.execute(
+            f"UPDATE inbox SET {', '.join(sets)} WHERE id = ?", params
+        )
+        self._conn.commit()
+        if cur.rowcount == 0:
+            return None
+        return self._get_inbox_row(inbox_id)
+
+    def _get_inbox_row(self, inbox_id: str) -> dict | None:
+        row = self._conn.execute(
+            "SELECT * FROM inbox WHERE id = ?", (inbox_id,)
+        ).fetchone()
+        return self._row_to_inbox(row) if row else None
 
     # ── Internal: Thread operations ──────────────────────
 
