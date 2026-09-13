@@ -67,9 +67,9 @@ b. Orphaned instance service dirs.
        stalled Slack conversation about a school timetable) is not lost.
 
    `_plist_references()` re-checks this at runtime rather than trusting the
-   one-time manual verification above, so the same migration is safe to ship
-   fleet-wide: any machine where a plist has grown a reference to one of
-   these directories since is left alone, not archived out from under it.
+   one-time manual verification above, so the migration is safe to replay: if a
+   plist has grown a reference to one of these directories since, the directory
+   is left alone rather than archived out from under it.
 
 c. Dead entries in ~/.claude.json's global `mcpServers`.
 
