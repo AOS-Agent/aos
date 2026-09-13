@@ -2,6 +2,11 @@
 
 All notable changes to AOS. Release notes sent via Telegram after each 4am update.
 
+## v0.7.8
+
+- Fixed `check-update` reporting `last_apply: ok` when nothing actually deployed: phase 2 now verifies the on-disk VERSION and hash actually reached the target phase 1 resolved before writing success, recording `noop` with a reason otherwise (aos#2347).
+- Fixed `check-update` silently applying a downgrade (a `stable`/`main` ref rolled back upstream): a candidate whose VERSION is lower than deployed, or whose commit is an ancestor of the deployed commit, is now refused (`refused_downgrade`, one notification) on both the release and git-clone install paths — override with `check-update --apply --allow-downgrade` (aos#2347).
+
 ## v0.7.7 — the system sheds what it never used — 2026-09-13
 
 Summary: A cleanup release. The system drops the service it decommissioned, switches off the arms that should never have been on by default, clears years of junk out of the instance layer, and fixes the bug that was generating it. Development continues until Qren is ready — nothing here slows the update path down.
