@@ -40,7 +40,6 @@ skills regardless of which directory the session is in.
 | `recall` | "recall", "remember", "find notes about" | QMD vault search |
 | `step-by-step` | "step by step", "build out X", "set up X properly" | Structured decomposition |
 | `work` | "/work", "add task", "show my tasks", "mark X done" | Task/project/goal management |
-| `review` | "/review", "daily summary", "weekly review" | Work reviews and reflections |
 
 ## Integration Framework
 

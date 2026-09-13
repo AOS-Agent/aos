@@ -45,7 +45,7 @@ Capture  -> Prioritize -> Review  -> Brief         (work planning)
 ### Work Planning
 - Goal decomposition: break objectives into actionable tasks
 - Priority surfacing: what matters most right now
-- Review generation: daily summaries, weekly reflections
+- Review generation: daily summaries, weekly reflections, monthly scorecards, initiative-completion reviews
 - Drift detection: are we working on what we said we'd work on?
 
 ## Search
@@ -109,6 +109,80 @@ Quick reference:
 ### Next Week
 - [1-3 suggested priorities based on goals + patterns]
 ```
+
+### Monthly Review
+
+```
+## Monthly Review -- [Month Year]
+
+### Goal Scorecard
+| Goal | Progress | On Track? |
+|------|----------|-----------|
+
+### Initiative Scorecard
+| Initiative | Status | Started | Progress | On Track? |
+|-----------|--------|---------|----------|-----------|
+| {title} | {status} | {created} | {phase}/{total} | {yes/drift/stale} |
+
+Completed This Month:
+- [{title}] -- {actual time} vs {appetite} appetite. {one-line retrospective}.
+
+Stale (>7 days):
+- [{title}] -- recommendation: archive or resurface?
+
+### Wins
+- [biggest accomplishments]
+
+### Gaps
+- [what didn't move]
+
+### System Health
+- [is the work system itself working? friction points?]
+
+### Next Month
+- [adjusted priorities]
+```
+
+### Initiative Review (on completion)
+
+When an initiative reaches status: review (all phases complete) -- distinct from the in-progress "Initiative Assessment" above, this is the closing retrospective:
+
+```
+## Initiative Review -- {title}
+
+### Summary
+{What was built, in 2-3 sentences}
+
+### Timeline
+- Started: {created date}
+- Completed: {today}
+- Appetite: {appetite} | Actual: {calculated from dates}
+- Phases: {N} | Sessions: {count from progress log}
+
+### What Worked
+- {patterns from smooth phases}
+
+### What Didn't
+- {patterns from difficult phases, blockers}
+
+### Decisions Revisited
+- {any locked decisions that turned out right/wrong}
+
+### Lessons for Next Initiative
+- {concrete takeaways}
+```
+
+Save to the initiative document's `## Review` section and to `~/vault/log/`. Update initiative frontmatter: status -> done.
+
+Data sources: full initiative document (progress log), task completion dates vs estimates, session history linked to the initiative, decision log analysis.
+
+### Expertise Accumulation
+
+After completing an Initiative Review, update expertise files in `vault/knowledge/expertise/` -- this is how the system gets smarter over time; each completed initiative feeds back into future deliberations and planning:
+
+1. **estimation-accuracy.md** -- append a row: initiative name, appetite, actual time, ratio, notes
+2. **strategic-patterns.md** -- if new scoping, execution, or decision patterns emerged, append them
+3. **operator-preferences.md** -- if the review reveals new preferences (decision style, risk tolerance, work patterns), note them
 
 ### Morning Briefing
 

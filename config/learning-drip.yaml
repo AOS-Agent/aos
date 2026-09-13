@@ -63,7 +63,7 @@ days:
       Chief handles most things directly, but can delegate to specialists:
 
       • Steward — system health ("is the bridge running?")
-      • Advisor — analysis + reviews ("/review weekly")
+      • Advisor — analysis + reviews ("give me my weekly review")
       • Catalog agents — aos activate engineer, aos activate developer
 
       Chief decides who handles what. You just ask.
@@ -88,7 +88,7 @@ days:
     message: |
       One week. Try this:
 
-        /review weekly
+        "Chief, give me my weekly review"
 
       Advisor analyzes your sessions, tasks, and vault notes — what got done, what didn't, patterns noticed, and what to focus on next week.
 
