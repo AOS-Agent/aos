@@ -181,6 +181,11 @@ def _make_work_db(db_path: Path, tasks=None, projects=None):
         conn.close()
 
 
+def maintenance_log_for(db_path: Path) -> Path:
+    """Where run_inject_context sends the hook's maintenance log."""
+    return db_path.parent / "maintenance.jsonl"
+
+
 def run_inject_context(db_path: Path, hook_input: dict = None) -> dict:
     """Run inject_context.py as a subprocess against db_path, return parsed JSON."""
     if hook_input is None:
@@ -189,6 +194,10 @@ def run_inject_context(db_path: Path, hook_input: dict = None) -> dict:
     import os
     env = dict(os.environ)
     env["AOS_WORK_DB"] = str(db_path)
+    # The hook records its own size to a maintenance log. Redirect it per test:
+    # a suite that appends to ~/.aos/logs/ is a suite that edits the operator's
+    # machine, and the default path is the operator's machine.
+    env["AOS_MAINTENANCE_LOG"] = str(maintenance_log_for(db_path))
 
     result = subprocess.run(
         [sys.executable, str(INJECT_CONTEXT)],
@@ -281,9 +290,10 @@ class TestThreadContinuity:
         assert "additionalContext" in output
         assert "Current thread" not in output["additionalContext"]
 
-    def test_existing_thread_for_cwd_renders_current_thread_line(self, tmp_path):
-        """A thread already associated with this cwd (created by a prior
-        SessionEnd) must render as continuity context on the next SessionStart."""
+    def test_an_auto_thread_for_this_cwd_does_not_render(self, tmp_path):
+        """v0.7.7: an auto "Work in <dir>" thread is a record that a directory
+        existed, not an exploration anyone chose to open. It used to take a line
+        of every briefing; 4,639 of the live DB's 4,641 threads are these."""
         db_path = tmp_path / "work.db"
         _make_work_db(db_path)
         cwd = str(tmp_path)
@@ -300,29 +310,44 @@ class TestThreadContinuity:
         output = run_inject_context(db_path, {"session_id": "s1", "cwd": cwd})
 
         assert "additionalContext" in output
-        assert "Current thread" in output["additionalContext"]
-        assert "Work in scratch" in output["additionalContext"]
+        assert "Work in scratch" not in output["additionalContext"]
 
-    def test_thread_for_a_different_cwd_does_not_render(self, tmp_path):
-        """A thread that belongs to some other directory must not leak into
-        this session's continuity line."""
+    def test_an_operator_written_thread_renders(self, tmp_path):
+        """The inverse, and the reason this is a filter rather than a deletion:
+        a thread the operator typed is the continuity the section exists for."""
         db_path = tmp_path / "work.db"
         _make_work_db(db_path)
+        cwd = str(tmp_path)
 
         conn = sqlite3.connect(str(db_path))
         conn.execute(
             "INSERT INTO threads (id, title, status, created_at, cwd) "
-            "VALUES ('th1', 'Work in elsewhere', 'exploring', '2026-09-01', ?)",
-            ("/some/other/directory",),
+            "VALUES ('th1', 'Qren cutover night', 'exploring', '2026-09-01', ?)",
+            (cwd,),
         )
         conn.commit()
         conn.close()
 
-        output = run_inject_context(
-            db_path, {"session_id": "s1", "cwd": str(tmp_path)}
-        )
+        output = run_inject_context(db_path, {"session_id": "s1", "cwd": cwd})
 
-        assert "Current thread" not in output["additionalContext"]
+        assert "Qren cutover night" in output["additionalContext"]
+
+    def test_a_closed_thread_does_not_render(self, tmp_path):
+        db_path = tmp_path / "work.db"
+        _make_work_db(db_path)
+        cwd = str(tmp_path)
+
+        conn = sqlite3.connect(str(db_path))
+        conn.execute(
+            "INSERT INTO threads (id, title, status, created_at, cwd) "
+            "VALUES ('th1', 'Qren cutover night', 'closed', '2026-09-01', ?)",
+            (cwd,),
+        )
+        conn.commit()
+        conn.close()
+
+        output = run_inject_context(db_path, {"session_id": "s1", "cwd": cwd})
+        assert "Qren cutover night" not in output["additionalContext"]
 
 
 # ===========================================================================
@@ -368,3 +393,178 @@ class TestContextContent:
             "P2 task must appear in context"
         assert "High priority" in context, \
             "Context must contain a 'High priority' heading section"
+
+
+# ===========================================================================
+# Briefing diet (v0.7.7)
+#
+# The SessionStart briefing is paid for on every session, in every directory:
+# measured live at 4,487 chars (~1,120 tokens). Threads were the largest
+# avoidable part of it — 4,639 of the live DB's 4,641 rows are auto-generated
+# "Work in <dir>" records, and exactly 2 were ever promoted. A line per
+# directory the operator happened to have a session in is not context, it is
+# a changelog of the filesystem.
+# ===========================================================================
+
+FIXTURE_TASKS = [
+    {"id": "aos#1", "title": "Build session linking", "status": "active",
+     "priority": 2, "project": "aos", "created": "2026-09-01"},
+    {"id": "aos#2", "title": "Write onboarding docs", "status": "todo",
+     "priority": 2, "project": "aos", "created": "2026-09-02"},
+    {"id": "aos#3", "title": "Ship the project layer", "status": "todo",
+     "priority": 1, "project": "aos", "created": "2026-09-03"},
+    {"id": "t#1", "title": "Unscoped errand", "status": "todo",
+     "priority": 3, "created": "2026-09-04"},
+]
+
+
+def _seed_threads(db_path: Path, cwd: str, auto: int = 50) -> None:
+    """`auto` generated threads plus one the operator promoted."""
+    conn = sqlite3.connect(str(db_path))
+    try:
+        for i in range(auto):
+            conn.execute(
+                "INSERT INTO threads (id, title, status, created_at, cwd) "
+                "VALUES (?, ?, 'exploring', ?, ?)",
+                (f"th{i}", f"Work in v0.7.{i}-abc123", "2026-09-01",
+                 f"{cwd}/release-{i}"),
+            )
+        conn.execute(
+            "INSERT INTO threads (id, title, status, created_at, project_id, cwd) "
+            "VALUES ('th-promoted', 'aos-app workspace layer build', 'promoted', "
+            "'2026-09-10', 'aos', ?)",
+            (cwd,),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+class TestBriefingDiet:
+
+    def test_fifty_auto_threads_and_one_promoted_render_exactly_one(self, tmp_path):
+        db_path = tmp_path / "work.db"
+        _make_work_db(db_path, tasks=FIXTURE_TASKS)
+        cwd = str(tmp_path)
+        _seed_threads(db_path, cwd, auto=50)
+
+        context = run_inject_context(
+            db_path, {"session_id": "s1", "cwd": cwd}
+        )["additionalContext"]
+
+        assert "aos-app workspace layer build" in context, (
+            "the promoted thread is the one the operator curated — it must render"
+        )
+        leaked = [ln for ln in context.splitlines() if "Work in v0.7." in ln]
+        assert leaked == [], f"auto threads leaked into the briefing: {leaked}"
+
+    def test_briefing_stays_under_900_tokens(self, tmp_path):
+        db_path = tmp_path / "work.db"
+        _make_work_db(db_path, tasks=FIXTURE_TASKS)
+        cwd = str(tmp_path)
+        _seed_threads(db_path, cwd, auto=50)
+
+        context = run_inject_context(
+            db_path, {"session_id": "s1", "cwd": cwd}
+        )["additionalContext"]
+
+        est_tokens = len(context) / 4
+        assert est_tokens < 900, (
+            f"briefing is ~{est_tokens:.0f} tokens ({len(context)} chars); "
+            "the budget is 900 and it is paid on every session in every "
+            f"directory.\n---\n{context}\n---"
+        )
+
+    def test_the_hook_records_its_own_size(self, tmp_path):
+        """A budget nobody measures is a wish. The hook writes what it cost to
+        the maintenance log, so the next audit reads a number instead of
+        re-deriving one."""
+        db_path = tmp_path / "work.db"
+        _make_work_db(db_path, tasks=FIXTURE_TASKS)
+        cwd = str(tmp_path)
+        _seed_threads(db_path, cwd, auto=50)
+
+        context = run_inject_context(
+            db_path, {"session_id": "s1", "cwd": cwd}
+        )["additionalContext"]
+
+        log = maintenance_log_for(db_path)
+        assert log.exists(), "the hook did not write a maintenance log entry"
+        entry = json.loads(log.read_text().strip().splitlines()[-1])
+        assert entry["event"] == "briefing_rendered"
+        assert entry["chars"] == len(context)
+        assert entry["est_tokens"] == len(context) // 4
+        assert entry["threads_rendered"] == 1
+        assert entry["threads_suppressed"] == 50
+
+    def test_the_log_is_one_line_per_session_not_a_rewrite(self, tmp_path):
+        db_path = tmp_path / "work.db"
+        _make_work_db(db_path, tasks=FIXTURE_TASKS)
+        cwd = str(tmp_path)
+
+        run_inject_context(db_path, {"session_id": "s1", "cwd": cwd})
+        run_inject_context(db_path, {"session_id": "s2", "cwd": cwd})
+
+        lines = maintenance_log_for(db_path).read_text().strip().splitlines()
+        assert len(lines) == 2
+        assert {json.loads(ln)["session_id"] for ln in lines} == {"s1", "s2"}
+
+    def test_a_logging_failure_never_breaks_the_hook(self, tmp_path):
+        """Hooks must always emit valid JSON and exit 0 (CLAUDE.md). The log is
+        a side effect; an unwritable path is not a reason to lose the briefing."""
+        db_path = tmp_path / "work.db"
+        _make_work_db(db_path, tasks=FIXTURE_TASKS)
+
+        import os
+        import subprocess
+        env = dict(os.environ)
+        env["AOS_WORK_DB"] = str(db_path)
+        # A path whose parent is a FILE — mkdir and open both fail.
+        blocker = tmp_path / "not-a-dir"
+        blocker.write_text("")
+        env["AOS_MAINTENANCE_LOG"] = str(blocker / "maintenance.jsonl")
+
+        result = subprocess.run(
+            [sys.executable, str(INJECT_CONTEXT)],
+            input=json.dumps({"session_id": "s1", "cwd": str(tmp_path)}),
+            capture_output=True, text=True, timeout=20, env=env,
+        )
+        assert result.returncode == 0, result.stderr
+        assert "additionalContext" in json.loads(result.stdout.strip())
+
+    def test_the_ceiling_holds_when_the_briefing_is_fat(self, tmp_path):
+        """The 900-token figure is a delivered ceiling, not a section budget.
+
+        BRIEFING_BUDGET caps the sections; the header, the separator and the
+        guidance block are appended after the drop loop. A project with many
+        active tasks is the case that finds the difference — it grows both the
+        sections (which get dropped) and the guidance id list (which does not),
+        so the guidance line is bounded too.
+        """
+        db_path = tmp_path / "work.db"
+        tasks = [
+            {"id": f"aos#{i}",
+             "title": f"Active piece of work number {i} with a title long "
+                      f"enough to matter to a byte budget",
+             "status": "active", "priority": 1 if i % 3 else 2,
+             "project": "aos", "created": "2026-09-01"}
+            for i in range(40)
+        ]
+        _make_work_db(db_path, tasks=tasks)
+        cwd = str(tmp_path)
+        _seed_threads(db_path, cwd, auto=50)
+
+        context = run_inject_context(
+            db_path, {"session_id": "s1", "cwd": cwd}
+        )["additionalContext"]
+
+        est_tokens = len(context) / 4
+        assert est_tokens < 900, (
+            f"a fat briefing delivered ~{est_tokens:.0f} tokens "
+            f"({len(context)} chars) — the section budget left too little "
+            "headroom for the header and guidance appended after it"
+        )
+        assert "more)" in context or "Active tasks in this project" not in context, (
+            "with 40 active tasks the guidance id list must be truncated with a "
+            "count, not printed in full"
+        )
