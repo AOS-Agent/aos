@@ -306,6 +306,11 @@ jobs:
   # email-digest:     needs email integration
   # meeting-prep:     needs calendar integration
   # monthly-review:   needs 4+ weekly digests
-  # channel-update:   v1 script, needs v2 rewrite
+  #
+  # The hourly status post was deleted rather than parked here (aos#235): its
+  # service check probed a path that had moved, so every run reported the bridge
+  # down, and its raw output was the opposite of the house message style. Whether
+  # an hourly status should exist at all under the digest model is an open
+  # question — see docs/specs/ for the stub.
 
   # friction-rules:   needs bridge approval workflow
