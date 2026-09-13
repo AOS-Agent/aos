@@ -565,17 +565,56 @@ else
     fi
 fi
 
-# Every integration directory in registry.yaml should have a setup.sh if referenced
+# Every integration directory with a manifest should have a setup.sh, UNLESS
+# the registry marks it manual-setup (setup_hint present, no setup: key) — in
+# that case a missing setup.sh is intentional, not a gap. A registry `setup:`
+# key that points to a path which doesn't exist is always a real bug.
+# (Decision logic lives in Python, not bash — this file targets macOS's
+# default bash 3.2, which has no associative arrays.)
 if [[ -f "$DEV/core/infra/integrations/registry.yaml" ]]; then
     setup_missing=0
-    for int_dir in "$DEV"/core/infra/integrations/*/; do
-        [[ -d "$int_dir" ]] || continue
-        int_name=$(basename "$int_dir")
-        if [[ -f "$int_dir/manifest.yaml" ]] && [[ ! -f "$int_dir/setup.sh" ]]; then
-            warn "Integration '$int_name' has manifest but no setup.sh"
+    while IFS=$'\t' read -r verdict message; do
+        [[ -z "$verdict" ]] && continue
+        if [[ "$verdict" == "WARN" ]]; then
+            warn "$message"
             setup_missing=$((setup_missing + 1))
         fi
-    done
+    done < <("$AOS_PY" -c "
+import os
+import yaml
+
+dev = '$DEV'
+with open(os.path.join(dev, 'core/infra/integrations/registry.yaml')) as f:
+    doc = yaml.safe_load(f) or {}
+
+registry = {}
+for tier in doc.values():
+    if not isinstance(tier, dict):
+        continue
+    for key, entry in tier.items():
+        if isinstance(entry, dict):
+            registry[key] = entry
+
+int_root = os.path.join(dev, 'core/infra/integrations')
+for name in sorted(os.listdir(int_root)):
+    d = os.path.join(int_root, name)
+    if not os.path.isdir(d):
+        continue
+    if not os.path.isfile(os.path.join(d, 'manifest.yaml')):
+        continue
+    if os.path.isfile(os.path.join(d, 'setup.sh')):
+        continue
+    entry = registry.get(name) or registry.get(name.replace('-', '_'))
+    setup = entry.get('setup') if entry else None
+    hint = entry.get('setup_hint') if entry else None
+    if isinstance(setup, str) and setup:
+        if not os.path.isfile(os.path.join(dev, setup)):
+            print(f'WARN\tIntegration {name!r} registry setup path does not exist: {setup}')
+    elif hint:
+        pass  # marked manual-setup via setup_hint (no setup: key) — not a gap
+    else:
+        print(f'WARN\tIntegration {name!r} has manifest but no setup.sh')
+" 2>/dev/null)
     if [[ $setup_missing -eq 0 ]]; then
         pass "All integrations with manifests have setup.sh"
     fi

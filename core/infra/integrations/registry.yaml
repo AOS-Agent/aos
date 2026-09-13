@@ -12,6 +12,11 @@
 #   setup.sh              — interactive setup (prompts for input)
 #   setup.sh --check      — health check only (no prompts, exit 0/1)
 #   setup.sh --configure  — non-interactive (reads from env/args)
+#
+# An entry with a manifest but no setup.sh is not automatically a gap: if it
+# carries setup_hint and no `setup:` key, that's a deliberate manual-setup
+# integration (ship-check skips it). A `setup:` key must point to a real path —
+# ship-check warns if it doesn't.
 
 # ─── Tier 1: Apple Native ─────────────────────────────────
 # Already on the Mac. Access via AppleScript, EventKit, or file system.
@@ -28,6 +33,8 @@ apple_native:
     access: applescript
     provides: [event reading, event creation, schedule awareness]
     requires: [calendar permission]
+    # Shadowed on this machine by google_suite (gws CLI) — see ~/.aos/config/integrations.yaml.
+    setup_hint: "Manual: macOS grants Calendar permission on first EventKit access, no setup script needed."
 
   notes:
     name: Notes
@@ -159,7 +166,7 @@ builtin:
     description: Health metrics from iOS via HealthSync app.
     provides: [sleep data, activity metrics, energy tracking]
     requires: [HealthSync iOS app, sync endpoint]
-    setup: core/infra/integrations/health/setup.sh
+    setup_hint: "Manual: install HealthSync on iPhone, point it at this Mac's sync endpoint. No setup script ships — see manifest.yaml for steps."
 
 # ─── Tier 3: Catalog ──────────────────────────────────────
 # Common SaaS tools. We provide config templates.
@@ -223,6 +230,19 @@ catalog:
     provides: [email, calendar, docs, sheets, slides, drive, forms, tasks, contacts, chat, apps_script]
     requires: [OAuth credentials in Keychain]
     setup_hint: "brew install googleworkspace-cli. Credentials in Keychain (GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET, GOOGLE_PRIMARY_EMAIL). Multi-account wrapper at core/bin/internal/gws-account."
+
+  google_workspace:
+    name: Google Workspace (manifest)
+    tier: 3
+    category: productivity
+    status: available
+    # Directory is core/infra/integrations/google-workspace/; shadowed on this
+    # machine by google_suite (gws CLI, the integration actually configured).
+    description: Manifest-only entry for the google-workspace MCP server. No standalone setup — activated via google_suite (gws CLI).
+    access: mcp
+    provides: [email, calendar, drive, docs, sheets, slides, forms, tasks, contacts, chat, apps_script]
+    requires: [MCP plugin, or use google_suite via gws CLI instead]
+    setup_hint: "Manual: no setup script ships; see core/infra/integrations/google-workspace/manifest.yaml for MCP setup steps."
 
   clickup:
     name: ClickUp
