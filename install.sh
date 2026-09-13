@@ -3,8 +3,9 @@
 #  AOS — Agentic Operating System
 #  Bootstrap installer
 #
-#  Usage (one-liner):
-#    curl -fsSL https://raw.githubusercontent.com/hishamalhadi/aos/main/install.sh | bash
+#  Usage (one-liner — see bootstrap.sh; it fetches a tarball and hands off
+#  here, so a fresh Mac's git-stub CLT prompt can't kill the install):
+#    bash -c "$(curl -fsSL https://raw.githubusercontent.com/hishamalhadi/aos/main/bootstrap.sh)"
 #
 #  Or manually:
 #    git clone https://github.com/hishamalhadi/aos.git ~/aos
