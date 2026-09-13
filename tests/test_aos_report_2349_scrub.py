@@ -113,8 +113,8 @@ class TestScrub:
         assert "[phone]" in out
 
     def test_email_still_redacted(self, aos_report):
-        out = aos_report.scrub("Reach hishamalhadi@gmail.com for details.")
-        assert "hishamalhadi@gmail.com" not in out
+        out = aos_report.scrub("Reach operator@example.com for details.")
+        assert "operator@example.com" not in out
 
     def test_uses_the_bridge_redactor_not_a_second_regex(self, aos_report):
         """scrub() must delegate to conversation_store.redact(), not keep an
