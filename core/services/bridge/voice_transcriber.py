@@ -25,6 +25,22 @@ TRANSCRIBER_URL = "http://127.0.0.1:7602"
 _mode = "fast"
 VALID_MODES = ("fast", "accurate")
 
+# Bilingual dual-pass runs slower than realtime on long notes (aos#2357: a
+# 367s/6.1min note took 171s to transcribe — well past the old flat 120s
+# timeout, which gave up on a call the service would have finished, and fell
+# back to the much slower per-request mlx-whisper path). Scale the wait with
+# the note's own duration instead: floor at the old 120s so short notes are
+# unaffected, cap so a corrupt or absurdly long file can't hang the bridge
+# indefinitely.
+_MIN_SERVICE_TIMEOUT = 120
+_MAX_SERVICE_TIMEOUT = 1200  # 20 minutes
+
+
+def _service_timeout(duration_s: float) -> int:
+    """HTTP timeout (seconds) for the transcriber service call, scaled to
+    audio length: max(120, 3x duration), capped at 20 minutes."""
+    return min(_MAX_SERVICE_TIMEOUT, max(_MIN_SERVICE_TIMEOUT, int(duration_s * 3)))
+
 
 def set_mode(mode: str):
     """Switch transcription mode."""
@@ -49,11 +65,14 @@ def _convert_ogg_to_wav(ogg_path: str, wav_path: str):
         raise RuntimeError(f"ffmpeg conversion failed: {result.stderr}")
 
 
-def _transcribe_via_service(wav_path: str) -> str:
+def _transcribe_via_service(wav_path: str, duration_s: float = 0) -> str:
     """Call the shared transcriber service.
 
     Uses bilingual mode by default — dual-pass EN+AR merge for voice
     messages where the operator switches languages mid-sentence.
+
+    `duration_s` (the note's own length, from Telegram voice metadata) scales
+    the HTTP timeout — see `_service_timeout` (aos#2357).
     """
     # Voice messages use bilingual mode (dual-pass EN+AR) unless
     # operator explicitly set a different mode via /whisper
@@ -72,7 +91,7 @@ def _transcribe_via_service(wav_path: str) -> str:
         method="POST",
     )
 
-    with urlopen(req, timeout=120) as resp:
+    with urlopen(req, timeout=_service_timeout(duration_s)) as resp:
         result = json.loads(resp.read())
 
     text = result.get("text", "").strip()
@@ -116,7 +135,7 @@ def _transcribe_fallback(wav_path: str) -> str:
         return "[transcription failed]"
 
 
-async def transcribe_voice(voice_file) -> str:
+async def transcribe_voice(voice_file, duration_s: float = 0) -> str:
     """Download and transcribe a Telegram voice message.
 
     Uses the shared transcriber service (Whisper Large V3 Turbo).
@@ -124,6 +143,9 @@ async def transcribe_voice(voice_file) -> str:
 
     Args:
         voice_file: telegram.File object from bot.get_file()
+        duration_s: audio duration in seconds, from Telegram voice metadata
+            (``update.message.voice.duration``). Scales the service timeout
+            so long notes aren't dropped (aos#2357).
 
     Returns:
         Transcribed text string
@@ -139,7 +161,7 @@ async def transcribe_voice(voice_file) -> str:
 
         # Try service first, fall back to direct
         try:
-            return _transcribe_via_service(wav_path)
+            return _transcribe_via_service(wav_path, duration_s)
         except (URLError, ConnectionError, OSError) as e:
             logger.warning(f"Transcriber service unreachable: {e}")
             try:

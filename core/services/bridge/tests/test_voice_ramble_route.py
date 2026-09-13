@@ -83,7 +83,7 @@ def channel(monkeypatch, tmp_path):
 
     calls: list[tuple[str, str]] = []
 
-    async def fake_transcribe(_file):
+    async def fake_transcribe(_file, duration_s=0):
         return TRANSCRIPT
 
     monkeypatch.setattr(tc, "transcribe_voice", fake_transcribe)
@@ -183,7 +183,7 @@ def test_a_voice_note_in_a_project_topic_still_goes_to_that_agent(channel):
 # ── Failure modes keep their old behaviour ──────────────────────────────────
 
 def test_an_empty_transcription_does_not_start_a_ramble(channel, monkeypatch):
-    async def empty(_file):
+    async def empty(_file, duration_s=0):
         return "   "
 
     monkeypatch.setattr(tc, "transcribe_voice", empty)
@@ -194,7 +194,7 @@ def test_an_empty_transcription_does_not_start_a_ramble(channel, monkeypatch):
 
 
 def test_a_failed_transcription_does_not_start_a_ramble(channel, monkeypatch):
-    async def boom(_file):
+    async def boom(_file, duration_s=0):
         raise RuntimeError("whisper died")
 
     monkeypatch.setattr(tc, "transcribe_voice", boom)

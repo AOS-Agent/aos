@@ -315,6 +315,11 @@ def _load_inflight() -> dict | None:
         return None
 
 TELEGRAM_MSG_LIMIT = 4096
+
+# Margin below TELEGRAM_MSG_LIMIT for the <i></i> wrapper (7 chars) around a
+# transcript echo plus any HTML-entity escaping _esc() introduces.
+_TRANSCRIPT_CHUNK_LIMIT = TELEGRAM_MSG_LIMIT - 100
+
 TYPING_INTERVAL = 4.0  # seconds between typing keepalive pings
 EDIT_INTERVAL = 2.0  # seconds between editing the live message
 MIN_CHARS_TO_SHOW = 30  # wait for this much text before first message
@@ -329,6 +334,32 @@ _SPLIT_PATTERN = re.compile(
 
 
 WORKSPACE = Path.home() / "aos"
+
+
+def _chunk_text(text: str, limit: int) -> list[str]:
+    """Split plain text into <= `limit`-sized pieces, preferring whitespace.
+
+    A voice transcript is prose, not markdown — no headings or code fences to
+    respect — so this is a plain, simpler cousin of `_split_for_telegram`
+    (aos#2357: a long transcript sent unchunked raised `BadRequest: Message
+    is too long` and killed the handler before the prompt reached Claude).
+    """
+    if len(text) <= limit:
+        return [text]
+    chunks: list[str] = []
+    remaining = text
+    while len(remaining) > limit:
+        cut = remaining.rfind(" ", 0, limit)
+        if cut <= 0:
+            cut = limit
+        chunk = remaining[:cut].rstrip()
+        if chunk:
+            chunks.append(chunk)
+        remaining = remaining[cut:].lstrip()
+    if remaining:
+        chunks.append(remaining)
+    return chunks
+
 
 # Telegram-supported HTML tags
 _TG_TAGS = {"b", "strong", "i", "em", "u", "ins", "s", "strike", "del",
@@ -975,9 +1006,10 @@ class TelegramChannel:
         if thread_id:
             reply_kwargs["message_thread_id"] = thread_id
 
+        duration_s = getattr(update.message.voice, "duration", 0) or 0
         try:
             voice_file = await update.message.voice.get_file()
-            text = await transcribe_voice(voice_file)
+            text = await transcribe_voice(voice_file, duration_s=duration_s)
         except Exception as e:
             logger.error(f"Voice transcription failed: {e}")
             await self._react(update.message, "💔")
@@ -994,19 +1026,26 @@ class TelegramChannel:
                        meta={"duration_s": update.message.voice.duration})
 
         # Show transcription — italic reply to the voice message, no labels.
+        # A long note can transcribe past Telegram's 4096-char limit (aos#2357:
+        # a 6-minute note produced a ~44,700-char transcript); an unchunked
+        # echo raised BadRequest on both the primary send and its fallback,
+        # and the exception killed the handler before the prompt ever reached
+        # Claude. Chunking must never block dispatch: a failed echo is logged
+        # and skipped, not fatal.
         await self._react(update.message, "✅")
-        try:
-            await update.message.reply_text(
-                f"<i>{_esc(text)}</i>",
-                parse_mode="HTML",
-                **reply_kwargs,
-            )
-        except Exception as e:
-            logger.warning(f"Transcript reply failed: {e}")
-            # Fallback: send as regular message
-            await update.message.chat.send_message(
-                f"<i>{_esc(text)}</i>", parse_mode="HTML", **reply_kwargs,
-            )
+        for chunk in _chunk_text(text, _TRANSCRIPT_CHUNK_LIMIT):
+            body = f"<i>{_esc(chunk)}</i>"
+            try:
+                await update.message.reply_text(body, parse_mode="HTML", **reply_kwargs)
+            except Exception as e:
+                logger.warning(f"Transcript reply failed: {e}")
+                try:
+                    # Fallback: send as regular message
+                    await update.message.chat.send_message(
+                        body, parse_mode="HTML", **reply_kwargs,
+                    )
+                except Exception as e2:
+                    logger.warning(f"Transcript echo failed entirely: {e2}")
 
         if topic_agent and not text.lower().startswith(("ask ", "tell ", "@")):
             # A voice note in a project topic belongs to that project's agent —
