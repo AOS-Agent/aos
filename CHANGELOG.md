@@ -2,9 +2,17 @@
 
 All notable changes to AOS. Release notes sent via Telegram after each 4am update.
 
-## v0.7.8 — the bridge stops dropping long notes and repeating itself — 2026-09-13
+## v0.7.8 — the system stops crying wolf — 2026-09-13
 
-Summary: Two bridge bugs. A voice note past ~4 minutes was silently lost — the transcriber service call timed out before dual-pass bilingual transcription finished, and the fallback transcript then blew past Telegram's 4096-char limit on an unchunked echo, killing the handler before the prompt ever reached Claude. And every bridge restart re-sent every still-open heartbeat alert, because the dedupe tracker lived only in a thread-local variable.
+Summary: The nine open issues that v0.7.7 walked past. Five were notification
+noise — a false "System rebooted" almost every tick, ~5,700 false "Internet is
+DOWN" alerts in 23 days, heartbeat alerts re-sent on every bridge restart,
+`deployment_health` claiming a fix every run, `volume_access` warning forever
+on a machine with no external drive. Two were the bridge quietly losing things:
+voice notes over ~4 minutes, and — worse — every bridge conversation turn and
+every daily-briefing boot crashing on a write into the read-only `~/aos`. Two
+were the update path lying: "success" when nothing deployed, and silent
+downgrades. Migration 133 removes the `.last-boot` directory workaround.
 
 - Fixed voice notes over ~4 minutes being dropped (aos#2357). `voice_transcriber.py:75` hardcoded `timeout=120` for the transcriber service call — bilingual dual-pass runs slower than realtime on long notes (a 367s/6.1min note took 171s), so the bridge gave up on a call the service would have finished and fell back to the slower per-request path. The timeout now scales with the note's own duration (from Telegram voice metadata): `max(120, 3× duration)`, capped at 20 minutes (`voice_transcriber._service_timeout`). Separately, `telegram_channel.py`'s `_handle_voice` echoed the transcript with a single unchunked `reply_text` (:994) — a transcript over 4096 chars raised `BadRequest: Message is too long` on both the primary send and its except-fallback, and the exception killed the handler before the prompt was dispatched. The echo is now chunked (`_chunk_text`, margin for the `<i></i>` wrapper and HTML escaping) and each chunk's send is independently guarded, so a transcript of any length reaches the operator and Claude; the 0.7.7 ramble force-route and its one-line confirm (1f90d5c) are unchanged.
 - Fixed heartbeat re-alerting on every bridge restart (aos#2324). `heartbeat.py`'s `last_reported` dedupe set was a local inside `_loop()` — it died with the thread, so every restart re-sent every problem still open (3,234 restarts logged, each a repeat of the same alert). Added a `notice_state(key, last_sent, fingerprint)` table to the bridge's existing `~/.aos/data/bridge.db` (`conversation_store.py`, 0.7.7) with `should_send_notice`/`record_notice_sent`; `heartbeat.py`'s loop is now a small `Heartbeat` class whose `run_once()` consults persisted state before sending and expires it after 6 hours, so a restart doesn't resend what a previous process already reported, a changed problem still alerts immediately, and a problem that never clears still gets an occasional reminder.
