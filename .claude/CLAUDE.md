@@ -29,7 +29,7 @@ Install mechanism:
 
 ## Skills
 
-Skill source: `~/aos/.claude/skills/` (development).
+Skill source: `~/aos/core/skills/` (development).
 Active skills: `~/.claude/skills/` (installed globally, available in every session).
 
 Installed globally (not project-scoped) because agents are global — Chief needs

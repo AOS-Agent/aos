@@ -102,7 +102,7 @@ Subsystem details load on demand via `.claude/rules/` — see `comms-pipeline.md
 
 - Hooks must NEVER crash — always output valid JSON and exit 0
 - Runtime data goes in `~/.aos/`, never in `~/aos/`
-- Skills are symlinked from `~/aos/.claude/skills/` — edits in framework propagate
+- Skills are symlinked from `~/aos/core/skills/` — edits in framework propagate
 - Settings.json harness files need explicit `allow` permissions (bypassPermissions doesn't cover them)
 - Test with both Homebrew Python and system Python 3.9 (some users only have 3.9)
 - **Never hardcode lists the filesystem declares.** When checking for services, skills, agents, or LaunchAgents — discover from the filesystem. Lists drift. Directories don't. ship-check enforces this.
