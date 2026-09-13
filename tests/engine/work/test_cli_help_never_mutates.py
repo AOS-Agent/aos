@@ -10,7 +10,7 @@ command's real logic instead:
   * ``work thread --help`` -> same shape: created a thread titled "--help".
   * ``work done --help`` / ``work cancel --help`` -> "--help" fuzzy-matched a
     task literally titled "--help" (t#7 — itself a leftover from the same bug
-    class via the Telegram handler, see CHANGELOG v0.8.0) and flipped its
+    class via the Telegram handler, see CHANGELOG v0.7.7) and flipped its
     status.
   * ``work handoff -h`` -> fell through to "Error: --state is required"
     (exit 1, no usage) instead of showing help.

@@ -1,7 +1,7 @@
 """
-Invariant: the v0.8.0 default-off services stay declared off.
+Invariant: the v0.7.7 default-off services stay declared off.
 
-Four services ship off as of v0.8.0 — `work-runner` (zero recorded runs, ever)
+Four services ship off as of v0.7.7 — `work-runner` (zero recorded runs, ever)
 and the three autonomous-comms arms `sentinel`, `converse`, `envoy`. Migrations
 111 and 112 record that on each machine by writing the names into
 ~/.aos/config/services.yaml under `disabled:`.
@@ -42,7 +42,7 @@ from lib.default_off import (
 
 class DefaultOffServicesCheck(ReconcileCheck):
     name = "default_off_services"
-    description = "v0.8.0 default-off services remain declared off (unless opted in)"
+    description = "v0.7.7 default-off services remain declared off (unless opted in)"
 
     # Cheap and file-local, and the window where a missing declaration means a
     # comms arm is live is exactly the window worth closing early.

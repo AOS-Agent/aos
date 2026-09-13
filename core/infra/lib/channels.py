@@ -14,12 +14,17 @@ promotion), the stable channel falls back to ``main`` so the machine keeps
 updating instead of stranding itself.
 
 Nothing here decides *whether* a machine updates — only which ref it tracks.
-Every machine running AOS takes the release its channel points at. An operator
-who wants to pause updates has two existing knobs and needs no third: set
-`enabled: false` on the `auto-update` / `check-update` jobs in
-`~/.aos/config/crons.yaml` (see `config/crons.yaml` for the contract), or stop
-the scheduler. Both are reversible by editing one line, and neither leaves a
-flag in framework code that outlives the reason it was set.
+Every machine running AOS takes the release its channel points at, and there is
+no gate in this module that can refuse one.
+
+An operator who wants to pause updates on their own machine already has a knob
+and does not need a new one: add `scheduler` to the `disabled:` list in
+`~/.aos/config/services.yaml` (the service opt-out from migration 105, which
+reconcile reads and which nothing in AOS auto-reverses). That stops the
+scheduler, and with it `check-update` and the 04:00 `auto-update`. Removing the
+name starts them again. Per-job `enabled: false` exists in `config/crons.yaml`
+too, but that file lives in the framework tree and an update rewrites it, so it
+is a shipped decision rather than a per-machine one.
 
 Everything here is pure logic — no git calls, and the only I/O is reading one
 small config file — so resolution and the promotion guard are both unit-testable.

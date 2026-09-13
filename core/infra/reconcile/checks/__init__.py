@@ -66,7 +66,7 @@ ALL_CHECKS = [
     LauncherNamingCheck,
     ArmsCoverageCheck,
 
-    # Services — the v0.8.0 default-off set stays declared off. Must run
+    # Services — the v0.7.7 default-off set stays declared off. Must run
     # BEFORE ServiceLoadedCheck and the per-service checks: they read the very
     # file this repairs, so a missing declaration would otherwise be read as
     # "should be running" for one whole cycle.

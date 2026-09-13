@@ -1,12 +1,12 @@
 """
-Migration 112: sentinel, converse and envoy ship off by default (v0.8.0 freeze).
+Migration 112: sentinel, converse and envoy ship off by default (v0.7.7).
 
 The three autonomous-comms arms — Sentinel (reads iMessage, drafts
 follow-through on commitments), Converse (live multi-turn sessions), Envoy
 (runs delegated outbound conversations with third parties) — are the most
 personal surface AOS has, and the one whose failure mode is a message actually
-sent to another human. AOS is freezing; autonomous comms becomes a future Qren
-arm rather than a thing left switched on in a system nobody is developing.
+sent to another human. Autonomous comms becomes a future Qren arm; until then it
+is not a thing to leave switched on, on a machine that never asked for it.
 
 So they become opt-in on every machine:
 

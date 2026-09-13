@@ -43,7 +43,7 @@ jobs:
   auto-update:
     command: bash ~/aos/core/bin/crons/check-update --apply
     at: "04:00"
-    # No catch_up: this is the only machine running AOS and it is always on.
+    # No catch_up: this machine is always on, so the 04:00 window is never missed.
     # The flag was added for a laptop that slept through the 04:00 window; that
     # laptop has no AOS install. `check-update` (every 2h) still reports an
     # available update in between, so a missed window is visible, not silent.

@@ -121,6 +121,6 @@ def test_121_is_a_noop_without_a_threads_table(home):
 
 
 def test_live_instance_is_untouched_by_this_suite():
-    """Guard the guard — see tests/test_migrations_108_117_idempotency.py for
+    """Guard the guard — see tests/test_migrations_111_116_idempotency.py for
     the incident this pattern exists to catch."""
     assert Path.home() == Path("~").expanduser(), "Path.home patch leaked out of a test"

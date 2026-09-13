@@ -1,5 +1,5 @@
 """
-Migration 120: retire dead MCP entries and the slack-lite orphan (v0.8.0 cleanup,
+Migration 120: retire dead MCP entries and the slack-lite orphan (v0.7.7 cleanup,
 operator-approved, aos#221).
 
 Four actions, each independently idempotent.
@@ -140,7 +140,7 @@ of the three dead keys, and no known-good drift remains uncorrected.
 
 from __future__ import annotations
 
-DESCRIPTION = "Archive orphaned slack-lite dir, drop dead MCP entries, fix integration status drift (0.8.0)"
+DESCRIPTION = "Archive orphaned slack-lite dir, drop dead MCP entries, fix integration status drift (0.7.7)"
 
 import json
 import os

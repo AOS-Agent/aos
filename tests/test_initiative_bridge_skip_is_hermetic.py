@@ -14,7 +14,7 @@ risk isn't that one read (it's harmless and read-only): it's that AOS_USER
 down, and would be read the moment execution ever continued past the guard.
 
 This test re-imports the file with `Path.home()` patched *before* exec — the
-same pattern `load_migration()` in test_migrations_108_117_idempotency.py uses
+same pattern `load_migration()` in test_migrations_111_116_idempotency.py uses
 for migrations that resolve HOME at module scope — proving: (1) the skip
 reason reflects the sandboxed home, not whatever machine happens to be running
 the suite; (2) the guard's one check creates nothing under that sandbox; and

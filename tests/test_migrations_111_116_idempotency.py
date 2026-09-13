@@ -110,7 +110,7 @@ def _seed_fixture_db(path: Path) -> None:
     threads = [(f"th{i}", "Work in v0.7.6-abc", "exploring", "2026-05-01", None)
                for i in range(50)]
     threads.append(("th-real", "People DB intelligence gaps", "exploring", "2026-05-01", None))
-    threads.append(("th-new", "Work in v0.8.0-xyz", "exploring", "2999-01-01", None))
+    threads.append(("th-new", "Work in v0.7.7-xyz", "exploring", "2999-01-01", None))
     conn.executemany("INSERT INTO threads VALUES (?,?,?,?,?)", threads)
     conn.commit()
     conn.close()
@@ -367,7 +367,7 @@ def test_115_spares_recent_threads(work_db, home):
     conn = sqlite3.connect(str(work_db))
     conn.execute(
         "INSERT INTO threads (id, title, status, created_at) "
-        "VALUES ('th-today', 'Work in v0.8.0-now', 'exploring', date('now'))"
+        "VALUES ('th-today', 'Work in v0.7.7-now', 'exploring', date('now'))"
     )
     conn.commit()
     conn.close()

@@ -85,7 +85,7 @@ Not everything with a plist is a resident service:
   5 min) — it is declared by its plist, not the registry, and is intentionally
   out of the resident-monitoring set.
 - **`slack-watch`** was this kind of instance-layer single-shot poller; it was
-  retired in the v0.8.0 decommission sweep (migration 109), superseded by
+  retired in the v0.7.7 decommission sweep (migration 109), superseded by
   `sana-watch`, which is instance-only and not shipped as a framework manifest.
 
 ## Consumers that derive from the registry

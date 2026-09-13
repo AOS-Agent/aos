@@ -130,12 +130,12 @@ modules:
     kind: daemon
     category: standard
     tagline: Executes queued work in the background so tasks move without you.
-    # v0.8.0: OFF by default fleet-wide (migration 111). `task_runs` held zero
+    # v0.7.7: OFF by default on every machine (migration 111). `task_runs` held zero
     # rows on every machine audited — built, deployed, never once used. The
     # service registry has always called this `optional`; `tier: core` here was
     # the drift the registry exists to prevent. Opt in with `work runner enable`.
     ask: "Run delegated tasks in the background? (off by default — autonomous agent spawning)"
-    status_note: "off by default since v0.8.0 — opt in with `work runner enable`"
+    status_note: "off by default since v0.7.7 — opt in with `work runner enable`"
     costs: { resident_ram: "~40 MB" }
     services: ["com.aos.work-runner"]
     detect:
@@ -251,7 +251,7 @@ modules:
     install:
       manual:
         - "Grant Full Disk Access to the sentinel binary in System Settings › Privacy & Security"
-    status_note: "off by default since v0.8.0 — autonomous comms deferred to Qren"
+    status_note: "off by default since v0.7.7 — autonomous comms deferred to Qren"
     detect:
       services: ["com.aos.sentinel"]
 
@@ -265,7 +265,7 @@ modules:
     ask: "Enable live voice conversation?"
     costs: { resident_ram: "~80 MB when loaded" }
     services: ["com.aos.converse"]
-    status_note: "off by default since v0.8.0 — autonomous comms deferred to Qren"
+    status_note: "off by default since v0.7.7 — autonomous comms deferred to Qren"
     detect:
       services: ["com.aos.converse"]
 
@@ -279,7 +279,7 @@ modules:
     consent: "Sends messages to third parties introducing itself as your agent."
     costs: { resident_ram: "0 (runs every 5 min)" }
     services: ["com.aos.envoy"]
-    status_note: "instance-only, not installable; off by default since v0.8.0"
+    status_note: "instance-only, not installable; off by default since v0.7.7"
     detect:
       services: ["com.aos.envoy"]
     health:

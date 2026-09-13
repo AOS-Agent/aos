@@ -28,7 +28,7 @@ MIGRATIONS = REPO / "core" / "infra" / "migrations"
 def load_migration(name: str, home: Path):
     """Import a migration with Path.home() already pointing at the sandbox.
 
-    Mirrors tests/test_migrations_108_117_idempotency.py's loader: migrations
+    Mirrors tests/test_migrations_111_116_idempotency.py's loader: migrations
     resolve HOME = Path.home() at module scope, so the patch must be in place
     before exec_module, and the module must be re-imported per test.
     """
@@ -328,15 +328,14 @@ def test_full_migration_twice_is_stable(m, home):
 
 def test_live_instance_is_untouched_by_this_suite():
     """Guard the guard — see the equivalent test in
-    tests/test_migrations_108_117_idempotency.py for why this matters: a
+    tests/test_migrations_111_116_idempotency.py for why this matters: a
     Path.home() patch that leaked out of a test would mean every assertion
     above ran against (and mutated) the operator's own machine instead of a
     tmp_path sandbox.
 
-    This suite has no single global side-effect file to check for absence the
-    way migration 117's freeze flag works (~/.aos/backups/retired-services
-    could legitimately already exist on a machine that ran this migration for
-    real) — so the property this test actually guards is the one every other
+    This suite has no single global side-effect file whose absence it could
+    check (~/.aos/backups/retired-services could legitimately already exist on
+    a machine that ran this migration for real) — so the property this test actually guards is the one every other
     test in the file depends on: the patch stays scoped to `load_migration`'s
     `try/finally` and never survives past it.
     """

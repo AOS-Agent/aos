@@ -2,7 +2,7 @@ name: listen
 purpose: HTTP job-queue server (retired — zero producers since ~April 2026).
 # RETIRED, operator-approved (aos#180). Must NOT be loaded; monitoring must not
 # probe :7600 or report it DOWN. Tombstone manifest — the code dir was removed
-# in the v0.8.0 half-baked-services sweep (aos#208 follow-up); migration 109
+# in the v0.7.7 half-baked-services sweep (aos#208 follow-up); migration 109
 # deletes the instance venv (operator-approved 2026-08-18). port/health are
 # recorded for historical truth only; no consumer probes a retired service.
 status: retired

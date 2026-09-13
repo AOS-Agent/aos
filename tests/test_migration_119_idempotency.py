@@ -4,7 +4,7 @@ sandboxed HOME.
 Why this file exists when `tests/test_project_layer.py` already exercises the
 migration: that suite patches the module's path constants *after* import. This
 one patches `Path.home()` *before* `exec_module`, the way
-`test_migrations_108_117_idempotency.py` does, so the test covers the real
+`test_migrations_111_116_idempotency.py` does, so the test covers the real
 failure mode of a migration that resolves `HOME = Path.home()` at module scope.
 If a future edit moves a path out of the patched set — a new `~/.claude/...`
 target, say — the attribute-patching fixture would quietly write to the

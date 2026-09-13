@@ -1,10 +1,11 @@
 """
 Migration 116: write a Qren-readiness inventory for this machine.
 
-AOS freezes at v0.8.0; Qren succeeds it. Whatever the Qren installer turns out
-to be, it will need to know what it is landing on — and the moment to record
-that is now, on a machine still running the system that knows itself, not later
-from an installer poking at a half-migrated tree.
+Qren succeeds AOS eventually, and whatever its installer turns out to be, it
+will need to know what it is landing on. The moment to record that is now, on a
+machine running a system that still knows itself, rather than later from an
+installer poking at a half-migrated tree. AOS carries on being developed in the
+meantime; this report is a starting point, not a final accounting.
 
 Writes ~/.aos/data/qren-readiness.json:
 

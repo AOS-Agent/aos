@@ -19,9 +19,10 @@ closes retroactively; 115 is a one-time sweep and intentionally does not
 touch the generator. This migration plus the code fix in the same commit
 (core/engine/work/ontology/work.py, backend.py) close the loop: 115 mops up
 the existing rows, this restores the column, and the generator itself now
-finds-or-reuses instead of creating unconditionally. **The v0.8.0 hold doc's
+finds-or-reuses instead of creating unconditionally. **The release plan's
 "generation of Work in … threads is unchanged" decision is reversed as of
-this migration — the generator is fixed in this same release.**
+this migration — the generator is fixed in this same release**; see
+docs/releases/0.7.7.md.
 
 The adapter (`WorkAdapter._ensure_aux_schema`) already adds this column at
 construction time — fresh installs and the test fixture work without this

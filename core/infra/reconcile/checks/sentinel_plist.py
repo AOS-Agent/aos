@@ -37,7 +37,7 @@ class SentinelPlistDriftCheck(ReconcileCheck):
     # existed and was simply not consulted, because the check never said what
     # it was about. TranscriberServiceCheck declared this from the start; this
     # one did not, and the asymmetry was invisible: both look correct in
-    # isolation. As of v0.8.0 sentinel is default-off, so this was the exact
+    # isolation. As of v0.7.7 sentinel is default-off, so this was the exact
     # path that would have re-armed the arm we just switched off.
     service = "sentinel"
 

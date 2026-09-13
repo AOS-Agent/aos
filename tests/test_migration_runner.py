@@ -203,7 +203,8 @@ class TestPendingCount:
 class TestNumberingGaps:
     """A missing migration number is not a missing migration.
 
-    Migration 117 (the v0.8.0 update freeze) was deleted before it ever ran
+    Migration 117 (an update freeze, dropped with the 0.7.7 reframe) was deleted
+    before it ever ran
     anywhere, which leaves the directory numbered 116, 118, 119, … Discovery
     must treat that hole as nothing at all: it globs files and sorts them, so
     there is no "next number" to stall on. These tests pin that, because the
