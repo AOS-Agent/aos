@@ -114,7 +114,7 @@ case "${1:-help}" in
         mkdir -p "$TARGET"
 
         # Deprecated — never install (remove if found)
-        DEPRECATED="instagram youtube"
+        DEPRECATED="instagram youtube deliberate"
 
         synced=0
         for src in "$SOURCE"/*/; do

@@ -229,7 +229,7 @@ When asked to assess an initiative or provide a deliberation perspective:
 - [specific next action with reasoning]
 ```
 
-When serving as a perspective lens in a `deliberate` session (dispatched by Chief):
+When dispatched by Chief as one of several parallel perspective lenses for a quick decision scan (see the `council` skill):
 - Stay in character for your assigned perspective (risk assessor, scope guardian, etc.)
 - Be specific and quantitative where possible
 - Disagree with the other perspectives if warranted -- conflict surfaces truth

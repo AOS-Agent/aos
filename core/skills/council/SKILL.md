@@ -5,8 +5,9 @@ description: >
   addressing each other with @name; the operator can inject at any time. Trigger
   on: /council, "convene a council", "deliberate with personas", "stress-test
   this decision", "get multiple lenses on X", or any high-stakes
-  architectural/strategic question. Use `deliberate` for quick parallel scans;
-  use council when cross-engagement between perspectives is the point.
+  architectural/strategic question — including a quick parallel scan of
+  perspectives (run it short, skip the back-and-forth) when cross-engagement
+  isn't needed.
 allowed-tools: Bash, Read, Write
 ---
 
@@ -21,7 +22,7 @@ Use `council` when:
 - You want to **stress-test** a verdict by having the council attack its own work
 - The decision deserves a **persistent transcript** for later review
 
-Use `deliberate` instead when you just want a fast parallel scan of perspectives without the back-and-forth.
+Want just a fast parallel scan without the back-and-forth? Run council the same way, but keep it to 1-2 turns per persona and skip the cross-engagement — no separate skill needed.
 
 ## What this replaces
 
@@ -154,7 +155,6 @@ Each council lives at:
 
 ## Footguns to avoid
 
-- **Don't conflate `council` with `deliberate`.** Deliberate is parallel; council is sequential cross-engaged chat. Different patterns.
 - **Don't seed without the actual question in the body.** If your seed says "answer the question above" but the question lives in the topic metadata only, the agents will (correctly) refuse to fake an answer. Inline the question.
 - **Don't run more than ~12 turns without an operator check-in.** Conversations drift. Use `council tail -f` to watch, `council say` to redirect.
 - **Don't expect the agents to forget character.** They will hold their lens even when it's inconvenient. That's the feature.
