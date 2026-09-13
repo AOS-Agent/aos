@@ -716,7 +716,14 @@ prereq_editor() {
     # stay legible. There is deliberately no editor choice here: `aos start`
     # drives cmux via `cmux new-workspace`, and a second option would only mean
     # a second, less-tested launch path.
-    if command -v cmux &>/dev/null || [[ -x "$CMUX_BIN" ]]; then
+    #
+    # Requires the .app bundle, not just a `cmux` on PATH. `brew install cmux`
+    # (the CLI formula, no cask) puts a `cmux` on PATH that satisfies
+    # `command -v` while /Applications/cmux.app never gets installed — a
+    # second-operator machine ended up exactly there (aos#237): CLI present,
+    # no app, `aos start` unable to open a workspace at all. Only the app
+    # bundle counts as "already installed".
+    if [[ -x "$CMUX_BIN" ]] || [[ -d "/Applications/cmux.app" ]]; then
         _save_editor "cmux"
         _skip "cmux"
         _configure_cmux_socket
