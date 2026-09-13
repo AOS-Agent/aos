@@ -1,5 +1,5 @@
 """
-Idempotency and safety tests for the v0.8.0 migrations (111–117).
+Idempotency and safety tests for the v0.7.7 migrations (111–116).
 
 The migration contract is that up() can run twice. The runner replays on any
 machine whose recorded level is behind, a release can be activated and rolled
@@ -443,107 +443,6 @@ def test_116_never_claims_an_unprobed_login_state(home):
         assert engine["authenticated"] is None
 
 
-# ── 117: freeze ──────────────────────────────────────────────────────────────
-
-
-def test_117_freezes_then_is_a_noop(home, monkeypatch):
-    m = load_migration("117", home)
-    monkeypatch.setattr(m, "_send_notice", lambda: True)
-
-    assert m.check() is False
-    assert m.up() is True
-    assert m.check() is True
-
-    body = m.CONFIG.read_text()
-    m.up()
-    assert m.CONFIG.read_text() == body
-
-
-def test_117_sends_the_notice_exactly_once(home, monkeypatch):
-    m = load_migration("117", home)
-    sends = []
-    monkeypatch.setattr(m, "_send_notice", lambda: sends.append(1) or True)
-
-    m.up()
-    m.up()
-    m.up()
-    assert len(sends) == 1, "a replayed migration must not re-announce the freeze"
-
-
-def test_117_does_not_retry_after_a_failed_send(home, monkeypatch):
-    """A Telegram outage must not become the same message arriving days later."""
-    m = load_migration("117", home)
-    sends = []
-    monkeypatch.setattr(m, "_send_notice", lambda: sends.append(1) and False)
-
-    m.up()
-    m.up()
-    assert len(sends) == 1
-    assert m.NOTICE_MARKER.exists()
-
-
-def test_117_writes_the_flag_even_if_the_notice_fails(home, monkeypatch):
-    m = load_migration("117", home)
-    monkeypatch.setattr(m, "_send_notice", lambda: False)
-    m.up()
-    assert m._flag_set() is True
-
-
-def test_117_notice_text_follows_the_telegram_rule(home):
-    """Clean English: no IDs, no paths, no version numbers, no jargon."""
-    m = load_migration("117", home)
-    text = m.NOTICE
-    for banned in ("v0.8", "0.8.0", "~/", "/Users/", "migration", "reconcile",
-                   "launchctl", "check-update", "#"):
-        assert banned not in text, f"{banned!r} must not appear in the notice"
-    assert "Qren" in text
-    assert "invite only" in text
-
-
-def test_117_does_not_clobber_an_existing_channel_update_config(home, monkeypatch):
-    """channel-update.yaml already holds the hourly Telegram settings.
-
-    The freeze flag went into that file in the first draft. On any machine set
-    up since March it would have replaced a working config for an unrelated
-    feature with a two-line freeze document, and nothing would have surfaced it
-    until someone asked why the hourly updates stopped.
-    """
-    existing = home / ".aos" / "config" / "channel-update.yaml"
-    body = "forum_topic_id: 88\ninterval: hourly\ninclude:\n  health: true\n"
-    existing.write_text(body)
-
-    m = load_migration("117", home)
-    monkeypatch.setattr(m, "_send_notice", lambda: True)
-    m.up()
-
-    assert existing.read_text() == body, "an unrelated config must not be touched"
-    assert (home / ".aos" / "config" / "update-policy.yaml").exists()
-
-
-def test_117_reads_a_hand_set_flag_in_the_legacy_file(home):
-    """An operator who put frozen: true in channel-update.yaml is still frozen."""
-    (home / ".aos" / "config" / "channel-update.yaml").write_text(
-        "forum_topic_id: 88\nfrozen: true\n"
-    )
-    sys.path.insert(0, str(REPO / "core" / "infra" / "lib"))
-    import channels
-    assert channels.is_frozen(home / ".aos" / "config") is True
-
-
-def test_117_flag_is_readable_by_the_freeze_gate(home, monkeypatch):
-    """The migration and the gate must agree on the file it writes."""
-    m = load_migration("117", home)
-    monkeypatch.setattr(m, "_send_notice", lambda: True)
-    m.up()
-
-    sys.path.insert(0, str(REPO / "core" / "infra" / "lib"))
-    import channels
-    config_dir = home / ".aos" / "config"
-    assert channels.is_frozen(config_dir) is True
-    assert channels.freeze_gate("0.8.0", "0.9.0", channels.is_frozen(config_dir))["allowed"] is False
-    assert channels.freeze_gate("0.8.0", "0.8.1", channels.is_frozen(config_dir))["allowed"] is True
-
-
 # ── The live instance is never touched ───────────────────────────────────────
 
 
@@ -557,18 +456,16 @@ def test_live_instance_is_untouched_by_this_suite():
     """
     assert Path.home() == Path("~").expanduser(), "Path.home patch leaked out of a test"
 
-    policy = Path.home() / ".aos" / "config" / "update-policy.yaml"
-    assert not policy.exists(), (
-        "the live instance has a freeze flag — either the suite wrote outside its "
-        "sandbox, or migration 117 was run for real against this machine"
-    )
-
-    marker = Path.home() / ".aos" / "state" / ".freeze-notice-sent"
-    assert not marker.exists(), "the freeze notice marker was written to the live instance"
-
     services = Path.home() / ".aos" / "config" / "services.yaml"
     if services.exists():
-        assert "enabled:" not in services.read_text(), (
+        # A *key*, not the substring. The framework's own header comment
+        # (default_off.py `_HEADER`) explains `enabled:` in prose, and a real
+        # migration run writes that header to this file — so a substring test
+        # fails on any machine where 111/112 were legitimately applied,
+        # including the operator's own after this release installs.
+        import yaml
+        data = yaml.safe_load(services.read_text()) or {}
+        assert "enabled" not in data, (
             "the live services.yaml gained an `enabled:` key — a sandboxed "
             "migration wrote to the real instance"
         )

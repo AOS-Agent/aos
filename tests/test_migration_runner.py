@@ -198,3 +198,51 @@ class TestPendingCount:
         runner.save_version(0)
         runner.cmd_pending_count()
         assert runner.load_version() == 0
+
+
+class TestNumberingGaps:
+    """A missing migration number is not a missing migration.
+
+    Migration 117 (the v0.8.0 update freeze) was deleted before it ever ran
+    anywhere, which leaves the directory numbered 116, 118, 119, … Discovery
+    must treat that hole as nothing at all: it globs files and sorts them, so
+    there is no "next number" to stall on. These tests pin that, because the
+    alternative implementation — walk current+1, current+2, … until a file is
+    missing — looks identical on a contiguous directory and silently stops
+    migrating on this one.
+    """
+
+    def _write(self, d: Path, stem: str) -> None:
+        (d / f"{stem}.py").write_text(
+            "DESCRIPTION = 'fake'\n"
+            "def check():\n    return False\n"
+            "def up():\n    return True\n"
+        )
+
+    def test_discovery_spans_a_gap(self, runner, tmp_path, monkeypatch):
+        d = tmp_path / "migrations"
+        d.mkdir()
+        self._write(d, "116_before_the_gap")
+        self._write(d, "118_after_the_gap")
+        monkeypatch.setattr(runner, "MIGRATION_DIR", d)
+
+        assert [n for n, _, _ in runner.find_migrations()] == [116, 118]
+
+    def test_migrate_applies_116_then_118_with_117_absent(self, runner, tmp_path, monkeypatch):
+        """The sequence 116 → 118 applies, and the watermark lands on 118."""
+        d = tmp_path / "migrations"
+        d.mkdir()
+        self._write(d, "116_before_the_gap")
+        self._write(d, "118_after_the_gap")
+        monkeypatch.setattr(runner, "MIGRATION_DIR", d)
+        runner.save_version(115)
+
+        assert runner.cmd_migrate() is True
+        assert runner.load_version() == 118
+
+    def test_real_migrations_directory_has_no_duplicate_numbers(self):
+        """Numbers may skip; they may never collide — two modules claiming the
+        same number means one of them never runs on a machine at that level."""
+        real = Path(__file__).parent.parent / "core" / "infra" / "migrations"
+        nums = [int(f.stem.split("_")[0]) for f in real.glob("[0-9][0-9][0-9]_*.py")]
+        assert len(nums) == len(set(nums)), "duplicate migration numbers"

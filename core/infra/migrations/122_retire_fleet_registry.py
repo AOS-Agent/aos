@@ -11,17 +11,12 @@ reads `nodes:` and believes this machine verifies others after every ship.
 
 That second entry is the reason this file is retired rather than trimmed.
 `faisal-mini` is another operator's Mac mini, running its own live AOS install
-(v0.7.6, migration level 107, its own agents, Qareen resident). `aos fleet
-update all` would have pushed `check-update --apply` onto it over SSH, which is
-exactly what must never happen — that machine takes an update only when its own
-operator asks for one. The host scope guard in core/infra/lib/channels.py
-already refuses the update on the machine itself; removing the registry removes
-the other half, the command here that would have reached for it.
-
-**The `allow-updates` override is NOT touched.** It is the companion to the host
-scope guard, which this release keeps: it is how the owner of an excluded
-machine opts their own machine back in. Retiring it would quietly take that
-choice away from someone whose computer this is.
+(v0.7.6, migration level 107, its own agents). It takes 0.7.7 like any other AOS
+machine — on its own update cycle, decided on that machine. What must not exist
+is a command here that reaches across SSH and applies an update to it from this
+one, and `aos fleet update all` was exactly that: `check-update --apply` over
+SSH, driven by this registry. Updating is a machine's own business, and this
+file made it somebody else's.
 
 The three nodes this registry would otherwise imply are installs — pi5, mbp,
 imac — have no AOS install at all (probed 2026-09-13): no `~/aos` and no
@@ -53,9 +48,9 @@ CONFIG_DIR = HOME / ".aos" / "config"
 ARCHIVE_DIR = HOME / ".aos" / "backups" / "retired-config"
 
 # Literal names. Never a glob over ~/.aos/config — that directory holds
-# operator.yaml, accounts.yaml, update-policy.yaml, the allow-updates override
-# and every integration's settings, and a pattern loose enough to catch a typo'd
-# filename is loose enough to catch one of those.
+# operator.yaml, accounts.yaml, channel, channel-update.yaml and every
+# integration's settings, and a pattern loose enough to catch a typo'd filename
+# is loose enough to catch one of those.
 RETIRED_FILES = (
     "fleet.yaml",    # node registry for the deleted `aos fleet` CLI
 )
