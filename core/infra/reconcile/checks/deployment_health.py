@@ -25,6 +25,9 @@ class DeploymentHealthCheck(ReconcileCheck):
     name = "deployment_health"
     description = "Verify shipped components are deployed and functional"
 
+    # The QMD collection this check keeps registered over the vault.
+    QMD_COLLECTION_NAME = "vault"
+
     def __init__(self):
         self.issues = []
         self.fixed = []
@@ -37,10 +40,32 @@ class DeploymentHealthCheck(ReconcileCheck):
         self._check_qmd_collections()
         return len(self.issues) == 0
 
-    def fix(self) -> CheckResult:
-        self.fixed = []
+    @staticmethod
+    def _issue_id(issue: dict):
+        """Stable identity for an issue, used to tell whether a specific
+        gap survived a fix() pass. Two issues of the same kind (e.g. two
+        services missing a venv) are different issues and must not be
+        conflated."""
+        kind = issue["kind"]
+        if kind == "missing_venv":
+            return (kind, issue.get("service"))
+        if kind == "missing_cron_script":
+            return (kind, issue.get("job"))
+        if kind == "missing_git_hook":
+            return (kind, issue.get("target"))
+        return (kind, issue.get("message"))
 
-        for issue in list(self.issues):
+    def fix(self) -> CheckResult:
+        """Apply remedies, then re-run the detector and judge every remedy
+        by whether its issue actually disappeared (aos#2345). A remedy
+        must never self-report success — `_fix_qmd_collection` used to
+        append to `self.fixed` whenever the `qmd` subprocess calls didn't
+        raise, regardless of whether the vault collection came into
+        existence, which produced a false "Fixed 1 deployment gap(s)" on
+        every run forever."""
+        before = list(self.issues)
+
+        for issue in before:
             kind = issue["kind"]
             if kind == "missing_venv":
                 self._fix_venv(issue)
@@ -51,26 +76,28 @@ class DeploymentHealthCheck(ReconcileCheck):
             elif kind == "missing_qmd_collection":
                 self._fix_qmd_collection(issue)
 
-        remaining = [i for i in self.issues if i not in self.fixed]
+        # The only trustworthy signal that a remedy took: re-run the same
+        # detector that found the gap in the first place.
+        self.check()
+        after_ids = {self._issue_id(i) for i in self.issues}
+        self.fixed = [i for i in before if self._issue_id(i) not in after_ids]
+        remaining = list(self.issues)
 
-        if remaining and not self.fixed:
-            detail = "\n".join(f"  - {i['message']}" for i in remaining)
+        if remaining:
+            if self.fixed:
+                detail_fixed = "\n".join(f"  ✓ {i['message']}" for i in self.fixed)
+                detail_remain = "\n".join(f"  ✗ {i['message']}" for i in remaining)
+                detail = f"{detail_fixed}\n{detail_remain}"
+            else:
+                detail = "\n".join(f"  - {i['message']}" for i in remaining)
             return CheckResult(
                 name=self.name,
                 status=Status.NOTIFY,
-                message=f"{len(remaining)} deployment gap(s) need attention",
+                message=f"Fixed {len(self.fixed)}, {len(remaining)} remain"
+                if self.fixed
+                else f"{len(remaining)} deployment gap(s) need attention",
                 detail=detail,
                 notify=True,
-            )
-        elif remaining:
-            detail_fixed = "\n".join(f"  ✓ {i['message']}" for i in self.fixed)
-            detail_remain = "\n".join(f"  ✗ {i['message']}" for i in remaining)
-            return CheckResult(
-                name=self.name,
-                status=Status.FIXED,
-                message=f"Fixed {len(self.fixed)}, {len(remaining)} remain",
-                detail=f"{detail_fixed}\n{detail_remain}",
-                notify=bool(remaining),
             )
         elif self.fixed:
             detail = "\n".join(f"  ✓ {i['message']}" for i in self.fixed)
@@ -81,6 +108,8 @@ class DeploymentHealthCheck(ReconcileCheck):
                 detail=detail,
             )
         else:
+            # Nothing was wrong (fix() called directly against an already
+            # healthy state) — never claim a fix that never happened.
             return CheckResult(
                 name=self.name,
                 status=Status.OK,
@@ -234,27 +263,43 @@ class DeploymentHealthCheck(ReconcileCheck):
 
     # ── QMD collections ──────────────────────────────────────────────────
 
+    def _qmd_collection_exists(self, qmd: Path) -> bool:
+        """The single source of truth for whether the vault collection is
+        registered: `qmd collection show <name>` (aos#2345). `qmd status`
+        aggregates every collection into one summary, so it stayed green
+        while the specific collection this check owns was missing or had
+        never been added under this name — a check that can't name what it
+        verified isn't verifying it."""
+        try:
+            result = subprocess.run(
+                [str(qmd), "collection", "show", self.QMD_COLLECTION_NAME],
+                capture_output=True, text=True, timeout=10,
+            )
+        except Exception:
+            return False
+        return result.returncode == 0
+
     def _check_qmd_collections(self):
         """Verify QMD vault collection is registered."""
         qmd = HOME / ".bun" / "bin" / "qmd"
         if not qmd.exists():
             return  # QMD not installed — skip
 
-        try:
-            result = subprocess.run(
-                [str(qmd), "status"],
-                capture_output=True, text=True, timeout=10,
-            )
-            if "Total:    0 files" in result.stdout or "No collections" in result.stdout:
-                self.issues.append({
-                    "kind": "missing_qmd_collection",
-                    "message": "QMD has no collections — vault search is broken",
-                })
-        except Exception:
-            pass
+        if not self._qmd_collection_exists(qmd):
+            self.issues.append({
+                "kind": "missing_qmd_collection",
+                "message": f"QMD has no '{self.QMD_COLLECTION_NAME}' collection — vault search is broken",
+            })
 
     def _fix_qmd_collection(self, issue):
-        """Bootstrap the vault collection."""
+        """Bootstrap the vault collection.
+
+        Deliberately does NOT record success itself — `fix()` re-runs
+        `check()` (which re-verifies via `qmd collection show`) and decides
+        from that whether this remedy actually took. `qmd` can exit 0 while
+        refusing the action outright ("Collection 'vault' already exists.");
+        trusting the exit code here is exactly the bug aos#2345 fixed.
+        """
         qmd = HOME / ".bun" / "bin" / "qmd"
         vault = HOME / "vault"
         if not qmd.exists() or not vault.exists():
@@ -262,13 +307,12 @@ class DeploymentHealthCheck(ReconcileCheck):
 
         try:
             subprocess.run(
-                [str(qmd), "collection", "add", "vault", str(vault), "--pattern", "**/*.md"],
+                [str(qmd), "collection", "add", self.QMD_COLLECTION_NAME, str(vault), "--pattern", "**/*.md"],
                 capture_output=True, timeout=30,
             )
             subprocess.run(
                 [str(qmd), "embed"],
                 capture_output=True, timeout=120,
             )
-            self.fixed.append(issue)
         except Exception:
             pass

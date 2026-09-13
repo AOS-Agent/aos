@@ -2,6 +2,10 @@
 
 All notable changes to AOS. Release notes sent via Telegram after each 4am update.
 
+## v0.7.8
+
+- Fixed `deployment_health` reporting "Fixed 1 deployment gap(s)" on every single run forever (aos#2345): `_fix_qmd_collection` appended to `self.fixed` whenever the `qmd` subprocess calls didn't raise, regardless of whether the vault collection actually came into existence — and since 0.7.7's inbox sink turns every standing NOTIFY into one inbox row, a false FIXED here was actively hiding the fact that vault search never worked. `fix()` now re-runs the detector after acting and derives its verdict from what disappeared: FIXED only when the re-check confirms it, OK when nothing was wrong to begin with, NOTIFY when the remedy didn't take. Detection and re-verification both go through `qmd collection show <name>` — the exact call the real binary can exit 0 on while refusing the action ("Collection 'vault' already exists.") — instead of string-matching `qmd status`'s aggregate summary, which stayed green regardless of whether this specific collection existed.
+
 ## v0.7.7 — the system sheds what it never used — 2026-09-13
 
 Summary: A cleanup release. The system drops the service it decommissioned, switches off the arms that should never have been on by default, clears years of junk out of the instance layer, and fixes the bug that was generating it. Development continues until Qren is ready — nothing here slows the update path down.
