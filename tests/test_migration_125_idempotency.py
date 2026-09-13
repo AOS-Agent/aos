@@ -19,7 +19,6 @@ as every other v0.8.0 migration: `up()` must be safe to replay.
 from __future__ import annotations
 
 import importlib.util
-import os
 import stat
 from pathlib import Path
 

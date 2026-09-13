@@ -92,11 +92,13 @@ def test_previously_fixed_fields_remain_known(tmp_path):
 
 
 def test_reference_operator_yaml_shape_has_no_unknown_key_warnings(tmp_path):
-    """Every top-level key this machine's own operator.yaml actually uses."""
+    """Every top-level key this machine's own operator.yaml actually uses
+    (values genericized — this is a shape test, not a copy of the real
+    file, which stays out of the shipped repo)."""
     data = {
-        "name": "Hisham Al Hadi",
+        "name": "Test Operator",
         "timezone": "America/Toronto",
-        "location": {"latitude": 43.59, "longitude": -79.64, "city": "Mississauga"},
+        "location": {"latitude": 43.59, "longitude": -79.64, "city": "Example City"},
         "prayer": {"method": "NorthAmerica"},
         "communication": {"style": "concise", "questions": "one-at-a-time", "language": "en"},
         "schedule": {"blocks": [], "weekends": {"active_after": "fajr"}},
@@ -104,7 +106,7 @@ def test_reference_operator_yaml_shape_has_no_unknown_key_warnings(tmp_path):
         "trust": {"default_level": 1, "escalation": "always"},
         "agent_name": "chief",
         "initiatives": {"enabled": True, "max_active": 3},
-        "nickname": "Mr. Al Hadi",
+        "nickname": "Boss",
         "notifications": {"learning_tips": True, "morning_briefing": True},
         "role": "developer",
     }
