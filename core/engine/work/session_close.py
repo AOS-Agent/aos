@@ -263,7 +263,7 @@ def main():
                     body = content[fm_end + 3:]
 
                     # Append to Progress section — just the date + session marker
-                    # The real detail comes from task completions logged by engine.py
+                    # The real detail comes from task completions logged by the work engine
                     progress_entry = f"\n- {today}: Session — work performed"
                     progress_marker = "## Progress"
                     if progress_marker in body:

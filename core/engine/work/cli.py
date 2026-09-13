@@ -263,149 +263,6 @@ def cmd_cancel(args):
         sys.exit(1)
 
 
-def cmd_delegate(args):
-    """Delegate a task to an agent: delegate <task> --to <agent>.
-
-    The state transition (spec §3.1): the agent becomes the holder and the task
-    moves into a started stage. assigned_to (the accountable human) is untouched.
-    Emits task.delegated — the runner's future pickup hook. No runner yet (Phase
-    4-5); this is the tagging vocabulary being born.
-    """
-    args, actor_spec = _take_actor(args)
-    if not args or "--to" not in args:
-        print("Usage: delegate <task_id or search> --to <agent> [--actor WHO]")
-        sys.exit(1)
-    to_idx = args.index("--to")
-    query_str = " ".join(args[:to_idx])
-    agent = args[to_idx + 1] if to_idx + 1 < len(args) else None
-    if not query_str or not agent:
-        print("Usage: delegate <task_id or search> --to <agent> [--actor WHO]")
-        sys.exit(1)
-    task = _resolve(query_str)
-    result = engine.delegate_task(task["id"], agent, actor=actor_spec)
-    if result:
-        print(f"Delegated {result['id']}: {result['title']}")
-        print(f"  → held by agent:{agent} (assigned_to unchanged; you stay accountable)")
-        if result.get("stage"):
-            print(f"  → stage: {result['stage']}")
-    else:
-        print(f"Task {task['id']} not found")
-        sys.exit(1)
-
-
-def cmd_hold(args):
-    """Take a delegated task back: hold <task>. Operator becomes the holder."""
-    args, actor_spec = _take_actor(args)
-    if not args:
-        print("Usage: hold <task_id or search> [--actor WHO]")
-        sys.exit(1)
-    query_str = " ".join(args)
-    task = _resolve(query_str)
-    result = engine.hold_task(task["id"], actor=actor_spec)
-    if result:
-        print(f"Held {result['id']}: {result['title']}")
-        print("  → back with operator (delegate cleared)")
-    else:
-        print(f"Task {task['id']} not found")
-        sys.exit(1)
-
-
-def cmd_runner(args):
-    """Control the generic work runner (Kanban Phase 4).
-
-    Subcommands:
-      runner status            what's running / recently finished / queued
-      runner cancel <task>     SIGTERM the worker for a task, mark run cancelled
-      runner enable            deploy + load the service and flip enabled: true
-      runner disable           set enabled: false (pause spawning; stays loaded)
-
-    The runner ships OFF. Autonomous agent spawning is opt-in — `runner enable`
-    is the deliberate step; `runner disable` is the global kill switch.
-    """
-    from runner import RunnerConfig, WorkRunner  # local import — heavy deps
-
-    sub = args[0] if args else "status"
-
-    if sub == "status":
-        runner = WorkRunner(RunnerConfig.load(), backend_mod=engine)
-        st = runner.status()
-        print(f"Runner: enabled={st['enabled']}  cap={st['max_concurrent']}  "
-              f"live-workers={st['in_process_workers']}")
-        if st["running"]:
-            print("\nRunning:")
-            for r in st["running"]:
-                print(f"  {r['id']}  {r['task_id']:12s}  {r['agent']:10s}  pid={r['pid']}  since {r['started_at']}")
-        else:
-            print("\nRunning: (none)")
-        if st["recent"]:
-            print("\nRecent:")
-            for r in st["recent"]:
-                tail = f" — {r['reason']}" if r.get("reason") else ""
-                print(f"  {r['task_id']:12s}  {r['agent']:10s}  {r['state']:14s}{tail}")
-        return
-
-    if sub == "cancel":
-        if len(args) < 2:
-            print("Usage: runner cancel <task_id or search>")
-            sys.exit(1)
-        task = _resolve(" ".join(args[1:]))
-        runner = WorkRunner(RunnerConfig.load(), backend_mod=engine)
-        ok = runner.cancel(task["id"])
-        print(f"Cancelled runner for {task['id']}" if ok
-              else f"No live/running runner for {task['id']}")
-        return
-
-    if sub in ("enable", "disable"):
-        _runner_toggle(enable=(sub == "enable"))
-        return
-
-    print(f"Unknown runner subcommand: {sub}")
-    print("Usage: runner [status | cancel <task> | enable | disable]")
-    sys.exit(1)
-
-
-def _runner_toggle(enable: bool):
-    """Flip runner.enabled in the instance config; on enable, also render + load
-    the LaunchAgent (the opt-in step). On disable, leave the service loaded and
-    idle — the kill switch pauses spawning without an unload."""
-    import subprocess
-    from pathlib import Path
-
-    import yaml
-
-    cfg_path = Path.home() / ".aos" / "config" / "work-runner.yaml"
-    cfg = {}
-    if cfg_path.exists():
-        cfg = yaml.safe_load(cfg_path.read_text()) or {}
-    cfg["enabled"] = enable
-    cfg_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg_path.write_text(yaml.safe_dump(cfg, sort_keys=False))
-    print(f"Set runner.enabled = {enable} in {cfg_path}")
-
-    if not enable:
-        print("Spawning paused. Service stays loaded (in-flight workers finish + park).")
-        return
-
-    # Render the plist from the service-dir template (not auto-globbed, so the
-    # runner is never deployed until this deliberate opt-in) and load it.
-    home = Path.home()
-    for root in (home / "aos", home / "project" / "aos"):
-        tmpl = root / "core" / "services" / "work_runner" / "com.aos.work-runner.plist.template"
-        if tmpl.exists():
-            break
-    else:
-        print("Could not find plist template; service not loaded.")
-        return
-    plist = home / "Library" / "LaunchAgents" / "com.aos.work-runner.plist"
-    plist.write_text(tmpl.read_text().replace("__HOME__", str(home)))
-    subprocess.run(["launchctl", "unload", str(plist)], capture_output=True, text=True)
-    res = subprocess.run(["launchctl", "load", str(plist)], capture_output=True, text=True)
-    if res.returncode == 0:
-        print(f"Loaded com.aos.work-runner ({plist}). Runner is live.")
-    else:
-        print(f"Wrote plist but load reported: {res.stderr.strip()}")
-
-
 def cmd_activity(args):
     """Show or append a task's narrative activity log (Kanban Phase 2).
 
@@ -1185,27 +1042,6 @@ def cmd_threads(args):
         print(f"  {t['id']:6s}  {t['status']:10s}  {t['title']}  ({sessions} sessions){promoted}")
 
 
-def cmd_metrics(args):
-    """Show flow metrics for current week."""
-    import metrics as work_metrics
-
-    data = engine.load_all()
-    tasks = data["tasks"]
-    goals = data["goals"]
-
-    week = work_metrics.compute_current_week(tasks)
-    goal_health = work_metrics.compute_goal_health(goals, tasks)
-
-    save = "--no-save" not in args
-    if save:
-        path = work_metrics.save_weekly_snapshot(week)
-
-    print(work_metrics.format_metrics_display(week, goal_health))
-
-    if save:
-        print(f"\n  Snapshot saved: {path}")
-
-
 def cmd_today(args):
     """Show today's work plan."""
     from datetime import date as _date
@@ -1335,15 +1171,6 @@ def cmd_next(args):
             reasons.append("has momentum")
         reason_str = f"  -- {', '.join(reasons)}" if reasons else ""
         print(f"  {i}. {marker} {t['id']:12s}  {t['title']}{proj}{sess_str}{reason_str}")
-
-
-def cmd_drift(args):
-    """Show drift analysis."""
-    import metrics as work_metrics
-
-    data = engine.load_all()
-    drift = work_metrics.compute_drift(data["goals"], data["tasks"])
-    print(work_metrics.format_drift_display(drift))
 
 
 def cmd_migrate(args):
@@ -1975,10 +1802,7 @@ COMMANDS = {
     "stop": cmd_stop,
     "active": cmd_active,
     "cancel": cmd_cancel,
-    "delegate": cmd_delegate,
-    "hold": cmd_hold,
     "activity": cmd_activity,
-    "runner": cmd_runner,
     "show": cmd_show,
     "list": cmd_list,
     "search": cmd_search,
@@ -1988,8 +1812,6 @@ COMMANDS = {
     "goals": cmd_goals,
     "today": cmd_today,
     "next": cmd_next,
-    "metrics": cmd_metrics,
-    "drift": cmd_drift,
     "link": cmd_link,
     "thread": cmd_thread,
     "threads": cmd_threads,
@@ -2020,9 +1842,6 @@ USAGE = {
     "done": "Usage: done <task_id or search> [--actor WHO]",
     "start": "Usage: start <task_id or search> [--actor WHO]",
     "cancel": "Usage: cancel <task_id or search> [--actor WHO]",
-    "delegate": "Usage: delegate <task_id or search> --to <agent> [--actor WHO]",
-    "hold": "Usage: hold <task_id or search> [--actor WHO]",
-    "runner": "Usage: runner [status | cancel <task> | enable | disable]",
     "activity": "Usage: activity <task> [--kind K --body \"...\" [--data '{...}'] [--actor A]]",
     "show": "Usage: show <task_id or search>",
     "inbox": "Usage: inbox [text to capture] | inbox drop <inbox_id>   (no args shows the inbox)",

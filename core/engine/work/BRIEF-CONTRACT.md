@@ -391,6 +391,6 @@ Strict — do not edit files owned by another workstream.
 | Workstream | Owns |
 |---|---|
 | Compiler | `brief_types.py`, `brief.py`, `tests/engine/work/test_brief.py` |
-| Attribution | `actor.py`, `engine.py`, `backend.py`, `cli.py` |
+| Attribution | `actor.py`, `backend.py`, `cli.py` |
 | Enricher | `enrich.py`, `tests/engine/work/test_enrich.py` |
 | Wires | `session_close.py`, `detect_projects.py` |

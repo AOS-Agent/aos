@@ -6,9 +6,10 @@ for every project="aos" task. Test fixtures (conftest.populated_work_env,
 tests in test_engine.py) create exactly such tasks, and before the guard
 existed the suite filed thousands of real issues on the public repo.
 
-The guard lives in two places (the gh-sync code is duplicated):
-  - core/engine/work/backend.py   (live engine, used by cli.py)
-  - core/engine/work/engine.py    (legacy engine, same API)
+The guard lives in core/engine/work/backend.py, the one work engine cli.py
+uses. It used to be duplicated into a predecessor flat module beside it, which
+v0.7.7 deleted — so there is now one guard to prove rather than two to keep in
+step.
 
 Contract proven here:
   1. Sync is hard-disabled under pytest, even with AOS_GITHUB_SYNC=1 set.
@@ -30,13 +31,11 @@ for _p in (str(_REPO), str(_REPO / "core" / "engine" / "work")):
         sys.path.insert(0, _p)
 
 import backend  # noqa: E402,F401 — also puts the repo root on sys.path
-import engine  # noqa: E402
 import pytest  # noqa: E402
 
 # (module, create_fn_name, close_fn_name)
 GH_MODULES = [
     (backend, "_gh_create_issue", "_gh_close_issue"),
-    (engine, "_gh_create_issue", "_gh_close_issue"),
 ]
 IDS = [m.__name__ for m, _, _ in GH_MODULES]
 

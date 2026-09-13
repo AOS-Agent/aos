@@ -1,8 +1,10 @@
 """
 AOS Work Backend — Ontology-backed work engine for CLI use.
 
-Replaces the old engine.py with ontology-based access.
-Provides the same function signatures so cli.py needs minimal changes.
+The single work engine: SQLite-backed task/project/thread access for the CLI,
+the hooks and the bridge. A predecessor flat module sat beside this one until
+v0.7.7, when it was deleted — nothing imported it and its copy of the
+thread-creation logic had diverged.
 
 All functions return plain dicts (not dataclasses) because query.py and
 cli.py expect dict access via .get(). The _to_dict() conversion is the
@@ -683,7 +685,7 @@ def _today() -> str:
     return date.today().isoformat()
 
 
-# ── Public API (matches engine.py function signatures) ──
+# ── Public API (the function surface cli.py and the hooks call) ──
 
 
 # ── Context Detection ───────────────────────────────────
@@ -1622,53 +1624,52 @@ def move_tasks_to_project(task_ids: list[str], target_project: str,
 def migrate_task_ids() -> dict:
     """Migrate old t1, t2, ... IDs to new project-scoped IDs.
 
-    Delegates to old engine for this one-time migration tool.
+    One-time tool behind `work migrate`. It used to try the predecessor work
+    module first (`import engine as _old_engine`) and fall back to the
+    implementation below; that module was deleted in v0.7.7, so the fallback is
+    now the only path — which is the code that already ran on every machine
+    where the optional import failed.
     """
-    try:
-        import engine as _old_engine
-        return _old_engine.migrate_task_ids()
-    except ImportError:
-        # Old engine not available, perform migration directly
-        adapter = _get_adapter()
-        conn = adapter._conn
-        rows = conn.execute("SELECT * FROM tasks").fetchall()
-        id_map = {}
+    adapter = _get_adapter()
+    conn = adapter._conn
+    rows = conn.execute("SELECT * FROM tasks").fetchall()
+    id_map = {}
 
-        for row in rows:
-            old_id = row["id"]
-            if "#" in old_id:
-                continue
+    for row in rows:
+        old_id = row["id"]
+        if "#" in old_id:
+            continue
 
-            project = row["project_id"]
-            prefix = adapter._project_prefix(project)
-            new_id = adapter._next_scoped_id(prefix)
+        project = row["project_id"]
+        prefix = adapter._project_prefix(project)
+        new_id = adapter._next_scoped_id(prefix)
 
-            conn.execute(
-                "INSERT INTO tasks "
-                "(id, title, status, priority, project_id, description, "
-                " assigned_to, created_by, created_at, started_at, completed_at, "
-                " due_at, parent_id, pipeline, pipeline_stage, recurrence, tags, "
-                " version, modified_at) "
-                "SELECT ?, title, status, priority, project_id, description, "
-                " assigned_to, created_by, created_at, started_at, completed_at, "
-                " due_at, parent_id, pipeline, pipeline_stage, recurrence, tags, "
-                " version, ? "
-                "FROM tasks WHERE id = ?",
-                (new_id, _now(), old_id),
-            )
-            conn.execute(
-                "UPDATE task_handoffs SET task_id = ? WHERE task_id = ?",
-                (new_id, old_id),
-            )
-            conn.execute("DELETE FROM tasks WHERE id = ?", (old_id,))
-            id_map[old_id] = new_id
+        conn.execute(
+            "INSERT INTO tasks "
+            "(id, title, status, priority, project_id, description, "
+            " assigned_to, created_by, created_at, started_at, completed_at, "
+            " due_at, parent_id, pipeline, pipeline_stage, recurrence, tags, "
+            " version, modified_at) "
+            "SELECT ?, title, status, priority, project_id, description, "
+            " assigned_to, created_by, created_at, started_at, completed_at, "
+            " due_at, parent_id, pipeline, pipeline_stage, recurrence, tags, "
+            " version, ? "
+            "FROM tasks WHERE id = ?",
+            (new_id, _now(), old_id),
+        )
+        conn.execute(
+            "UPDATE task_handoffs SET task_id = ? WHERE task_id = ?",
+            (new_id, old_id),
+        )
+        conn.execute("DELETE FROM tasks WHERE id = ?", (old_id,))
+        id_map[old_id] = new_id
 
-        # Update parent references
-        for old, new in id_map.items():
-            conn.execute(
-                "UPDATE tasks SET parent_id = ? WHERE parent_id = ?",
-                (new, old),
-            )
+    # Update parent references
+    for old, new in id_map.items():
+        conn.execute(
+            "UPDATE tasks SET parent_id = ? WHERE parent_id = ?",
+            (new, old),
+        )
 
-        conn.commit()
-        return id_map
+    conn.commit()
+    return id_map

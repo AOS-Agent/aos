@@ -568,7 +568,18 @@ def test_live_instance_is_untouched_by_this_suite():
 
     services = Path.home() / ".aos" / "config" / "services.yaml"
     if services.exists():
-        assert "enabled:" not in services.read_text(), (
-            "the live services.yaml gained an `enabled:` key — a sandboxed "
-            "migration wrote to the real instance"
+        # Parse, never substring-match: default_off.py's own header comment
+        # documents both lists ("# enabled:   services you explicitly want
+        # ON"), so any machine whose services.yaml has been written by
+        # disable_service() contains the literal text `enabled:` and the old
+        # substring form of this assertion failed on the operator's real file
+        # for reasons that had nothing to do with the suite.
+        import yaml
+        try:
+            raw = yaml.safe_load(services.read_text()) or {}
+        except Exception:  # noqa: BLE001
+            raw = {}
+        assert not (isinstance(raw, dict) and raw.get("enabled")), (
+            "the live services.yaml gained a populated `enabled:` list — a "
+            "sandboxed migration wrote an opt-in to the real instance"
         )

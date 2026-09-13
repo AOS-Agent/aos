@@ -219,8 +219,9 @@ class WorkAdapter(Adapter):
         #
         # The default MUST be "unknown", never "operator". Defaulting to the
         # operator does not merely omit attribution — it FORGES it. AOS_ACTOR is
-        # set on only one path (runner.py), so every agent working in an
-        # ordinary Claude Code session was silently credited to the human.
+        # set on only one path (the work runner, deleted in v0.7.7), so every
+        # agent working in an ordinary Claude Code session was silently
+        # credited to the human.
         # Confirmed 2026-07-26: an agent completed hre#1.1/1.2/1.3 and all three
         # landed as actor=operator. "unknown" is the honest answer; callers that
         # know who they are pass an explicit actor.
@@ -2850,7 +2851,7 @@ class WorkAdapter(Adapter):
         """Fetch task + all children, return nested structure.
 
         Returns a dict (not Task) with ``task["subtasks"]`` containing
-        full subtask dicts, matching engine.py's format.
+        full subtask dicts, the shape the CLI renders.
         """
         row = self._conn.execute(
             "SELECT * FROM tasks WHERE id = ?", (task_id,)

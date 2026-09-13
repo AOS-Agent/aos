@@ -7,7 +7,7 @@ Used by migration/reconcile system to ensure all AOS machines get these changes.
 
 | File | Change | Status |
 |------|--------|--------|
-| `core/work/engine.py` | Added `source_ref` param to `add_task()` + conditional write (2 lines) | ✅ verified |
+| `core/work/backend.py` | Added `source_ref` param to `add_task()` + conditional write (2 lines) | ✅ verified — the change landed in the predecessor flat module too, which v0.7.7 deleted; `backend.add_task` is the surviving signature |
 | `core/work/cli.py` | Added `source_ref` display in `cmd_show`, added `cmd_initiatives` command | ✅ verified |
 | `~/.aos/config/operator.yaml` | Added `initiatives:` config block | ✅ verified |
 | `core/work/inject_context.py` | Initiative scanning + merged session-context.json write | ✅ verified |

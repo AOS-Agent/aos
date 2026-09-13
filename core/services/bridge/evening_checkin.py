@@ -89,10 +89,17 @@ except Exception:
 # ── Work engine (dynamic import) ─────────────────────────────────────────────
 
 def _load_work_engine():
-    """Dynamically import the work engine. Returns the module or None."""
+    """Dynamically import the work engine. Returns the module or None.
+
+    backend.py is the one work engine. This used to load a predecessor flat
+    module beside it, which v0.7.7 deleted; because every failure here is
+    swallowed into "work engine unavailable", that stale path would have
+    degraded the evening check-in to an empty task list in silence rather than
+    raising anything anyone would see.
+    """
     try:
-        engine_path = AOS_ROOT / "core" / "engine" / "work" / "engine.py"
-        spec = importlib.util.spec_from_file_location("engine", str(engine_path))
+        engine_path = AOS_ROOT / "core" / "engine" / "work" / "backend.py"
+        spec = importlib.util.spec_from_file_location("work_backend", str(engine_path))
         if spec:
             mod = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(mod)

@@ -150,8 +150,16 @@ class ProjectContext:
 
         Resolution order:
         1. Match against project ``path`` fields from the database.
-           A project matches if ``cwd`` is equal to or inside that path.
+           A project matches if ``cwd`` is equal to or inside that path, and
+           the **longest** matching path wins.
         2. Fall back to directory name matching against project IDs.
+
+        Longest-match is load-bearing, not a nicety. Projects nest — a dataset
+        or an app inside a monorepo — and this used to return whichever
+        candidate the adapter listed first, so the same directory could resolve
+        to the parent on one machine and the child on another purely by row
+        order. Thread dedup (backend.get_or_create_thread_for_cwd) keys on the
+        answer, so a non-deterministic answer means duplicate threads.
 
         Args:
             cwd: Override for the working directory. Defaults to os.getcwd().
@@ -164,19 +172,25 @@ class ProjectContext:
 
         cwd_path = Path(cwd).resolve()
 
-        # 1. Query projects from the adapter and match by path
+        # 1. Query projects from the adapter and match by path, longest first
         projects = self._get_all_projects()
+        best_id: str | None = None
+        best_len = -1
         for proj in projects:
             proj_path_str = proj.get("path") if isinstance(proj, dict) else getattr(proj, "path", None)
-            if not proj_path_str:
+            if not proj_path_str or not str(proj_path_str).strip():
                 continue
-            proj_path = Path(proj_path_str).expanduser().resolve()
+            proj_path = Path(str(proj_path_str).strip()).expanduser().resolve()
             try:
                 cwd_path.relative_to(proj_path)
-                proj_id = proj["id"] if isinstance(proj, dict) else proj.id
-                return proj_id
             except ValueError:
                 continue
+            depth = len(proj_path.parts)
+            if depth > best_len:
+                best_len = depth
+                best_id = proj["id"] if isinstance(proj, dict) else proj.id
+        if best_id is not None:
+            return best_id
 
         # 2. Fall back to directory name matching against project IDs
         dir_name = cwd_path.name

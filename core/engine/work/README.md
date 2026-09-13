@@ -9,7 +9,8 @@ Task tracking engine. Manages tasks and subtasks with project-scoped IDs, cascad
 - **Config**: `~/.aos/config/work.yaml`
 
 ## Key Files
-- `engine.py` — Core CRUD, cascade logic, handoff storage
+- `backend.py` — Core CRUD, cascade logic, handoff storage (the one work engine)
+- `ontology/` — SQLite adapter, typed Task/Project objects, resolver, activity log
 - `cli.py` — Command-line interface (`work add`, `work done`, `work list`, etc.)
 - `inject_context.py` — SessionStart hook: injects active tasks and threads into agent context
 - `session_close.py` — SessionEnd hook: prompts for handoff if tasks are in-progress

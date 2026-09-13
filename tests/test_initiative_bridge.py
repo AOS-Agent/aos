@@ -108,7 +108,7 @@ REQUIRED_FILES = [
     "core/services/bridge/main.py",
     "core/services/bridge/pyproject.toml",
     # Work engine / Initiative
-    "core/engine/work/engine.py",
+    "core/engine/work/backend.py",
     "core/engine/work/cli.py",
     "core/engine/work/inject_context.py",
     "core/engine/work/session_close.py",
@@ -186,7 +186,7 @@ except ImportError as e:
     check("Import: intent_classifier", False, str(e))
 
 try:
-    from core.engine.work.engine import add_task
+    from core.engine.work.backend import add_task
     sig = inspect.signature(add_task)
     check("add_task has source_ref param", "source_ref" in sig.parameters)
 except ImportError as e:
