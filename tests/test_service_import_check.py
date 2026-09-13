@@ -11,7 +11,6 @@ directions — a real gap fires, everything else stays quiet.
 
 import importlib.util
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest

@@ -45,6 +45,15 @@ class HooksPathCheck(ReconcileCheck):
             "command": "python3 ~/aos/core/engine/work/session_close.py",
             "async": True,
         },
+        # aos#236.4: automatic trust-log entries for catalog dispatch —
+        # chief.md's "log every catalog dispatch" mandate had no enforcement
+        # (5 rows ever written). matcher scopes this to the Agent tool only,
+        # so every other PostToolUse consumer is unaffected.
+        "PostToolUse": {
+            "command": "python3 ~/aos/core/hooks/trust_log_dispatch.py",
+            "matcher": "Agent",
+            "async": True,
+        },
     }
 
     # Required permissions — blanket tool-level allows.
@@ -136,7 +145,13 @@ class HooksPathCheck(ReconcileCheck):
                 if spec.get("async"):
                     entry["async"] = True
 
-                hooks[event].append({"hooks": [entry]})
+                block = {"hooks": [entry]}
+                if spec.get("matcher"):
+                    # Tool-scoped hook (e.g. PostToolUse) — matcher lives on
+                    # the outer block, alongside "hooks", not on the entry.
+                    block["matcher"] = spec["matcher"]
+
+                hooks[event].append(block)
                 actions.append(f"added {event} hook")
 
         settings["hooks"] = hooks
