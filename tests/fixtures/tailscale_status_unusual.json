@@ -1,0 +1,55 @@
+{
+  "Version": "1.66.4",
+  "TUN": true,
+  "BackendState": "Running",
+  "AuthURL": "",
+  "TailscaleIPs": ["100.64.0.1"],
+  "Self": {
+    "ID": "n1234",
+    "PublicKey": "nodekey:selfkey",
+    "HostName": "node-a",
+    "DNSName": "node-a.example.ts.net.",
+    "Online": true,
+    "ExitNode": false,
+    "Tags": null
+  },
+  "Peer": {
+    "nodekey:offline-peer-no-lastseen": {
+      "ID": "n2001",
+      "PublicKey": "nodekey:offline-peer-no-lastseen",
+      "HostName": "",
+      "DNSName": "",
+      "Online": false,
+      "LastSeen": null,
+      "ExitNode": true,
+      "PrimaryRoutes": ["0.0.0.0/0", "::/0"],
+      "Tags": ["tag:exit-node"]
+    },
+    "nodekey:duplicate-name-1": {
+      "ID": "n2002",
+      "PublicKey": "nodekey:duplicate-name-1",
+      "HostName": "node-b",
+      "DNSName": "node-b.example.ts.net.",
+      "Online": true,
+      "LastSeen": "2026-09-13T10:00:00Z"
+    },
+    "nodekey:duplicate-name-2": {
+      "ID": "n2003",
+      "PublicKey": "nodekey:duplicate-name-2",
+      "HostName": "node-b",
+      "DNSName": "node-b-2.example.ts.net.",
+      "Online": false,
+      "LastSeen": "12d ago"
+    },
+    "nodekey:nested-weird": {
+      "ID": "n2004",
+      "PublicKey": "nodekey:nested-weird",
+      "HostName": "node-c",
+      "Online": true,
+      "CapMap": {"1": null, "2": [1, 2, 3]},
+      "Addrs": []
+    }
+  },
+  "MagicDNSSuffix": "example.ts.net",
+  "CurrentTailnet": {"Name": "example.ts.net", "MagicDNSEnabled": true}
+}
