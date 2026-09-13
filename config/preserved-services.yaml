@@ -24,3 +24,14 @@ launchagents:
     reason: "WhatsApp bridge — Go-based relay on port 7601, used by comms WhatsApp adapter"
     referenced_by:
       - core/engine/comms/channels/whatsapp.py
+  com.aos.envoy:
+    # No config/launchagents/ template — envoy's CLI renders and installs
+    # its own plist inline (cmd_install_daemon in cli.py), not from a
+    # framework template. Not currently deployed on this machine, but the
+    # code path is real; without this entry, installing it later would be
+    # reported as an orphan the first time hygiene ran (aos#236.8 removed
+    # the config/modules.yaml declaration that used to cover this label —
+    # it was describing a periodic daemon that was never actually deployed).
+    reason: "Envoy delegated-conversation daemon — self-installed by core/engine/comms/envoy/cli.py, off by default (default_off.py)"
+    referenced_by:
+      - core/engine/comms/envoy/cli.py

@@ -2325,6 +2325,16 @@ hook_defs = {
             {'type': 'command', 'command': 'python3 ~/aos/core/bin/crons/reconcile-sessions --hook --quiet', 'async': True},
         ]},
     ],
+    # aos#236.4: automatic trust-log entries for catalog dispatch — matcher
+    # scopes this to the Agent tool only, every other PostToolUse consumer
+    # is unaffected. Also carried by migration 130 and the hooks reconcile
+    # check (core/infra/reconcile/checks/hooks.py) so it self-heals on
+    # existing installs too.
+    'PostToolUse': [
+        {'matcher': 'Agent', 'hooks': [
+            {'type': 'command', 'command': 'python3 ~/aos/core/hooks/trust_log_dispatch.py', 'async': True},
+        ]},
+    ],
 }
 
 for event, hook_entries in hook_defs.items():

@@ -127,13 +127,16 @@ def _framework_launchagents():
 def _manifest_labels():
     """LaunchAgent labels declared in config/modules.yaml.
 
-    The module manifest describes every AOS service on the machine, including
-    those that have no core/services/ dir and no services.d entry —
-    work-runner, ios-deploy, converse, envoy, sana-watch.
-    Without reading it, hygiene called five live
-    services orphans and offered to delete them: two running daemons and three
-    periodic jobs that were merely idle between ticks, which is what healthy
-    looks like for a periodic job.
+    The module manifest describes services on the machine that have no
+    core/services/ dir and no services.d entry and aren't covered by
+    preserved-services.yaml either — today that's just ios-deploy (converse
+    and work-runner are also registry-covered; envoy moved to
+    preserved-services.yaml and sana-watch was removed outright — aos#236.8,
+    neither had a real deployed LaunchAgent anywhere and sana-watch has no
+    framework code at all). Without reading this file, hygiene called live
+    services orphans and offered to delete them: daemons and periodic jobs
+    that were merely idle between ticks, which is what healthy looks like
+    for a periodic job.
     """
     manifest = AOS / "config" / "modules.yaml"
     if not manifest.is_file():

@@ -70,14 +70,63 @@ class InitiativeDirectoriesCheck(ReconcileCheck):
 
 class BridgeTopicsCheck(ReconcileCheck):
     name = "bridge_topics_config"
-    description = "Bridge v2 topics config exists"
+    description = "Bridge v2 topics config exists; every active route has a topic id"
 
     CONFIG_PATH = Path.home() / ".aos" / "config" / "bridge-topics.yaml"
     PROJECTS_YAML = Path.home() / ".aos" / "config" / "projects.yaml"
     AGENT_SECRET = Path.home() / "aos" / "core" / "bin" / "agent-secret"
 
+    # Allowed to re-evaluate on the lightweight periodic reconcile too, not
+    # just deploys — this never mutates anything (see _null_topic_routes /
+    # fix() below), it only computes a fresh NOTIFY message, so there is no
+    # reason to make the operator wait for a deploy to see current state.
+    periodic_fix = True
+
     def check(self) -> bool:
-        return self.CONFIG_PATH.exists()
+        if not self.CONFIG_PATH.exists():
+            return False
+        return not self._null_topic_routes()
+
+    def _null_topic_routes(self) -> list[tuple[str, str]]:
+        """Active Telegram routes whose forum_topic_id is null.
+
+        core/services/bridge/main.py silently skips any route where
+        `tg.get("forum_topic_id")` is None — `if topic_id is None: continue`.
+        That is the exact condition mirrored here: a route can be otherwise
+        fully configured and still never load, with no signal to the
+        operator. Returns (yaml_path, name) pairs, e.g.
+        ("projects.chief.telegram.forum_topic_id", "chief").
+        """
+        if not self.PROJECTS_YAML.exists():
+            return []
+        try:
+            import yaml
+            with open(self.PROJECTS_YAML) as f:
+                data = yaml.safe_load(f)
+        except Exception:
+            return []
+        if not isinstance(data, dict):
+            return []
+
+        findings: list[tuple[str, str]] = []
+
+        for name, proj in (data.get("projects") or {}).items():
+            if not isinstance(proj, dict) or proj.get("status") != "active":
+                continue
+            tg = proj.get("telegram")
+            if isinstance(tg, dict) and tg.get("forum_topic_id") is None:
+                findings.append((f"projects.{name}.telegram.forum_topic_id", name))
+
+        # Non-project top-level entries with their own telegram config
+        # (e.g. technician) — same skip condition in main.py's second loop.
+        for key, entry in data.items():
+            if key in ("projects", "system") or not isinstance(entry, dict):
+                continue
+            tg = entry.get("telegram")
+            if isinstance(tg, dict) and tg.get("forum_topic_id") is None:
+                findings.append((f"{key}.telegram.forum_topic_id", key))
+
+        return findings
 
     def _get_forum_group_id(self) -> int | None:
         """Try to extract forum_group_id from projects.yaml."""
@@ -104,12 +153,38 @@ class BridgeTopicsCheck(ReconcileCheck):
         return None
 
     def fix(self) -> CheckResult:
-        """Create a minimal bridge-topics.yaml scaffold.
+        """Create a minimal bridge-topics.yaml scaffold if missing, else
+        NOTIFY about any active route whose forum_topic_id is null.
 
-        The TopicManager will populate topic thread IDs at runtime
-        when Telegram is available. This just ensures the file exists
-        so the bridge can start without errors.
+        The TopicManager will populate topic thread IDs at runtime when
+        Telegram is available. This just ensures the file exists so the
+        bridge can start without errors.
+
+        ~/.aos/config/projects.yaml is instance config — this never writes
+        to it. A null forum_topic_id needs a real Telegram topic created and
+        its ID copied in by the operator; the best this check can do is say
+        exactly which line that is.
         """
+        if self.CONFIG_PATH.exists():
+            null_routes = self._null_topic_routes()
+            if null_routes:
+                lines = "; ".join(
+                    f"{name}: set `forum_topic_id: <ID>` at {yaml_path} in "
+                    f"~/.aos/config/projects.yaml (currently null — route is "
+                    f"silently skipped at load)"
+                    for yaml_path, name in null_routes
+                )
+                return CheckResult(
+                    name=self.name,
+                    status=Status.NOTIFY,
+                    message=(
+                        f"{len(null_routes)} Telegram route(s) never load — "
+                        f"forum_topic_id is null: {lines}"
+                    ),
+                    notify=True,
+                )
+            return CheckResult(name=self.name, status=Status.OK, message="ok")
+
         forum_group_id = self._get_forum_group_id()
         if forum_group_id is None:
             if not self.PROJECTS_YAML.exists():

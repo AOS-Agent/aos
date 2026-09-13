@@ -10,13 +10,13 @@ directions — a real gap fires, everything else stays quiet.
 """
 
 import importlib.util
+import subprocess
 from pathlib import Path
 
 import pytest
 
-CHECKER = (
-    Path(__file__).parent.parent / "core" / "infra" / "service_import_check.py"
-)
+REPO_ROOT = Path(__file__).parent.parent
+CHECKER = REPO_ROOT / "core" / "infra" / "service_import_check.py"
 
 
 def _load_checker():
@@ -108,3 +108,78 @@ def test_aos_internal_module_is_not_flagged(tmp_path, sic):
         files={"main.py": "import httpx\nfrom log import get_logger\n"},
     )
     assert sic.find_import_gaps(svc) == []
+
+
+# ---------------------------------------------------------------------------
+# Regression: bridge's aiohttp dependency (aos#236.3)
+#
+# Dangling-wires audit (2026-09-13): "Bridge API :4098 — missing aiohttp
+# dependency ... 'No module aiohttp' x40 restarts." Investigation found
+# aiohttp>=3.9.0 was already declared in core/services/bridge/pyproject.toml
+# and pinned in requirements.lock (fixed 2026-03-28, commit f3c2170,
+# aos#131-era) — both the manifest and the installed .venv already have it.
+# What was missing was a test locking that fact in, run through the same
+# venv-aware path ship-check uses (core/infra/service_import_check.py run
+# with the SERVICE's own interpreter, not pytest's) — so a future edit that
+# drops the dependency line fails the suite instead of waiting to be
+# discovered as restart-loop noise in production.
+# ---------------------------------------------------------------------------
+
+BRIDGE_DIR = REPO_ROOT / "core" / "services" / "bridge"
+BRIDGE_VENV_PY = Path.home() / ".aos" / "services" / "bridge" / ".venv" / "bin" / "python"
+
+
+def _run_checker(python: Path, svc_dir: Path) -> str:
+    result = subprocess.run(
+        [str(python), str(CHECKER), str(svc_dir)],
+        capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 0, f"checker crashed: {result.stderr}"
+    return result.stdout.strip()
+
+
+@pytest.mark.skipif(
+    not BRIDGE_VENV_PY.exists(),
+    reason="bridge .venv not built on this machine — instance state, not framework state",
+)
+def test_bridge_service_has_no_import_gaps_in_its_own_venv():
+    """The exact check ship-check runs, against the exact venv bridge runs in.
+
+    aiohttp is the named regression (it is what api_server.py imports for the
+    :4098 health/SSE endpoints), but this asserts zero gaps overall — any
+    undeclared third-party import in the bridge service is the same failure
+    class (ImportError on a freshly rebuilt remote venv).
+    """
+    gaps = _run_checker(BRIDGE_VENV_PY, BRIDGE_DIR).splitlines()
+    assert gaps == [], (
+        f"bridge service has undeclared third-party imports: {gaps} — "
+        f"add them to {BRIDGE_DIR / 'pyproject.toml'}"
+    )
+
+
+@pytest.mark.skipif(
+    not BRIDGE_VENV_PY.exists(),
+    reason="bridge .venv not built on this machine — instance state, not framework state",
+)
+def test_bridge_import_check_would_catch_a_dropped_aiohttp(tmp_path):
+    """Proves the regression guard has teeth: copy the real bridge service,
+    strip the aiohttp dependency line, and confirm the checker (run with the
+    real bridge venv, so aiohttp IS importable there) still flags it as a
+    declared-dependency gap rather than silently passing."""
+    import shutil
+
+    fake_root = tmp_path / "aos"
+    fake_svc = fake_root / "core" / "services" / "bridge"
+    shutil.copytree(BRIDGE_DIR, fake_svc, ignore=shutil.ignore_patterns(".venv", "__pycache__"))
+
+    pyproject = fake_svc / "pyproject.toml"
+    stripped = "\n".join(
+        line for line in pyproject.read_text().splitlines()
+        if "aiohttp" not in line
+    )
+    pyproject.write_text(stripped)
+
+    gaps = _run_checker(BRIDGE_VENV_PY, fake_svc).splitlines()
+    assert "aiohttp" in gaps, (
+        f"stripping aiohttp from pyproject.toml should surface it as a gap, got: {gaps}"
+    )
