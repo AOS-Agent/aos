@@ -56,7 +56,7 @@ Two options depending on complexity:
 
 **Complex initiatives:** Dispatch Advisor: "Read the initiative at {path}. Propose phases with tasks (30min-3hr each). Map dependencies. Assign wave numbers for parallelism. Return the structure."
 
-On approval: create phase tasks via work CLI, update initiative doc, status → executing. Step-by-step handles execution of each phase — it creates a plan file, tracks parts, and syncs progress back to the initiative doc.
+On approval: create phase tasks via work CLI, update initiative doc, status → executing. Step-by-step handles execution of each phase — parts become work subtasks with stored criteria; the engine syncs progress to the initiative doc.
 
 ### Gate Check (dispatch to Advisor)
 

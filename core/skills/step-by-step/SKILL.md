@@ -1,383 +1,95 @@
 ---
 name: step-by-step
 description: >
-  Structured decomposition and execution — one part at a time: context,
-  decision, execution, next. Trigger on "step by step", "one by one", "one at a
-  time", "do X properly", "build out X", "set up X the right way", "let's work
-  through X". Trigger proactively on any task with 3+ parts (migrations, multi-
-  service setups, large refactors, system configs). NOT for "walk me
-  through"/"explain" requests where the user only wants understanding, not
-  decisions.
-
+  Decompose a multi-part task and execute it one part at a time — scope with
+  sizes and dependencies, a brief per part with runnable done-when criteria,
+  verified execution, goal-backward polish. Trigger on "step by step", "one at
+  a time", "do X properly", "build out X", "let's work through X", and
+  proactively on any task with 3+ parts (migrations, multi-service setups,
+  large refactors, system configs). "Walk me through" / "explain" wants
+  understanding only — answer directly.
 ---
 
-# Step by Step -- Structured Decomposition & Execution
+# Step by Step
 
-When a task has multiple parts, don't rush to execute. Decompose, explain, get buy-in, then execute one part at a time with verification. The goal is proper solutions with the operator in control.
-
-## Structured Choices
-
-Claude Code has a native `AskUserQuestion` tool that presents clean, selectable options. **Use it at every decision point** in this skill instead of listing options as text. The operator taps a choice instead of typing.
-
-Rules:
-- Use `question` for the prompt, `options` for the choices
-- Keep option labels short (2-5 words). Put detail in the question, not the options.
-- Always include a freeform fallback — the tool allows typed responses alongside options
-- Don't use AskUserQuestion for simple yes/no — just ask naturally in prose
-
-## Phase 1: SCOPE
-
-Analyze the request and decompose it into parts.
-
-**What to produce:**
-- An ordered list of parts, sequenced by dependency (not arbitrary order)
-- Each part gets a **t-shirt size** (S/M/L) so the operator knows the weight
-- Note dependencies between parts explicitly ("Part 3 needs Part 1's output")
-- If the scope is genuinely ambiguous, ask **one** clarifying question -- not a list
-
-**How to detect parts:**
-- Read the domain. Infrastructure -> services/config/verification. Code -> architecture/implementation/testing. Business -> research/strategy/execution.
-- Think in deliverables, not activities. Each part should produce something concrete.
-- If a part is L-sized, flag it -- it may need to be split further.
-
-**Format:**
+Scope → brief → execute → verify → next, one part at a time. The operator stays in control, the work system holds the state, `sbs` renders and verifies so every run looks the same.
 
 ```
-## Scope: [Task Name]
-
-1. **[Part Name]** (S) -- one-line description
-2. **[Part Name]** (M) -- one-line description
-   depends on: Part 1
-3. **[Part Name]** (L) -- one-line description -- may need splitting
-   depends on: Parts 1, 2
+SBS="python3 ~/.claude/skills/step-by-step/scripts/sbs.py"     # scope · trail · criteria · verify · log
+WORK="python3 ~/aos/core/engine/work/cli.py"                    # commands: references/tracking.md
 ```
 
-Wait for the operator to approve, adjust, reorder, or split before proceeding.
+Decisions use `AskUserQuestion` — at most 4 options, 2–5-word labels, detail in the question. Yes/no goes in prose.
 
-After scope approval, use `AskUserQuestion` to set the rhythm:
+## 1 · SCOPE
 
-```
-AskUserQuestion(
-  question: "I'd suggest [as-we-go/plan-first] for this. How do you want to flow?",
-  options: ["As we go", "Plan first"]
-)
-```
-
-- **As we go** -- present a part, approve, execute, next
-- **Plan first** -- present all parts for approval, then execute
-
-Smart defaults by domain:
-- **Infrastructure / system config / setup / migration / code** -> suggest "As we go"
-- **Business strategy / planning** -> suggest "Plan first"
-
-## Phase 1.5: 10x RECOMMEND
-
-After scope is approved but before executing anything, pause and think bigger. The operator asked for X — but what's the *best possible* version of X? What would someone who's done this 50 times recommend?
-
-**What to produce:**
-
-A short recommendation block (3-8 lines max) that covers:
-
-1. **The 10x take** — Is there a fundamentally better approach than the obvious one? A different tool, pattern, architecture, or sequence that would make this 10x better?
-2. **What most people get wrong** — The common mistake or shortcut that causes pain later
-3. **The move** — One concrete recommendation that elevates the whole task
-
-**When to include:**
-- Always, unless the task is purely mechanical (e.g., "rename these 5 files")
-- The recommendation should be grounded — not theoretical. Reference real tools, patterns, or approaches you know work.
-
-**Format:**
+1. Decompose into **deliverables** — each part produces something concrete — sequenced by dependency, sized S/M/L. Split every L now; the operator never meets an L at a brief. Unfamiliar domain → `references/domain-examples.md`.
+2. Add the **10x take**: what someone who has done this fifty times would build — the better approach, the mistake that hurts later, one concrete move. Opinionated, grounded in real tools. Their approach already best → say so. Nothing genuine → no block.
+3. Present both in one message; ambiguous scope → one clarifying question first.
 
 ```
-### 💡 10x Recommendation
+## Scope: [Task]
+1. **[Part]** (S) — one line
+2. **[Part]** (M) — one line · depends on 1
 
-Most people [common approach]. The better move is [10x approach] because [why].
+### 💡 10x take
+Most people [X]. The better move is [Y] because [Z]. Watch out for [W].
+**Move:** [one action] (+ scope impact)
 
-Watch out for [common mistake that causes pain later].
-
-**Recommendation**: [One concrete, actionable suggestion].
+Rhythm: as we go — say *plan first* for every brief up front.
 ```
 
-**Rules:**
-- Be opinionated. The operator wants your best judgment, not a menu of options.
-- If the operator's approach is already the best one, say so: "Your approach is solid — no 10x upgrade needed here."
-- If the 10x move changes the scope, flag it and let the operator decide: "This would add a Part 0 but save you from rebuilding later."
-- Don't pad. If you don't have a genuine 10x insight, skip this phase entirely rather than writing filler.
+`AskUserQuestion`: **Go** · **Go with the 10x move** · **Discuss**.
 
-After presenting, use `AskUserQuestion`:
+4. On approval, create the parent task and one subtask per part (`references/tracking.md`); show `$SBS scope <parent>`. Multi-session scope with no initiative → ask once: "Track as an initiative?"
 
-```
-AskUserQuestion(
-  question: "Want to adopt this into the scope?",
-  options: ["Adopt", "Note it", "Skip"]
-)
-```
+## 2 · MAP — one brief per part
 
-Then move to MAP for Part 1.
+Open with `$SBS trail <parent> --current <part>` and a readiness signal: `⚡ Ready`, or `🔍 Needs research` — then research first, so the brief is written with the unknowns resolved.
 
-## Phase 2: MAP (per part)
-
-Before executing each part, present a brief explaining what you'll do and why.
-
-**Header format:**
+**Context** what this part enables · **Problem** what needs solving, specifically · **Approach** the proper solution, its key trade-off, the tools involved · **Recommendation** only when there is a real choice · **Done when** — stored as you present it:
 
 ```
-                    ┃ N of Total ┃
-  ━━━━━━━━━━━━━━━━━━┛            ┗━━━━━━━━━━━━━━━━━━
-  Part Name                                    🟢 S
-  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-  ✅ Done  →  🔶 Current  →  ⬜ Upcoming  →  ⬜ Upcoming
+$SBS criteria <part> --size M \
+  --set '$ curl -s http://127.0.0.1:4098/health :: 200' \
+  --set '$ launchctl list | grep com.agent.logwatch' \
+  --set 'notification appears on the phone and tapping it opens the thread'
 ```
 
-Size dots: `🟢 S` · `🟡 M` · `🔴 L`
+A `$` line is a check the machine decides — `:: text` must appear in the output; without `::`, exit 0 passes. A prose line is a manual gate, for when no command can decide. Runnable and exhaustive beats descriptive.
 
-These markers match the initiative pipeline: `✅` complete, `🔶` in progress, `⬜` not started.
+`AskUserQuestion`, exactly these: **Go** · **Discuss** · **Split** · **Skip**. Anything else — a new order, folding two parts — arrives typed; act on it.
 
-**Readiness signal** (right after header):
-- `⚡ Ready` -- approach is clear, no unknowns, can execute immediately
-- `🔍 Needs research` -- unknowns exist, need to investigate before committing
+## 3 · EXECUTE
 
-**Sections:**
+1. Build the proper solution; a temporary hack only when the operator agreed to one.
+2. Parts with no dependency edge and an approved approach run in parallel: background agents (worktree if code) while the operator reviews the next brief — pattern in `dispatching-parallel-agents`.
+3. Evidence is `$SBS verify <part>` output, verbatim. Every ❌ is fixed before the part closes; every 👁 confirmed by looking.
+4. From Part 2 on, `$SBS verify <parent>` re-runs every finished part's criteria — the backward check. A regression stops the flow until it is green again.
+5. Something breaks → stop, explain, propose the fix; the operator sees every failure before a retry.
+6. `$WORK done <part>` — the engine cascades to parent and initiative — show the trail, open the next brief.
 
-**Context**: Why this part matters / what it enables
+## 4 · POLISH
 
-**Problem**: What needs solving (be specific)
-
-**Approach**: What you'll do (proper solution, not bandaid)
-- Key decision or trade-off, if any
-- Tools/services involved
-
-**Recommendation**: Your top pick if there's a meaningful choice to make
-(skip this if there's only one reasonable approach)
-
-**Done when**: Concrete, verifiable acceptance criteria. Not vibes, not "it works." Specific conditions that can be checked.
-
-Examples of good criteria:
-- `curl http://127.0.0.1:4098/health` returns 200
-- `~/.aos/logs/bridge.jsonl` contains entries with `"level"` and `"ts"` fields
-- `launchctl list | grep com.agent.logwatch` shows running
-
-Then use `AskUserQuestion`:
+1. `$SBS verify <parent>` — all still green.
+2. **Goal-backward:** restate the original request in one sentence, then use the result end-to-end as the operator would. A gap between "parts done" and "goal met" is the first line of the report, in bold.
+3. Report **Gaps** (deferred, out of scope) · **Hardening** (edge cases, tests worth adding) · **10x reflection** (did the take land — one sentence) · **Dependencies created** (downstream updates).
+4. `$SBS log --task … --parts N --mode as-we-go|plan-first --domain … --work-id <parent>`, then confirm the parent cascaded: `$WORK show <parent>`.
 
 ```
-AskUserQuestion(
-  question: "Ready for [Part Name]?",
-  options: ["Go", "Reorder", "Split", "Skip", "Merge", "Discuss"]
-)
+✅ Part 1  →  ✅ Part 2  →  ⏭ Part 3  →  ✅ Part 4   🏁 [Task]
 ```
 
-## Phase 3: EXECUTE
+## Leaving early · resuming
 
-After approval, do the work. Key rules:
+Any exit before POLISH writes the baton: `$WORK handoff <parent> --state … --next … --decisions …`. On "resume": `$WORK dispatch <parent>`, `$SBS scope <parent>`, confirm — "Parts 1–2 done, picking up at 3, [name]?" — open its brief. Criteria stored at MAP survive the gap; `verify` still runs them.
 
-1. **Proper solutions only.** No temporary hacks unless explicitly agreed.
+## Not this skill
 
-2. **Verify against acceptance criteria.** Show evidence with blockquotes:
+Single actions · "just do it", "quick fix" — execute directly · pure research · "walk me through" — answer directly. "Skip the ceremony" mid-flow: run the remaining parts straight through, keeping verify and close.
 
-   ```
-   > ✅ `curl :4098/health` → 200
-   > ✅ `logs/bridge.jsonl` has valid JSON with "level" and "ts"
-   > ❌ `launchctl list | grep logwatch` → not found
-   ```
+## Resources
 
-   If any criterion fails, stop and fix before moving on.
-
-3. **Progress indicator.** Every message during execution starts with:
-   ```
-   ● Part Name                                    [N/Total]
-   ───────────────────────────────────────────────────────────
-   ```
-
-4. **Backward verification (Parts 2+).** Re-run acceptance criteria from completed parts that could be affected. If a prior part breaks, stop immediately.
-
-5. **If something goes wrong:** Stop. Explain. Propose a fix. Don't silently retry.
-
-6. **Transition.** After completing a part, show the progress trail, then present next part's MAP:
-   ```
-   ✅ Health Endpoints  →  🔶 Watchdog Script  →  ⬜ Alerting  →  ⬜ Dashboard
-   ```
-
-## Phase 4: POLISH
-
-After all parts are complete, do a final pass.
-
-### Goal-Backward Check
-
-Verify that the *original request* was actually achieved -- not just that tasks were completed.
-
-1. Restate the original request in one sentence
-2. For each part completed, check: does this contribute to the original goal?
-3. Try to use the result end-to-end as the operator would
-4. If there's a gap between "tasks completed" and "goal achieved" -- flag it clearly
-
-### Final Review
-
-```
-  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-  ✅ Part 1  →  ✅ Part 2  →  ✅ Part 3  →  ✅ Part 4
-
-  🏁 COMPLETE ─── [Task Name]
-  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-```
-
-Skipped parts show as: `⏭ Part Name`
-
-**Goal check**: Does the completed work deliver what was originally requested?
-
-**Gaps**: Anything knowingly deferred or out of scope
-
-**Hardening**: Error handling, edge cases, or tests worth adding
-
-**10x Reflection**: Did the 10x recommendation from Phase 1.5 land? If adopted, did it pay off? If skipped, would it have helped? One sentence.
-
-**Dependencies Created**: Anything downstream that needs updating
-
-## Task Tracking — Two Layers
-
-Step-by-step uses two complementary tracking systems:
-
-| Layer | Tool | Purpose |
-|-------|------|---------|
-| **In-session** | `TaskCreate` / `TaskUpdate` | Visual progress in Claude Code UI — spinners, checkmarks, status |
-| **Persistent** | Work CLI (`~/aos/core/engine/work/cli.py`) | Cross-session state, dashboard events, initiative linking |
-
-Both are mandatory. TaskCreate gives the operator live visual feedback. The work system gives resumability and downstream automation.
-
-### At SCOPE (after operator approves parts)
-
-**1. Create work system tasks** (persistent layer):
-
-```bash
-# Create parent task for the whole step-by-step flow
-python3 ~/aos/core/engine/work/cli.py add "{Task Name}" --project {project}
-# Note the returned ID (e.g., aos#15)
-
-# Create subtasks — one per part
-python3 ~/aos/core/engine/work/cli.py subtask aos#15 "Part 1: {name}"
-python3 ~/aos/core/engine/work/cli.py subtask aos#15 "Part 2: {name}"
-python3 ~/aos/core/engine/work/cli.py subtask aos#15 "Part 3: {name}"
-```
-
-If this work belongs to an initiative phase, add `source_ref` when creating the parent:
-```bash
-python3 ~/aos/core/engine/work/cli.py add "{Task Name}" --project {project} --source-ref "vault/knowledge/initiatives/{slug}.md"
-```
-
-**2. Create in-session tasks** (visual layer):
-
-Use `TaskCreate` for each part. Wire up dependencies with `addBlockedBy`.
-
-```
-TaskCreate(
-  subject: "Part 1: {name}",
-  description: "{one-line description from scope}",
-  activeForm: "{Present continuous — e.g., 'Setting up health endpoints'}"
-)
-# → returns taskId "1"
-
-TaskCreate(
-  subject: "Part 2: {name}",
-  description: "{one-line description}",
-  activeForm: "{e.g., 'Configuring watchdog script'}"
-)
-# → returns taskId "2"
-# Then: TaskUpdate(taskId: "2", addBlockedBy: ["1"])
-
-TaskCreate(
-  subject: "Part 3: {name}",
-  description: "{one-line description}",
-  activeForm: "{e.g., 'Wiring up alerting'}"
-)
-# → returns taskId "3"
-# Then: TaskUpdate(taskId: "3", addBlockedBy: ["1", "2"])
-```
-
-Rules for in-session tasks:
-- `subject` matches the part name from scope (e.g., "Part 1: Health Endpoints")
-- `activeForm` is present continuous — this text shows in the spinner during execution
-- Wire `addBlockedBy` to mirror the dependency chain from scope
-- Store the `taskId` ↔ work system ID mapping (e.g., taskId "1" = aos#15.1) for the session
-
-**3. Show the created structure** to the operator:
-
-```
-  Scope: {Task Name}                              [aos#15]
-
-  ⬜ 1. {Part 1} (S)                              [aos#15.1]
-  ⬜ 2. {Part 2} (M)                              [aos#15.2]
-  ⬜ 3. {Part 3} (L)                              [aos#15.3]
-```
-
-### At EXECUTE (per part)
-
-**Starting a part** — mark it in-progress in session tasks:
-
-```
-TaskUpdate(taskId: "{id}", status: "in_progress")
-```
-
-This activates the spinner with the `activeForm` text. The operator sees live progress.
-
-**Completing a part** — after verifying acceptance criteria, update both layers:
-
-```
-# In-session: show checkmark
-TaskUpdate(taskId: "{id}", status: "completed")
-
-# Persistent: mark subtask done
-python3 ~/aos/core/engine/work/cli.py done aos#15.1
-```
-
-The work engine handles everything downstream:
-- Subtask marked done
-- When ALL subtasks done → parent auto-completes (cascade)
-- If parent has `source_ref` → initiative checkbox auto-updates
-- Dashboard gets a live event
-
-You do NOT need to manually update initiative docs, plan files, or dashboards. The engine does it.
-
-### At POLISH
-
-Verify the parent task cascaded:
-```bash
-python3 ~/aos/core/engine/work/cli.py show aos#15
-```
-
-If it shows `status: done` with `auto_completed: true`, everything synced. If not, mark it done manually:
-```bash
-python3 ~/aos/core/engine/work/cli.py done aos#15
-```
-
-## Resumability
-
-If a session ends mid-flow, the operator can say "resume" or "continue" and you should:
-1. Read your injected context — active tasks with subtask status are already there
-2. Or run `python3 ~/aos/core/engine/work/cli.py show {parent-id}` to see which subtasks are done
-3. Confirm: "Parts 1-3 are done. Picking up at Part 4 — {name}. Sound right?"
-4. Continue from MAP for the next uncompleted part
-
-The work system IS the resume state. No files to read, no context to recover.
-
-## When NOT to use this skill
-
-- Simple, single-action requests ("restart the bridge", "check system health")
-- Tasks where the operator explicitly wants speed over structure ("just do it", "quick fix")
-- Pure research or information gathering
-
-The operator is always in control. If they say "skip the ceremony, just execute" -- respect that.
-
-## Usage Tracking
-
-After completing a step-by-step flow, append a one-line entry to `~/.aos/logs/step-by-step.jsonl`:
-
-```json
-{"date":"2026-03-25","task":"Auth system","parts":4,"mode":"as-we-go","domain":"code","skipped":0,"splits":1,"initiative":"nuchay-app","phase":1}
-```
-
-The `initiative` and `phase` fields are included when the work is initiative-linked, omitted otherwise.
-
-## Bundled Resources
-
-- `references/domain-examples.md` -- Example decompositions across 5 domains. Read when scoping a task in an unfamiliar domain.
+- `scripts/sbs.py` — no arguments prints usage
+- `references/tracking.md` — work CLI: create, close, handoff, resume, initiative linking
+- `references/domain-examples.md` — decompositions and criteria, six domains
