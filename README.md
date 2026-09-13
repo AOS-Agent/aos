@@ -2,7 +2,7 @@
   <img src="https://img.shields.io/badge/status-beta-F5A623?style=flat-square" alt="Beta" />
   <img src="https://img.shields.io/badge/platform-macOS-000?style=flat-square&logo=apple" alt="macOS" />
   <img src="https://img.shields.io/badge/runtime-Claude_Code-D9730D?style=flat-square" alt="Claude Code" />
-  <img src="https://img.shields.io/badge/version-0.8.0-blue?style=flat-square" alt="v0.8.0" />
+  <img src="https://img.shields.io/badge/version-0.7.7-blue?style=flat-square" alt="v0.7.7" />
   <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="MIT" />
 </p>
 
