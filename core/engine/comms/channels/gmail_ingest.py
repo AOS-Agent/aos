@@ -11,13 +11,18 @@ new channel.
 Auth
 ----
 OAuth credentials live one file per account under
-``~/.google_workspace_mcp/credentials/<email>.json`` (the Google Workspace
-MCP store, operator-managed). Each file carries a ``refresh_token`` and the
-shared OAuth client id/secret. We refresh a short-lived access token
-(non-interactive server call — NOT the interactive consent flow) and hand
-it to ``gws`` via ``GOOGLE_WORKSPACE_CLI_TOKEN``. Accounts are DISCOVERED
-from the directory — nothing is hardcoded. An account whose refresh fails
-is reported and skipped; we never launch an OAuth GUI flow ourselves.
+``~/.aos/config/google/credentials/<email>.json`` — the same canonical,
+0600-hardened directory ``gws-account``, migration 059/134, and the
+``google_workspace`` reconcile check all treat as the one credential store
+(aos#2326: this used to point at the superseded workspace-mcp path,
+``~/.google_workspace_mcp/credentials/``, which meant the same refresh
+token could exist in two on-disk places at once). Each file carries a
+``refresh_token`` and the shared OAuth client id/secret. We refresh a
+short-lived access token (non-interactive server call — NOT the interactive
+consent flow) and hand it to ``gws`` via ``GOOGLE_WORKSPACE_CLI_TOKEN``.
+Accounts are DISCOVERED from the directory — nothing is hardcoded. An
+account whose refresh fails is reported and skipped; we never launch an
+OAuth GUI flow ourselves.
 
 Dedup (two layers)
 ------------------
@@ -70,7 +75,7 @@ logger = logging.getLogger(__name__)
 
 # ── Paths ────────────────────────────────────────────────────────────────
 
-CREDENTIALS_DIR = Path.home() / ".google_workspace_mcp" / "credentials"
+CREDENTIALS_DIR = Path.home() / ".aos" / "config" / "google" / "credentials"
 COMMS_DB = Path.home() / ".aos" / "data" / "comms.db"
 PEOPLE_DB = Path.home() / ".aos" / "data" / "people.db"
 STATE_FILE = Path.home() / ".aos" / "data" / ".gmail-ingest-state.json"

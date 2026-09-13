@@ -336,3 +336,15 @@ def test_ingest_dry_run_writes_nothing(tmp_path):
     conn = sqlite3.connect(comms)
     assert conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 0
     conn.close()
+
+
+# ── aos#2326: credentials live at the canonical gws location ─────────────
+
+def test_credentials_dir_matches_canonical_gws_location():
+    """gmail_ingest.py must read from the same directory gws-account,
+    migration 059/134, and the reconcile check all treat as canonical —
+    not the superseded ~/.google_workspace_mcp/credentials/ legacy path
+    migration 134 removes. Two credential stores for the same refresh
+    token is exactly the exposure aos#2326 flagged; there must be one."""
+    assert gi.CREDENTIALS_DIR == Path.home() / ".aos" / "config" / "google" / "credentials"
+    assert ".google_workspace_mcp" not in gi.CREDENTIALS_DIR.parts

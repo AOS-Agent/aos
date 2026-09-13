@@ -64,8 +64,15 @@ def _extract_python_blocks(script_text: str) -> list[str]:
 
 
 def test_no_datetime_utc_pattern_in_tree():
+    """git-grep, not a plain walk, so this only ever sees tracked files —
+    and it excludes the two places the literal string is *expected* to
+    appear as prose describing the bug (this file's own docstrings/
+    assertions, and the CHANGELOG entry), not as a live code path."""
     result = subprocess.run(
-        ["git", "grep", "-n", "datetime.UTC"],
+        [
+            "git", "grep", "-n", "datetime.UTC", "--",
+            ".", ":!CHANGELOG.md", ":!tests/test_datetime_utc_removed.py",
+        ],
         cwd=REPO_ROOT, capture_output=True, text=True,
     )
     assert result.returncode == 1, f"datetime.UTC reappeared:\n{result.stdout}"
