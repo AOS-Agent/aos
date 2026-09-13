@@ -77,7 +77,7 @@ class TestMigrateContract:
     """cmd_migrate() success/failure classification for a single pending migration."""
 
     def test_success_true_advances_watermark(self, runner, monkeypatch):
-        monkeypatch.setattr(runner, "find_migrations", lambda: [fake_migration(1, "001_ok", True)])
+        monkeypatch.setattr(runner, "find_migrations", lambda *a, **k: [fake_migration(1, "001_ok", True)])
         result = runner.cmd_migrate()
         assert result is True
         assert runner.load_version() == 1
@@ -85,13 +85,13 @@ class TestMigrateContract:
     def test_success_none_advances_watermark(self, runner, monkeypatch):
         """Many migrations don't explicitly `return True` — falling off the
         end of up() returns None, which must also count as success."""
-        monkeypatch.setattr(runner, "find_migrations", lambda: [fake_migration(1, "001_ok_none", None)])
+        monkeypatch.setattr(runner, "find_migrations", lambda *a, **k: [fake_migration(1, "001_ok_none", None)])
         result = runner.cmd_migrate()
         assert result is True
         assert runner.load_version() == 1
 
     def test_false_return_is_failure_watermark_unchanged(self, runner, monkeypatch):
-        monkeypatch.setattr(runner, "find_migrations", lambda: [fake_migration(1, "001_fail", False)])
+        monkeypatch.setattr(runner, "find_migrations", lambda *a, **k: [fake_migration(1, "001_fail", False)])
         result = runner.cmd_migrate()
         assert result is False
         assert runner.load_version() == 0
@@ -102,7 +102,7 @@ class TestMigrateContract:
         failure, not silently recorded as applied."""
         monkeypatch.setattr(
             runner, "find_migrations",
-            lambda: [fake_migration(1, "001_fail_string", "Failed: no such table")],
+            lambda *a, **k: [fake_migration(1, "001_fail_string", "Failed: no such table")],
         )
         result = runner.cmd_migrate()
         assert result is False
@@ -111,7 +111,7 @@ class TestMigrateContract:
     def test_exception_is_failure_watermark_unchanged(self, runner, monkeypatch):
         monkeypatch.setattr(
             runner, "find_migrations",
-            lambda: [fake_migration(1, "001_raises", RuntimeError("boom"))],
+            lambda *a, **k: [fake_migration(1, "001_raises", RuntimeError("boom"))],
         )
         result = runner.cmd_migrate()
         assert result is False
@@ -133,7 +133,7 @@ class TestMigrateContract:
 
         monkeypatch.setattr(
             runner, "find_migrations",
-            lambda: [
+            lambda *a, **k: [
                 make(1, "001_fail_string", "some error"),
                 make(2, "002_would_run", True),
             ],
@@ -145,7 +145,7 @@ class TestMigrateContract:
 
     def test_already_applied_check_skips_up_and_advances_watermark(self, runner, monkeypatch):
         n, name, mod = fake_migration(1, "001_already_applied", "would be an error if called", checked=True)
-        monkeypatch.setattr(runner, "find_migrations", lambda: [(n, name, mod)])
+        monkeypatch.setattr(runner, "find_migrations", lambda *a, **k: [(n, name, mod)])
         result = runner.cmd_migrate()
         assert result is True
         assert runner.load_version() == 1
@@ -154,7 +154,7 @@ class TestMigrateContract:
         import yaml
         monkeypatch.setattr(
             runner, "find_migrations",
-            lambda: [fake_migration(1, "001_fail_string", "Failed: no such table")],
+            lambda *a, **k: [fake_migration(1, "001_fail_string", "Failed: no such table")],
         )
         runner.cmd_migrate()
         log = yaml.safe_load(runner.MIGRATION_LOG.read_text())
@@ -176,7 +176,7 @@ class TestPendingCount:
     """
 
     def test_zero_pending_when_no_migrations_above_watermark(self, runner, monkeypatch, capsys):
-        monkeypatch.setattr(runner, "find_migrations", lambda: [fake_migration(1, "001_applied", True)])
+        monkeypatch.setattr(runner, "find_migrations", lambda *a, **k: [fake_migration(1, "001_applied", True)])
         runner.save_version(1)
         runner.cmd_pending_count()
         assert capsys.readouterr().out.strip() == "0"
@@ -188,7 +188,7 @@ class TestPendingCount:
         other way to know they exist."""
         monkeypatch.setattr(
             runner, "find_migrations",
-            lambda: [
+            lambda *a, **k: [
                 fake_migration(1, "001_applied", True),
                 fake_migration(2, "002_pending", True),
                 fake_migration(3, "003_pending", True),
@@ -204,7 +204,7 @@ class TestPendingCount:
         """Checking pending count must be side-effect free — it's called
         every update cycle by the updater purely to decide whether to run
         migrate, and must not itself advance state."""
-        monkeypatch.setattr(runner, "find_migrations", lambda: [fake_migration(1, "001_pending", True)])
+        monkeypatch.setattr(runner, "find_migrations", lambda *a, **k: [fake_migration(1, "001_pending", True)])
         runner.save_version(0)
         runner.cmd_pending_count()
         assert runner.load_version() == 0
@@ -257,3 +257,59 @@ class TestNumberingGaps:
         real = Path(__file__).parent.parent / "core" / "infra" / "migrations"
         nums = [int(f.stem.split("_")[0]) for f in real.glob("[0-9][0-9][0-9]_*.py")]
         assert len(nums) == len(set(nums)), "duplicate migration numbers"
+
+
+class TestLazyDiscovery:
+    """The runner must never import a migration that has already been applied.
+
+    Found by the 0.7.7 sequential dry-run: migration 093 imports
+    `qareen.tracking.store` at module scope, and the Qareen decommission (108)
+    deleted that package — so on any machine at watermark ≥ 93, discovery
+    crashed with ModuleNotFoundError before a single pending migration ran.
+    Applied migrations are history; only pending ones get imported, and a
+    pending one that fails to import is logged as an error, not a crash.
+    """
+
+    def _write(self, mig_dir: Path, name: str, body: str) -> None:
+        mig_dir.mkdir(parents=True, exist_ok=True)
+        (mig_dir / f"{name}.py").write_text(body)
+
+    def test_applied_migrations_are_never_imported(self, runner, tmp_path, monkeypatch):
+        mig_dir = tmp_path / "migrations"
+        self._write(mig_dir, "001_ok", "DESCRIPTION='ok'\ndef check(): return True\ndef up(): return True\n")
+        self._write(mig_dir, "002_broken", "import module_that_does_not_exist_anymore\n")
+        monkeypatch.setattr(runner, "MIGRATION_DIR", mig_dir)
+        runner.save_version(2)
+        assert runner.cmd_migrate() is True  # 'already at version 2' — no import, no crash
+        assert runner.load_version() == 2
+
+    def test_pending_broken_import_is_an_error_not_a_crash(self, runner, tmp_path, monkeypatch):
+        mig_dir = tmp_path / "migrations"
+        self._write(mig_dir, "001_ok", "DESCRIPTION='ok'\ndef check(): return True\ndef up(): return True\n")
+        self._write(mig_dir, "002_broken", "import module_that_does_not_exist_anymore\n")
+        self._write(mig_dir, "003_never_reached", "DESCRIPTION='later'\ndef check(): return False\ndef up(): return True\n")
+        monkeypatch.setattr(runner, "MIGRATION_DIR", mig_dir)
+        runner.save_version(1)
+        assert runner.cmd_migrate() is False
+        assert runner.load_version() == 1
+        log = runner.MIGRATION_LOG.read_text()
+        assert "002_broken" in log and "error" in log
+        assert "003_never_reached" not in log
+
+    def test_pending_count_needs_no_imports(self, runner, tmp_path, monkeypatch, capsys):
+        mig_dir = tmp_path / "migrations"
+        self._write(mig_dir, "001_broken", "import module_that_does_not_exist_anymore\n")
+        monkeypatch.setattr(runner, "MIGRATION_DIR", mig_dir)
+        runner.save_version(0)
+        runner.cmd_pending_count()
+        assert capsys.readouterr().out.strip() == "1"
+
+
+def test_093_survives_the_qareen_decommission(tmp_path, monkeypatch):
+    """093 must import and report applied on a machine where qareen/ is gone."""
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+    path = RUNNER_PATH.parent / "093_auto_tracker_init.py"
+    spec = importlib.util.spec_from_file_location("mig_093", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)  # must not raise
+    assert mod.check() is True

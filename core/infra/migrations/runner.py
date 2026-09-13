@@ -46,19 +46,51 @@ def save_version(version: int):
     VERSION_FILE.write_text(str(version))
 
 
-def find_migrations() -> list[tuple[int, str, object]]:
+class _BrokenMigration:
+    """Stand-in for a pending migration whose module failed to import.
+
+    check() is False so the runner tries it; up() re-raises the import error
+    so the failure is logged as 'error' with the real cause and the batch
+    stops — instead of the whole runner crashing at discovery time.
+    """
+
+    def __init__(self, name: str, error: Exception):
+        self.DESCRIPTION = f"{name} (import failed)"
+        self._error = error
+
+    def check(self) -> bool:
+        return False
+
+    def up(self):
+        raise self._error
+
+
+def find_migrations(applied_through: int | None = None,
+                    load: bool = True) -> list[tuple[int, str, object]]:
     """Find all migration scripts, sorted by number.
 
-    Returns list of (number, name, module).
+    Returns list of (number, name, module). A migration is IMPORTED only when
+    it is still pending — numbered above ``applied_through`` — and ``load`` is
+    true; applied migrations (and every migration when ``load`` is False) come
+    back with ``module=None``. Applied migrations are history: importing them
+    means their module-level imports must resolve forever, and the 0.7.7
+    dry-run found 093 importing a package the 108 decommission deleted, which
+    crashed discovery on every machine before a single pending migration ran.
+    A pending migration that fails to import becomes a ``_BrokenMigration`` so
+    cmd_migrate logs the error and stops cleanly.
     """
     migrations = []
     for f in sorted(MIGRATION_DIR.glob("[0-9][0-9][0-9]_*.py")):
         num = int(f.stem.split("_")[0])
         name = f.stem
-        # Load as module
-        spec = importlib.util.spec_from_file_location(name, f)
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
+        mod = None
+        if load and (applied_through is None or num > applied_through):
+            spec = importlib.util.spec_from_file_location(name, f)
+            mod = importlib.util.module_from_spec(spec)
+            try:
+                spec.loader.exec_module(mod)
+            except Exception as e:  # noqa: BLE001 — any import failure is a migration error
+                mod = _BrokenMigration(name, e)
         migrations.append((num, name, mod))
     return migrations
 
@@ -87,7 +119,7 @@ def log_migration(num: int, name: str, status: str, details: str = ""):
 def cmd_migrate():
     """Run all pending migrations."""
     current = load_version()
-    migrations = find_migrations()
+    migrations = find_migrations(applied_through=current)
     pending = [(n, name, mod) for n, name, mod in migrations if n > current]
 
     if not pending:
@@ -145,7 +177,7 @@ def cmd_pending_count():
     migration trigger must be pending count, not version delta.
     """
     current = load_version()
-    migrations = find_migrations()
+    migrations = find_migrations(load=False)
     pending = [n for n, name, mod in migrations if n > current]
     print(len(pending))
 
@@ -153,7 +185,7 @@ def cmd_pending_count():
 def cmd_status():
     """Show migration status."""
     current = load_version()
-    migrations = find_migrations()
+    migrations = find_migrations(applied_through=current)
     pending = [(n, name, mod) for n, name, mod in migrations if n > current]
     applied = [(n, name, mod) for n, name, mod in migrations if n <= current]
 

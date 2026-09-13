@@ -35,7 +35,10 @@ CORE_DIR = Path(__file__).resolve().parents[2]
 if str(CORE_DIR) not in sys.path:
     sys.path.insert(0, str(CORE_DIR))
 
-from qareen.tracking.store import AUTO_TRACKER_TABLES, SCHEMA_SQL  # noqa: E402
+try:
+    from qareen.tracking.store import AUTO_TRACKER_TABLES, SCHEMA_SQL  # noqa: E402
+except ImportError:  # the Auto Tracker was retired with Qareen (migration 108)
+    AUTO_TRACKER_TABLES, SCHEMA_SQL = (), None
 
 QAREEN_DB = Path.home() / ".aos" / "data" / "qareen.db"
 
@@ -102,3 +105,22 @@ if __name__ == "__main__":
         print("Migration 093 already applied")
     else:
         print("Done" if up() else "Failed")
+
+
+# ── Post-decommission guard ────────────────────────────────────────────────
+# Migration 108 deleted qareen/ (and with it the tracker store this migration
+# installs). On such a machine there is nothing to create: report applied.
+_up_impl, _check_impl = up, check
+
+
+def up(db_path: Optional[Union[str, Path]] = None) -> bool:  # noqa: F811
+    if SCHEMA_SQL is None:
+        print("  Auto Tracker retired with Qareen (migration 108) — nothing to apply")
+        return True
+    return _up_impl(db_path)
+
+
+def check(db_path: Optional[Union[str, Path]] = None) -> bool:  # noqa: F811
+    if SCHEMA_SQL is None:
+        return True
+    return _check_impl(db_path)
