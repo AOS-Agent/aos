@@ -20,17 +20,32 @@ from pathlib import Path
 # and it calls sys.exit() at the end — which would abort pytest collection.
 # When imported by pytest, skip the whole module cleanly. Run it directly on a
 # dev box instead:  python3 tests/test_initiative_bridge.py
-if __name__ != "__main__":
-    import pytest
 
-    _dev_workspace = Path.home() / "project" / "aos"
-    _reason = (
+
+def _pytest_skip_reason() -> str:
+    """The message for the module-level pytest.skip() below.
+
+    A function, not an inlined expression, so it resolves Path.home() fresh
+    on every call rather than binding it once into a module-level constant —
+    the `default_off.py` pattern this release fixed elsewhere (HOME = Path.
+    home() at import time meant a later, sandboxed Path.home() in a test was
+    silently ignored). Here that would mean a test re-importing this file
+    with a patched HOME still reading whatever machine ran the *first*
+    import. See tests/test_initiative_bridge_skip_is_hermetic.py.
+    """
+    reason = (
         "dev-machine verification script — run it directly "
         "(python3 tests/test_initiative_bridge.py), not under pytest"
     )
-    if not _dev_workspace.is_dir():
-        _reason = "not a dev machine (no ~/project/aos); " + _reason
-    pytest.skip(_reason, allow_module_level=True)
+    if not (Path.home() / "project" / "aos").is_dir():
+        reason = "not a dev machine (no ~/project/aos); " + reason
+    return reason
+
+
+if __name__ != "__main__":
+    import pytest
+
+    pytest.skip(_pytest_skip_reason(), allow_module_level=True)
 
 # Setup paths
 AOS_DEV = Path.home() / "project" / "aos"
