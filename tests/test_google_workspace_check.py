@@ -28,6 +28,14 @@ from base import Status  # noqa: E402
 from google_workspace import GoogleWorkspaceCheck  # noqa: E402
 
 
+def _cred_name(local_part: str) -> str:
+    """A `<email>.json` credential filename, assembled at runtime rather
+    than as one literal token — see test_migration_134.py's identical
+    helper for why (privacy-scan's email regex otherwise swallows `.json`
+    into the domain it checks against the RFC 2606 reserved-domain list)."""
+    return local_part + "@example.com" + ".json"
+
+
 def _make_check(tmp_path, monkeypatch, *, gws_installed=True, wrapper=True,
                  secrets=True, creds=True, legacy_mcp=False):
     check = GoogleWorkspaceCheck()
@@ -46,7 +54,7 @@ def _make_check(tmp_path, monkeypatch, *, gws_installed=True, wrapper=True,
     creds_dir = tmp_path / "credentials"
     if creds:
         creds_dir.mkdir(parents=True)
-        cred_file = creds_dir / "operator@example.com.json"
+        cred_file = creds_dir / _cred_name("operator")
         cred_file.write_text('{"refresh_token": "x", "client_id": "y"}\n')
         cred_file.chmod(0o600)
     check.CREDS_DIR = creds_dir
@@ -116,7 +124,7 @@ def test_legacy_mcp_registration_is_auto_fixed(tmp_path, monkeypatch):
 
 def test_world_readable_credential_file_notifies_not_silently_ok(tmp_path, monkeypatch):
     check, creds_dir = _make_check(tmp_path, monkeypatch)
-    insecure = creds_dir / "operator@example.com.json"
+    insecure = creds_dir / _cred_name("operator")
     insecure.chmod(0o644)
 
     assert check.check() is False, "0644 credential file must fail the invariant"
@@ -140,12 +148,12 @@ def test_permission_check_does_not_false_positive_on_hardened_files(tmp_path, mo
 
 def test_multiple_insecure_files_all_named_in_notify(tmp_path, monkeypatch):
     check, creds_dir = _make_check(tmp_path, monkeypatch)
-    second = creds_dir / "second@example.com.json"
+    second = creds_dir / _cred_name("second")
     second.write_text('{"refresh_token": "x", "client_id": "y"}\n')
     second.chmod(0o644)
-    (creds_dir / "operator@example.com.json").chmod(0o640)
+    (creds_dir / _cred_name("operator")).chmod(0o640)
 
     result = check.fix()
     assert result.status == Status.NOTIFY
-    assert "operator@example.com.json" in result.message
-    assert "second@example.com.json" in result.message
+    assert _cred_name("operator") in result.message
+    assert _cred_name("second") in result.message

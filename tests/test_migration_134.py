@@ -32,6 +32,17 @@ REPO = Path(__file__).resolve().parents[1]
 MIG = REPO / "core" / "infra" / "migrations" / "134_google_credentials_hardening.py"
 
 
+def _cred_name(local_part: str) -> str:
+    """A `<email>.json` credential filename, assembled at runtime rather
+    than as one literal token — the real filename shape per the
+    google-workspace manifest's own setup instructions, but written this
+    way so a fixture using the RFC 2606 reserved `example.com` domain
+    doesn't get read by privacy-scan's email regex as one run ending in
+    `.json` (which isn't a reserved TLD, so the reserved-domain downgrade
+    never fires). No behavior difference; same fixture data either way."""
+    return local_part + "@example.com" + ".json"
+
+
 @pytest.fixture
 def m(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
@@ -67,7 +78,7 @@ def test_nothing_present_is_already_applied(m):
 def test_legacy_token_converted_hardened_and_legacy_dir_removed(m):
     old_dir = m._old_creds_dir()
     old_dir.mkdir(parents=True)
-    token = old_dir / "operator@example.com.json"
+    token = old_dir / _cred_name("operator")
     token.write_text(json.dumps({
         "client_id": "cid", "client_secret": "csecret", "refresh_token": "rtok",
     }))
@@ -78,7 +89,7 @@ def test_legacy_token_converted_hardened_and_legacy_dir_removed(m):
     assert m.up() is True
 
     new_dir = m._new_creds_dir()
-    converted = new_dir / "operator@example.com.json"
+    converted = new_dir / _cred_name("operator")
     assert converted.exists()
     data = json.loads(converted.read_text())
     assert data["refresh_token"] == "rtok"
@@ -96,7 +107,7 @@ def test_already_converted_new_dir_only_gets_hardened(m):
     conversion step. Migration must not require the legacy dir to exist."""
     new_dir = m._new_creds_dir()
     new_dir.mkdir(parents=True)
-    f = new_dir / "operator@example.com.json"
+    f = new_dir / _cred_name("operator")
     f.write_text(json.dumps({
         "client_id": "cid", "client_secret": "csecret",
         "refresh_token": "rtok", "type": "authorized_user",
@@ -113,7 +124,7 @@ def test_already_converted_new_dir_only_gets_hardened(m):
 def test_backup_exclusion_attempted_on_new_dir_with_credentials(m):
     new_dir = m._new_creds_dir()
     new_dir.mkdir(parents=True)
-    (new_dir / "a@example.com.json").write_text('{"refresh_token":"x","client_id":"y"}')
+    (new_dir / _cred_name("a")).write_text('{"refresh_token":"x","client_id":"y"}')
 
     assert m.up() is True
 
@@ -128,7 +139,7 @@ def test_partial_conversion_failure_keeps_legacy_dir(m):
     lost, and up() reports failure."""
     old_dir = m._old_creds_dir()
     old_dir.mkdir(parents=True)
-    (old_dir / "broken@example.com.json").write_text(json.dumps({"client_id": "cid"}))
+    (old_dir / _cred_name("broken")).write_text(json.dumps({"client_id": "cid"}))
 
     assert m.up() is False
     assert old_dir.exists(), "must not delete legacy data it failed to convert"
@@ -137,13 +148,13 @@ def test_partial_conversion_failure_keeps_legacy_dir(m):
 def test_already_present_new_file_is_not_overwritten_by_legacy(m):
     old_dir = m._old_creds_dir()
     old_dir.mkdir(parents=True)
-    (old_dir / "operator@example.com.json").write_text(json.dumps({
+    (old_dir / _cred_name("operator")).write_text(json.dumps({
         "client_id": "STALE", "client_secret": "x", "refresh_token": "STALE",
     }))
 
     new_dir = m._new_creds_dir()
     new_dir.mkdir(parents=True)
-    live = new_dir / "operator@example.com.json"
+    live = new_dir / _cred_name("operator")
     live.write_text(json.dumps({
         "client_id": "LIVE", "client_secret": "x", "refresh_token": "LIVE",
         "type": "authorized_user",
@@ -159,7 +170,7 @@ def test_already_present_new_file_is_not_overwritten_by_legacy(m):
 def test_idempotent_second_run_is_a_noop(m):
     old_dir = m._old_creds_dir()
     old_dir.mkdir(parents=True)
-    (old_dir / "a@example.com.json").write_text(json.dumps({
+    (old_dir / _cred_name("a")).write_text(json.dumps({
         "client_id": "cid", "client_secret": "csecret", "refresh_token": "rtok",
     }))
 

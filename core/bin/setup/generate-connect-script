@@ -98,19 +98,76 @@ mkdir -p "$HOME/.ssh"
 touch "$HOME/.ssh/config"
 chmod 600 "$HOME/.ssh/config"
 
-if grep -qE '^[[:space:]]*Host[[:space:]]+aos([[:space:]]|$)' "$HOME/.ssh/config"; then
-    say "SSH host 'aos' already configured — leaving it alone."
-else
-    cat >> "$HOME/.ssh/config" <<SSHCFG
-
-# Added by AOS connect script
+# aos#2334: a re-run used to see any existing `Host aos` block (marked or
+# not) and leave it alone — so a changed Tailscale IP (new machine, new
+# network) never landed, and the script still reported success. This
+# idempotently replaces the managed block between marker comments, adding
+# the markers if this is the first run, and never touches anything else in
+# the file.
+_write_aos_ssh_block() {
+    local config="$HOME/.ssh/config"
+    local begin="# >>> aos-connect: managed 'aos' host — do not edit between these lines >>>"
+    local end="# <<< aos-connect: managed 'aos' host <<<"
+    local block_file tmp
+    # The replacement block is staged in its own file and spliced in via
+    # awk's getline-from-file — NOT passed through `awk -v` as a multi-line
+    # string, which BSD/"one true" awk (macOS's default /usr/bin/awk) rejects
+    # outright ("newline in string") even though gawk tolerates it. A laptop
+    # this script runs on is not guaranteed to have gawk.
+    block_file=$(mktemp)
+    cat > "$block_file" <<BLOCK
+$begin
 Host aos
     HostName ${AOS_IP}
     User ${AOS_USER}
     ServerAliveInterval 60
-SSHCFG
-    say "Added 'aos' to ~/.ssh/config — you can now run: ssh aos"
-fi
+$end
+BLOCK
+    tmp=$(mktemp "${config}.XXXXXX")
+
+    if grep -qF "$begin" "$config" 2>/dev/null; then
+        # Marked block from a prior run of this script — replace it in
+        # place so a changed IP actually lands. Everything else preserved.
+        awk -v begin="$begin" -v end="$end" -v blockfile="$block_file" '
+            $0 == begin {
+                while ((getline line < blockfile) > 0) print line
+                close(blockfile)
+                skip=1; next
+            }
+            skip && $0 == end { skip=0; next }
+            skip { next }
+            { print }
+        ' "$config" > "$tmp"
+        say "Updated the 'aos' SSH config entry (picked up the current Tailscale IP)."
+    elif grep -qE '^[[:space:]]*Host[[:space:]]+aos([[:space:]]|$)' "$config" 2>/dev/null; then
+        # Unmarked `Host aos` block from an older connect-to-aos.sh —
+        # replace it with the new marked block instead of leaving a stale,
+        # unmanaged duplicate.
+        awk -v blockfile="$block_file" '
+            /^[[:space:]]*Host[[:space:]]+aos([[:space:]]|$)/ && !replaced {
+                while ((getline line < blockfile) > 0) print line
+                close(blockfile)
+                in_block=1; replaced=1; next
+            }
+            in_block && /^[[:space:]]*Host[[:space:]]+/ { in_block=0 }
+            in_block { next }
+            { print }
+        ' "$config" > "$tmp"
+        say "Replaced an existing 'aos' SSH config entry with a managed one."
+    else
+        cp "$config" "$tmp"
+        {
+            echo ""
+            cat "$block_file"
+        } >> "$tmp"
+        say "Added 'aos' to ~/.ssh/config — you can now run: ssh aos"
+    fi
+
+    rm -f "$block_file"
+    mv "$tmp" "$config"
+    chmod 600 "$config"
+}
+_write_aos_ssh_block
 
 # ── 3. Desktop shortcuts ─────────────────────────────────────────────────────
 TERM_CMD="$HOME/Desktop/AOS Terminal.command"
