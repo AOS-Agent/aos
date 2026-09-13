@@ -11,7 +11,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-logger = logging.getLogger("bridge.longform")
+logger = logging.getLogger("aos.bridge.longform")
 
 LONGFORM_THRESHOLD = 6000  # chars — about 1.5 Telegram messages
 VAULT_RESPONSES_DIR = Path.home() / "vault" / "log"

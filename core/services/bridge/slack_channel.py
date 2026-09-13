@@ -9,7 +9,7 @@ from session_manager import WORKSPACE, clear_session, get_session_id, save_sessi
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("aos.bridge.slack_channel")
 
 SLACK_MSG_LIMIT = 4000
 

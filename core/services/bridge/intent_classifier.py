@@ -21,7 +21,7 @@ from pathlib import Path
 
 import httpx
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("aos.bridge.intent_classifier")
 
 
 def esc(value) -> str:

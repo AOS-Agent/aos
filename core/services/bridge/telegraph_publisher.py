@@ -9,7 +9,7 @@ import mistune
 from mistune.plugins.table import table
 from telegraph import Telegraph
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("aos.bridge.telegraph_publisher")
 
 # Load token from Keychain
 _TOKEN = None

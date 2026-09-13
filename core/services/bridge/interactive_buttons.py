@@ -12,7 +12,7 @@ from dataclasses import dataclass
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("aos.bridge.interactive_buttons")
 
 OPTION_MAX_AGE = 3600  # 1 hour — auto-expire stale pending options
 

@@ -19,7 +19,7 @@ from collections import deque
 
 from aiohttp import web
 
-logger = logging.getLogger("bridge.api")
+logger = logging.getLogger("aos.bridge.api")
 
 # Ring buffer of recent events for /history (last 200 events)
 _event_history: deque[dict] = deque(maxlen=200)

@@ -47,7 +47,7 @@ from telegram.ext import (
 )
 from voice_transcriber import get_mode, set_mode, transcribe_voice
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("aos.bridge.telegram")
 
 
 def _esc(value) -> str:

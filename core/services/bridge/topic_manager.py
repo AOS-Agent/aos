@@ -20,7 +20,7 @@ from pathlib import Path
 
 import yaml
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("aos.bridge.topic_manager")
 
 CONFIG_PATH = Path.home() / ".aos" / "config" / "bridge-topics.yaml"
 

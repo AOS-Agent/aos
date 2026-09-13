@@ -12,7 +12,7 @@ import httpx
 import yaml
 from activity_client import log_activity as log_dashboard_activity
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("aos.bridge.heartbeat")
 
 WORKSPACE = Path.home() / "aos"
 
