@@ -140,13 +140,13 @@ def test_unrelated_hosts_are_byte_for_byte_untouched(tmp_path):
         "    IdentityFile ~/.ssh/id_ed25519_github\n"
         "\n"
         "Host laptop\n"
-        "    HostName 198.51.100.20\n"
+        "    HostName 10.0.2.20\n"
         "    User alice\n"
         "\n"
         + _expected_block("203.0.113.99", "olduser") + "\n"
         "\n"
         "Host desktop\n"
-        "    HostName 198.51.100.30\n"
+        "    HostName 10.0.2.30\n"
         "    User bob\n"
     )
     out = _run(existing, "203.0.113.10", "opuser", tmp_path)
@@ -158,12 +158,12 @@ def test_unrelated_hosts_are_byte_for_byte_untouched(tmp_path):
     ) in out
     assert (
         "Host laptop\n"
-        "    HostName 198.51.100.20\n"
+        "    HostName 10.0.2.20\n"
         "    User alice\n"
     ) in out
     assert (
         "Host desktop\n"
-        "    HostName 198.51.100.30\n"
+        "    HostName 10.0.2.30\n"
         "    User bob\n"
     ) in out
     assert _expected_block("203.0.113.10", "opuser") in out
@@ -182,13 +182,13 @@ def test_unrelated_hosts_untouched_with_legacy_unmarked_block(tmp_path):
         "    ServerAliveInterval 60\n"
         "\n"
         "Host laptop\n"
-        "    HostName 198.51.100.20\n"
+        "    HostName 10.0.2.20\n"
         "    User alice\n"
     )
     out = _run(existing, "203.0.113.10", "opuser", tmp_path)
 
     assert "Host github.com\n    User git\n" in out
-    assert "Host laptop\n    HostName 198.51.100.20\n    User alice\n" in out
+    assert "Host laptop\n    HostName 10.0.2.20\n    User alice\n" in out
     assert _expected_block("203.0.113.10", "opuser") in out
     assert "203.0.113.99" not in out
     assert "olduser" not in out
