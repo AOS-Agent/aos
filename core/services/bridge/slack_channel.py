@@ -4,7 +4,7 @@ import json
 import logging
 import subprocess
 
-from activity_client import log_activity
+from conversation_store import record_inbound, record_outbound
 from session_manager import WORKSPACE, clear_session, get_session_id, save_session_id
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
@@ -76,7 +76,7 @@ class SlackChannel:
                 return
 
             user_key = f"slack:{user_id}"
-            log_activity("slack", "message_received", summary=text[:100])
+            record_inbound(text, kind="message", meta={"channel": "slack"})
 
             response = _ask_claude_sync(text, user_key)
 
@@ -85,7 +85,7 @@ class SlackChannel:
                 chunk = response[i:i + SLACK_MSG_LIMIT]
                 say(chunk)
 
-            log_activity("slack", "response_sent", summary=response[:100])
+            record_outbound(response, kind="response", meta={"channel": "slack"})
 
     def start(self):
         """Start Slack Socket Mode with connection retry limit."""

@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 
 import httpx
 import yaml
-from activity_client import log_activity as log_dashboard_activity
+from conversation_store import record_outbound
 
 logger = logging.getLogger("aos.bridge.heartbeat")
 
@@ -333,8 +333,9 @@ def start_heartbeat(bot_token: str, chat_id: int, interval_minutes: int = 30):
                     ) or "no-http-services"
                     summary = f"disk:{health['disk_pct']}% ram:{health['ram_pct']}% {svc_summary}"
 
-                    # Always log to dashboard
-                    log_dashboard_activity("ops", "heartbeat", summary=summary)
+                    # A health sample, not a message — it belongs in the log,
+                    # not in the conversation store.
+                    logger.debug(f"Heartbeat: {summary}")
 
                     if problems:
                         # Only report NEW problems (not already flagged)
@@ -348,7 +349,8 @@ def start_heartbeat(bot_token: str, chat_id: int, interval_minutes: int = 30):
                             else:
                                 msg = new_problems[0]
                             _alert(bot_token, chat_id, msg)
-                            log_dashboard_activity("ops", "heartbeat_alert", summary=msg[:200])
+                            record_outbound(msg, chat_id=chat_id, topic="alerts",
+                                            kind="heartbeat_alert")
                             logger.info(f"Heartbeat alert (new): {new_problems}")
 
                         # Update tracked problems

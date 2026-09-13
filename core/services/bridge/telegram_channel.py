@@ -13,8 +13,8 @@ import tempfile
 import time as _time
 from pathlib import Path
 
-from activity_client import log_activity, log_conversation, update_conversation
 from bridge_events import bridge_event
+from conversation_store import record_inbound, record_outbound
 from evening_checkin import (
     _save_checkin_to_daily,
     is_awaiting_checkin_reply,
@@ -169,7 +169,7 @@ async def _dispatch_steer_and_report(chat, message, text: str, thread_id=None):
                     ["python3", poll_script, "cleanup", job_id],
                     capture_output=True, text=True,
                 )
-                log_activity("telegram", "steer_job_completed", summary=summary[:100])
+                record_outbound(response_text, kind="job_report")
                 return summary
 
             elif status == "failed":
@@ -188,7 +188,7 @@ async def _dispatch_steer_and_report(chat, message, text: str, thread_id=None):
                     ["python3", poll_script, "cleanup", job_id],
                     capture_output=True, text=True,
                 )
-                log_activity("telegram", "steer_job_failed", summary=error[:100])
+                record_outbound(error, kind="job_failed")
                 return f"Failed: {error}"
 
             # Still running — update progress if there are new updates
@@ -627,8 +627,6 @@ class TelegramChannel:
             )
 
             log_agent = agent_name or "claude"
-            aid = log_activity(log_agent, "invoke", status="running",
-                               summary=message[:100])
 
             # Render stream to Telegram — pass the thinking message so it gets
             # edited into the response (single message flow, no ghosts)
@@ -647,9 +645,6 @@ class TelegramChannel:
 
             # Log completion
             if result and not result.is_error:
-                from activity_client import update_activity
-                update_activity(aid, "completed", summary=final_text[:100],
-                                duration_ms=duration_ms)
                 log_execution(
                     task=message[:200], approach="claude-cli-stream",
                     success=True, duration_ms=duration_ms,
@@ -663,10 +658,6 @@ class TelegramChannel:
                 )
             else:
                 had_error = True
-                from activity_client import update_activity
-                update_activity(aid, "failed",
-                                summary=(result.text if result else "Unknown error")[:100],
-                                duration_ms=duration_ms)
                 log_execution(
                     task=message[:200], approach="claude-cli-stream",
                     success=False, duration_ms=duration_ms,
@@ -782,7 +773,9 @@ class TelegramChannel:
                     "Evening check-in saved. Good night.",
                     parse_mode="HTML",
                 )
-                log_activity("telegram", "checkin_saved", summary=text_raw[:100])
+                record_inbound(text_raw, chat_id=chat_id, kind="checkin_reply")
+                record_outbound("Evening check-in saved. Good night.",
+                                chat_id=chat_id, kind="checkin_ack")
                 return
             except Exception as e:
                 logger.warning(f"Failed to save check-in reply: {e}")
@@ -805,7 +798,7 @@ class TelegramChannel:
                     await update.message.reply_text(f"Error: {result.stderr[:500]}", parse_mode="HTML")
                 else:
                     # The script sends its own Telegram notification, just log it
-                    log_activity("telegram", "rules_approved", summary=f"Approved rules: {' '.join(args)}")
+                    record_inbound(text_raw, chat_id=chat_id, kind="command")
                 return
             except Exception as e:
                 logger.warning(f"Failed to process approve-rules: {e}")
@@ -834,7 +827,8 @@ class TelegramChannel:
                 quick_reply = classify_intent(text)
                 if quick_reply:
                     logger.info(f"Quick command: {text[:60]}")
-                    log_activity("telegram", "quick_command", summary=text[:100])
+                    record_inbound(text, chat_id=chat_id, kind="quick_command")
+                    record_outbound(quick_reply, chat_id=chat_id, kind="quick_reply")
                     await update.message.reply_text(
                         quick_reply, parse_mode="HTML",
                         message_thread_id=thread_id,
@@ -849,8 +843,9 @@ class TelegramChannel:
 
         # Acknowledge receipt immediately (before lock — user sees 👀 right away)
         await self._ack_message(update.message)
+        _topic_name = topic_agent or (f"topic:{thread_id}" if thread_id else "dm")
         logger.info(f"Message: {text[:80]} [{user_key}]")
-        log_activity("telegram", "message_received", summary=text[:100])
+        record_inbound(text, chat_id=chat_id, topic=_topic_name, kind="message")
 
         # Per-conversation lock — only one Claude process at a time
         lock = self._conversation_locks.setdefault(user_key, asyncio.Lock())
@@ -874,16 +869,10 @@ class TelegramChannel:
             )
 
             _conv_start = _time.monotonic()
-            _topic_name = topic_agent or (f"topic:{thread_id}" if thread_id else "dm")
-            _conv_id = log_conversation(
-                user_key=user_key, agent=topic_agent, topic_name=_topic_name,
-                message=update.message.text,
-            )
 
             # ── Task dispatch: multi-step work runs in tmux, agent picks tools ──
             if _is_task_dispatch(text):
                 logger.info(f"Task dispatch: {user_key} → {text[:60]}")
-                log_activity("telegram", "task_dispatch", summary=text[:100])
                 response = await _dispatch_steer_and_report(
                     update.message.chat, update.message, text,
                     thread_id=thread_id,
@@ -904,8 +893,8 @@ class TelegramChannel:
 
             _conv_duration = int((_time.monotonic() - _conv_start) * 1000)
             logger.info(f"Response: {_conv_duration}ms, {len(response)} chars [{user_key}]")
-            update_conversation(_conv_id, response=response[:10000], duration_ms=_conv_duration)
-            log_activity("telegram", "response_sent", summary=response[:100])
+            record_outbound(response, chat_id=chat_id, topic=_topic_name,
+                            kind="response", meta={"duration_ms": _conv_duration})
 
     async def _handle_new(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not update.message:
@@ -948,7 +937,6 @@ class TelegramChannel:
 
         # Acknowledge receipt
         await self._react(update.message, "🎙")
-        log_activity("telegram", "voice_received", summary=f"voice {update.message.voice.duration}s")
 
         # Download and transcribe
         reply_kwargs = {}
@@ -969,6 +957,9 @@ class TelegramChannel:
             await self._react(update.message, "💔")
             await update.message.reply_text("(couldn't transcribe — empty audio)", **reply_kwargs)
             return
+
+        record_inbound(text, chat_id=chat_id, kind="voice",
+                       meta={"duration_s": update.message.voice.duration})
 
         # Show transcription — italic reply to the voice message, no labels.
         await self._react(update.message, "✅")
@@ -998,7 +989,8 @@ class TelegramChannel:
             update.message.chat, update.message, prompt, user_key,
             cwd=topic_cwd, thread_id=thread_id,
         )
-        log_activity("telegram", "voice_response_sent", summary=response[:100])
+        record_outbound(response, chat_id=chat_id, kind="response",
+                        meta={"source": "voice"})
 
     async def _handle_whisper(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Switch whisper mode: /whisper fast | /whisper accurate"""
@@ -1103,7 +1095,7 @@ class TelegramChannel:
                 tmp.close()
                 await tg_file.download_to_drive(tmp.name)
                 image_paths.append(tmp.name)
-                log_activity("telegram", "photo_received", summary=caption[:100] or "photo")
+                record_inbound(caption or "(photo)", chat_id=chat_id, kind="photo")
 
             elif msg.video:
                 is_video = True
@@ -1118,8 +1110,8 @@ class TelegramChannel:
                 if not image_paths:
                     await msg.reply_text("Couldn't extract frames from video.")
                     return
-                log_activity("telegram", "video_received",
-                             summary=f"video {msg.video.duration}s — {caption[:80]}")
+                record_inbound(caption or "(video)", chat_id=chat_id, kind="video",
+                               meta={"duration_s": msg.video.duration})
 
             elif msg.document:
                 mime = msg.document.mime_type or ""
@@ -1132,8 +1124,8 @@ class TelegramChannel:
                     tmp.close()
                     await tg_file.download_to_drive(tmp.name)
                     image_paths.append(tmp.name)
-                    log_activity("telegram", "image_doc_received",
-                                 summary=caption[:100] or "image document")
+                    record_inbound(caption or "(image file)", chat_id=chat_id,
+                                   kind="document")
                 elif mime.startswith("video/"):
                     is_video = True
                     tg_file = await msg.document.get_file()
@@ -1146,8 +1138,8 @@ class TelegramChannel:
                     if not image_paths:
                         await msg.reply_text("Couldn't extract frames from video.")
                         return
-                    log_activity("telegram", "video_doc_received",
-                                 summary=f"video doc — {caption[:80]}")
+                    record_inbound(caption or "(video file)", chat_id=chat_id,
+                                   kind="document")
                 else:
                     await msg.reply_text(
                         f"Unsupported file type: {mime}\n"
@@ -1187,7 +1179,8 @@ class TelegramChannel:
             msg.chat, msg, prompt, user_key, image_paths=image_paths,
             cwd=topic_cwd, thread_id=thread_id,
         )
-        log_activity("telegram", "media_response_sent", summary=response[:100])
+        record_outbound(response, chat_id=chat_id, kind="response",
+                        meta={"source": "media"})
 
         # Clean up temp files
         for p in image_paths:
@@ -1270,7 +1263,8 @@ class TelegramChannel:
             query.message.chat, query.message, message_text, user_key,
             cwd=topic_cwd, thread_id=thread_id,
         )
-        log_activity("telegram", "callback_response", summary=response[:100])
+        record_outbound(response, chat_id=chat_id, kind="response",
+                        meta={"source": "button"})
 
     # ── Vault commands (/note, /search, /capture) ─────────
 
@@ -1327,7 +1321,7 @@ class TelegramChannel:
         filepath.parent.mkdir(parents=True, exist_ok=True)
         filepath.write_text(content)
         self._qmd_reindex_async()
-        log_activity("telegram", "note_saved", summary=text[:100])
+        record_inbound(text, chat_id=update.message.chat_id, kind="note")
         await update.message.reply_text(
             f"Saved to <code>ideas/{_esc(filename)}</code>",
             parse_mode="HTML",
@@ -1476,7 +1470,7 @@ class TelegramChannel:
                 pass
 
         self._qmd_reindex_async()
-        log_activity("telegram", "capture_saved", summary=f"{note_type}: {text[:100]}")
+        record_inbound(text, chat_id=update.message.chat_id, kind="capture")
         await update.message.reply_text(
             f"Captured [{_esc(note_type)}] → <code>{_esc(folder)}/{_esc(filename)}</code>{related_msg}",
             parse_mode="HTML",
@@ -1618,8 +1612,6 @@ class TelegramChannel:
         if not self._is_authorized(update.message.chat_id):
             return
 
-        from activity_client import log_activity
-
         args = context.args or []
         thread_id = getattr(update.message, 'message_thread_id', None)
         kwargs = {}
@@ -1678,7 +1670,7 @@ class TelegramChannel:
                 await update.message.reply_text(
                     f"✅ {out}", parse_mode="HTML", **kwargs,
                 )
-                log_activity("telegram", "task_created", summary=task_name[:100])
+                record_outbound(out, chat_id=update.message.chat_id, kind="task_reply")
             else:
                 await update.message.reply_text(
                     "Failed to create task.", **kwargs,
@@ -1691,7 +1683,7 @@ class TelegramChannel:
                 await update.message.reply_text(
                     f"✅ {out}", parse_mode="HTML", **kwargs,
                 )
-                log_activity("telegram", "task_done", summary=search[:100])
+                record_outbound(out, chat_id=update.message.chat_id, kind="task_reply")
             else:
                 await update.message.reply_text(
                     f"No task matching '<b>{search}</b>'.",
@@ -1705,7 +1697,7 @@ class TelegramChannel:
                 await update.message.reply_text(
                     f"🔄 {out}", parse_mode="HTML", **kwargs,
                 )
-                log_activity("telegram", "task_started", summary=search[:100])
+                record_outbound(out, chat_id=update.message.chat_id, kind="task_reply")
             else:
                 await update.message.reply_text(
                     f"No task matching '<b>{search}</b>'.",
@@ -1719,7 +1711,7 @@ class TelegramChannel:
                 await update.message.reply_text(
                     f"🎯 {out}", parse_mode="HTML", **kwargs,
                 )
-                log_activity("telegram", "task_focused", summary=search[:100])
+                record_outbound(out, chat_id=update.message.chat_id, kind="task_reply")
             else:
                 await update.message.reply_text(
                     f"No task matching '<b>{search}</b>'.",
@@ -1807,7 +1799,8 @@ class TelegramChannel:
                 cwd=cwd, thread_id=thread_id,
             )
             _clear_inflight()
-            log_activity("telegram", "inflight_replayed", summary=response[:100])
+            record_outbound(response, chat_id=chat_id, kind="response",
+                            meta={"replayed": True})
         except Exception as e:
             logger.error(f"Failed to replay in-flight message: {e}")
             _clear_inflight()

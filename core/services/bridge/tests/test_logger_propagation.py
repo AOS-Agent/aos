@@ -103,9 +103,13 @@ class _DeadSession:
 
 
 @pytest.fixture
-def channel(monkeypatch):
+def channel(monkeypatch, tmp_path):
     """A TelegramChannel with every external side effect stubbed out."""
     import session_manager
+
+    # The conversation store resolves its path per call — point it at a
+    # throwaway DB so a test never writes into the operator's real one.
+    monkeypatch.setenv("AOS_BRIDGE_DB", str(tmp_path / "bridge.db"))
 
     ch = tc.TelegramChannel("token", 999)
 
@@ -144,3 +148,17 @@ def test_inbound_message_and_response_reach_the_log_file(channel, bridge_log):
 
 def test_module_logger_is_named_under_aos_bridge():
     assert tc.logger.name.startswith("aos.bridge."), tc.logger.name
+
+
+def test_the_same_message_lands_in_the_conversation_store(channel, bridge_log, tmp_path):
+    """Log line and stored row are two halves of the same observability fix."""
+    import sqlite3
+
+    msg = _FakeMessage(999, "anything on my plate today")
+    asyncio.run(channel._handle_message(_FakeUpdate(msg), None))
+
+    db = tmp_path / "bridge.db"
+    assert db.exists(), "no conversation store written"
+    rows = sqlite3.connect(str(db)).execute(
+        "SELECT direction, kind FROM messages ORDER BY id").fetchall()
+    assert rows == [("in", "message"), ("out", "response")], rows
