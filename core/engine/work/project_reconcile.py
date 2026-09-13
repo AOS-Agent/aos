@@ -51,7 +51,7 @@ rather than prose:
                                differs: adoption is the fix for a missing
                                manifest and would clobber a broken one.
   ``layer_not_installed``      a zone or ``~/project/CLAUDE.md`` is missing —
-                               migration 102 deferred and never came back.
+                               migration 119 deferred and never came back.
   ``archived_but_active``      marked finished, still being worked in. This one
                                was made non-negotiable at the council close: a
                                reconciler that only reports *missing* manifests
@@ -1278,10 +1278,10 @@ def _archived_activity(directory: Path, marker) -> str | None:
 
 
 def _layer_drift(root: Path) -> list[Drift]:
-    """The zones and the policy file that migration 102 was supposed to install.
+    """The zones and the policy file that migration 119 was supposed to install.
 
     Reported because the install can genuinely not have happened and nothing
-    else would ever say so: migration 102 defers zone creation when ``~/project``
+    else would ever say so: migration 119 defers zone creation when ``~/project``
     is unreachable, and an operator whose external volume was unmounted during an
     update ends up with the CLI on PATH, the rule linked, and no zones at all.
     That state is silent — every verb lazily creates what it needs — so the gap
@@ -1295,7 +1295,7 @@ def _layer_drift(root: Path) -> list[Drift]:
             out.append(Drift(
                 "layer_not_installed", zone, str(d),
                 f"zone {zone}/ does not exist — `project new` or `project adopt` "
-                f"will create it, or re-run `aos update` to apply migration 102"))
+                f"will create it, or re-run `aos update` to apply migration 119"))
     policy = root / _zones.POLICY_FILENAME
     if not policy.exists():
         out.append(Drift(

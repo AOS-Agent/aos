@@ -147,7 +147,7 @@ NO_GIT_MARKER = "no-git"
 
 # The policy file that loads automatically for any session under ~/project/.
 # FRAMEWORK ships the template; the INSTANCE gets a copy it may then edit. Both
-# migration 102 and the first `project new` install it through ``ensure_zones``,
+# migration 119 and the first `project new` install it through ``ensure_zones``,
 # because a fresh machine has no ~/project/ when migrations run and the policy
 # must not wait for the migration watermark to come round again — it never
 # would.

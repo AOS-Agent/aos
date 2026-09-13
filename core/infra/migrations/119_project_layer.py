@@ -1,5 +1,5 @@
 """
-Migration 102: the project layer reaches the instance.
+Migration 119: the project layer reaches the instance.
 
 The framework now ships a `project` CLI, a zone-aware reconciler, a steward
 check, a `~/project/CLAUDE.md` policy template and a global agent rule. None of
@@ -22,6 +22,25 @@ Four things, each idempotent:
    uses for `aos` and `cld`. `project` is a command the operator types, so it
    has to be typeable.
 4. Nothing else.
+
+BOTH SYMLINKS ARE *REPOINTED*, NOT MERELY CREATED
+--------------------------------------------------
+
+The first machine to run this feature ran it from a development worktree: the
+rule and the CLI were hand-linked to
+`~/project/aos/.claude/worktrees/feat-project-layer/...` so the work could be
+used while it was still being written. That is the normal shape of pre-release
+AOS work, and it leaves an instance whose two links point at a branch checkout
+that `aos update` neither owns nor keeps. When the worktree is eventually
+deleted the operator's `project` command dies with it, silently, with no failed
+check to explain why.
+
+So `_relink()` is a repoint, not a create. A link that already resolves to the
+runtime path is left untouched (that is the idempotent case, and the second run
+of `up()` takes it); a link pointing anywhere else — a worktree, an old release
+directory, a dangling target — is replaced with one pointing at `~/aos/...`;
+and a *real* file sitting at either path is renamed to `.pre-reconcile` rather
+than removed, because it may be something the operator wrote by hand.
 
 WHAT THIS MIGRATION DELIBERATELY DOES NOT DO
 ---------------------------------------------

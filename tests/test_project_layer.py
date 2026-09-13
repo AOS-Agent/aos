@@ -1,6 +1,6 @@
 """
 Tests for the project layer — zones, markers, the lifecycle verbs, zone-aware
-reconciliation, the steward check, and migration 102.
+reconciliation, the steward check, and migration 119.
 
 Everything here runs against a tmp_path standing in for ``~/project/``. Nothing
 touches the operator's real projects directory, real work.db, real
@@ -1113,7 +1113,7 @@ def test_an_empty_husk_is_not_told_to_adopt_itself(reconcile_root):
 
 
 def test_missing_zones_and_policy_are_reported(tmp_path, monkeypatch):
-    """Migration 102 defers zone creation when ~/project cannot be written into.
+    """Migration 119 defers zone creation when ~/project cannot be written into.
     Every verb lazily creates what it needs, so a half-installed layer is
     otherwise completely silent."""
     bare = tmp_path / "project"
@@ -1260,14 +1260,14 @@ def test_check_is_registered(check_cls):
     assert check_cls.name in {c.name for c in ALL_CHECKS}
 
 
-# ── migration 102 ───────────────────────────────────────────────────
+# ── migration 119 ───────────────────────────────────────────────────
 
 @pytest.fixture()
 def migration(tmp_path):
-    """Load migration 102 with every path it writes redirected into tmp_path."""
+    """Load migration 119 with every path it writes redirected into tmp_path."""
     import importlib.util
-    path = REPO_ROOT / "core" / "infra" / "migrations" / "102_project_layer.py"
-    spec = importlib.util.spec_from_file_location("m102", path)
+    path = REPO_ROOT / "core" / "infra" / "migrations" / "119_project_layer.py"
+    spec = importlib.util.spec_from_file_location("m119", path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
 
@@ -1419,11 +1419,11 @@ def test_migration_imports_under_the_system_python(migration):
     if not system_python.exists():              # pragma: no cover — Linux CI
         pytest.skip("no /usr/bin/python3 on this machine")
 
-    path = REPO_ROOT / "core" / "infra" / "migrations" / "102_project_layer.py"
+    path = REPO_ROOT / "core" / "infra" / "migrations" / "119_project_layer.py"
     proc = subprocess.run(
         (str(system_python), "-c",
          "import importlib.util, sys;"
-         f"spec = importlib.util.spec_from_file_location('m102', {str(path)!r});"
+         f"spec = importlib.util.spec_from_file_location('m119', {str(path)!r});"
          "mod = importlib.util.module_from_spec(spec);"
          "spec.loader.exec_module(mod);"
          "print(mod.DESCRIPTION)"),
