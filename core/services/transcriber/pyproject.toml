@@ -5,6 +5,7 @@ description = "Unified transcription service — mlx-whisper Large V3 Turbo, Eng
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115.0",
+    "pydantic>=2.0",
     "uvicorn>=0.32.0",
     "python-multipart>=0.0.20",
     "mlx-whisper>=0.4.0",

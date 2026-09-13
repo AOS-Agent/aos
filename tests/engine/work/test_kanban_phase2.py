@@ -20,7 +20,6 @@ Isolated: uses the work_env fixture (throwaway AOS_WORK_DB), never the real DB.
 """
 from __future__ import annotations
 
-import asyncio
 import importlib.util
 import sqlite3
 import sys

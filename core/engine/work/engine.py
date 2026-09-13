@@ -21,7 +21,6 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
-import urllib.request
 from datetime import date, datetime
 from difflib import SequenceMatcher
 from pathlib import Path

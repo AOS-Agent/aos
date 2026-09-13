@@ -50,6 +50,9 @@ def env(tmp_path, monkeypatch):
         "restart_ok": True,
     }
     monkeypatch.setattr(mod, "is_loaded", lambda label: state["loaded"].get(label, True))
+    # The operator opt-out list is instance state; a disabled transcriber on the
+    # dev machine must not turn "loaded but unhealthy" into a pass.
+    monkeypatch.setattr(mod, "is_disabled", lambda svc: False)
     monkeypatch.setattr(mod, "last_restart_age", lambda label: state["restart_age"].get(label))
 
     def fake_restart(label, plist, actor="?"):

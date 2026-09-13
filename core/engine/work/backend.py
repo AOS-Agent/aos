@@ -27,7 +27,6 @@ import subprocess
 # ── Path setup for ontology imports ─────────────────────
 import sys
 import tempfile
-import urllib.request
 from datetime import date, datetime
 from pathlib import Path
 
@@ -50,7 +49,6 @@ if not (_project_root / "core" / "engine" / "work").is_dir():
             sys.path.insert(0, str(_project_root))
             break
 
-from core.engine.work.ontology.work import WorkAdapter
 from core.engine.work.ontology.types import (
     Goal,
     Project,
@@ -58,6 +56,7 @@ from core.engine.work.ontology.types import (
     TaskPriority,
     TaskStatus,
 )
+from core.engine.work.ontology.work import WorkAdapter
 from core.engine.work.ontology.work_utils import (
     HandoffFormatter,
     LiveContext,

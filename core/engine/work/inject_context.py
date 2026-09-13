@@ -48,7 +48,6 @@ except ImportError:
 
 try:
     import glob as globmod
-    import urllib.request
     from datetime import date
 except Exception:
     _safe_exit(_check_onboarding() or "")

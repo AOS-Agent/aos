@@ -51,6 +51,7 @@ from .activity import (
     is_appendable,
     status_body,
 )
+from .base import Adapter
 from .types import (
     Area,
     Goal,
@@ -72,7 +73,6 @@ from .types import (
     Workflow,
     WorkflowRun,
 )
-from .base import Adapter
 
 
 def _parse_dt(val: str | None) -> datetime | None:
