@@ -9,6 +9,10 @@ Usage:
     echo '{"title":"...","body":"...","labels":["bug"]}' | python3 aos-report
     python3 aos-report --context   # just dump system context as JSON (for skill to use)
 
+Exit codes: 0 on success (created/commented). Non-zero whenever a `gh` call
+fails — a report that only got queued locally is never reported as a silent
+success (aos#2323).
+
 Input JSON fields:
     title:          Issue title (required)
     body:           Issue body in markdown (required)
@@ -20,7 +24,6 @@ Input JSON fields:
 """
 
 import json
-import os
 import re
 import socket
 import subprocess
@@ -31,6 +34,13 @@ from pathlib import Path
 AOS_DIR = Path.home() / "aos"
 USER_DIR = Path.home() / ".aos"
 REPORT_LOG = USER_DIR / "logs" / "reports.jsonl"
+
+# The repo issues are filed against — explicit and never inferred from `cwd`.
+# On a release install ~/aos is a symlink into an unpacked release tarball
+# with no `.git`, so `gh` cannot infer a repo from `cwd=str(AOS_DIR)` the way
+# a dev checkout would let it (aos#2323). This is the one place that names
+# the repo for every `gh` call this script makes.
+GH_REPO = "AOS-Agent/aos"
 
 
 # ── System context ────────────────────────────────────────────────────────
@@ -169,8 +179,9 @@ def search_existing_issues(title: str) -> list[dict]:
         query = ' '.join(terms)
 
         result = subprocess.run(
-            ["gh", "issue", "list", "--search", query, "--json", "number,title,url,state", "--limit", "5"],
-            capture_output=True, text=True, timeout=15, cwd=str(AOS_DIR),
+            ["gh", "issue", "list", "--repo", GH_REPO, "--search", query,
+             "--json", "number,title,url,state", "--limit", "5"],
+            capture_output=True, text=True, timeout=15,
         )
         if result.returncode == 0:
             return json.loads(result.stdout)
@@ -179,10 +190,17 @@ def search_existing_issues(title: str) -> list[dict]:
     return []
 
 
-def file_issue(title: str, body: str, labels: list[str]) -> dict | None:
-    """Create a GitHub Issue. Returns {number, url} or None."""
+def file_issue(title: str, body: str, labels: list[str]) -> tuple[dict | None, str | None]:
+    """Create a GitHub Issue.
+
+    Returns ({"number", "url"}, None) on success, or (None, a human-readable
+    error) on failure. A failed `gh` call must never look like a silent
+    success (aos#2323) — the caller decides what to do with the error, but
+    it must always get one.
+    """
     cmd = [
         "gh", "issue", "create",
+        "--repo", GH_REPO,
         "--title", title,
         "--body", body,
     ]
@@ -190,30 +208,39 @@ def file_issue(title: str, body: str, labels: list[str]) -> dict | None:
         cmd.extend(["--label", label])
 
     try:
-        result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=30, cwd=str(AOS_DIR),
-        )
-        if result.returncode == 0:
-            url = result.stdout.strip()
-            # Extract issue number from URL
-            match = re.search(r'/issues/(\d+)', url)
-            number = int(match.group(1)) if match else None
-            return {"number": number, "url": url}
-    except Exception:
-        pass
-    return None
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    except Exception as e:
+        return None, f"could not run gh: {e}"
+
+    if result.returncode == 0:
+        url = result.stdout.strip()
+        # Extract issue number from URL
+        match = re.search(r'/issues/(\d+)', url)
+        number = int(match.group(1)) if match else None
+        return {"number": number, "url": url}, None
+
+    stderr = (result.stderr or "").strip()
+    return None, stderr or f"gh exited {result.returncode}"
 
 
-def comment_on_issue(number: int, body: str) -> bool:
-    """Add a comment to an existing issue."""
+def comment_on_issue(number: int, body: str) -> tuple[bool, str | None]:
+    """Add a comment to an existing issue.
+
+    Returns (True, None) on success, or (False, a human-readable error) on
+    failure — same contract as `file_issue` (aos#2323).
+    """
     try:
         result = subprocess.run(
-            ["gh", "issue", "comment", str(number), "--body", body],
-            capture_output=True, text=True, timeout=15, cwd=str(AOS_DIR),
+            ["gh", "issue", "comment", str(number), "--repo", GH_REPO, "--body", body],
+            capture_output=True, text=True, timeout=15,
         )
-        return result.returncode == 0
-    except Exception:
-        return False
+    except Exception as e:
+        return False, f"could not run gh: {e}"
+
+    if result.returncode == 0:
+        return True, None
+    stderr = (result.stderr or "").strip()
+    return False, stderr or f"gh exited {result.returncode}"
 
 
 # ── Telegram ───────────────────────────────────────────────────────────────
@@ -387,25 +414,48 @@ def main():
 
     # Handle duplicates
     if duplicate_of:
-        ok = comment_on_issue(duplicate_of, f"**Additional report from {operator}:**\n\n{full_body}")
-        action = f"commented on #{duplicate_of}"
-        issue_url = f"https://github.com/hishamalhadi/aos/issues/{duplicate_of}"
-        log_report(title, labels, issue_url, action)
-        print(json.dumps({"action": action, "issue_url": issue_url}))
-        notify_developer(title, severity, operator, bool(proposed_fix), issue_url)
-        return
+        comment_body = f"**Additional report from {operator}:**\n\n{full_body}"
+        ok, err = comment_on_issue(duplicate_of, comment_body)
+        issue_url = f"https://github.com/{GH_REPO}/issues/{duplicate_of}"
+        if ok:
+            action = f"commented on #{duplicate_of}"
+            log_report(title, labels, issue_url, action)
+            print(json.dumps({"action": action, "issue_url": issue_url}))
+            notify_developer(title, severity, operator, bool(proposed_fix), issue_url)
+            return
+        # A failed gh call must surface, never look like success (aos#2323).
+        log_report(title, labels, None, "queued")
+        print(
+            f"aos-report: GitHub filing failed ({err}) — saved locally.",
+            file=sys.stderr,
+        )
+        print(json.dumps({
+            "action": "queued",
+            "error": f"GitHub filing failed — saved locally ({err})",
+        }))
+        sys.exit(1)
 
     # File new issue
-    result = file_issue(title, full_body, labels)
+    result, err = file_issue(title, full_body, labels)
     if result:
         issue_url = result["url"]
         log_report(title, labels, issue_url, "created")
         notify_developer(title, severity, operator, bool(proposed_fix), issue_url)
         print(json.dumps({"action": "created", "issue_url": issue_url, "number": result["number"]}))
     else:
-        # Queue locally if GitHub fails
+        # Queue locally if GitHub fails — but a failed gh call must surface,
+        # never look like a silent success (aos#2323): non-zero exit plus a
+        # humanized notice, in addition to the JSON contract callers parse.
         log_report(title, labels, None, "queued")
-        print(json.dumps({"action": "queued", "error": "GitHub filing failed — saved locally"}))
+        print(
+            f"aos-report: GitHub filing failed ({err}) — saved locally.",
+            file=sys.stderr,
+        )
+        print(json.dumps({
+            "action": "queued",
+            "error": f"GitHub filing failed — saved locally ({err})",
+        }))
+        sys.exit(1)
 
 
 if __name__ == "__main__":

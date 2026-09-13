@@ -2,6 +2,15 @@
 
 All notable changes to AOS. Release notes sent via Telegram after each 4am update.
 
+## v0.7.9 — the reporter finally reports — 2026-09-13
+
+Summary: `aos-report` — the tool `/report` files bugs through — was silently
+failing on every release install, discarding the diagnosis on the rare
+occasion it did admit failure, and corrupting any report that contained code,
+a table, or a date. All three fixed.
+
+- Fixed aos-report's `gh` calls silently failing on every release install (aos#2323). `file_issue()`/`comment_on_issue()`/`search_existing_issues()` (`core/bin/cli/aos-report`) ran `gh` with `cwd=str(AOS_DIR)` and no `--repo` — on a release install `~/aos` is a symlink into an unpacked tarball with no `.git`, so `gh` could never infer a target repo, and every report silently fell back to the local queue. All three calls now pass `--repo AOS-Agent/aos` explicitly (one constant, `GH_REPO`) and never depend on `cwd`. A failed `gh` call now surfaces instead of looking like success: `file_issue`/`comment_on_issue` return `(result, error)` rather than swallowing the failure, and the queue-fallback path now exits non-zero with a plain-English notice in addition to the JSON the `/report` skill parses.
+
 ## v0.7.8 — the system stops crying wolf — 2026-09-13
 
 Summary: The nine open issues that v0.7.7 walked past. Five were notification
