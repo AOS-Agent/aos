@@ -49,14 +49,30 @@ import os
 import subprocess
 from pathlib import Path
 
-HOME = Path.home()
 LABEL = "com.aos.work-runner"
 SERVICE = "work-runner"
 
-PLIST = HOME / "Library" / "LaunchAgents" / f"{LABEL}.plist"
-LAUNCHER = HOME / ".aos" / "launchers" / SERVICE
-RUNNER_CONFIG = HOME / ".aos" / "config" / "work-runner.yaml"
-SERVICES_CONFIG = HOME / ".aos" / "config" / "services.yaml"
+
+# Resolved on every call, never captured at import — see default_off.py's own
+# docstring (core/infra/lib/default_off.py) for why a module-level
+# `Path.home()` here would freeze whichever machine (or sandboxed test HOME)
+# happened to import this module first, for the rest of the process. This one
+# matters twice over: _clear_declaration() writes the same services.yaml that
+# default_off.disable_service() does, and that helper already re-resolves.
+def _plist() -> Path:
+    return Path.home() / "Library" / "LaunchAgents" / f"{LABEL}.plist"
+
+
+def _launcher() -> Path:
+    return Path.home() / ".aos" / "launchers" / SERVICE
+
+
+def _runner_config() -> Path:
+    return Path.home() / ".aos" / "config" / "work-runner.yaml"
+
+
+def _services_config() -> Path:
+    return Path.home() / ".aos" / "config" / "services.yaml"
 
 
 def _loaded() -> bool:
@@ -72,11 +88,11 @@ def _loaded() -> bool:
 
 def _declared_names() -> set[str]:
     """`work-runner` wherever services.yaml still mentions it."""
-    if not SERVICES_CONFIG.exists():
+    if not _services_config().exists():
         return set()
     try:
         import yaml
-        raw = yaml.safe_load(SERVICES_CONFIG.read_text())
+        raw = yaml.safe_load(_services_config().read_text())
     except Exception:  # noqa: BLE001
         return set()
     if not isinstance(raw, dict):
@@ -96,13 +112,13 @@ def _clear_declaration() -> list[str]:
         return []
     try:
         import yaml
-        raw = yaml.safe_load(SERVICES_CONFIG.read_text())
+        raw = yaml.safe_load(_services_config().read_text())
     except Exception:  # noqa: BLE001
         return []
     if not isinstance(raw, dict):
         return []
     header_lines = []
-    for line in SERVICES_CONFIG.read_text().splitlines():
+    for line in _services_config().read_text().splitlines():
         if line.startswith("#") or not line.strip():
             header_lines.append(line)
         else:
@@ -114,13 +130,13 @@ def _clear_declaration() -> list[str]:
     except Exception:  # noqa: BLE001
         return []
     prefix = "\n".join(header_lines).rstrip("\n")
-    SERVICES_CONFIG.write_text((prefix + "\n\n" if prefix else "") + body)
+    _services_config().write_text((prefix + "\n\n" if prefix else "") + body)
     return sorted(keys)
 
 
 def check() -> bool:
     """Applied when no trace of the service is left on this machine."""
-    if PLIST.exists() or LAUNCHER.exists() or RUNNER_CONFIG.exists():
+    if _plist().exists() or _launcher().exists() or _runner_config().exists():
         return False
     if _loaded():
         return False
@@ -135,8 +151,8 @@ def up() -> bool:
         )
         print(f"  ✓ Booted out {LABEL}")
 
-    for path, what in ((PLIST, "LaunchAgent plist"), (LAUNCHER, "launcher wrapper"),
-                       (RUNNER_CONFIG, "instance config")):
+    for path, what in ((_plist(), "LaunchAgent plist"), (_launcher(), "launcher wrapper"),
+                       (_runner_config(), "instance config")):
         if path.exists():
             try:
                 path.unlink()
@@ -148,7 +164,7 @@ def up() -> bool:
     cleared = _clear_declaration()
     if cleared:
         where = " and ".join(f"`{k}:`" for k in cleared)
-        print(f"  ✓ Cleared {SERVICE} from {where} in {SERVICES_CONFIG}")
+        print(f"  ✓ Cleared {SERVICE} from {where} in {_services_config()}")
         if "enabled" in cleared:
             print("     (it was an explicit opt-in — the service no longer exists "
                   "in the framework, so there is nothing left to opt in to)")

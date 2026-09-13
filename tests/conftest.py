@@ -90,10 +90,13 @@ def no_gh_subprocess(monkeypatch):
 # a failure, and never brought into existence by this fixture.
 # ---------------------------------------------------------------------------
 
+# `~/.claude.json` is deliberately NOT in this list. The harness rewrites it
+# constantly on its own (and several agents can be running at once), so its
+# hash moves during any long session for reasons no test caused — a tripwire
+# that cries wolf gets switched off, which costs more than the leg was worth.
 _LIVE_INSTANCE_GUARDED_PATHS = (
     Path(os.path.expanduser("~")) / ".aos" / "config" / "services.yaml",
     Path(os.path.expanduser("~")) / ".aos" / "config" / "integrations.yaml",
-    Path(os.path.expanduser("~")) / ".claude.json",
     Path(os.path.expanduser("~")) / ".aos" / "data" / "work.db",
 )
 
@@ -103,7 +106,7 @@ def _live_instance_snapshot() -> dict[Path, tuple[str, int]]:
 
     A path that is absent is simply omitted — "skip cleanly if a path is
     absent" — so this never fails just because a machine (or CI) has no
-    ~/.claude.json, no work.db yet, etc.
+    work.db yet, no integrations.yaml, etc.
     """
     snapshot = {}
     for path in _LIVE_INSTANCE_GUARDED_PATHS:

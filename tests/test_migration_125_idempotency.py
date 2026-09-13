@@ -27,6 +27,9 @@ import pytest
 REPO = Path(__file__).resolve().parent.parent
 MIGRATIONS = REPO / "core" / "infra" / "migrations"
 
+# Captured before any fixture patches it — the value a sandbox must not be.
+_REAL_HOME = Path.home()
+
 STUB_QMD = """#!/bin/bash
 # Records every invocation as one space-joined line, then fakes just enough
 # of `qmd collection show/add` + `update`/`embed` for the migration under
@@ -48,10 +51,19 @@ exit 0
 def load_migration(name: str, home: Path):
     """Import a migration with Path.home() already pointing at the sandbox.
 
-    Migrations resolve their paths at import time (HOME = Path.home() at
-    module scope), so the patch has to be in place before exec_module, and
-    the module has to be re-imported per test rather than cached.
+    The module resolves every path from Path.home() on each call, so the
+    sandbox has to be in place before exec_module AND stay in place for the
+    rest of the test — the `home` fixture applies it; this only re-asserts it.
+    The module is re-imported per test rather than cached.
     """
+    assert Path.home() != _REAL_HOME, (
+        "Path.home() still resolves to the operator's real home right before "
+        "load_migration() was about to exec a migration module. The calling "
+        "test's `home` fixture must patch Path.home() (persistently, for the "
+        "whole test) before calling load_migration() — this migration resolves "
+        f"its paths per call, so refusing to run {name!r} against the live "
+        "instance is the only safe answer."
+    )
     path = next(MIGRATIONS.glob(f"{name}*.py"))
     real_home = Path.home
     Path.home = staticmethod(lambda: home)  # type: ignore[method-assign]
@@ -87,6 +99,12 @@ def home(tmp_path, monkeypatch):
     # tmp_path rather than being stashed on it.
     monkeypatch.setenv("QMD_STUB_CALLS", str(_calls_log(h)))
     monkeypatch.setenv("QMD_STUB_STATE", str(_state_file(h)))
+
+    # Persistently, for the whole test — not just across the import. The
+    # migration resolves the qmd binary and every collection source path on
+    # each call, so a patch that expired after exec would point check() and
+    # up() at the operator's real ~/.bun/bin/qmd and real vault.
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: h))
     return h
 
 
@@ -210,4 +228,4 @@ def test_125_declares_exactly_the_reference_machine_collection_set(home):
     """The canonical set this migration backfills, pinned so a future edit to
     it is a deliberate diff and not an accidental add/removal."""
     m = load_migration("125", home)
-    assert set(m.AOS_COLLECTIONS.keys()) == AOS_NAMES
+    assert set(m._aos_collections().keys()) == AOS_NAMES

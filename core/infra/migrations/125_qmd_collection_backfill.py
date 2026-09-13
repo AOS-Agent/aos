@@ -22,7 +22,7 @@ runs: six curated, purpose-described collections (`qmd collection show
 
 This migration backfills only what is MISSING from that set, one `qmd
 collection add <name> <path> --pattern "**/*.md"` per gap. It never adds,
-removes, or renames a collection outside AOS_COLLECTIONS below — an
+removes, or renames a collection outside _aos_collections() below — an
 operator's own collections (a hand-added flat `vault`, a business knowledge
 base, anything else) are not this migration's to touch, on the same principle
 122 applied to fleet.yaml and 021 applied when it pruned only its own named
@@ -51,31 +51,39 @@ DESCRIPTION = "QMD collection backfill — ensure the curated AOS collection set
 import subprocess
 from pathlib import Path
 
-HOME = Path.home()
-QMD = HOME / ".bun" / "bin" / "qmd"
 
-# name -> framework-declared source path. Read off a reference machine via
-# `qmd collection show <name>` — see this module's docstring. Adding a new
-# framework collection means adding it here, in the same commit.
-AOS_COLLECTIONS: dict[str, Path] = {
-    "log": HOME / "vault" / "log",
-    "knowledge": HOME / "vault" / "knowledge",
-    "skills": HOME / ".claude" / "skills",
-    "skills-core": HOME / "aos" / "core" / "skills",
-    "agents": HOME / "aos" / "core" / "agents",
-    "aos-docs": HOME / "aos" / "docs",
-}
+# Resolved on every call, never captured at import — see default_off.py's own
+# docstring (core/infra/lib/default_off.py) for why a module-level
+# `Path.home()` here would freeze whichever machine (or sandboxed test HOME)
+# happened to import this module first, for the rest of the process.
+def _qmd() -> Path:
+    return Path.home() / ".bun" / "bin" / "qmd"
+
+
+def _aos_collections() -> dict[str, Path]:
+    """name -> framework-declared source path. Read off a reference machine via
+    `qmd collection show <name>` — see this module's docstring. Adding a new
+    framework collection means adding it here, in the same commit."""
+    home = Path.home()
+    return {
+        "log": home / "vault" / "log",
+        "knowledge": home / "vault" / "knowledge",
+        "skills": home / ".claude" / "skills",
+        "skills-core": home / "aos" / "core" / "skills",
+        "agents": home / "aos" / "core" / "agents",
+        "aos-docs": home / "aos" / "docs",
+    }
 
 
 def _addable() -> dict[str, Path]:
-    """AOS_COLLECTIONS entries whose source directory actually exists here."""
-    return {name: path for name, path in AOS_COLLECTIONS.items() if path.exists()}
+    """`_aos_collections()` entries whose source directory exists here."""
+    return {name: path for name, path in _aos_collections().items() if path.exists()}
 
 
 def _collection_exists(name: str) -> bool:
     try:
         result = subprocess.run(
-            [str(QMD), "collection", "show", name],
+            [str(_qmd()), "collection", "show", name],
             capture_output=True, text=True, timeout=15,
         )
     except Exception:
@@ -85,17 +93,17 @@ def _collection_exists(name: str) -> bool:
 
 def check() -> bool:
     """Applied once every addable collection is registered."""
-    if not QMD.exists():
+    if not _qmd().exists():
         return True  # qmd not installed — nothing for this migration to do
     return all(_collection_exists(name) for name in _addable())
 
 
 def up() -> bool:
-    if not QMD.exists():
+    if not _qmd().exists():
         print("       qmd not installed — skipping collection backfill")
         return True
 
-    for name, path in AOS_COLLECTIONS.items():
+    for name, path in _aos_collections().items():
         if name not in _addable():
             print(f"       Skipping '{name}': {path} does not exist yet")
 
@@ -105,7 +113,7 @@ def up() -> bool:
             continue
         try:
             result = subprocess.run(
-                [str(QMD), "collection", "add", name, str(path), "--pattern", "**/*.md"],
+                [str(_qmd()), "collection", "add", name, str(path), "--pattern", "**/*.md"],
                 capture_output=True, text=True, timeout=30,
             )
         except Exception as e:
@@ -119,8 +127,8 @@ def up() -> bool:
 
     if added:
         try:
-            subprocess.run([str(QMD), "update"], capture_output=True, timeout=180)
-            subprocess.run([str(QMD), "embed"], capture_output=True, timeout=300)
+            subprocess.run([str(_qmd()), "update"], capture_output=True, timeout=180)
+            subprocess.run([str(_qmd()), "embed"], capture_output=True, timeout=300)
             print(f"       Reindexed after adding: {', '.join(added)}")
         except Exception as e:
             print(f"       Reindex after backfill failed (non-fatal): {e}")

@@ -98,18 +98,34 @@ DESCRIPTION = (
 import re
 from pathlib import Path
 
-HOME = Path.home()
-CRONS_YAML = HOME / "aos" / "config" / "crons.yaml"
-ACCOUNTS_YAML = HOME / ".aos" / "config" / "accounts.yaml"
-GOALS_YAML = HOME / ".aos" / "config" / "goals.yaml"
-STATE_YAML = HOME / ".aos" / "config" / "state.yaml"
 
-# {path: [dead top-level keys]}
-DEAD_KEYS = {
-    ACCOUNTS_YAML: ["schema_version"],
-    GOALS_YAML: ["recurring_responsibilities"],
-    STATE_YAML: ["machine_user", "voice_models"],
-}
+# Resolved on every call, never captured at import — see default_off.py's own
+# docstring (core/infra/lib/default_off.py) for why a module-level
+# `Path.home()` here would freeze whichever machine (or sandboxed test HOME)
+# happened to import this module first, for the rest of the process.
+def _crons_yaml() -> Path:
+    return Path.home() / "aos" / "config" / "crons.yaml"
+
+
+def _accounts_yaml() -> Path:
+    return Path.home() / ".aos" / "config" / "accounts.yaml"
+
+
+def _goals_yaml() -> Path:
+    return Path.home() / ".aos" / "config" / "goals.yaml"
+
+
+def _state_yaml() -> Path:
+    return Path.home() / ".aos" / "config" / "state.yaml"
+
+
+def _dead_keys() -> dict[Path, list[str]]:
+    """{path: [dead top-level keys]}"""
+    return {
+        _accounts_yaml(): ["schema_version"],
+        _goals_yaml(): ["recurring_responsibilities"],
+        _state_yaml(): ["machine_user", "voice_models"],
+    }
 
 TARGET_JOBS = ("comms-extract", "people-intel-refresh", "loop-sensors")
 
@@ -181,9 +197,9 @@ def _remove_top_level_key(lines: list[str], key: str) -> list[str]:
 
 
 def _dead_keys_present() -> dict[Path, list[str]]:
-    """{path: [keys still present]} across DEAD_KEYS — empty dict if clean."""
+    """{path: [keys still present]} across _dead_keys() — empty dict if clean."""
     present: dict[Path, list[str]] = {}
-    for path, keys in DEAD_KEYS.items():
+    for path, keys in _dead_keys().items():
         lines = _read_lines(path)
         if lines is None:
             continue
@@ -196,7 +212,7 @@ def _dead_keys_present() -> dict[Path, list[str]]:
 def check() -> bool:
     """Applied once crons.yaml's target jobs are all explicit, and none of
     the four dead config keys remain in whichever instance files have them."""
-    lines = _read_lines(CRONS_YAML)
+    lines = _read_lines(_crons_yaml())
     if lines is not None:
         blocks = _job_blocks(lines)
         for job in TARGET_JOBS:
@@ -211,9 +227,9 @@ def check() -> bool:
 
 
 def up() -> bool:
-    lines = _read_lines(CRONS_YAML)
+    lines = _read_lines(_crons_yaml())
     if lines is None:
-        print(f"  · {CRONS_YAML} not found — nothing to patch (release ships it pre-set)")
+        print(f"  · {_crons_yaml()} not found — nothing to patch (release ships it pre-set)")
     else:
         blocks = _job_blocks(lines)
         changed = False
@@ -239,11 +255,11 @@ def up() -> bool:
             print(f"  ✓ {job}: inserted `enabled: false`")
 
         if changed:
-            CRONS_YAML.write_text("".join(lines))
-            print(f"     Wrote {CRONS_YAML}")
+            _crons_yaml().write_text("".join(lines))
+            print(f"     Wrote {_crons_yaml()}")
             print("     Opt back in: set `enabled: true` under the job in crons.yaml")
 
-    for path, keys in DEAD_KEYS.items():
+    for path, keys in _dead_keys().items():
         file_lines = _read_lines(path)
         if file_lines is None:
             continue

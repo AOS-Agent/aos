@@ -19,8 +19,19 @@ import pytest
 REPO = Path(__file__).resolve().parent.parent
 MIGRATIONS = REPO / "core" / "infra" / "migrations"
 
+# Captured before any fixture patches it — the value a sandbox must not be.
+_REAL_HOME = Path.home()
+
 
 def load_migration(name: str, home: Path):
+    assert Path.home() != _REAL_HOME, (
+        "Path.home() still resolves to the operator's real home right before "
+        "load_migration() was about to exec a migration module. The calling "
+        "test's `home` fixture must patch Path.home() (persistently, for the "
+        "whole test) before calling load_migration() — this migration resolves "
+        f"its paths per call, so refusing to run {name!r} against the live "
+        "instance is the only safe answer."
+    )
     path = next(MIGRATIONS.glob(f"{name}*.py"))
     real_home = Path.home
     Path.home = staticmethod(lambda: home)  # type: ignore[method-assign]

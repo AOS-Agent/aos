@@ -65,10 +65,19 @@ import sqlite3
 import time
 from pathlib import Path
 
-HOME = Path.home()
-WORK_DB = HOME / ".aos" / "data" / "work.db"
-QAREEN_DB = HOME / ".aos" / "data" / "qareen.db"
-BACKUP_DIR = HOME / ".aos" / "backups" / "pre-merge"
+
+# Resolved on every call, never captured at import — see default_off.py's own
+# docstring (core/infra/lib/default_off.py) for why a module-level
+# `Path.home()` here would freeze whichever machine (or sandboxed test HOME)
+# happened to import this module first, for the rest of the process.
+def _work_db() -> Path:
+    return Path.home() / ".aos" / "data" / "work.db"
+
+def _qareen_db() -> Path:
+    return Path.home() / ".aos" / "data" / "qareen.db"
+
+def _backup_dir() -> Path:
+    return Path.home() / ".aos" / "backups" / "pre-merge"
 
 TABLES = ("sessions", "session_tasks")
 
@@ -149,13 +158,13 @@ def _shared_columns(conn: sqlite3.Connection, table: str) -> list[str]:
 
 def check() -> bool:
     """Applied when work.db holds both tables and is not missing source rows."""
-    work = _connect(WORK_DB, readonly=True)
+    work = _connect(_work_db(), readonly=True)
     if work is None:
         return True  # no work.db — the adapter will create the tables itself
     try:
         if not all(_table_exists(work, t) for t in TABLES):
             return False
-        src = _connect(QAREEN_DB, readonly=True)
+        src = _connect(_qareen_db(), readonly=True)
         if src is None:
             return True  # nothing left to move
         try:
@@ -169,30 +178,30 @@ def check() -> bool:
 
 
 def _backup() -> Path | None:
-    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    _backup_dir().mkdir(parents=True, exist_ok=True)
     stamp = time.strftime("%Y%m%d-%H%M%S")
     try:
-        for db in (WORK_DB, QAREEN_DB):
+        for db in (_work_db(), _qareen_db()):
             if db.exists():
-                dest = BACKUP_DIR / f"{db.name}.bak-{stamp}"
+                dest = _backup_dir() / f"{db.name}.bak-{stamp}"
                 shutil.copy2(db, dest)
                 print(f"  ✓ Backed up {db.name} → {dest}")
     except OSError as e:
         print(f"  ✗ Could not back up ({e}) — refusing to merge")
         return None
-    return BACKUP_DIR / f"work.db.bak-{stamp}"
+    return _backup_dir() / f"work.db.bak-{stamp}"
 
 
 def up() -> bool:
-    if not WORK_DB.exists():
+    if not _work_db().exists():
         print("  No work.db on this machine — the adapter creates both tables on first use")
         return True
 
-    src = _connect(QAREEN_DB, readonly=True)
+    src = _connect(_qareen_db(), readonly=True)
     pending = {}
     if src is not None:
         try:
-            work_ro = _connect(WORK_DB, readonly=True)
+            work_ro = _connect(_work_db(), readonly=True)
             for t in TABLES:
                 have = _count(work_ro, t) if work_ro else 0
                 pending[t] = (_count(src, t), have)
@@ -213,7 +222,7 @@ def up() -> bool:
     if backup is None:
         return False
 
-    work = _connect(WORK_DB)
+    work = _connect(_work_db())
     if work is None:
         return False
     try:
@@ -222,8 +231,8 @@ def up() -> bool:
         work.executescript(SCHEMA)
         work.commit()
 
-        if to_move and QAREEN_DB.exists():
-            work.execute("ATTACH DATABASE ? AS src", (str(QAREEN_DB),))
+        if to_move and _qareen_db().exists():
+            work.execute("ATTACH DATABASE ? AS src", (str(_qareen_db()),))
             try:
                 for t in TABLES:
                     if not work.execute(
@@ -246,7 +255,7 @@ def up() -> bool:
     except sqlite3.Error as e:
         work.rollback()
         work.close()
-        print(f"  ✗ Merge failed ({e}) — rolled back; backups in {BACKUP_DIR}")
+        print(f"  ✗ Merge failed ({e}) — rolled back; backups in {_backup_dir()}")
         return False
     finally:
         try:
@@ -255,10 +264,10 @@ def up() -> bool:
             pass
 
     if not check():
-        print(f"  ✗ Row counts do not match after the merge — backups in {BACKUP_DIR}")
+        print(f"  ✗ Row counts do not match after the merge — backups in {_backup_dir()}")
         return False
 
-    work_ro = _connect(WORK_DB, readonly=True)
+    work_ro = _connect(_work_db(), readonly=True)
     if work_ro is not None:
         for t in TABLES:
             print(f"  ✓ work.db {t}: {_count(work_ro, t)} row(s)")

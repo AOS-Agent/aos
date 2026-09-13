@@ -38,8 +38,13 @@ DESCRIPTION = "Create ~/.aos/data/bridge.db for the bridge conversation store (a
 import sqlite3
 from pathlib import Path
 
-HOME = Path.home()
-BRIDGE_DB = HOME / ".aos" / "data" / "bridge.db"
+
+# Resolved on every call, never captured at import — see default_off.py's own
+# docstring (core/infra/lib/default_off.py) for why a module-level
+# `Path.home()` here would freeze whichever machine (or sandboxed test HOME)
+# happened to import this module first, for the rest of the process.
+def _bridge_db() -> Path:
+    return Path.home() / ".aos" / "data" / "bridge.db"
 
 # The table first, the indexes last: a store written before `status` existed
 # would fail `CREATE INDEX ... (status)` before the ALTER could add the column.
@@ -74,10 +79,10 @@ def _columns(conn: sqlite3.Connection) -> set:
 
 def check() -> bool:
     """True when the store exists with every column the bridge writes."""
-    if not BRIDGE_DB.exists():
+    if not _bridge_db().exists():
         return False
     try:
-        conn = sqlite3.connect(str(BRIDGE_DB))
+        conn = sqlite3.connect(str(_bridge_db()))
     except sqlite3.Error:
         return False
     try:
@@ -90,8 +95,8 @@ def check() -> bool:
 
 def up() -> bool:
     try:
-        BRIDGE_DB.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(str(BRIDGE_DB))
+        _bridge_db().parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(str(_bridge_db()))
     except (OSError, sqlite3.Error) as e:
         print(f"  ✗ Could not open the bridge store ({e})")
         return False
