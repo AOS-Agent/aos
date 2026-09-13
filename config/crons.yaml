@@ -108,6 +108,13 @@ jobs:
     tier: 2
     description: Compiles weekly review with metrics and insights
 
+  notify-flush:
+    command: bash ~/aos/core/bin/internal/aos-python ~/aos/core/bin/crons/notify-flush
+    every: 15m
+    timeout: 60
+    tier: 2
+    description: Delivers notifications held back by quiet hours, as one digest
+
   inbox-collect:
     command: python3 ~/aos/core/bin/crons/inbox-collect
     every: 30m

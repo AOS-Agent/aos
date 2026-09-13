@@ -60,6 +60,22 @@ def _load_router():
     return mod
 
 
+def _router_sends(monkeypatch, tmp_path, text, **kwargs):
+    router = _load_router()
+    sent: list[str] = []
+    monkeypatch.setattr(router, "_get_secret",
+                        lambda name: "token" if name == "TELEGRAM_BOT_TOKEN" else "999")
+    monkeypatch.setattr(router, "_load_topics", lambda: (None, {}))
+    monkeypatch.setattr(router, "TOPICS_CONFIG", tmp_path / "bridge-topics.yaml")
+    monkeypatch.setattr(router, "OPERATOR_CONFIG", tmp_path / "operator.yaml")
+    monkeypatch.setattr(router, "in_quiet_hours", lambda *a, **kw: False)
+    monkeypatch.setattr(router, "_send_with_retry",
+                        lambda *a, **kw: (sent.append(a[2]), (True, ""))[1])
+    monkeypatch.setenv("AOS_BRIDGE_DB", str(tmp_path / "bridge.db"))
+    router.send_notification(text, **kwargs)
+    return sent[0]
+
+
 # ── strip_traceback ─────────────────────────────────────────────────────────
 
 RAW_STDERR = '''Traceback (most recent call last):
@@ -243,43 +259,18 @@ def test_notice_on_empty_is_empty():
 # ── The router actually uses it ─────────────────────────────────────────────
 
 def test_router_humanizes_before_sending(monkeypatch, tmp_path):
-    router = _load_router()
-    sent: list[str] = []
-
-    monkeypatch.setattr(router, "_get_secret",
-                        lambda name: "token" if name == "TELEGRAM_BOT_TOKEN" else "999")
-    monkeypatch.setattr(router, "_load_topics", lambda: (None, {}))
-    monkeypatch.setattr(router, "TOPICS_CONFIG", tmp_path / "bridge-topics.yaml")
-
-    def fake_send(token, chat_id, text, *a, **kw):
-        sent.append(text)
-        return True, ""
-
-    monkeypatch.setattr(router, "_send_with_retry", fake_send)
-    monkeypatch.setenv("AOS_BRIDGE_DB", str(tmp_path / "bridge.db"))
-
-    result = router.send_notification(
-        "A cron died reading ~/.aos/config/crons.yaml\n" + RAW_STDERR, kind="alert")
-
-    assert result["delivered"] is True
-    assert sent, "nothing was sent"
-    _assert_phone_safe(sent[0])
-    assert "A cron died reading" in sent[0]
+    out = _router_sends(monkeypatch, tmp_path,
+                        "A cron died reading ~/.aos/config/crons.yaml\n" + RAW_STDERR,
+                        kind="alert")
+    _assert_phone_safe(out)
+    assert "A cron died reading" in out
 
 
 def test_router_exposes_an_opt_out_for_preformatted_senders(monkeypatch, tmp_path):
     """A sender that composes its own copy can say so, rather than guessing."""
-    router = _load_router()
-    sent: list[str] = []
-    monkeypatch.setattr(router, "_get_secret",
-                        lambda name: "token" if name == "TELEGRAM_BOT_TOKEN" else "999")
-    monkeypatch.setattr(router, "_load_topics", lambda: (None, {}))
-    monkeypatch.setattr(router, "_send_with_retry",
-                        lambda *a, **kw: (sent.append(a[2]), (True, ""))[1])
-    monkeypatch.setenv("AOS_BRIDGE_DB", str(tmp_path / "bridge.db"))
-
-    router.send_notification("literal ~/path/stays.yaml", kind="info", humanize=False)
-    assert "~/path/stays.yaml" in sent[0]
+    out = _router_sends(monkeypatch, tmp_path, "literal ~/path/stays.yaml",
+                        kind="info", humanize=False)
+    assert "~/path/stays.yaml" in out
 
 
 # ── MESSAGE_STYLE.md carries the five rules ─────────────────────────────────
@@ -303,3 +294,19 @@ def test_message_style_documents_the_five_rules(needle):
                                     "humanize_notice"])
 def test_message_style_names_the_new_humanizers(sender):
     assert sender in STYLE_DOC.read_text()
+
+
+# ── One emoji per section, at the router boundary ───────────────────────────
+
+def test_router_does_not_add_a_second_emoji(monkeypatch, tmp_path):
+    """reconcile has been sending 'ℹ️ 🛠️ …' since aos#170."""
+    out = _router_sends(monkeypatch, tmp_path,
+                        "🛠️ A few housekeeping notes:", kind="info", humanize=False)
+    assert out.startswith("🛠️"), out
+    assert "ℹ️" not in out
+
+
+def test_router_still_marks_plain_text(monkeypatch, tmp_path):
+    out = _router_sends(monkeypatch, tmp_path, "Disk is nearly full.", kind="alert",
+                        humanize=False)
+    assert out.startswith("⚠️")

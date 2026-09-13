@@ -1,0 +1,61 @@
+#!/usr/bin/env python3
+"""notify-flush — deliver what quiet hours held back, as one digest (aos#235).
+
+Non-urgent notifications raised while the operator is asleep are stored by
+`core/engine/notify/router.py` instead of pushed. This is the other half: once
+the quiet window has opened, everything queued goes out as a single message.
+
+Runs every 15 minutes rather than at a fixed hour on purpose. The window comes
+from `operator.yaml` (`notifications.quiet_hours`, falling back to the evening
+check-in and morning briefing times), and the operator is free to change it —
+a cron pinned to 07:00 would be wrong the moment they did. Inside quiet hours
+this exits immediately, so the cost of polling is one SELECT that returns
+nothing, and the digest lands within a quarter hour of the window opening.
+
+Run manually:  bash ~/aos/core/bin/internal/aos-python ~/aos/core/bin/crons/notify-flush
+Force a flush: ... notify-flush --force    (ignores the window; for testing)
+
+Exit codes: 0 always, unless the router itself cannot be loaded (1). A cron that
+exits non-zero on "nothing to do" trains everyone to ignore cron failures.
+"""
+
+import importlib.util
+import sys
+from pathlib import Path
+
+ROUTER = Path(__file__).resolve().parents[2] / "engine" / "notify" / "router.py"
+
+
+def main() -> int:
+    if not ROUTER.exists():
+        print(f"notify router not found at {ROUTER}", file=sys.stderr)
+        return 1
+    try:
+        spec = importlib.util.spec_from_file_location("aos_notify_router", ROUTER)
+        router = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(router)
+    except Exception as e:  # noqa: BLE001
+        print(f"could not load the notify router: {e}", file=sys.stderr)
+        return 1
+
+    force = "--force" in sys.argv
+
+    if not force and router.in_quiet_hours():
+        window = router.quiet_window()
+        if window:
+            (sh, sm), (eh, em) = window
+            print(f"quiet hours ({sh:02d}:{sm:02d}-{eh:02d}:{em:02d}) — holding the digest")
+        return 0
+
+    result = router.flush_quiet_queue(force=force)
+    if result["flushed"]:
+        print(f"digest delivered — {result['flushed']} item(s)")
+    else:
+        print("nothing queued")
+    if result.get("error"):
+        print(f"note: {result['error']}", file=sys.stderr)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
