@@ -45,6 +45,33 @@ _work_dir = os.path.abspath(os.path.join(_this_dir, '..', '..', 'work'))
 sys.path.insert(0, _work_dir)
 
 
+# The directories this hook covered before project resolution existed. Kept as
+# a fallback, not as the rule: a machine whose projects have no `path` recorded
+# would otherwise silently stop getting threads.
+LEGACY_PROJECT_DIR_NAMES = ("aos", "nuchay", "chief-ios-app")
+
+
+def _belongs_to_tracked_work(engine, cwd: str) -> bool:
+    """Should a SessionEnd in this directory get a thread?
+
+    Yes if the directory resolves to a tracked project (including through a
+    worktree or the ~/aos release symlink — see backend.project_for_cwd), or if
+    it is one of the legacy three, matched on a path boundary so that a sibling
+    whose name merely starts the same way does not qualify.
+    """
+    try:
+        if engine.project_for_cwd(cwd):
+            return True
+    except Exception:  # noqa: BLE001 — a hook must never crash
+        pass
+    home = str(Path.home())
+    for name in LEGACY_PROJECT_DIR_NAMES:
+        d = os.path.join(home, name)
+        if cwd == d or cwd.startswith(d + os.sep):
+            return True
+    return False
+
+
 def _estimate_session_scope(transcript: str) -> dict:
     """Analyze transcript to estimate what happened.
 
@@ -214,18 +241,19 @@ def main():
     for task in active_tasks:
         engine.link_session_to_task(task["id"], session_id)
 
-    # Thread continuity — find or create thread for this cwd
-    home = str(Path.home())
-    known_project_dirs = [
-        os.path.join(home, "aos"),
-        os.path.join(home, "nuchay"),
-        os.path.join(home, "chief-ios-app"),
-    ]
-    is_project_dir = cwd in known_project_dirs or any(
-        cwd.startswith(d) for d in known_project_dirs
-    )
-
-    if is_project_dir:
+    # Thread continuity — find or create the one thread for this project.
+    #
+    # The gate is "does this directory resolve to a tracked project", read from
+    # the project rows rather than from a hardcoded list that drifts. The legacy
+    # three directories stay as a fallback for a machine whose projects have no
+    # `path` recorded yet — but matched on a path BOUNDARY now. The bare
+    # startswith was a real bug, not a style point: "/Users/x/aos-releases/
+    # v0.7.1-bdd0739" startswith "/Users/x/aos", so every release directory
+    # passed this gate under a name that changes on every update, which is what
+    # fed the 2,015 threads titled "Work in v0.7.1-bdd0739" (aos#223). Release
+    # targets still get a thread — now via project resolution, which knows they
+    # are all the same checkout.
+    if _belongs_to_tracked_work(engine, cwd):
         engine.get_or_create_thread_for_cwd(cwd, session_id)
 
     # --- Step 2b: Update initiative documents ---

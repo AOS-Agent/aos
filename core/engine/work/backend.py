@@ -132,6 +132,21 @@ ACTIVITY_FILE = WORK_DIR / "activity.yaml"
 AOS_REPO = "hishamalhadi/aos"
 MAX_ACTIVITY = 100
 
+# The title the SessionEnd hook generates, and therefore the one shape that
+# tells an auto thread apart from one the operator typed. Migration 115 used
+# the same discriminator to close 3,574 of them; keeping one definition means
+# the sweep and the generator can never disagree about what they mean.
+AUTO_THREAD_PREFIX = "Work in "
+
+# The AOS framework's own project id. ~/aos is a release symlink whose target
+# is ~/aos-releases/<version> — a different directory name on every update —
+# so that tree cannot be matched by a recorded project path the way an ordinary
+# checkout can. Named here rather than inferred because the work engine already
+# keys GitHub issue sync off this same id (see _gh_sync_enabled / AOS_REPO).
+FRAMEWORK_PROJECT = "aos"
+RELEASE_DIR_NAME = "aos-releases"
+WORKTREE_SEGMENTS = (".claude", "worktrees")
+
 
 # ── Lazy singletons ────────────────────────────────────
 
@@ -1268,13 +1283,15 @@ def get_thread(thread_id: str) -> dict | None:
     return _to_dict(result)
 
 
-def add_thread(title: str, session_id: str = None, cwd: str = None) -> dict:
+def add_thread(title: str, session_id: str = None, cwd: str = None,
+               project: str = None) -> dict:
     """Create a new thread."""
     result = _get_adapter().create({
         "_type": "thread",
         "title": title,
         "session_id": session_id,
         "cwd": cwd,
+        "project": project,
     })
     return _to_dict(result) if not isinstance(result, dict) else result
 
@@ -1313,6 +1330,93 @@ def promote_thread(thread_id: str, project_title: str = None,
     if result is None:
         return None
     return _to_dict(result)
+
+
+def _strip_worktree(path: Path) -> Path:
+    """A worktree path collapsed to the project it is a checkout of.
+
+    `<project>/.claude/worktrees/<branch-slug>` is the sanctioned layout
+    (rules/project-structure.md), so the project root is everything above the
+    `.claude` segment. Matching against the project's recorded `path` already
+    covers this — but only when the project HAS a path recorded; this makes the
+    name fallback work for worktrees too.
+    """
+    parts = path.parts
+    for i in range(len(parts) - 1):
+        if (parts[i], parts[i + 1]) == WORKTREE_SEGMENTS:
+            return Path(*parts[:i]) if i else path
+    return path
+
+
+def _framework_project() -> str | None:
+    """FRAMEWORK_PROJECT, but only if this machine actually tracks it."""
+    try:
+        row = _get_adapter()._conn.execute(
+            "SELECT id FROM projects WHERE id = ?", (FRAMEWORK_PROJECT,)
+        ).fetchone()
+    except Exception:  # noqa: BLE001
+        return None
+    return row["id"] if row else None
+
+
+def project_for_cwd(cwd: str | None) -> str | None:
+    """The project a directory belongs to, seeing through the spellings.
+
+    `detect_project_from_cwd` matches a directory against recorded project
+    paths, which is right but literal. One logical checkout answers to several
+    directory names, and each one used to mint its own thread:
+
+      ~/project/aos                                 the project root
+      ~/project/aos/.claude/worktrees/feat-x        a worktree of it
+      /Volumes/AOS-X/project/aos/...                the same thing, unsymlinked
+      ~/aos  ->  ~/aos-releases/v0.7.6-dff5c0d      the release symlink target,
+                                                    renamed on every update
+
+    The release case is the one that did the damage: the live DB held 2,015
+    threads under the single title "Work in v0.7.1-bdd0739", because the version
+    directory changes name every release (aos#223, migrations 115 and 121).
+
+    Returns None when nothing resolves — callers then fall back to the raw
+    directory, which is the pre-v0.7.7 behaviour for untracked dirs.
+    """
+    if not cwd:
+        return None
+    raw = Path(cwd).expanduser()
+    try:
+        resolved = raw.resolve()
+    except OSError:
+        resolved = raw
+
+    candidates = [resolved] if resolved == raw else [resolved, raw]
+    for candidate in candidates:
+        if RELEASE_DIR_NAME in candidate.parts:
+            framework = _framework_project()
+            if framework:
+                return framework
+        found = detect_project_from_cwd(str(_strip_worktree(candidate)))
+        if found:
+            return found
+    return None
+
+
+def find_thread_by_project(project_id: str) -> dict | None:
+    """The project's one open thread, if it has one.
+
+    Most recent first, and `rowid` breaks the tie because `threads.created_at`
+    holds a bare date — several threads a day share a value, and an ordering
+    that is not total is an ordering that can move between calls.
+    """
+    if not project_id:
+        return None
+    adapter = _get_adapter()
+    row = adapter._conn.execute(
+        "SELECT id FROM threads WHERE project_id = ? AND status != 'closed' "
+        "ORDER BY created_at DESC, rowid DESC LIMIT 1",
+        (project_id,),
+    ).fetchone()
+    if not row:
+        return None
+    return get_thread(row["id"])
 
 
 def find_thread_by_cwd(cwd: str) -> dict | None:
@@ -1421,24 +1525,45 @@ def link_session_to_thread(thread_id: str, session_id: str,
 
 def get_or_create_thread_for_cwd(cwd: str, session_id: str,
                                   title: str = None) -> dict:
-    """Find the thread already associated with this directory, or create the
-    one and only thread for it.
+    """Find this project's open thread, or create the one and only one for it.
 
-    aos#223: at most one "Work in <dir>" thread per cwd, ever. Repeated
-    SessionEnds in the same directory must link to the existing thread, not
-    mint another — see find_thread_by_cwd.
+    **Keyed on project, not cwd (v0.7.7).** aos#223 made this find-or-create
+    instead of always-create, which fixed repeated SessionEnds in the *same*
+    directory — and left the actual flood in place, because one project answers
+    to many directory names: three worktrees, the ~/project symlink, and ~/aos,
+    whose release target is renamed on every update. Keying on the cwd string
+    gave each spelling its own thread (4,635 rows across 23 titles in the live
+    DB, 2,015 of them under one title).
+
+    A project's thread is whatever open thread it already has, including one the
+    operator wrote or promoted: reusing it is the point. Minting an auto thread
+    beside a hand-written one for the same project is how "at most one" becomes
+    two. A *closed* thread is never resurrected — migration 115 closed 3,574 of
+    these deliberately, and the next session in that project starts fresh.
+
+    Falls back to the raw cwd when no project resolves, which is the behaviour
+    every untracked directory had before.
     """
+    project = project_for_cwd(cwd)
+
+    if project:
+        thread = find_thread_by_project(project)
+        if thread:
+            link_session_to_thread(thread["id"], session_id, cwd=cwd,
+                                   project=project)
+            return thread
+        if not title:
+            title = f"{AUTO_THREAD_PREFIX}{project}"
+        return add_thread(title, session_id=session_id, cwd=cwd, project=project)
+
     thread = find_thread_by_cwd(cwd)
     if thread:
-        link_session_to_thread(thread["id"], session_id)
+        link_session_to_thread(thread["id"], session_id, cwd=cwd)
         return thread
 
     if not title:
-        dir_name = Path(cwd).name
-        title = f"Work in {dir_name}"
-
-    thread = add_thread(title, session_id=session_id, cwd=cwd)
-    return thread
+        title = f"{AUTO_THREAD_PREFIX}{Path(cwd).name}"
+    return add_thread(title, session_id=session_id, cwd=cwd)
 
 
 def find_tasks_by_project_or_cwd(cwd: str) -> list:

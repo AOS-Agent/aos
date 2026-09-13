@@ -893,6 +893,7 @@ class WorkAdapter(Adapter):
                     title=obj["title"],
                     session_id=obj.get("session_id"),
                     cwd=obj.get("cwd"),
+                    project=obj.get("project") or obj.get("project_id"),
                 )
             elif "text" in obj:
                 return self._create_inbox(
@@ -1983,25 +1984,32 @@ class WorkAdapter(Adapter):
         return [self._row_to_thread(r) for r in rows]
 
     def _create_thread(
-        self, title: str, session_id: str | None = None, cwd: str | None = None
+        self, title: str, session_id: str | None = None, cwd: str | None = None,
+        project: str | None = None,
     ) -> dict:
-        """Create a thread. Returns normalized dict."""
+        """Create a thread. Returns normalized dict.
+
+        ``project`` is the dedup key as of v0.7.7: one open thread per project,
+        not per cwd string (backend.get_or_create_thread_for_cwd). It was
+        previously only ever set by ``promote_thread``, which is why a thread
+        born from a SessionEnd had nothing to group it by.
+        """
         tid = self._next_id("th")
         now = _today()
         cols = {r[1] for r in self._conn.execute("PRAGMA table_info(threads)")}
         if "cwd" in cols:
             self._conn.execute(
-                "INSERT INTO threads (id, title, status, created_at, cwd) "
-                "VALUES (?, ?, 'exploring', ?, ?)",
-                (tid, title, now, cwd),
+                "INSERT INTO threads (id, title, status, created_at, cwd, project_id) "
+                "VALUES (?, ?, 'exploring', ?, ?, ?)",
+                (tid, title, now, cwd, project),
             )
         else:
             # Defensive fallback only — _ensure_aux_schema always adds this
             # column at adapter construction, so this branch should be dead.
             self._conn.execute(
-                "INSERT INTO threads (id, title, status, created_at) "
-                "VALUES (?, ?, 'exploring', ?)",
-                (tid, title, now),
+                "INSERT INTO threads (id, title, status, created_at, project_id) "
+                "VALUES (?, ?, 'exploring', ?, ?)",
+                (tid, title, now, project),
             )
         self._conn.commit()
         thread = {
@@ -2009,7 +2017,7 @@ class WorkAdapter(Adapter):
             "title": title,
             "status": "exploring",
             "started": now,
-            "project": None,
+            "project": project,
             "cwd": cwd,
         }
         if session_id:
