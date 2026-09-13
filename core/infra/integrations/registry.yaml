@@ -296,4 +296,4 @@ catalog:
 #   - API: operator provides base URL + API key
 #   - MCP: operator points to an MCP server
 #   - Web: operator gives a URL, Chrome MCP handles it
-#   - App: native/electron app, Steer or AppleScript handles it
+#   - App: native/electron app, AppleScript or Chrome MCP handles it

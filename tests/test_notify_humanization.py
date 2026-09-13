@@ -126,7 +126,14 @@ def test_dispatch_failure_never_carries_stderr():
     _assert_phone_safe(out)
     assert _items(out) <= 4
     assert out.startswith(("😕", "⚠️"))
-    assert "try again" in out.lower()
+    # aos#40: GUI-automation dispatch (core/steer/) was removed, so this stage
+    # is now the permanent, every-time outcome of a dispatch attempt — never
+    # a transient hiccup. The copy must say so plainly and must NOT promise a
+    # retry that will never come (the pre-#40 wording, "I'll try again in a
+    # moment", was already false for a genuinely dead dependency and would be
+    # false 100% of the time now).
+    assert "try again" not in out.lower()
+    assert "available" in out.lower()
 
 
 def test_job_started_is_three_words():

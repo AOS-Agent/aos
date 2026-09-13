@@ -54,3 +54,66 @@ def test_duration_consumer_renders_without_keyerror(tmp_path):
     # The two f-strings that used to KeyError every week.
     assert f"{s['total_duration_min']}min (~{s['avg_duration_min']}min avg)" == "0min (~0min avg)"
     assert f"Sessions: {s['count']} ({s['total_duration_min']}min)" == "Sessions: 0 (0min)"
+
+
+# ── aos#114: wrong sessions path + silent zero-session weeks ──────────────
+#
+# SESSIONS_DIR pointed at vault/ops/sessions, which never existed (the vault
+# schema's canonical session-export location is vault/log/sessions — see
+# ~/vault/SCHEMA.md and every sibling cron: compile-patterns, session-export,
+# compile-daily, reconcile-sessions). Every run silently found nothing.
+# Fixed by pointing at vault/log/sessions and by warning (rather than quietly
+# reporting 0) when a week genuinely turns up no sessions.
+
+def test_sessions_dir_is_log_sessions_not_ops():
+    m = _load()
+    assert m.SESSIONS_DIR == Path.home() / "vault" / "log" / "sessions"
+    assert "ops" not in m.SESSIONS_DIR.parts
+
+
+def test_sessions_dir_resolves_under_real_vault_layout(tmp_path, monkeypatch):
+    """Temp-vault integration test: a session export under vault/log/sessions/
+    is found without any test-only path override."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    sessions_dir = tmp_path / "vault" / "log" / "sessions"
+    sessions_dir.mkdir(parents=True)
+    (sessions_dir / "2026-01-02-abc123.md").write_text(
+        "---\nproject: aos\nmessage_count: 5\nduration_min: 12\n---\n# Test Session\n"
+    )
+
+    m = _load()
+    assert m.SESSIONS_DIR == sessions_dir  # wired up via VAULT_ROOT, not a test hack
+
+    result = m.scan_sessions(datetime.date(2026, 1, 1), datetime.date(2026, 1, 7))
+    assert result["count"] == 1
+    assert result["total_messages"] == 5
+    assert result["projects"]["aos"] == 1
+
+
+def test_zero_session_week_warns_instead_of_silent(tmp_path, monkeypatch, capsys):
+    """A week with zero sessions must surface a warning, not report 0 quietly."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / "vault" / "log" / "sessions").mkdir(parents=True)
+
+    m = _load()
+    m.NO_TELEGRAM = True
+    m.main()
+
+    captured = capsys.readouterr()
+    assert "WARNING" in captured.err
+    assert "0 session" in captured.err.lower()
+
+
+def test_nonzero_session_week_does_not_warn(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    sessions_dir = tmp_path / "vault" / "log" / "sessions"
+    sessions_dir.mkdir(parents=True)
+    today = datetime.date.today()
+    (sessions_dir / f"{today.isoformat()}-abc123.md").write_text("# Test Session\n")
+
+    m = _load()
+    m.NO_TELEGRAM = True
+    m.main()
+
+    captured = capsys.readouterr()
+    assert "WARNING" not in captured.err

@@ -53,8 +53,7 @@ The map returns an ordered list of approaches, cheapest first.
 
 **Only escalate to token-consuming methods when zero-token methods fail:**
 - AppleScript (low cost)
-- Steer accessibility (medium cost)
-- Chrome MCP / Steer OCR (high cost)
+- Chrome MCP (high cost)
 - Full screenshot+vision loop (very high cost)
 
 ## Step 3: Execute with Fallback
@@ -75,23 +74,15 @@ Attempt 1: AppleScript
   → SUCCESS → done
 
 If AppleScript failed:
-Attempt 2: Steer
-  → steer apps activate Calendar
-  → steer see --app Calendar --json
-  → steer click --on "+" button
-  → steer type "Meeting" → steer click "Save"
-  → SUCCESS → done
-
-If Steer failed:
-Attempt 3: Chrome
+Attempt 2: Chrome
   → Open calendar.google.com via Chrome MCP
   → Click "Create", fill fields, save
   → SUCCESS → done
 
 All failed:
-  → Report: "Tried AppleScript (error: no calendar access), Steer (Calendar
-    window not visible), Chrome (Google Calendar not logged in). Need: either
-    grant Calendar access to Terminal, or log into Google Calendar in Chrome."
+  → Report: "Tried AppleScript (error: no calendar access), Chrome (Google
+    Calendar not logged in). Need: either grant Calendar access to Terminal,
+    or log into Google Calendar in Chrome."
 ```
 
 ## Step 4: Log the Execution
@@ -125,9 +116,9 @@ If 3+ similar successful tasks exist with the same approach:
 
 | About to say... | Instead, try... |
 |-----------------|-----------------|
-| "I can't interact with this app" | Check capabilities.yaml → try steer/chrome/API |
+| "I can't interact with this app" | Check capabilities.yaml → try AppleScript/chrome/API |
 | "Please do this manually" | Try all approaches in the fallback chain first |
-| "This requires a GUI" | You HAVE a GUI — use steer or chrome-mcp |
+| "This requires a GUI" | You HAVE a GUI — use AppleScript or chrome-mcp |
 | "I don't have access to..." | Check keychain (`bin/agent-secret`), check APIs, check MCPs |
 | "Please log in first" | Try saved cookies, API tokens, keychain credentials |
 | "I'm unable to verify..." | Take a screenshot, use OCR, read accessibility tree |
@@ -139,117 +130,6 @@ If 3+ similar successful tasks exist with the same approach:
 - Legal/financial authorization (signing contracts, approving payments)
 - Operator explicitly restricted this action type
 - Truly all approaches exhausted — with evidence of each attempt
-
-## Steer Quick Reference
-
-For desktop app interaction, Steer is your primary tool. **Invisible-first by default** —
-clicks use AXPress (no cursor warp), hotkeys go to the target PID (no global events).
-The operator is NOT interrupted.
-
-```bash
-STEER=~/aos/vendor/mac-mini-agent-tools/apps/steer/.build/arm64-apple-macosx/release/steer
-
-# See what's on screen (works for native + Electron apps automatically)
-$STEER see --app "App Name" --json
-# Electron apps auto-detected → OCR merged with AX tree → O1,O2,O3 elements
-
-# Click by element ID (invisible-first: uses AXPress, no cursor movement)
-$STEER click --on B3 --app "App Name" --json
-# If AXPress fails, falls back to CGEvent with warning on stderr
-
-# Click with forced visible mode (only when invisible doesn't work)
-$STEER click --on B3 --visible --json
-
-# Type text into a field (invisible-first: uses AXSetValue)
-$STEER type "hello world" --into T1 --app "App Name"
-
-# Keyboard shortcuts (targeted to app PID, not global)
-$STEER hotkey cmd+s --app "App Name"
-$STEER hotkey cmd+shift+p --app Obsidian
-
-# Wait for element to appear (OCR-aware, polls until found)
-$STEER wait --for "Submit" --app "App Name" --timeout 5 --json
-
-# Inspect what AX actions an element supports (debug)
-$STEER click --on B3 --inspect --app "App Name"
-
-# Cleanup after a session
-$STEER cleanup --opened "Obsidian,TextEdit" --clear-old --json
-```
-
-### The Observe-Act-Verify Loop
-
-**NEVER chain steer commands.** After EVERY action, observe:
-
-```bash
-$STEER see --app Safari --json          # 1. OBSERVE: understand current state
-$STEER click --on B3 --app Safari       # 2. ACT: one action
-$STEER see --app Safari --json          # 3. VERIFY: did it work?
-# If not → adjust and retry. If yes → next action.
-```
-
-### Wait, Don't Sleep
-
-**NEVER use `sleep` between steer commands.** Use `steer wait`:
-
-```bash
-# BAD:
-$STEER click --on "Search"
-sleep 1
-$STEER type "query"
-
-# GOOD:
-$STEER click --on "Search" --app Safari
-$STEER wait --for "search" --app Safari --timeout 5
-$STEER type "query" --into "search" --app Safari
-```
-
-### Electron Apps (VS Code, Obsidian, Slack, Notion)
-
-Steer auto-detects Electron apps and merges OCR text with AX elements.
-Just use `steer see` — no special flags needed:
-
-```bash
-$STEER see --app "Obsidian" --json
-# Returns: O1 "daily", O2 "2026-03-22", O3 "knowledge", etc.
-# Click by OCR element ID:
-$STEER click --on O2 --app Obsidian
-```
-
-### Job Tracking
-
-For multi-step automation, track progress so the bridge can report back:
-
-```bash
-JOB=~/aos/core/steer/job.py
-
-# At task start:
-JOB_ID=$(python3 $JOB create "Find today's notes" | python3 -c "import json,sys; print(json.loads(sys.stdin.read())['job_id'])")
-python3 $JOB start $JOB_ID
-
-# After each meaningful step:
-python3 $JOB update $JOB_ID "Opened Obsidian, found 5 notes"
-python3 $JOB app $JOB_ID Obsidian    # track apps opened for cleanup
-
-# On completion:
-python3 $JOB summary $JOB_ID "Found and organized 5 daily notes"
-python3 $JOB done $JOB_ID
-
-# On failure:
-python3 $JOB fail $JOB_ID "Obsidian window not found"
-```
-
-### Cleanup Protocol
-
-**ALWAYS clean up at the end of a task:**
-
-```bash
-# Close apps you opened (from job tracking)
-$STEER cleanup --opened "Obsidian,TextEdit" --clear-old --json
-
-# The --clear-old flag removes screenshots older than 1 hour
-# The --opened flag quits the listed apps
-```
 
 ## Chrome MCP Quick Reference
 

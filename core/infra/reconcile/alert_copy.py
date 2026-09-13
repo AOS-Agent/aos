@@ -480,7 +480,10 @@ def cap_items(text: str | None, max_items: int = MAX_ITEMS) -> str:
 # ── STEER job reports ──────────────────────────────────────────────────────
 
 _JOB_COPY = {
-    "dispatch_failed": "😕 Couldn't start that job — I'll try again in a moment.",
+    # aos#40: GUI-automation dispatch (core/steer/) was removed — this stage
+    # is now the permanent outcome of a dispatch attempt, never a transient
+    # hiccup, so the copy must not promise a retry that will never happen.
+    "dispatch_failed": "😕 GUI automation isn't available on this machine. Details are in the log.",
     "started": "🔄 On it.",
     "working": "🔄 Still working on it.",
     "failed": "😕 That job didn't finish. Details are in the log.",

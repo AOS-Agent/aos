@@ -59,10 +59,10 @@ _write_event() {
 
     "$AOS_PY" -c "
 import json, os
-from datetime import datetime
+from datetime import datetime, timezone
 
 event = {
-    'ts': datetime.now(datetime.UTC).isoformat() + 'Z',
+    'ts': datetime.now(timezone.utc).isoformat() + 'Z',
     'type': os.environ['EVENT_TYPE'],
     'detail': os.environ['EVENT_DETAIL'],
 }
@@ -84,11 +84,11 @@ _start() {
     SESSION_FILE="$SESSION_DIR/${session_id}.jsonl"
     EVENT_TYPE="flow_start" EVENT_DETAIL="$flow" "$AOS_PY" -c "
 import json, os, platform
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 event = {
-    'ts': datetime.now(datetime.UTC).isoformat() + 'Z',
+    'ts': datetime.now(timezone.utc).isoformat() + 'Z',
     'type': 'flow_start',
     'flow': os.environ.get('EVENT_DETAIL', 'unknown'),
     'aos_version': Path(os.path.expanduser('~/.aos/.version')).read_text().strip() if Path(os.path.expanduser('~/.aos/.version')).exists() else 'unknown',
@@ -112,9 +112,9 @@ _event() {
     EVENT_DETAIL="$detail" \
     "$AOS_PY" -c "
 import json, os
-from datetime import datetime
+from datetime import datetime, timezone
 event = {
-    'ts': datetime.now(datetime.UTC).isoformat() + 'Z',
+    'ts': datetime.now(timezone.utc).isoformat() + 'Z',
     'type': os.environ['EVENT_TYPE'],
     'detail': os.environ['EVENT_DETAIL'],
 }
@@ -134,9 +134,9 @@ _error() {
     EVENT_CONTEXT="$context" \
     "$AOS_PY" -c "
 import json, os
-from datetime import datetime
+from datetime import datetime, timezone
 event = {
-    'ts': datetime.now(datetime.UTC).isoformat() + 'Z',
+    'ts': datetime.now(timezone.utc).isoformat() + 'Z',
     'type': 'error',
     'message': os.environ.get('EVENT_MESSAGE', ''),
     'context': os.environ.get('EVENT_CONTEXT', ''),
@@ -157,9 +157,9 @@ _choice() {
     EVENT_ANSWER="$answer" \
     "$AOS_PY" -c "
 import json, os
-from datetime import datetime
+from datetime import datetime, timezone
 event = {
-    'ts': datetime.now(datetime.UTC).isoformat() + 'Z',
+    'ts': datetime.now(timezone.utc).isoformat() + 'Z',
     'type': 'choice',
     'question': os.environ.get('EVENT_QUESTION', ''),
     'answer': os.environ.get('EVENT_ANSWER', ''),
@@ -178,7 +178,7 @@ _end() {
     SESSION_FILE="$SESSION_DIR/${session_id}.jsonl" \
     "$AOS_PY" -c "
 import json, os
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 # Calculate total duration
@@ -191,7 +191,7 @@ else:
     start_ts = 'unknown'
 
 event = {
-    'ts': datetime.now(datetime.UTC).isoformat() + 'Z',
+    'ts': datetime.now(timezone.utc).isoformat() + 'Z',
     'type': 'flow_end',
     'outcome': '$outcome',
     'start_ts': start_ts,

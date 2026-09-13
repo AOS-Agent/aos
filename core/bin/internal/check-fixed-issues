@@ -115,9 +115,9 @@ for issue in issues:
     for fix in "${fixed[@]}"; do
         "$AOS_PY" -c "
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
-entry = {'ts': datetime.now(datetime.UTC).isoformat() + 'Z', 'issue': '''$fix'''}
+entry = {'ts': datetime.now(timezone.utc).isoformat() + 'Z', 'issue': '''$fix'''}
 path = Path('$FIXED_LOG')
 with open(path, 'a') as f:
     f.write(json.dumps(entry) + '\n')

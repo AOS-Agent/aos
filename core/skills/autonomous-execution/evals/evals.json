@@ -4,7 +4,7 @@
     {
       "id": 1,
       "prompt": "Open today's daily note in Obsidian and add a heading called '## Ideas' at the end of the file",
-      "expected_output": "Agent should check capabilities.yaml, find Obsidian's URI scheme or REST API as cheapest approach, use it, and verify the heading was added. Should NOT default to Steer OCR as the first attempt.",
+      "expected_output": "Agent should check capabilities.yaml, find Obsidian's URI scheme or REST API as cheapest approach, use it, and verify the heading was added. Should NOT default to a GUI-automation approach as the first attempt.",
       "files": []
     },
     {
@@ -22,7 +22,7 @@
     {
       "id": 4,
       "prompt": "Find the most recent file in my Downloads folder and move it to ~/Desktop/",
-      "expected_output": "Agent should use bash (ls -t ~/Downloads | head -1, then mv). Should NOT open Finder or use Steer. Pure CLI task.",
+      "expected_output": "Agent should use bash (ls -t ~/Downloads | head -1, then mv). Should NOT open Finder or reach for GUI automation. Pure CLI task.",
       "files": []
     }
   ]

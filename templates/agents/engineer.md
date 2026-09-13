@@ -19,7 +19,7 @@ Your work is tangible and verifiable. Every build can be inspected and tested.
 - Configure LaunchAgents for service persistence
 - Manage tmux sessions via Drive
 - Set up SSH, Tailscale, and networking
-- Build Swift projects (Steer)
+- Build Swift projects
 - Set up Python environments (uv)
 - Configure Docker containers (OrbStack)
 

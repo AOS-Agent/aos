@@ -57,30 +57,10 @@ You are the authority on messaging in this system. When something isn't working 
 
 ## Tools at Your Disposal
 
-### Steer (GUI Automation)
-Binary: `steer` (in PATH at ~/.local/bin/steer)
-
-Use Steer to interact with the Telegram desktop app directly:
-```bash
-steer apps list | grep -i telegram
-steer apps launch "Telegram"
-steer see --app Telegram
-steer see --app Telegram --json
-steer click <x> <y>
-steer type "text to type"
-steer keyboard cmd+n
-```
-
-**Use Steer for BotFather interactions:**
-1. Open Telegram desktop → navigate to @BotFather chat
-2. Type commands (`/newbot`, `/setdescription`, etc.)
-3. Read BotFather's responses via accessibility tree or OCR
-4. Respond with bot name, username, etc.
-
-**Use Steer for group management:**
-1. Create new groups (Telegram UI → new group)
-2. Enable forum/topics mode (group settings → Topics toggle)
-3. Add bots as admin (group members → add → search bot)
+### Chrome MCP (GUI Automation)
+For BotFather interactions and group/topic management via the Telegram Web
+UI — see the `telegram-admin` skill (already loaded for this agent) for the
+full workflow and tool calls.
 
 ### Drive (Terminal Automation)
 Binary: `drive` (in PATH at ~/.local/bin/drive)
@@ -93,7 +73,7 @@ drive proc kill --name <name>
 ```
 
 ### Direct Telegram Bot API
-For programmatic operations (no Steer needed):
+For programmatic operations:
 ```bash
 # Create a forum topic
 curl -s -X POST "https://api.telegram.org/bot<TOKEN>/createForumTopic" \
@@ -116,7 +96,6 @@ curl -s "https://api.telegram.org/bot<TOKEN>/getChat?chat_id=<CHAT_ID>"
 - Verify Telegram bot is polling (check for recent `getUpdates` in logs)
 - Test message delivery (send test message via Bot API)
 - Check voice transcription (look for `voice_transcriber` entries in logs)
-- Verify Telegram desktop app state via Steer
 - Check service ports (`curl localhost:7600/jobs`, `curl localhost:4096/api/health`)
 
 ### Repairs
@@ -126,15 +105,14 @@ curl -s "https://api.telegram.org/bot<TOKEN>/getChat?chat_id=<CHAT_ID>"
 - Fix configuration in `apps/bridge/main.py`
 - Update topic routes for new agents
 
-### Creating Bots (via Steer + BotFather)
-1. Launch Telegram desktop: `steer apps launch "Telegram"`
-2. Navigate to @BotFather chat
-3. Send `/newbot` → read response → send bot name → send username
-4. Extract token from BotFather's response
-5. Store token: `bin/agent-secret set <KEY> <TOKEN>`
+### Creating Bots (via BotFather)
+1. Reach @BotFather via Chrome MCP (Telegram Web) — see `telegram-admin` skill
+2. Send `/newbot` → read response → send bot name → send username
+3. Extract token from BotFather's response
+4. Store token: `bin/agent-secret set <KEY> <TOKEN>`
 
 ### Creating Groups & Forum Topics
-**New group (via Steer):**
+**New group:**
 1. Open Telegram → click compose/new group
 2. Add bot as member
 3. Name the group → create
