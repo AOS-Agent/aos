@@ -192,7 +192,7 @@ services:
   bridge:
     health: ''
     launchagent: com.aos.bridge
-tailscale_ip: 100.112.113.53
+tailscale_ip: 100.64.0.1
 voice_models:
   stt:
     whisper:
@@ -241,7 +241,7 @@ def test_strips_all_four_dead_keys_and_leaves_everything_else_intact(m):
     assert "whisper" not in state
     assert "last_updated: '2026-03-31'\n" in state
     assert "services:\n  bridge:\n    health: ''\n    launchagent: com.aos.bridge\n" in state
-    assert "tailscale_ip: 100.112.113.53\n" in state
+    assert "tailscale_ip: 100.64.0.1\n" in state
 
     # Idempotent: a second run makes no further changes.
     before = (accounts, goals, state)
