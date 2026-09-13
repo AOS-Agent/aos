@@ -77,6 +77,7 @@ HELPERS: dict[str, list[str]] = {
     ],
     "129_close_cwd_keyed_threads": ["_work_db", "_backup_dir"],
     "130_trust_log_dispatch_hook": ["_settings_file"],
+    "131_comms_nightly_park_and_retire": ["_crons_yaml", "_stale_report", "_backups_dir"],
 }
 
 
