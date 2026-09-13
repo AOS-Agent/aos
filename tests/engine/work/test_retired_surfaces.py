@@ -19,6 +19,12 @@ the code shipped, ran, and was never used.
     fossil, with no staleness warning.
   * the ``delegate`` / ``hold`` / ``runner`` / ``metrics`` CLI commands — 0, 3,
     2 and 0 invocations respectively across the tool's whole life.
+  * the goals-adjacent verbs ``threads`` / ``promote`` / ``move`` / ``who`` /
+    ``enrich`` / ``drift`` — retired in the same release by the never-used
+    sweep. ``move`` had been fixed to resolve titles days earlier; the fix and
+    the retirement are not in conflict, the command simply did not survive the
+    sweep, and the resolver gate it was fitted with still covers the five
+    mutators that did.
 
 This test is the ratchet. A module that was dead once is attractive to
 resurrect by accident (a stray import, a revert, a merge that brings a file
@@ -46,14 +52,17 @@ RETIRED_MODULES = (
     "metrics.py",
 )
 
-RETIRED_COMMANDS = ("delegate", "hold", "runner", "metrics")
+RETIRED_COMMANDS = (
+    "delegate", "hold", "runner", "metrics",
+    "threads", "promote", "move", "who", "enrich", "drift",
+)
 
-# The core loop the audit found real traffic for, plus the five low-volume
-# commands the operator explicitly kept. Guards against over-deleting.
+# The core loop the audit found real traffic for, plus the low-volume commands
+# the operator explicitly kept. Guards against over-deleting.
 KEPT_COMMANDS = (
     "add", "done", "start", "list", "show", "search", "today", "next",
     "projects", "inbox", "link", "subtask", "handoff", "dispatch", "thread",
-    "who", "move", "promote", "goals", "threads",
+    "goals",
 )
 
 

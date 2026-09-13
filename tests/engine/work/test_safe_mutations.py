@@ -129,35 +129,6 @@ def test_mutating_commands_refuse_an_ambiguous_title(twins, monkeypatch, capsys,
     )
 
 
-def test_move_refuses_an_ambiguous_title(twins, monkeypatch, capsys):
-    eng = twins["engine"]
-    eng.add_project("Target", project_id="target")
-    before = {t["id"] for t in eng.get_all_tasks()}
-
-    code, out = _run(monkeypatch, capsys, "move", AMBIGUOUS, "--to", "target")
-
-    assert code == 2, out
-    assert {t["id"] for t in eng.get_all_tasks()} == before, (
-        "move re-IDs tasks; a guessed move is unusually hard to undo"
-    )
-
-
-def test_move_accepts_an_unambiguous_title(work_env, monkeypatch, capsys):
-    """`move` only ever matched literal ids before — a title silently moved
-    nothing and said "No tasks found to move". It resolves now, with the same
-    refusal on a tie."""
-    eng = work_env["engine"]
-    eng.add_project("Target", project_id="target")
-    task = eng.add_task("Wire the evening check-in")
-
-    code, out = _run(monkeypatch, capsys, "move", "evening check-in", "--to", "target")
-
-    assert code == 0, out
-    moved = [t for t in eng.get_all_tasks() if t["title"] == "Wire the evening check-in"]
-    assert moved and moved[0]["project"] == "target"
-    assert moved[0]["id"] != task["id"], "a move re-IDs into the target project"
-
-
 # ---------------------------------------------------------------------------
 # Still fuzzy-friendly: a clear winner wins
 # ---------------------------------------------------------------------------
@@ -198,7 +169,7 @@ def test_no_match_at_all_still_exits_1(work_env, monkeypatch, capsys):
 # Read commands keep today's behaviour
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("command", ["show", "dispatch", "who"])
+@pytest.mark.parametrize("command", ["show", "dispatch"])
 def test_read_commands_still_resolve_an_ambiguous_title(twins, monkeypatch, capsys, command):
     code, out = _run(monkeypatch, capsys, command, AMBIGUOUS)
     assert code == 0, f"`work {command}` must stay fuzzy: {out}"

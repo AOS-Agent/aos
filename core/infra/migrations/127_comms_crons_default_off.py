@@ -1,6 +1,6 @@
 """
 Migration 127: comms-extract, people-intel-refresh, loop-sensors off by
-default (v0.8.0 freeze).
+default (v0.7.7).
 
 Cross-machine usage audit (~/vault/knowledge/references/never-used-2026-09-13.md):
 

@@ -202,7 +202,9 @@ body_synced_at: "..."    # when pulled from source
 
 ### The enricher
 
-`work enrich <project>` — a **link-and-pull** pass, not a generator:
+`enrich` was retired as a CLI verb in v0.7.7 (never-used sweep). The contract
+below is kept because it is the specification a future enricher must meet, not
+a description of a command that ships:
 
 1. For each task, find its section in the project's source docs by matching
    the task title against headings (`Part 2` → `## 4C · Part 2 — …`).
@@ -329,13 +331,12 @@ Debounce: coalesce recompiles for the same project within 2s.
 
 ## CLI
 
+`enrich` and `who` were retired in v0.7.7; what ships is:
+
 ```
 work brief <project>            # render the brief as markdown to stdout
 work brief <project> --json
 work brief --all                # one-line state per project
-work enrich <project>           # link-and-pull task bodies from source docs
-work enrich <project> --dry-run # show what would be pulled, change nothing
-work who <task>                 # show attribution + audit trail for a task
 ```
 
 ## Module interfaces — LOCKED

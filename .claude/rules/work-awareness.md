@@ -19,10 +19,10 @@ You can resolve tasks by:
 
 When in a project directory, new tasks auto-assign to that project.
 
-**Mutations never guess.** `done/start/cancel/subtask/handoff/move` take a
-title, but one matching several tasks equally well prints the candidates,
-**exits 2, and changes nothing** — re-run with the ID it printed, don't reword.
-`show/search/dispatch/who` stay loosely fuzzy.
+**Mutations never guess.** `done/start/cancel/subtask/handoff` take a title,
+but one matching several tasks equally well prints the candidates, **exits 2,
+and changes nothing** — re-run with the ID it printed, don't reword.
+`show/search/dispatch` stay loosely fuzzy.
 
 ## When to Act
 

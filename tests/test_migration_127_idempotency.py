@@ -1,6 +1,6 @@
 """Migration 127 — comms-extract/people-intel-refresh/loop-sensors default-off.
 
-Same contract as the other v0.8.0 default-off migrations (111, 112): idempotent,
+Same contract as the other v0.7.7 default-off migrations (111, 112): idempotent,
 respects an explicit operator opt-in, never touches a service/job it wasn't
 named for. This one patches ~/aos/config/crons.yaml line-based rather than a
 full YAML round-trip, so the extra thing worth locking in is that a re-run
