@@ -43,7 +43,10 @@ jobs:
   auto-update:
     command: bash ~/aos/core/bin/crons/check-update --apply
     at: "04:00"
-    catch_up: true   # machines that sleep at 04:00 run it on first wake
+    # No catch_up: this is the only machine running AOS and it is always on.
+    # The flag was added for a laptop that slept through the 04:00 window; that
+    # laptop has no AOS install. `check-update` (every 2h) still reports an
+    # available update in between, so a missed window is visible, not silent.
     timeout: 300
     tier: 1
     description: Pulls and applies AOS updates automatically
@@ -51,7 +54,7 @@ jobs:
   harness-update:
     command: bash ~/aos/core/bin/crons/harness-update
     at: "04:15"
-    catch_up: true   # same: run on first wake if the 04:15 window was missed
+    # No catch_up — same reason as auto-update above.
     timeout: 300
     tier: 1
     description: Keeps the Claude Code harness current (npm) so new models stay reachable

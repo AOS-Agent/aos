@@ -13,7 +13,7 @@ This is not hypothetical. When this check was written, the live machine showed:
     comms-graduation    81 of  113 runs failed   (72%)
     weekly-digest       13 of   16 runs failed   (81%)
 
-`check-update` is the mechanism that pulls updates to every machine at 4am. It
+`check-update` is the mechanism that pulls updates to this machine at 4am. It
 had been failing two runs in three and nothing had ever said so.
 
 The lesson was already learned once, narrowly: `tracker_health` gained a
