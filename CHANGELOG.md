@@ -2,6 +2,10 @@
 
 All notable changes to AOS. Release notes sent via Telegram after each 4am update.
 
+## v0.7.8
+
+- Fixed the scheduler sending a false "System rebooted" Telegram notification on essentially every tick, forever (aos#2356). `check_reboot()` deduped reboots with an exact string match on `kern.boottime`, which NTP clock slew defeats — the reported boot second oscillates by a second or two, so the exact match failed on almost every tick and every failure read as a new boot. Dedupe now tolerates drift up to 120s, persists the last-seen boot as a plain integer (a pre-fix ISO-string value on disk converges without crashing), and only ever notifies for a boot caught within 10 minutes of it actually happening — an older "new" boot (first-ever run days after install, or a stale state file) is recorded silently instead of announced as having "just happened". Migration 133 removes the operator-side `.last-boot` directory workaround this bug required, now that it's no longer needed.
+
 ## v0.7.7 — the system sheds what it never used — 2026-09-13
 
 Summary: A cleanup release. The system drops the service it decommissioned, switches off the arms that should never have been on by default, clears years of junk out of the instance layer, and fixes the bug that was generating it. Development continues until Qren is ready — nothing here slows the update path down.

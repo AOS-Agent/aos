@@ -34,6 +34,18 @@ DEFAULT_TIMEOUT = 120  # seconds
 UPTIME_LOG       = HOME / ".aos" / "logs" / "uptime.log"
 LAST_BOOT_FILE   = LOGS_DIR / ".last-boot"
 
+# Reboot dedupe (aos#2356): `kern.boottime` is not a constant — NTP clock slew
+# nudges its reported second back and forth across a boundary, so two ticks
+# of the *same* boot can read e.g. :35 then :36 then :35 again. Any two
+# readings within this many seconds of each other are treated as one boot.
+BOOT_TOLERANCE_SECONDS = 120
+# A "new" boot is only ever announced if the scheduler catches it within this
+# window of the actual boot. Anything older (a first-ever run days after
+# install, or a stale/missing state file) is adopted silently — this is the
+# uptime<10min guard the docstring and core/agents/steward.md always promised
+# but that was previously computed and never checked.
+REBOOT_FRESH_WINDOW_SECONDS = 600
+
 # Failure alerting: notify the operator via Telegram once a job has failed
 # this many times in a row (1 = alert on the first nonzero exit). Debounced
 # to at most one alert per job per ALERT_DEBOUNCE_SECONDS so a nightly-failing
@@ -44,11 +56,23 @@ ALERT_DEBOUNCE_SECONDS = 86400  # 24h
 # ── Reboot Detection ─────────────────────────────────────────────────────────
 
 def check_reboot():
-    """Detect if the machine just rebooted. Run once per boot, not every 5 min."""
-    try:
-        import ctypes
-        import struct
+    """Detect if the machine just rebooted. Run once per boot, not every 5 min.
 
+    aos#2356: `kern.boottime` slews under NTP, so two ticks of the SAME boot
+    can report different seconds — dedupe is therefore a tolerance
+    (BOOT_TOLERANCE_SECONDS) around the persisted last-seen boot, not an exact
+    match. State is the raw integer boot-second; a legacy ISO-string value
+    left by a pre-fix scheduler is treated as "nothing recorded yet" (never a
+    crash) and converges onto the new format on this tick.
+
+    Decision (documented, not left implicit): a "new" boot only gets a
+    Telegram notification if it is caught within REBOOT_FRESH_WINDOW_SECONDS
+    of the actual boot — this covers the first-ever run on a fresh install
+    too. An older "new" boot (stale/missing state file days after the actual
+    reboot) is adopted — state written, so it converges and never spams — but
+    is never announced as something that "just happened".
+    """
+    try:
         # Get boot time from sysctl (full path — /usr/sbin not in LaunchAgent PATH)
         result = subprocess.run(["/usr/sbin/sysctl", "-n", "kern.boottime"],
                                 capture_output=True, text=True, timeout=5)
@@ -57,13 +81,26 @@ def check_reboot():
         boot_time = datetime.fromtimestamp(boot_sec)
         boot_key = boot_time.strftime("%Y-%m-%dT%H:%M:%S")
 
-        # Check if we've already handled this boot
         LAST_BOOT_FILE.parent.mkdir(parents=True, exist_ok=True)
-        if LAST_BOOT_FILE.exists() and LAST_BOOT_FILE.read_text().strip() == boot_key:
-            return  # Already handled
+
+        last_raw = LAST_BOOT_FILE.read_text().strip() if LAST_BOOT_FILE.exists() else ""
+        last_boot_sec = int(last_raw) if last_raw.isdigit() else None
+
+        # Same boot as last tick (within tolerance)? Already handled.
+        if last_boot_sec is not None and abs(last_boot_sec - boot_sec) <= BOOT_TOLERANCE_SECONDS:
+            return
 
         # New boot detected — how long ago?
         uptime_seconds = int(time.time()) - boot_sec
+
+        if uptime_seconds > REBOOT_FRESH_WINDOW_SECONDS:
+            # Too old to have "just happened" — adopt silently so this
+            # doesn't get recomputed (and re-considered) every tick, but
+            # never announce a reboot that's actually days old.
+            LAST_BOOT_FILE.write_text(str(boot_sec))
+            log(f"Reboot detection: adopting boot at {boot_key} without notifying "
+                f"(uptime {uptime_seconds}s, past the {REBOOT_FRESH_WINDOW_SECONDS}s fresh window)")
+            return
 
         # Log it
         UPTIME_LOG.parent.mkdir(parents=True, exist_ok=True)
@@ -87,7 +124,7 @@ def check_reboot():
             log("Sent reboot notification to Telegram")
 
         # Mark this boot as handled
-        LAST_BOOT_FILE.write_text(boot_key)
+        LAST_BOOT_FILE.write_text(str(boot_sec))
 
     except Exception as e:
         log(f"Reboot detection error: {e}")
