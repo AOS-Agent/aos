@@ -4,7 +4,7 @@
 # Architecture:
 #   Git clone lives at ONE of (checked in order):
 #     1. ~/project/aos/   (dev machines with AOS-X)
-#     2. ~/.aos/repo/     (fleet machines, created during conversion)
+#     2. ~/.aos/repo/     (release installs, created during conversion)
 #   ~/aos-releases/       Versioned release directories (read-only)
 #   ~/aos                 Symlink → ~/aos-releases/<active version>/
 #
@@ -33,7 +33,7 @@ LOCK_FILE="$STATE_DIR/deploy.lock"
 HASH_FILE="$STATE_DIR/deployed-hash"
 PREV_FILE="$STATE_DIR/previous-release"
 
-# Find the git repo — prefer ~/project/aos/ (dev), fall back to ~/.aos/repo/ (fleet)
+# Find the repo — prefer ~/project/aos/ (dev), fall back to ~/.aos/repo/ (release)
 _find_repo() {
     if [ -d "$HOME/project/aos/.git" ]; then
         echo "$HOME/project/aos"
@@ -104,7 +104,7 @@ trap release_lock EXIT
 #
 # node_modules strategy: reuse the dev repo's installed modules for the same
 # package path via a temporary symlink (fast path, dev machines). If absent,
-# `npm ci` into the release copy (fleet machines). Either way node_modules is
+# `npm ci` into the release copy (release installs). Either way node_modules is
 # removed after the build — releases ship dist/ only.
 #
 # Failures are non-fatal (backend runs without UI — graceful skip per the
@@ -492,7 +492,7 @@ convert() {
         git fetch origin main --quiet 2>/dev/null || true
     else
         repo_dest="$HOME/.aos/repo"
-        log "  Fleet machine — will move clone to $repo_dest"
+        log "  Release install — will move clone to $repo_dest"
     fi
 
     # Step 3: Create backup

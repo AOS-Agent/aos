@@ -24,7 +24,7 @@ fi
 
 # Fallback: try common locations in order of preference.
 #
-# A version number is NOT health. Homebrew's python@3.14 on this fleet reports
+# A version number is NOT health. Homebrew's python@3.14 on this machine reports
 # 3.14 and passes any version test, but its pyexpat is linked against an expat
 # newer than macOS ships — so `import plistlib` (and anything touching XML)
 # raises ImportError, and both pip and uv refuse to install into it. Checking

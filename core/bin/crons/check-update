@@ -59,7 +59,8 @@ detect_install() {
 }
 
 # Find the source git repo for release-system updates.
-# Mirrors release-manager's _find_repo: dev machines first, then fleet.
+# Mirrors release-manager's _find_repo: the dev workspace first, then the
+# release-install clone.
 find_repo() {
     if [[ -d "$HOME/project/aos/.git" ]]; then
         echo "$HOME/project/aos"
@@ -191,7 +192,7 @@ PY
 }
 
 # Record the outcome of an apply attempt WITHOUT clobbering the check state.
-# Merges a `last_apply` object into update-state.json so `aos fleet status`
+# Merges a `last_apply` object into update-state.json so `aos status`
 # can answer not just "is this node behind" but WHY: which step failed, when,
 # and with what detail. (Born from the faisal-mini incident: release activated,
 # migrations failed, script exited 0, nothing recorded anywhere.)
@@ -1018,7 +1019,7 @@ deploy() {
             # is disabled, opted-out, or ships-off (converse on operator
             # machines) is updated on disk and skipped silently — restarting
             # it would fail by design and bury real alarms in fake ones
-            # (observed on both fleet machines, 2026-08-15).
+            # (observed on both machines, 2026-08-15).
             if ! launchctl print "gui/${uid}/${la_name}" >/dev/null 2>&1; then
                 log "Skipping $svc_name — not loaded (disabled or opted out)"
                 continue

@@ -214,7 +214,7 @@ case "${1:-help}" in
         #
         # aos_servers is intentionally empty (migration 120, aos#221): crawler
         # never worked as an MCP server (fails to connect at every session
-        # start) and was pulled from ~/.claude.json fleet-wide in the same
+        # start) and was pulled from ~/.claude.json in the same
         # commit. Leaving its entry here would have sync-mcp silently
         # re-register it on the next `aos sync`/update, undoing that cleanup.
         # The crawler service venv and core/services/crawler/crawl_cli.py are
@@ -1104,9 +1104,9 @@ sys.exit(0 if errors == 0 else 1)
             fi
         done
 
-        # Record the verdict where `aos fleet` can see it — a machine failing
+        # Record the verdict where `aos status` can see it — a machine failing
         # verification every night must be visible without ssh (update-state is
-        # what fleet status reads; before this, the verdict evaporated).
+        # what status reads; before this, the verdict evaporated).
         "$AOS_PY" - "$test_errors" "$failed_suites" <<'PYEOF' 2>/dev/null || true
 import json, sys, datetime
 from pathlib import Path
@@ -1267,14 +1267,6 @@ if dismiss_list:
     mesh)
         shift
         exec "$AOS_DIR/core/bin/cli/mesh" "$@"
-        ;;
-
-    fleet)
-        # Fleet update-verification: what version is each node on, is it
-        # behind, WHY, and is it healthy. SSH-pull; registry in
-        # ~/.aos/config/fleet.yaml.
-        shift
-        "$AOS_DIR/core/bin/internal/aos-python" "$AOS_DIR/core/bin/cli/fleet" "$@"
         ;;
 
     snapshot)
