@@ -69,7 +69,7 @@ core/infra/reconcile/
 ```
 ~/aos/                       SYSTEM CODE (this repo)
 ├── core/
-│   ├── services/              Bridge, dashboard, listen, memory
+│   ├── services/              Bridge, crawler, mesh, transcriber, whatsmeow, work_runner
 │   ├── agents/                chief.md, steward.md, advisor.md
 │   ├── work/                  Work engine + hooks (inject_context, session_close)
 │   ├── infra/reconcile/       Invariant checks (runs every update)
