@@ -64,6 +64,19 @@ Summary: Qareen decommissioned — the companion bet moves to aos-app; the syste
 - Added migration 109: removes those services' LaunchAgents, launchers, venvs (~2.2 GB total), and stale state.yaml entries. sana-watch and slack-lite are untouched.
 - Removed the memory MCP server — its ChromaDB index was empty (zero documents ever indexed) and QMD is the production search/memory layer. `sync-mcp` no longer registers it; migration 110 deregisters it from `~/.claude.json`/`mcp.json` and deletes the ~300 MB venv and empty index.
 
+### Also in v0.8.0 — dangling-wires reconnect (2026-09-13)
+
+Summary: A read-only audit of declared-but-unconnected wiring across AOS found several checks and hooks that had never actually run, plus a handful of phantom config entries with nothing behind them. This reconnects what was real and deletes what wasn't.
+
+- Fixed the Stop hook (`core/engine/work/reconcile.py`), silent since 2026-03-26: it read a `tool_use_results` field Claude Code's Stop hook payload has never had, so `files_modified` was always empty and nothing was ever logged. It now parses the real `transcript_path` JSONL for `tool_use` blocks.
+- Added `core/hooks/trust_log_dispatch.py`: a PostToolUse hook, matcher-scoped to the `Agent` tool, that automatically records a trust-log `executed` row for every catalog-agent dispatch — chief.md's "log every catalog dispatch" mandate had produced 5 rows, ever. Wired via `core/infra/reconcile/checks/hooks.py`, migration 123, and install.sh's fresh-install hook bootstrap.
+- Fixed `BridgeTopicsCheck` (`core/infra/reconcile/checks/initiatives.py`) to NOTIFY with the exact `projects.yaml` line to fix when an active Telegram route's `forum_topic_id` is null instead of silently never routing.
+- Fixed `core/skills/session-analysis/SKILL.md`, which pointed at the nonexistent `~/aos/bin/session-analysis`; corrected to `core/bin/session-analysis`.
+- Fixed two `core/services/*/service.yaml` `plist_template` fields that pointed nowhere: `crawler` (never a LaunchAgent — field removed) and `mesh` (a LaunchAgent-shaped service the Mesh initiative hasn't shipped a plist for yet — set to `null` rather than inventing one).
+- Removed the phantom `envoy` and `sana-watch` entries from `config/modules.yaml` (no service dir, template, plist, or launchd load anywhere). Moved `com.aos.envoy`'s false-orphan protection to `config/preserved-services.yaml` first, since its CLI (`core/engine/comms/envoy/cli.py`) can genuinely self-install that LaunchAgent.
+- Rewrote `docs/reference/comms-pipeline.md`, which described a `comms_bus` :4099 daemon, `CommsStoreConsumer`, and a `message-person` CLI that have never existed, to describe the real pipeline: `core/engine/comms/extract/pipeline.py`, the `pattern_update.py`/`people_intel.py` consumers, and the Sentinel spawner (off by default).
+- Confirmed already resolved by earlier commits in this release and left untouched: `VaultContractCheck`'s import path (fixed by aos#167, 2026-07-14), the bridge's `aiohttp` dependency (fixed 2026-03-28), and `com.aos.n8n.plist.template` (removed with the decommission sweep above) — each now has a regression test locking the fix in.
+
 ## v0.7.6 — 2026-08-18
 
 Summary: One update, one number — the app and the system now ship, and install, as a single release.
