@@ -34,7 +34,15 @@ def test_nothing_references_com_aos_n8n_outside_historical_migrations():
     for path in REPO_ROOT.rglob("*"):
         if not path.is_file():
             continue
-        if any(part in {".git", "__pycache__", "node_modules"} for part in path.parts):
+        # `.claude/worktrees/` holds whole checkouts of OTHER branches (the
+        # convention this repo uses — see .claude/rules/project-structure.md).
+        # Scanning them makes this assertion depend on which branches happen to
+        # be checked out, and an old branch legitimately still naming n8n is
+        # not live wiring in THIS tree.
+        if any(
+            part in {".git", "__pycache__", "node_modules", "worktrees"}
+            for part in path.parts
+        ):
             continue
         if path in exempt_files:
             continue

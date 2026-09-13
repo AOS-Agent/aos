@@ -108,10 +108,18 @@ def test_mesh_plist_template_is_explicitly_null_not_a_dangling_basename():
     )
 
 
-def test_converse_and_work_runner_templates_resolve_under_their_own_service_dir():
-    """Pin the two known service-dir-local cases explicitly, so a future
-    change that moves them (or breaks the dual-location resolver) is loud."""
-    for name, dirname in (("converse", "converse"), ("work-runner", "work_runner")):
+def test_converse_template_resolves_under_its_own_service_dir():
+    """Pin the service-dir-local case explicitly, so a future change that moves
+    it (or breaks the dual-location resolver) is loud.
+
+    `work-runner` was the other one, and it is deliberately gone: the same
+    release deleted the service, its manifest and its plist template outright
+    (0 rows in `task_runs`, ever). Asserting its template still resolves would
+    contradict tests/engine/work/test_retired_surfaces.py, which asserts the
+    template must NOT come back — an installable template for code that does
+    not exist is the dangerous half of that retirement.
+    """
+    for name, dirname in (("converse", "converse"),):
         manifest = next(m for m in load_registry() if m.name == name)
         assert manifest.plist_template, f"{name} should still declare a plist_template"
         expected = SERVICES_DIR / dirname / manifest.plist_template
