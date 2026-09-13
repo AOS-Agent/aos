@@ -21,7 +21,7 @@ from __future__ import annotations
 
 def test_get_or_create_thread_for_cwd_creates_exactly_one_thread(work_env):
     eng = work_env["engine"]
-    cwd = "/Users/operator/aos"
+    cwd = "/tmp/operator/aos"
 
     first = eng.get_or_create_thread_for_cwd(cwd, "session-1")
     second = eng.get_or_create_thread_for_cwd(cwd, "session-2")
@@ -40,7 +40,7 @@ def test_get_or_create_thread_for_cwd_creates_exactly_one_thread(work_env):
 def test_get_or_create_thread_for_cwd_survives_many_repeated_sessions(work_env):
     """The actual flood shape: N SessionEnds in the same directory over time."""
     eng = work_env["engine"]
-    cwd = "/Users/operator/aos"
+    cwd = "/tmp/operator/aos"
 
     for i in range(10):
         eng.get_or_create_thread_for_cwd(cwd, f"session-{i}")
@@ -59,8 +59,8 @@ def test_different_cwds_with_same_basename_stay_distinct(work_env):
     derived title."""
     eng = work_env["engine"]
 
-    a = eng.get_or_create_thread_for_cwd("/Users/operator/repo-one/core", "s1")
-    b = eng.get_or_create_thread_for_cwd("/Users/operator/repo-two/core", "s2")
+    a = eng.get_or_create_thread_for_cwd("/tmp/operator/repo-one/core", "s1")
+    b = eng.get_or_create_thread_for_cwd("/tmp/operator/repo-two/core", "s2")
 
     assert a["id"] != b["id"]
     matching = [t for t in eng.get_all_threads() if t["title"] == "Work in core"]
@@ -69,12 +69,12 @@ def test_different_cwds_with_same_basename_stay_distinct(work_env):
 
 def test_find_thread_by_cwd_none_before_any_session(work_env):
     eng = work_env["engine"]
-    assert eng.find_thread_by_cwd("/Users/operator/never-visited") is None
+    assert eng.find_thread_by_cwd("/tmp/operator/never-visited") is None
 
 
 def test_find_thread_by_cwd_finds_after_create(work_env):
     eng = work_env["engine"]
-    cwd = "/Users/operator/aos"
+    cwd = "/tmp/operator/aos"
     created = eng.add_thread("Work in aos", cwd=cwd)
 
     found = eng.find_thread_by_cwd(cwd)
@@ -90,7 +90,7 @@ def test_second_call_links_session_without_crashing(work_env):
     always returned None; fixing the lookup makes it reachable, so it must
     not explode with 'no such table: sessions'."""
     eng = work_env["engine"]
-    cwd = "/Users/operator/aos"
+    cwd = "/tmp/operator/aos"
 
     eng.get_or_create_thread_for_cwd(cwd, "session-1")
     second = eng.get_or_create_thread_for_cwd(cwd, "session-2")
