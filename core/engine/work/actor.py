@@ -65,7 +65,6 @@ except Exception:  # pragma: no cover - only if brief_types is missing entirely
 __all__ = [
     "Actor",
     "ATTRIBUTION_FIX_AT",
-    "AUDIT_CAP",
     "actor_from_dict",
     "actor_to_dict",
     "actor_type_for",
@@ -82,10 +81,6 @@ __all__ = [
     "to_adapter_string",
 ]
 
-# How many audit entries `work who` shows by default. The trail itself is
-# unbounded in entity_history — capping is a display concern, not storage.
-AUDIT_CAP = 20
-
 # When the adapter stopped defaulting an unset actor to "operator".
 #
 # Every row written before this instant carries whatever the default was, so an
@@ -93,8 +88,9 @@ AUDIT_CAP = 20
 # may be agent work wearing the human's name. Consumers should render pre-cutoff
 # operator rows as unattributed rather than as fact.
 #
-# This is the canonical definition. cli.py (`work who`) and brief.py both key
-# off it; it lives here so neither has to reach into the other's source.
+# This is the canonical definition. brief.py keys off it; it lives here so
+# nothing else has to reach into its source. (Previously shared with cli.py's
+# `work who` command, removed 2026-09 — never invoked outside its own doc.)
 ATTRIBUTION_FIX_AT = "2026-07-26T16:11:00"
 
 

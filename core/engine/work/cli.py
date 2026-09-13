@@ -1144,47 +1144,6 @@ def cmd_thread(args):
     print(f"Created {thread['id']}: {thread['title']} [{thread['status']}]")
 
 
-def cmd_promote(args):
-    """Promote a thread to a project."""
-    if not args:
-        print("Usage: promote <thread_id> [--title PROJECT_TITLE] [--goal GOAL_ID]")
-        sys.exit(1)
-
-    thread_id = args[0]
-    title = None
-    goal = None
-
-    i = 1
-    while i < len(args):
-        if args[i] == "--title" and i + 1 < len(args):
-            title = args[i + 1]
-            i += 2
-        elif args[i] == "--goal" and i + 1 < len(args):
-            goal = args[i + 1]
-            i += 2
-        else:
-            i += 1
-
-    project = engine.promote_thread(thread_id, project_title=title, goal=goal)
-    if project:
-        print(f"Promoted thread {thread_id} -> project {project['id']}: {project['title']}")
-    else:
-        print(f"Thread {thread_id} not found")
-        sys.exit(1)
-
-
-def cmd_threads(args):
-    """List all threads (including inactive)."""
-    threads = engine.get_all_threads()
-    if not threads:
-        print("No threads.")
-        return
-    for t in threads:
-        sessions = len(t.get("sessions", []))
-        promoted = f" -> {t['promoted_to']}" if t.get("promoted_to") else ""
-        print(f"  {t['id']:6s}  {t['status']:10s}  {t['title']}  ({sessions} sessions){promoted}")
-
-
 def cmd_metrics(args):
     """Show flow metrics for current week."""
     import metrics as work_metrics
@@ -1335,15 +1294,6 @@ def cmd_next(args):
             reasons.append("has momentum")
         reason_str = f"  -- {', '.join(reasons)}" if reasons else ""
         print(f"  {i}. {marker} {t['id']:12s}  {t['title']}{proj}{sess_str}{reason_str}")
-
-
-def cmd_drift(args):
-    """Show drift analysis."""
-    import metrics as work_metrics
-
-    data = engine.load_all()
-    drift = work_metrics.compute_drift(data["goals"], data["tasks"])
-    print(work_metrics.format_drift_display(drift))
 
 
 def cmd_migrate(args):
@@ -1683,225 +1633,6 @@ def cmd_briefing(args):
     print(f"\nTotals: {s['total_tasks']} tasks | {s['projects']} projects | {s['goals']} goals | {s['threads']} threads | {s['inbox']} inbox")
 
 
-def cmd_move(args):
-    """Move tasks to a different project, re-IDing them."""
-    args, actor_spec = _take_actor(args)
-    if len(args) < 3 or "--to" not in args:
-        print("Usage: move <task_id> [task_id ...] --to <project_id> [--actor WHO]")
-        print("  Moves tasks and their subtasks to the target project with new IDs.")
-        print("  Example: move aos#36 aos#37 --to unified-comms")
-        sys.exit(1)
-
-    to_idx = args.index("--to")
-    task_ids = args[:to_idx]
-    target_project = args[to_idx + 1] if to_idx + 1 < len(args) else None
-
-    if not task_ids or not target_project:
-        print("Error: need at least one task ID and --to <project>")
-        sys.exit(1)
-
-    # Verify target project exists
-    projects = engine.get_all_projects()
-    if not any(p["id"] == target_project for p in projects):
-        print(f"Error: project '{target_project}' not found")
-        print(f"  Available: {', '.join(p['id'] for p in projects)}")
-        sys.exit(1)
-
-    moved = engine.move_tasks_to_project(task_ids, target_project,
-                                         actor=actor_spec)
-    if not moved:
-        print("No tasks found to move.")
-        return
-
-    print(f"Moved {len(moved)} task(s) to project '{target_project}':")
-    for m in moved:
-        print(f"  {m['old_id']} -> {m['new_id']}")
-
-
-def _ago(iso: str | None) -> str:
-    """'2h ago' / 'yesterday' / 'Jul 25'. Empty string if the stamp is junk."""
-    from datetime import datetime
-    if not iso:
-        return ""
-    try:
-        then = datetime.fromisoformat(iso)
-    except (ValueError, TypeError):
-        return ""
-    delta = datetime.now() - then
-    secs = delta.total_seconds()
-    if secs < 0:
-        return then.strftime("%b %-d")
-    if secs < 90:
-        return "just now"
-    if secs < 3600:
-        return f"{int(secs // 60)}m ago"
-    if secs < 86400:
-        return f"{int(secs // 3600)}h ago"
-    if secs < 172800:
-        return "yesterday"
-    if secs < 86400 * 7:
-        return f"{int(secs // 86400)}d ago"
-    return then.strftime("%b %-d")
-
-
-# Which field best names a multi-field event. One delegation writes rows for
-# delegate, held_by AND status — all true, all the same act. entity_history is
-# right to keep them separate; a timeline is not the place to read them apart.
-_FIELD_RANK = (
-    "created", "attribution_corrected", "moved_from", "project_id",
-    "status", "held_by", "delegate", "handoff", "change",
-    "title", "priority", "description",
-)
-
-
-def _collapse_history(rows: list) -> list:
-    """Group field-level rows into logical events.
-
-    Returns (representative_row, n_other_fields) pairs. Rows are grouped by
-    (timestamp, actor) — one mutation, one instant, one actor — and the most
-    descriptive field in each group speaks for it.
-    """
-    groups: list[tuple[tuple, list]] = []
-    for row in rows:
-        key = (row.get("timestamp"), row.get("actor"))
-        if groups and groups[-1][0] == key:
-            groups[-1][1].append(row)
-        else:
-            groups.append((key, [row]))
-
-    def rank(row):
-        field = row.get("field_name") or ""
-        return _FIELD_RANK.index(field) if field in _FIELD_RANK else len(_FIELD_RANK)
-
-    out = []
-    for _key, members in groups:
-        best = min(members, key=rank)
-        out.append((best, len(members) - 1))
-    return out
-
-
-def _short(val, n: int = 42) -> str:
-    """A field value, trimmed to something a timeline row can carry."""
-    s = "" if val is None else str(val).replace("\n", " ").strip()
-    return s if len(s) <= n else s[: n - 1] + "…"
-
-
-def _history_phrase(row: dict) -> tuple[str, str]:
-    """Turn one entity_history row into (verb, trailing detail).
-
-    describe() renders '<who> <verb> "<title>"', so whatever the row says ABOUT
-    the task lands after the quoted title to read like English:
-    'You moved "Fix login" to project hre'.
-    """
-    field = (row.get("field_name") or "").strip()
-    old, new = row.get("old_value"), row.get("new_value")
-
-    if field == "created":
-        detail = f" (via {old})" if old else ""
-        return "created", detail
-    if field == "status":
-        return {
-            "done": "completed",
-            "active": "started",
-            "cancelled": "cancelled",
-            "todo": "reopened",
-        }.get(new, f"moved to {new}"), ""
-    if field == "project_id":
-        return "moved", f" to project {new}"
-    if field == "moved_from":
-        return "re-identified", f" {old} → {new}"
-    if field == "handoff":
-        return "wrote a handoff for", (f" — next: {_short(new)}" if new else "")
-    if field == "held_by":
-        return ("took back", "") if new == "operator" else ("delegated", f" to {new}")
-    if field == "delegate":
-        return "delegated", f" to {new}" if new else ""
-    if field == "title":
-        return "renamed", f" → {_short(new)}"
-    if field == "priority":
-        return "reprioritised", f" P{old} → P{new}"
-    if field == "attribution_corrected":
-        return "re-attributed", f" from {old} to {new}, by confirmation"
-    if field == "change":
-        # Free-text event with no column behind it.
-        return (new or "changed something"), ""
-    if field:
-        return f"changed {field}", (f" → {_short(new)}" if new else "")
-    return "changed something", ""
-
-
-# The cutoff before which an `operator` signature cannot be trusted — and the
-# predicate that applies it — live in actor.py, because brief.py keys off the
-# same moment. Two copies would eventually tell the operator two different
-# stories about which signatures are real.
-
-
-def cmd_who(args):
-    """Show who created / started / completed a task, plus its audit trail."""
-    if not args:
-        print("Usage: who <task_id or search>")
-        sys.exit(1)
-
-    task = _resolve(" ".join(args))
-    task_id = task["id"]
-    title = task.get("title", "")
-    att = actor_mod.attribution_for(task_id)
-
-    print(f"\n  {task_id}  {title}")
-    print(f"  {'=' * 50}")
-
-    signed = False
-    suspect = False
-    for key, label in (("created_by", "Created"),
-                       ("started_by", "Started"),
-                       ("completed_by", "Completed")):
-        a = actor_mod.actor_from_dict(att.get(key))
-        if a is None:
-            continue
-        signed = True
-        who = actor_mod.display_name(a)
-        # One definition of "can't be trusted", shared with brief.py.
-        stale = actor_mod.is_suspect_operator_row(
-            actor_mod.to_adapter_string(a), actor_mod.actor_type_for(a), a.at,
-        )
-        if stale:
-            suspect = True
-            who += " (?)"
-        when = _ago(a.at)
-        line = f"  {label + ':':<11} {who}"
-        if when:
-            line += f" — {when}"
-        print(line)
-        if a.session_id:
-            print(f"  {'':<11} session {a.session_id[:12]}")
-
-    if not signed:
-        print("  Unattributed — nothing in this task's history says who")
-        print("  changed it. Most tasks predate the attribution layer.")
-
-    trail = _collapse_history(att.get("audit") or [])
-    if trail:
-        shown = trail[-actor_mod.AUDIT_CAP:]
-        more = len(trail) - len(shown)
-        header = f"\n  History ({len(trail)} event{'s' if len(trail) != 1 else ''}"
-        header += f", showing last {len(shown)})" if more else ")"
-        print(header + ":")
-        for row, extra in shown:
-            a = actor_mod._actor_from_row(row)
-            verb, detail = _history_phrase(row)
-            line = actor_mod.describe(a, verb, title) + detail
-            if extra:
-                line += f" (+{extra} more field{'s' if extra != 1 else ''})"
-            when = _ago(row.get("timestamp"))
-            print(f"    {line}" + (f" — {when}" if when else ""))
-
-    if suspect:
-        print("\n  (?) Recorded as the operator before the attribution fix, when")
-        print("      an unset actor silently defaulted to 'operator'. It may")
-        print("      have been an agent. Not rewritten — we can't know which.")
-    print()
-
-
 def cmd_brief(args):
     """Render a project's compiled brief (see BRIEF-CONTRACT.md)."""
     try:
@@ -1936,38 +1667,6 @@ def cmd_brief(args):
           else render_markdown(brief))
 
 
-def cmd_enrich(args):
-    """Link-and-pull task bodies from a project's source docs."""
-    try:
-        from enrich import enrich_project
-    except ImportError as e:
-        print(f"The enricher is not installed yet ({e}).")
-        print("  Expected: core/engine/work/enrich.py")
-        sys.exit(1)
-
-    dry_run = "--dry-run" in args
-    rest = [a for a in args if not a.startswith("--")]
-    if not rest:
-        print("Usage: enrich <project> [--dry-run]")
-        sys.exit(1)
-
-    report = enrich_project(rest[0], dry_run=dry_run)
-    header = "Would enrich" if dry_run else "Enriched"
-    print(f"{header} {report.project_id}: {report.changed} task(s) changed")
-    if report.matched:
-        print(f"\n  Matched ({len(report.matched)}):")
-        for task_id, anchor in report.matched:
-            print(f"    {task_id:<14} {anchor}")
-    if report.unmatched:
-        print(f"\n  No source section ({len(report.unmatched)}):")
-        for task_id in report.unmatched:
-            print(f"    {task_id}")
-    if report.disagreements:
-        print(f"\n  Disagreements ({len(report.disagreements)}):")
-        for c in report.disagreements:
-            print(f"    [{c.severity}] {c.message}")
-
-
 COMMANDS = {
     "add": cmd_add,
     "done": cmd_done,
@@ -1989,11 +1688,8 @@ COMMANDS = {
     "today": cmd_today,
     "next": cmd_next,
     "metrics": cmd_metrics,
-    "drift": cmd_drift,
     "link": cmd_link,
     "thread": cmd_thread,
-    "threads": cmd_threads,
-    "promote": cmd_promote,
     "subtask": cmd_subtask,
     "handoff": cmd_handoff,
     "dispatch": cmd_dispatch,
@@ -2001,10 +1697,7 @@ COMMANDS = {
     "json": cmd_json,
     "initiatives": cmd_initiatives,
     "briefing": cmd_briefing,
-    "move": cmd_move,
-    "who": cmd_who,
     "brief": cmd_brief,
-    "enrich": cmd_enrich,
 }
 
 
@@ -2032,11 +1725,7 @@ USAGE = {
     "search": "Usage: search <query>",
     "link": "Usage: link <task_id|thread_id> [--session ID] [--outcome TEXT]",
     "thread": "Usage: thread [title]   (no args lists active threads)",
-    "promote": "Usage: promote <thread_id> [--title PROJECT_TITLE] [--goal GOAL_ID]",
-    "move": "Usage: move <task_id> [task_id ...] --to <project_id> [--actor WHO]",
-    "who": "Usage: who <task_id or search>",
     "brief": "Usage: brief <project> [--json]   |   brief --all [--json]",
-    "enrich": "Usage: enrich <project> [--dry-run]",
 }
 
 

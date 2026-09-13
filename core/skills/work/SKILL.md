@@ -3,7 +3,7 @@ name: work
 description: >
   Manage tasks, projects, goals, and threads. Trigger on "/work", "add task",
   "show my tasks", "what's on my plate", "mark X done", "what should I work on",
-  "create project", "add goal", "track this", "create a thread", "promote thread",
+  "create project", "add goal", "track this", "create a thread",
   or any request to manage tracked work items. Also self-activate when you detect
   multi-step work emerging that should be tracked, or when a session completes
   work matching an active task.
@@ -56,12 +56,6 @@ python3 ~/aos/core/engine/work/cli.py thread "Researching WebSocket approach"
 
 # List active threads
 python3 ~/aos/core/engine/work/cli.py thread
-
-# List all threads (including promoted/abandoned)
-python3 ~/aos/core/engine/work/cli.py threads
-
-# Promote a thread to a project
-python3 ~/aos/core/engine/work/cli.py promote th1 --title "WebSocket Integration" --goal launch-mvp
 ```
 
 ### Other Commands
