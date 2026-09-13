@@ -18,8 +18,17 @@ from bridge_events import bridge_event
 logger = logging.getLogger("aos.bridge.session_manager")
 
 WORKSPACE = Path.home() / "aos"
-SESSIONS_FILE = WORKSPACE / "data" / "bridge" / "sessions.json"
 AGENTS_DIR = WORKSPACE / ".claude" / "agents"
+
+
+def _sessions_file() -> Path:
+    """Where per-user Claude session IDs are persisted. Never under
+    WORKSPACE (~/aos) — that's the read-only release symlink on every
+    modern install, and _locked_json_write's mkdir() raised on it on every
+    save, silently breaking session continuity (same class as aos#2320).
+    Resolved fresh on every call rather than cached at import time."""
+    return Path.home() / ".aos" / "data" / "bridge" / "sessions.json"
+
 
 # ── Active process registry — enables stop button ────────────
 # Maps user_key → asyncio.subprocess.Process for in-flight Claude calls.
@@ -313,7 +322,7 @@ SESSION_MAX_AGE = 30 * 60  # 30 min inactivity → fresh session (was 24h, cause
 
 def get_session_id(user_key: str) -> str | None:
     """Get stored session ID for a user key."""
-    entry = _locked_json_read(SESSIONS_FILE).get(user_key)
+    entry = _locked_json_read(_sessions_file()).get(user_key)
     if entry is None:
         return None
     # Backward compat: old format stored bare session_id string
@@ -330,7 +339,7 @@ def get_session_id(user_key: str) -> str | None:
 
 def save_session_id(user_key: str, session_id: str):
     """Persist session ID for a user key."""
-    sessions = _locked_json_read(SESSIONS_FILE)
+    sessions = _locked_json_read(_sessions_file())
     sessions[user_key] = {
         "session_id": session_id,
         "last_used": time.time(),
@@ -342,15 +351,15 @@ def save_session_id(user_key: str, session_id: str):
     for k in stale:
         sessions.pop(k)
         bridge_event("session_pruned", user_key=k)
-    _locked_json_write(SESSIONS_FILE, sessions)
+    _locked_json_write(_sessions_file(), sessions)
     bridge_event("session_saved", user_key=user_key, session_id=session_id[:12])
 
 
 def clear_session(user_key: str):
     """Clear stored session for a user key."""
-    sessions = _locked_json_read(SESSIONS_FILE)
+    sessions = _locked_json_read(_sessions_file())
     sessions.pop(user_key, None)
-    _locked_json_write(SESSIONS_FILE, sessions)
+    _locked_json_write(_sessions_file(), sessions)
     bridge_event("session_cleared", user_key=user_key)
 
 

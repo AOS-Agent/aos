@@ -28,6 +28,18 @@ VAULT = Path.home() / "vault"
 INITIATIVES_DIR = VAULT / "knowledge" / "initiatives"
 OPERATOR_CONFIG = Path.home() / ".aos" / "config" / "operator.yaml"
 
+
+def _bridge_state_dir() -> Path:
+    """Instance-writable state dir for this thread's own bookkeeping
+    (drip/briefing dedup markers) — never WORKSPACE (~/aos), which is the
+    read-only release symlink on every modern install (migration 008 moved
+    ~/aos/data/ -> ~/.aos/data/; this module was never updated to match, so
+    it kept recreating the now-forbidden path and crashed on every boot,
+    aos#2320). Resolved fresh on every call, not cached at import time, so
+    it always reflects the real $HOME — same convention as evening_checkin.py's
+    STATE_FILE."""
+    return Path.home() / ".aos" / "data" / "bridge"
+
 # Max items per BLUF section (Cowan 2001 cognitive load)
 MAX_ITEMS = 4
 
@@ -753,7 +765,7 @@ def _send_learning_drip(bot_token: str, chat_id: int, time_slot: str,
         if day_number > 7:
             return
 
-        drip_state_file = WORKSPACE / "data" / "bridge" / "drip_state.txt"
+        drip_state_file = _bridge_state_dir() / "drip_state.txt"
         drip_state_file.parent.mkdir(parents=True, exist_ok=True)
         drip_key = f"{today}:{time_slot}"
         if drip_state_file.exists() and drip_key in drip_state_file.read_text():
@@ -814,7 +826,7 @@ def start_daily_briefing(bot_token: str, chat_id: int, hour: int = 8,
         nonlocal thread_id
 
         # Persist last_sent_date to survive restarts
-        state_file = WORKSPACE / "data" / "bridge" / "briefing_state.txt"
+        state_file = _bridge_state_dir() / "briefing_state.txt"
         state_file.parent.mkdir(parents=True, exist_ok=True)
 
         last_sent_date = None

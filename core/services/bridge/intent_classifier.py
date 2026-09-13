@@ -715,8 +715,10 @@ def handle_friction(text: str) -> str:
     if cat_lines:
         lines.append("\n".join(cat_lines))
 
-    # Check for pending auto-rules
-    pending_file = AOS_DIR / "apps" / "bridge" / "data" / "bridge" / "pending_rules.json"
+    # Check for pending auto-rules. Instance data — never AOS_DIR (~/aos),
+    # the read-only release symlink; must match friction-rules' PENDING_FILE
+    # (same bug class as aos#2320).
+    pending_file = Path.home() / ".aos" / "data" / "bridge" / "pending_rules.json"
     if pending_file.exists():
         import json
         pending = json.loads(pending_file.read_text())

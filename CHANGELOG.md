@@ -6,6 +6,7 @@ All notable changes to AOS. Release notes sent via Telegram after each 4am updat
 
 - Fixed `check-update` reporting `last_apply: ok` when nothing actually deployed: phase 2 now verifies the on-disk VERSION and hash actually reached the target phase 1 resolved before writing success, recording `noop` with a reason otherwise (aos#2347).
 - Fixed `check-update` silently applying a downgrade (a `stable`/`main` ref rolled back upstream): a candidate whose VERSION is lower than deployed, or whose commit is an ancestor of the deployed commit, is now refused (`refused_downgrade`, one notification) on both the release and git-clone install paths — override with `check-update --apply --allow-downgrade` (aos#2347).
+- Fixed the bridge's daily-briefing thread crashing on every boot: it wrote its drip/briefing dedup state under `~/aos` (read-only on every modern install) instead of `~/.aos`, and the state directory `mkdir()` raised unguarded before the thread's loop even started — silent, permanent loss of the 9am briefing and 9pm check-in, ever, on every install (aos#2320). Same bug class found and fixed in two more places: `session_manager.py`'s per-user Claude session store (silently broke session continuity on every save) and `friction-rules`' nightly pending-rule-proposal file (paired with its reader in `intent_classifier.py`, moved together).
 
 ## v0.7.7 — the system sheds what it never used — 2026-09-13
 
