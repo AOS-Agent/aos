@@ -118,13 +118,6 @@ jobs:
     tier: 2
     description: Delivers notifications held back by quiet hours, as one digest
 
-  inbox-collect:
-    command: python3 ~/aos/core/bin/crons/inbox-collect
-    every: 30m
-    timeout: 120
-    tier: 2
-    description: Collects loose items into inbox for triage
-
   session-analysis:
     command: python3 ~/aos/core/bin/crons/session-analysis
     at: "22:00"
@@ -158,13 +151,6 @@ jobs:
     # job's 5-minute window has closed by the time the scheduler is free. It ran
     # only on days enrich-comms crashed early — 1 run in 28 days.
     catch_up: true
-  stale-detector:
-    command: python3 ~/aos/core/bin/crons/stale-detector
-    at: "08:00"
-    timeout: 60
-    tier: 2
-    description: Flags stale tasks and goals that need attention
-
   contact-sync:
     command: python3 ~/aos/core/engine/comms/sync_contacts.py
     at: "05:30"
@@ -180,11 +166,16 @@ jobs:
     description: Flags initiative docs untouched for 3+ days
 
   nightly-pipeline:
+    # v0.7.7 (aos#240.3): narrowed to the one step nothing else owns — the
+    # DAILY session-analysis friction report (Mon-Sat; Sunday's weekly
+    # version runs via session-analysis's own cron). Used to also re-run
+    # stale-detector (retired, aos#240.2) and compile-daily (which has its
+    # own 23:30 cron) — pure redundancy, now removed.
     command: bash ~/aos/core/bin/crons/nightly-pipeline
     at: "23:00"
     timeout: 600
     tier: 2
-    description: Runs nightly data processing pipeline
+    description: Runs daily session-analysis (Mon-Sat) — the one step with no other owner
 
   morning-context:
     command: python3 ~/aos/core/bin/crons/morning-context
@@ -231,6 +222,17 @@ jobs:
     description: Snapshots comms.db to AOS-X (rotating 7) before nightly enrichment
 
   enrich-comms:
+    # Default-off (v0.7.7, migration 131, operator decision — aos#240):
+    # ~46 min/night of Haiku entity extraction, the single heaviest job on
+    # the schedule and the scheduling-contention culprit that starves
+    # loop-sensors/compile-patterns of their catch_up windows most nights it
+    # runs long. Cron audit's own per-job verdict was KEEP (real consumer:
+    # comms.db entities feed ambient nudges) — the operator chose to pause
+    # the whole comms-intelligence nightly stack rather than run four
+    # back-to-back comms-DB jobs nightly for marginal refresh value.
+    # backup-comms (03:15) is untouched — comms.db's snapshot keeps running.
+    # Re-enable with `enabled: true` to resume nightly entity extraction.
+    enabled: false
     command: bash ~/aos/core/bin/crons/enrich-comms
     at: "03:30"
     timeout: 3000
@@ -250,6 +252,12 @@ jobs:
     description: Extracts insights from communications
 
   comms-patterns:
+    # Default-off (v0.7.7, migration 131, operator decision — aos#240):
+    # parked alongside enrich-comms — computes per-person response
+    # patterns/importance downstream of enrich-comms's entities, so parking
+    # one without the other leaves a half-fed job running for no reason.
+    # Re-enable with `enabled: true` (after re-enabling enrich-comms too).
+    enabled: false
     command: python3 ~/aos/core/engine/comms/patterns/compute.py
     at: "05:30"
     timeout: 180
@@ -257,6 +265,11 @@ jobs:
     description: Computes communication patterns and trends
 
   comms-graduation:
+    # Default-off (v0.7.7, migration 131, operator decision — aos#240):
+    # parked alongside enrich-comms/comms-patterns — graduates contacts
+    # through trust levels downstream of comms-patterns' output. Re-enable
+    # with `enabled: true` (after re-enabling the two jobs above it).
+    enabled: false
     command: python3 ~/aos/core/engine/comms/graduation/runner.py
     at: "06:00"
     timeout: 120
@@ -290,11 +303,15 @@ jobs:
     description: Sends morning intelligence digest to Telegram
 
   vault-maintenance:
+    # v0.7.7 (aos#240.5): the script now hardcodes --skip-llm — topic refresh
+    # and synthesis drafts call an ExecutionRouter that doesn't exist in this
+    # tree, so they errored every night for 0 tokens spent. Deterministic
+    # orphan/stale detection is real and runs as before.
     command: bash ~/aos/core/bin/internal/cron-wrap vault-maintenance bash ~/aos/core/bin/crons/vault-maintenance
     at: "04:30"
     timeout: 1800
     tier: 4
-    description: Nightly lint pass — orphans, stale docs, topic refresh, synthesis suggestions
+    description: Nightly lint pass — orphans and stale docs (topic refresh/synthesis disabled, see comment)
 
   # ── Planned (scripts not yet built) ─────────────────────────────────────────
   # These entries are placeholders. Scripts will be created when their

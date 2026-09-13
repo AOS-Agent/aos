@@ -90,6 +90,17 @@ async def complete(
     # Lazy import — avoids pulling execution_router into every consumer.
     # Try both import styles so this works whether the caller runs from
     # repo root (core.engine.X) or from core/ cwd (engine.X).
+    #
+    # NOTE (cron audit, 2026-09-13, aos#240.5): core.engine.execution.router
+    # does not exist anywhere in this tree — `git log` on that path is empty,
+    # it was written against and never built. Every call here currently
+    # raises ModuleNotFoundError immediately. The only two callers
+    # (core/engine/intelligence/lint/{topics_refresh,synthesis_suggestions}.py,
+    # via vault-maintenance) now run with --skip-llm so this path is never
+    # hit nightly. core/engine/people/intel/classifier.py has the identical
+    # pattern and the same gap, but its cron (people-intel-refresh) is
+    # already default-off (migration 127) for an unrelated reason. Whoever
+    # builds ExecutionRouter should grep both call sites.
     try:
         from engine.execution.router import ExecutionRouter
     except ImportError:

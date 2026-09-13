@@ -1,54 +1,40 @@
 #!/usr/bin/env bash
-# nightly-pipeline — orchestrates the nightly daily-summary steps.
+# nightly-pipeline — owns exactly the one nightly step nothing else runs:
+# the DAILY friction report from session-analysis (Mon-Sat).
 #
-# Each step is best-effort and non-blocking: a failing step must not stop the
-# others. But a failed step MUST propagate to the script's exit code, otherwise
-# cron telemetry (cron_runs) records a false success and a step can fail silently
-# every night unnoticed. Steps run to completion first; the script then exits
-# nonzero if ANY step failed, with a summary of which.
+# Cron audit (2026-09-13, aos#240.3): this used to also re-run stale-detector
+# (08:00's own standalone cron — stale-detector has since been retired
+# outright, aos#240.2) and compile-daily (which has its own 23:30 cron).
+# Running the same step from two crons on the same day was pure waste and
+# left two "owners" for one output. One owner per step now:
+#   - session-analysis DAILY mode  → owned solely by this pipeline (23:00)
+#   - session-analysis WEEKLY mode → owned solely by its own cron (22:00 Sun)
+#   - compile-daily                → owned solely by its own cron (23:30)
+#
+# On Sunday the standalone session-analysis cron already produced the WEEKLY
+# report at 22:00, so this skips entirely rather than also writing a
+# same-day daily one nobody asked for.
 set -u
 
 ts() { date +%H:%M:%S; }
 
 echo "[$(ts)] nightly-pipeline starting"
 
-failures=0
-failed_steps=()
-
-run_step() {
-    local label="$1"
-    shift
-    if "$@"; then
-        return 0
-    fi
-    local rc=$?
-    echo "[$(ts)] $label failed (exit $rc, non-fatal — continuing)" >&2
-    failures=$((failures + 1))
-    failed_steps+=("$label")
-}
-
-# Step 1: Session analysis (if it's Sunday, the scheduler already ran the
-# weekly version — skip to avoid double work).
 DAY=$(date +%u)  # 1=Monday, 7=Sunday
-if [ "$DAY" != "7" ]; then
-    echo "Running daily session analysis..."
-    run_step "session-analysis" ~/aos/core/bin/aos-python ~/aos/core/bin/session-analysis daily
-else
-    echo "Skipping session-analysis (Sunday — scheduler already ran weekly version)"
+if [ "$DAY" = "7" ]; then
+    echo "Skipping session-analysis (Sunday — scheduler already ran the weekly version at 22:00)"
+    echo "[$(ts)] nightly-pipeline done — nothing to run today"
+    exit 0
 fi
 
-# Step 2: Stale detector
-echo "Running stale detector..."
-run_step "stale-detector" ~/aos/core/bin/aos-python ~/aos/core/bin/stale-detector
+echo "Running daily session analysis..."
+~/aos/core/bin/aos-python ~/aos/core/bin/session-analysis daily
+rc=$?
 
-# Step 3: Compile daily summary (ensure it ran)
-echo "Running compile-daily..."
-run_step "compile-daily" ~/aos/core/bin/aos-python ~/aos/core/bin/compile-daily
-
-echo "[$(ts)] nightly-pipeline done — $failures failed"
-
-if [ "$failures" -gt 0 ]; then
-    echo "[$(ts)] nightly-pipeline FAILED steps: ${failed_steps[*]}" >&2
+if [ "$rc" -ne 0 ]; then
+    echo "[$(ts)] nightly-pipeline FAILED (session-analysis exit $rc)" >&2
     exit 1
 fi
+
+echo "[$(ts)] nightly-pipeline done"
 exit 0

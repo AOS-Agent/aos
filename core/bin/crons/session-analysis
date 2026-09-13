@@ -254,12 +254,49 @@ def generate_report(all_frictions: list[dict], days: int) -> str:
     return "\n".join(lines)
 
 
+def _parse_args(argv: list[str]) -> tuple[int, str]:
+    """Return (days, period_suffix) from CLI args.
+
+    A bare positional "daily"/"weekly" mode word sets both the lookback
+    window and the report's filename label explicitly — this is what
+    nightly-pipeline passes (`session-analysis daily`). Without it, `days`
+    silently stayed at the default 7 and every nightly-pipeline run wrote a
+    `...-weekly.md` file regardless of the "daily" argument it was called
+    with (the 2026-09-13 cron audit finding). `--days N` still works
+    standalone exactly as before when no mode word is given.
+    """
+    mode = None
+    days = None
+    i = 0
+    while i < len(argv):
+        arg = argv[i]
+        if arg == "--days" and i + 1 < len(argv):
+            days = int(argv[i + 1])
+            i += 2
+            continue
+        if arg in ("daily", "weekly"):
+            mode = arg
+            i += 1
+            continue
+        i += 1
+
+    if days is None:
+        days = 1 if mode == "daily" else 7
+
+    if mode:
+        period_suffix = mode
+    elif days == 1:
+        period_suffix = "daily"
+    elif days == 7:
+        period_suffix = "weekly"
+    else:
+        period_suffix = f"{days}d"
+
+    return days, period_suffix
+
+
 def main():
-    days = 7
-    if "--days" in sys.argv:
-        idx = sys.argv.index("--days")
-        if idx + 1 < len(sys.argv):
-            days = int(sys.argv[idx + 1])
+    days, period_suffix = _parse_args(sys.argv[1:])
 
     since = datetime.now() - timedelta(days=days)
     all_frictions = []
@@ -279,12 +316,6 @@ def main():
 
     report = generate_report(all_frictions, days)
     today = datetime.now().strftime("%Y-%m-%d")
-    if days == 1:
-        period_suffix = "daily"
-    elif days == 7:
-        period_suffix = "weekly"
-    else:
-        period_suffix = f"{days}d"
     report_path = VAULT_FRICTION / f"session-friction-{today}-{period_suffix}.md"
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(report)

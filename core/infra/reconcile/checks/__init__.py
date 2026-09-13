@@ -3,6 +3,7 @@ from .bridge_poll_liveness import BridgePollLivenessCheck
 from .claude_defaults import ClaudeDefaultsCheck
 from .claude_md import GlobalClaudeMdCheck, RootClaudeMdCheck
 from .cmux_socket_control import CmuxSocketControlCheck
+from .contact_sync_health import ContactSyncHealthCheck
 from .context_freshness import ContextFreshnessCheck
 from .cron_health import CronHealthCheck
 from .dead_code import DeadCodeCheck
@@ -159,6 +160,11 @@ ALL_CHECKS = [
     ServiceLoadedCheck,
 
     CronHealthCheck,
+
+    # contact-sync's AddressBook access — a TCC denial exits 0 (expected,
+    # recoverable), so cron_health's exit-code telemetry can't see it. This
+    # reads the status file sync_contacts.py writes directly.
+    ContactSyncHealthCheck,
 
     # Instance hygiene — diff framework declarations against instance state,
     # clean orphaned service venvs, stale LaunchAgents, broken symlinks,
