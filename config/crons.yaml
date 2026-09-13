@@ -303,11 +303,15 @@ jobs:
     description: Sends morning intelligence digest to Telegram
 
   vault-maintenance:
+    # v0.7.7 (aos#240.5): the script now hardcodes --skip-llm — topic refresh
+    # and synthesis drafts call an ExecutionRouter that doesn't exist in this
+    # tree, so they errored every night for 0 tokens spent. Deterministic
+    # orphan/stale detection is real and runs as before.
     command: bash ~/aos/core/bin/internal/cron-wrap vault-maintenance bash ~/aos/core/bin/crons/vault-maintenance
     at: "04:30"
     timeout: 1800
     tier: 4
-    description: Nightly lint pass — orphans, stale docs, topic refresh, synthesis suggestions
+    description: Nightly lint pass — orphans and stale docs (topic refresh/synthesis disabled, see comment)
 
   # ── Planned (scripts not yet built) ─────────────────────────────────────────
   # These entries are placeholders. Scripts will be created when their
