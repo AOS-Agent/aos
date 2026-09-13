@@ -1,15 +1,20 @@
 """
-Tests for the v0.8.0 update gates: freeze and host scope.
+Tests for the v0.8.0 update gate: freeze.
 
-Both decide whether an update runs at all, on machines these tests cannot
-reach, so they are written against the pure functions in core/lib/channels.py
-rather than the bash that calls them.
+The gate decides whether an update runs at all, so it is written against the
+pure functions in core/lib/channels.py rather than the bash that calls them —
+a decision that important should be provable without a network or a release.
 
-The host-scope tests carry the weight. The excluded machine and the release
-machine are both named some variant of "Agent's Mac mini", and the obvious
-implementation — normalize the ComputerName and compare — makes them the same
-string. A guard with that bug refuses to update the machine the rollout starts
-on and silently does nothing, which looks exactly like a guard that works.
+Two asymmetries carry the weight. A frozen machine must still take patches, or
+a security fix never lands on a system nobody is developing any more; and a
+machine whose candidate version cannot be read must be offered *nothing*,
+because failing open here pushes an unidentified release onto a machine that
+asked to stop receiving them. Everything else — a missing file, malformed
+YAML, a non-boolean flag — must read as "not frozen", since an accidental
+freeze is silent and lasts until someone notices months of missed patches.
+
+The companion host-scope guard was removed in the single-node cleanup: AOS runs
+on one machine, so there is no other machine to exclude.
 """
 
 import sys
@@ -115,88 +120,7 @@ def test_is_frozen_never_freezes_by_accident(tmp_path, body):
     assert channels.is_frozen(tmp_path) is False
 
 
-# ── Host scope ───────────────────────────────────────────────────────────────
-
-
-def test_excluded_mini_by_hostname(tmp_path):
-    r = channels.excluded_host("Agents-Mac-mini.local", "Agents-Mac-mini", tmp_path)
-    assert r["excluded"] is True
-
-
-def test_excluded_mini_by_tailscale_name(tmp_path):
-    r = channels.excluded_host("agents-mac-mini-2", None, tmp_path)
-    assert r["excluded"] is True
-
-
-def test_excluded_mini_by_tailnet_fqdn(tmp_path):
-    r = channels.excluded_host("agents-mac-mini-2.taila0423e.ts.net", None, tmp_path)
-    assert r["excluded"] is True
-
-
-def test_release_machine_is_not_excluded(tmp_path):
-    """The machine the rollout starts on must never match the guard.
-
-    This is the test that would have caught a normalized-ComputerName
-    implementation: both minis answer to "Agent's Mac mini", and a guard that
-    compares those strings bricks the rollout on the first machine while
-    looking like it is working. The release machine's own names are its
-    LocalHostName and the bare tailscale name — neither is an excluded pattern.
-    """
-    assert channels.excluded_host("host-four.local", "host-four", tmp_path)["excluded"] is False
-    assert channels.excluded_host("agents-mac-mini", "host-four", tmp_path)["excluded"] is False
-
-
-@pytest.mark.parametrize("hostname,local", [
-    ("host-one", "host-one"),
-    ("host-two.local", "host-two"),
-    ("host-three-4", "host-three-4"),
-    ("agents-mac-mini", "host-four"),  # the release Mini's own tailscale name
-])
-def test_other_fleet_machines_are_not_excluded(hostname, local, tmp_path):
-    """Only the one excluded mini matches — everything else updates normally."""
-    assert channels.excluded_host(hostname, local, tmp_path)["excluded"] is False
-
-
-def test_excluded_host_reports_which_name_matched(tmp_path):
-    r = channels.excluded_host("Agents-Mac-mini.local", None, tmp_path)
-    assert r["matched"] == "agents-mac-mini.local"
-    assert "override" in r["reason"]
-
-
-def test_override_file_unblocks_an_excluded_machine(tmp_path):
-    """The guard is a safe default about someone else's computer, not a lock.
-
-    Whoever owns the excluded machine can opt back in on their own machine.
-    """
-    (tmp_path / "allow-updates").write_text("")
-    r = channels.excluded_host("Agents-Mac-mini.local", "Agents-Mac-mini", tmp_path)
-    assert r["excluded"] is False
-    assert "overrides" in r["reason"]
-
-
-def test_no_hostname_is_not_excluded(tmp_path):
-    r = channels.excluded_host("", "", tmp_path)
-    assert r["excluded"] is False
-
-
-def test_host_scope_is_case_insensitive(tmp_path):
-    assert channels.excluded_host("AGENTS-MAC-MINI.LOCAL", None, tmp_path)["excluded"] is True
-
-
 # ── CLI shim (what the bash actually calls) ──────────────────────────────────
-
-
-def test_cli_host_scope_exit_codes(capsys, tmp_path):
-    """Exit 1 for excluded, 0 for in-scope — bash branches on this."""
-    assert channels.main(["host-scope", "Agents-Mac-mini.local", "-", str(tmp_path)]) == 1
-    assert channels.main(["host-scope", "host-four.local", "-", str(tmp_path)]) == 0
-
-
-def test_cli_host_scope_output_is_tab_separated(capsys, tmp_path):
-    channels.main(["host-scope", "Agents-Mac-mini.local", "-", str(tmp_path)])
-    fields = capsys.readouterr().out.strip().split("\t")
-    assert len(fields) == 3
-    assert fields[0] == "1"
 
 
 def test_cli_freeze_gate_exit_codes(tmp_path):

@@ -6,7 +6,7 @@ each machine:
 
   1. Writes `frozen: true` to ~/.aos/config/update-policy.yaml. From then on
      `check-update` offers patches and nothing else (core/lib/channels.py
-     freeze_gate, tested in tests/test_freeze_and_host_scope.py).
+     freeze_gate, tested in tests/test_freeze.py).
   2. Sends one Telegram notice through the existing aos-notify path.
 
 **The notice is sent exactly once, ever.** A migration that re-runs is normal —

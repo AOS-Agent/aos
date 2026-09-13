@@ -59,7 +59,8 @@ detect_install() {
 }
 
 # Find the source git repo for release-system updates.
-# Mirrors release-manager's _find_repo: dev machines first, then fleet.
+# Mirrors release-manager's _find_repo: the dev workspace first, then the
+# release-install clone.
 find_repo() {
     if [[ -d "$HOME/project/aos/.git" ]]; then
         echo "$HOME/project/aos"
@@ -106,41 +107,13 @@ _resolve_channel_target() {
     "$AOS_PY" "$CHANNELS_LIB" resolve "$main_hash" "$stable_hash" 2>/dev/null
 }
 
-# ── Freeze + host scope (v0.8.0) ─────────────────────────────────────────────
+# ── Freeze (v0.8.0) ──────────────────────────────────────────────────────────
 #
-# Two pre-flight gates, both decided in core/lib/channels.py so they are unit
-# tested rather than trusted:
-#
-#   host scope — some machines must never be updated by this system. A shared
-#                mini belonging to another account runs AOS and is not part of
-#                the fleet rollout. Exiting 0 (not 1) is deliberate: being out
-#                of scope is a correct outcome, and a non-zero exit here would
-#                report a cron failure every two hours forever.
-#
-#   freeze     — v0.8.0 is the last feature release. A machine with
-#                `frozen: true` in ~/.aos/config/channel-update.yaml stops being
-#                offered feature updates and keeps taking patches.
-
-# Echo TAB-separated: excluded(0|1)  matched  reason
-_host_scope() {
-    "$AOS_PY" "$CHANNELS_LIB" host-scope "$(hostname)" \
-        "$(scutil --get LocalHostName 2>/dev/null || echo -)" 2>/dev/null \
-        || echo -e "0\t-\thost-scope check unavailable"
-}
-
-# 0 if this host may update; 1 (and a log line) if it is excluded.
-host_in_scope() {
-    # `matched` is read only to consume the field; the reason line already
-    # names the host, so it is discarded rather than kept as an unused local.
-    local excluded reason
-    IFS=$'\t' read -r excluded _ reason < <(_host_scope)
-    if [[ "$excluded" == "1" ]]; then
-        log "Out of scope: $reason"
-        _write_state "out_of_scope" "" ""
-        return 1
-    fi
-    return 0
-}
+# One pre-flight gate, decided in core/infra/lib/channels.py so it is unit
+# tested rather than trusted: v0.8.0 is the last feature release, and a machine
+# with `frozen: true` in ~/.aos/config/update-policy.yaml stops being offered
+# feature updates while still taking patches. A machine whose candidate version
+# cannot be read is offered nothing — this gate fails closed.
 
 # Echo TAB-separated: allowed(0|1)  kind  reason
 _freeze_gate() {
@@ -191,7 +164,7 @@ PY
 }
 
 # Record the outcome of an apply attempt WITHOUT clobbering the check state.
-# Merges a `last_apply` object into update-state.json so `aos fleet status`
+# Merges a `last_apply` object into update-state.json so `aos status`
 # can answer not just "is this node behind" but WHY: which step failed, when,
 # and with what detail. (Born from the faisal-mini incident: release activated,
 # migrations failed, script exited 0, nothing recorded anywhere.)
@@ -252,8 +225,6 @@ notify() {
 # release-system machines, where ~/aos has no git remote.)
 
 check() {
-    host_in_scope || return 0
-
     local itype
     itype=$(detect_install)
     case "$itype" in
@@ -270,8 +241,6 @@ check() {
 # Returns 0 (true) if an update is available, 1 (false) otherwise.
 # Side effect: refreshes the state file. Used by both check and apply.
 update_available() {
-    host_in_scope || return 1
-
     local itype
     itype=$(detect_install)
     if [[ "$itype" == "release" ]]; then
@@ -414,13 +383,6 @@ check_git() {
 # problem — the old script never drives its own deployment.
 
 apply() {
-    # The hard stop. Nothing below this line runs on an excluded machine — not
-    # a git pull, not a release build, not a service restart.
-    if ! host_in_scope; then
-        log "Refusing to apply an update on an out-of-scope host"
-        return 0
-    fi
-
     local itype
     itype=$(detect_install)
     case "$itype" in
@@ -1018,7 +980,7 @@ deploy() {
             # is disabled, opted-out, or ships-off (converse on operator
             # machines) is updated on disk and skipped silently — restarting
             # it would fail by design and bury real alarms in fake ones
-            # (observed on both fleet machines, 2026-08-15).
+            # (observed 2026-08-15).
             if ! launchctl print "gui/${uid}/${la_name}" >/dev/null 2>&1; then
                 log "Skipping $svc_name — not loaded (disabled or opted out)"
                 continue
