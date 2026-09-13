@@ -39,7 +39,7 @@ except ImportError:
 NO_TELEGRAM = "--no-telegram" in sys.argv
 VAULT_ROOT = Path.home() / "vault"
 WORK_FILE = Path.home() / ".aos" / "work" / "work.yaml"
-SESSIONS_DIR = VAULT_ROOT / "ops" / "sessions"
+SESSIONS_DIR = VAULT_ROOT / "log" / "sessions"
 DAILY_DIR = VAULT_ROOT / "daily"
 PATTERNS_YAML = Path.home() / ".aos" / "config" / "patterns.yaml"
 REVIEWS_DIR = VAULT_ROOT / "reviews"
@@ -555,6 +555,12 @@ def main():
     work = load_work()
     task_data = analyze_tasks(work, start, end)
     sessions = scan_sessions(start, end)
+    if sessions["count"] == 0:
+        print(
+            f"WARNING: 0 sessions found for {date_range} in {SESSIONS_DIR} "
+            "— review may be incomplete (check that sessions are exporting)",
+            file=sys.stderr,
+        )
     daily = scan_daily_notes(start, end)
     patterns_count = count_new_patterns(start, end)
     health_data = scan_health_data(start, end)

@@ -2,6 +2,10 @@
 
 All notable changes to AOS. Release notes sent via Telegram after each 4am update.
 
+## v0.7.9
+
+- Fixed the `weekly-digest` cron reading sessions from `~/vault/ops/sessions`, a path that has never existed — the vault schema's canonical location is `~/vault/log/sessions` (aos#114). `SESSIONS_DIR` (`core/bin/crons/weekly-digest:42`) was the lone outlier among sibling crons (`compile-patterns`, `session-export`, `compile-daily`, `reconcile-sessions` all already used `log/sessions`); it had silently counted zero sessions in every weekly review for three months (1,470 real session exports, none of them ever read). Also added a warning: a week that genuinely turns up zero sessions now prints `WARNING: 0 sessions found for <week> in <dir>` to stderr instead of reporting `Sessions: 0` as if nothing were wrong.
+
 ## v0.7.8 — the system stops crying wolf — 2026-09-13
 
 Summary: The nine open issues that v0.7.7 walked past. Five were notification
