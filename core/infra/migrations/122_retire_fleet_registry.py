@@ -1,5 +1,5 @@
 """
-Migration 121: retire the fleet node registry and the host-scope override.
+Migration 122: retire the fleet node registry and the host-scope override.
 
 The single-node cleanup deleted `core/bin/cli/fleet` and the `aos fleet`
 subcommand. Two instance files outlive their only consumer, and a config file
@@ -97,4 +97,4 @@ def down() -> bool:
 
 
 if __name__ == "__main__":
-    print("Migration 121 already applied" if check() else ("Done" if up() else "Failed"))
+    print("Migration 122 already applied" if check() else ("Done" if up() else "Failed"))

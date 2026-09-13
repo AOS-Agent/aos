@@ -1,12 +1,12 @@
 """
-Idempotency and safety tests for migration 121 (retire the fleet registry).
+Idempotency and safety tests for migration 122 (retire the fleet registry).
 
 Same contract as the other v0.8.0 migrations: up() can run twice. The runner
 replays on any machine whose recorded level is behind, a release can be
 activated, rolled back and activated again, and an operator can run
 `aos migrate` by hand.
 
-121 moves operator-written config out of ~/.aos/config. That makes two failure
+122 moves operator-written config out of ~/.aos/config. That makes two failure
 modes worth asserting rather than assuming: a replay must not lose the archive
 the first run made, and the migration must never touch a config file it was not
 named for. Every test runs in a sandbox HOME; nothing reads or writes the live
@@ -61,11 +61,11 @@ def _archives(home: Path) -> list[Path]:
 # ── The migration does the thing ─────────────────────────────────────────────
 
 
-def test_121_archives_fleet_yaml_then_is_a_noop(home):
+def test_122_archives_fleet_yaml_then_is_a_noop(home):
     cfg = home / ".aos" / "config" / "fleet.yaml"
     cfg.write_text(FLEET_YAML)
 
-    m = load_migration("121", home)
+    m = load_migration("122", home)
     assert m.check() is False
     assert m.up() is True
 
@@ -83,21 +83,21 @@ def test_121_archives_fleet_yaml_then_is_a_noop(home):
     assert archived[0].read_text() == FLEET_YAML
 
 
-def test_121_archives_the_allow_updates_override(home):
+def test_122_archives_the_allow_updates_override(home):
     marker = home / ".aos" / "config" / "allow-updates"
     marker.write_text("")
 
-    m = load_migration("121", home)
+    m = load_migration("122", home)
     assert m.up() is True
     assert not marker.exists()
     assert [p.name.split(".")[0] for p in _archives(home)] == ["allow-updates"]
 
 
-def test_121_handles_both_files_in_one_run(home):
+def test_122_handles_both_files_in_one_run(home):
     (home / ".aos" / "config" / "fleet.yaml").write_text(FLEET_YAML)
     (home / ".aos" / "config" / "allow-updates").write_text("")
 
-    m = load_migration("121", home)
+    m = load_migration("122", home)
     assert m.up() is True
     assert m.check() is True
     assert len(_archives(home)) == 2
@@ -106,15 +106,15 @@ def test_121_handles_both_files_in_one_run(home):
 # ── Safety ───────────────────────────────────────────────────────────────────
 
 
-def test_121_is_already_applied_on_a_machine_that_never_had_the_files(home):
+def test_122_is_already_applied_on_a_machine_that_never_had_the_files(home):
     """The common case: nothing to do, and that is success, not failure."""
-    m = load_migration("121", home)
+    m = load_migration("122", home)
     assert m.check() is True
     assert m.up() is True
     assert _archives(home) == []
 
 
-def test_121_never_touches_config_it_was_not_named_for(home):
+def test_122_never_touches_config_it_was_not_named_for(home):
     """No glob over ~/.aos/config — the neighbours are the operator's real config."""
     cfg = home / ".aos" / "config"
     (cfg / "fleet.yaml").write_text(FLEET_YAML)
@@ -128,7 +128,7 @@ def test_121_never_touches_config_it_was_not_named_for(home):
     for name, body in neighbours.items():
         (cfg / name).write_text(body)
 
-    m = load_migration("121", home)
+    m = load_migration("122", home)
     assert m.up() is True
 
     for name, body in neighbours.items():
@@ -136,12 +136,12 @@ def test_121_never_touches_config_it_was_not_named_for(home):
     assert not (cfg / "fleet.yaml").exists()
 
 
-def test_121_replay_after_a_manual_restore_keeps_both_archives(home):
+def test_122_replay_after_a_manual_restore_keeps_both_archives(home):
     """An operator who restores the file and replays must not lose the first copy."""
     cfg = home / ".aos" / "config" / "fleet.yaml"
     cfg.write_text(FLEET_YAML)
 
-    m = load_migration("121", home)
+    m = load_migration("122", home)
     m.up()
     first = _archives(home)
     assert len(first) == 1
@@ -156,7 +156,7 @@ def test_121_replay_after_a_manual_restore_keeps_both_archives(home):
     assert first[0].read_text() == FLEET_YAML, "the first archive's content changed"
 
 
-def test_121_reports_a_description_and_refuses_to_reverse(home):
-    m = load_migration("121", home)
+def test_122_reports_a_description_and_refuses_to_reverse(home):
+    m = load_migration("122", home)
     assert isinstance(m.DESCRIPTION, str) and m.DESCRIPTION
     assert m.down() is False
