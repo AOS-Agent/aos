@@ -5,6 +5,14 @@
 #   cld                    — start interactive session
 #   cld "do something"     — run with prompt
 #   cld --resume           — resume last session
+#   cld --profile <name>   — run against an isolated Claude profile
+#
+# A symlink invoked under any other name (cld2, cld3, ...) behaves exactly
+# like `cld --profile <that name>` — see
+# core/infra/migrations/135_claude_profile_launchers.py, which puts cld2/cld3
+# on PATH, and core/bin/cli/claude-profile, which manages the profiles
+# themselves (aos#244.2). Plain `cld`, with neither, is byte-for-byte what it
+# was before profiles existed: no CLAUDE_CONFIG_DIR is ever exported.
 
 # Read agent name from operator config (default: chief)
 
@@ -20,6 +28,33 @@ d = yaml.safe_load(Path.home().joinpath('.aos/config/operator.yaml').read_text()
 print(d.get('agent_name', ''))
 " 2>/dev/null)
     [[ -n "$custom" ]] && AGENT_NAME="$custom"
+fi
+
+# A profile is resolved from the invoked name (a symlink like cld2/cld3) or
+# from an explicit `--profile <name>` as this script's first argument. Plain
+# `cld` with neither takes this branch, PROFILE_NAME stays empty, and nothing
+# below it runs — that's the byte-for-byte-unchanged path.
+INVOKED_NAME="${0##*/}"
+PROFILE_NAME=""
+if [[ "$INVOKED_NAME" != "cld" ]]; then
+    PROFILE_NAME="$INVOKED_NAME"
+elif [[ "${1:-}" == "--profile" ]]; then
+    PROFILE_NAME="${2:-}"
+    if [[ -z "$PROFILE_NAME" ]]; then
+        echo "Usage: cld --profile <name>" >&2
+        exit 2
+    fi
+    shift 2
+fi
+
+if [[ -n "$PROFILE_NAME" ]]; then
+    CLAUDE_PROFILE_CLI="$HOME/aos/core/bin/cli/claude-profile"
+    profile_dir=$("$CLAUDE_PROFILE_CLI" path "$PROFILE_NAME" 2>/dev/null)
+    if [[ $? -ne 0 || -z "$profile_dir" ]]; then
+        echo "No Claude profile '$PROFILE_NAME' yet — run: claude-profile add $PROFILE_NAME" >&2
+        exit 2
+    fi
+    export CLAUDE_CONFIG_DIR="$profile_dir"
 fi
 
 exec claude --dangerously-skip-permissions --agent "$AGENT_NAME" "$@"

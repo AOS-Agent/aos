@@ -80,6 +80,9 @@ HELPERS: dict[str, list[str]] = {
     "131_comms_nightly_park_and_retire": ["_crons_yaml", "_stale_report", "_backups_dir"],
     "133_revert_last_boot_directory_mitigation": ["_last_boot_file"],
     "134_google_credentials_hardening": ["_old_creds_dir", "_new_creds_dir"],
+    "135_claude_profile_launchers": [
+        "_home", "_local_bin", "_cld_source", "_cld2_link", "_cld3_link", "_aos_link",
+    ],
 }
 
 

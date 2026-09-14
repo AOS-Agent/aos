@@ -1187,6 +1187,7 @@ PYEOF
         echo "  discover        Scan machine for existing setup"
         echo "  hygiene         Find orphaned instance artifacts (services, plists, caches)"
         echo "  version         Show current version"
+        echo "  claude-profile  Isolated Claude Code login profiles (add/list/remove/path)"
         echo ""
         ;;
 
@@ -1285,6 +1286,12 @@ if dismiss_list:
     mesh)
         shift
         exec "$AOS_DIR/core/bin/cli/mesh" "$@"
+        ;;
+
+    claude-profile)
+        # Isolated Claude Code login profiles — add/list/remove/path.
+        shift
+        exec "$AOS_DIR/core/bin/cli/claude-profile" "$@"
         ;;
 
     snapshot)
