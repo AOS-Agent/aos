@@ -4,8 +4,19 @@ All notable changes to AOS. Release notes sent via Telegram after each 4am updat
 
 ## v0.7.10 — a second Claude account, without a second machine — 2026-09-14
 
-Summary: Part 1 of Claude profiles (aos#244.1) — the plumbing for running more
-than one Claude Code login on this machine.
+Summary: Claude profiles (aos#244) — a second (or third) Claude Code login,
+alongside the operator's own, without a second machine. `aos claude-profile add
+cld2` creates it, `cld2` once + `/login` signs it in, and `aos claude-profile
+status` confirms both are logged in — everything else (skills, agents, rules,
+hooks, commands, projects, plugins, CLAUDE.md, settings.json, statusline.sh,
+keybindings.json) stays shared, symlinked from `~/.claude`; only the per-account
+login state is separate. Add one line to `~/.aos/config/claude-lanes.yaml` and
+every headless spawn — the bridge, Sentinel, the memory-curate cron — starts
+failing over to it automatically the moment the operator's own login hits a
+usage limit, instead of going silent until someone notices. The Keychain is
+never touched by any of this, and the operator's own default login is never
+disturbed — a machine that never configures a second lane behaves exactly as
+it did before this release.
 
 - Added `claude-profile` (`core/bin/cli/claude-profile`), a stdlib+PyYAML CLI managing isolated Claude Code login profiles under `~/.aos/claude-profiles/<name>/` (aos#244.1). `add <name>` symlinks the shared AOS layer in — skills, agents, rules, hooks, commands, projects, plugins, CLAUDE.md, settings.json, statusline.sh, keybindings.json — from `~/.claude/`, creating each link only when its target exists, and seeds a per-profile `.claude.json` from the operator's `~/.claude.json` with every OAuth/token/credential/account/trial/usage-tracking key stripped (mcpServers, preferences, and per-project state are kept); the seed is written atomically at mode 0600. `list` shows every profile plus the default (`~/.claude`), each with a live login check (`CLAUDE_CONFIG_DIR=<dir> claude auth status`, 10s timeout, `claude not found` when the binary is missing). `remove` deletes only the profile's own directory — symlinks are unlinked, never followed, so the shared `~/.claude` targets are untouched — and refuses `default`. `path <name>` prints the `CLAUDE_CONFIG_DIR` value for scripts. Nothing here ever touches the macOS Keychain; a profile's first login is a manual `claude` + `/login` run by the operator. Part 2 will wire up a per-profile launcher (`cld2` and friends) so `add` won't have to spell out `CLAUDE_CONFIG_DIR=... claude` by hand.
 - Added the launcher half of Claude profiles (aos#244.2): `core/bin/cli/cld` resolves a `CLAUDE_CONFIG_DIR` from its own invoked name — a symlink like `cld2`/`cld3` — or an explicit `--profile <name>` as its first argument, via `claude-profile path <name>`; a name with no profile yet prints the one-line fix (`claude-profile add <name>`) and exits 2 rather than creating one implicitly. Plain `cld`, invoked as itself with no `--profile`, is byte-for-byte unchanged — no `CLAUDE_CONFIG_DIR` is ever exported on that path. `aos claude-profile` now dispatches to the CLI directly (same shape as `aos mesh`), and is listed in `aos help`. Migration 135 puts `~/.local/bin/cld2` and `~/.local/bin/cld3` on PATH, symlinked to the same `~/aos/core/bin/cld` target `~/.local/bin/cld` already uses, idempotently and without clobbering a real file at either path (backed up to `.pre-135` first); it deliberately does not create either profile directory — that's still `aos claude-profile add <name>`, run once, on purpose.
