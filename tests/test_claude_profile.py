@@ -147,8 +147,26 @@ class TestAddSymlinks:
     def test_add_prints_next_step_instructions(self, mod, capsys):
         mod.cmd_add(_ns(name="work"))
         out = capsys.readouterr().out
-        assert "CLAUDE_CONFIG_DIR=~/.aos/claude-profiles/work claude" in out
+        assert "cld --profile work" in out
+        assert "CLAUDE_CONFIG_DIR=" not in out
+        assert "Part 2" not in out
         assert "/login" in out
+
+    def test_launcher_hint_prefers_named_launcher_that_is_cld(self, mod, monkeypatch, tmp_path):
+        import shutil
+
+        real = tmp_path / "cld-real"
+        real.write_text("")
+        for name in ("cld", "cld2"):
+            (tmp_path / name).symlink_to(real)
+        (tmp_path / "git").write_text("")  # on PATH, but not cld
+        monkeypatch.setattr(
+            shutil, "which",
+            lambda n: str(tmp_path / n) if (tmp_path / n).exists() else None,
+        )
+        assert mod._launcher_for("cld2") == "cld2"
+        assert mod._launcher_for("git") == "cld --profile git"
+        assert mod._launcher_for("work") == "cld --profile work"
 
 
 # ---------------------------------------------------------------------------
@@ -181,6 +199,22 @@ class TestSeededClaudeJson:
         leftovers = [p.name for p in result.profile_dir.iterdir()
                      if p.name.startswith(".claude-profile-tmp-")]
         assert leftovers == []
+
+    def test_strips_onboarding_flags_so_first_launch_offers_login(self, mod, fake_home):
+        source = fake_home["home"] / ".claude.json"
+        data = json.loads(source.read_text())
+        data.update({
+            "hasCompletedOnboarding": True,
+            "lastOnboardingVersion": "2.1.251",
+            "hasCompletedClaudeInChromeOnboarding": True,
+        })
+        source.write_text(json.dumps(data))
+
+        seeded = json.loads(mod.create_profile("work").claude_json_path.read_text())
+
+        assert "hasCompletedOnboarding" not in seeded
+        assert "lastOnboardingVersion" not in seeded
+        assert seeded["hasCompletedClaudeInChromeOnboarding"] is True  # feature tips stay
 
     def test_missing_source_claude_json_seeds_empty_dict(self, mod, fake_home):
         (fake_home["home"] / ".claude.json").unlink()

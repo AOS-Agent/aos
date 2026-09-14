@@ -125,7 +125,19 @@ def _profile_dir(name: str) -> Path:
 
 # ── .claude.json seeding ─────────────────────────────────────────────
 
+# Exact top-level keys stripped even though they are not per-account: they
+# mark first-run onboarding as done, so Claude Code skips the screen where a
+# fresh profile picks how to log in and opens unauthenticated instead (labelled
+# as API usage billing) until the operator finds /login on their own.
+STRIP_KEYS = (
+    "hasCompletedOnboarding",
+    "lastOnboardingVersion",
+)
+
+
 def _strip_key(key: str) -> bool:
+    if key in STRIP_KEYS:
+        return True
     lowered = key.lower()
     return any(s in lowered for s in STRIP_SUBSTRINGS)
 
@@ -366,10 +378,25 @@ def cmd_add(args) -> int:
     if result.lanes_note:
         print(result.lanes_note)
     print()
-    print(f"Next: run `{result.name}` once and /login with the account for this profile.")
-    print("(Part 2 makes that a real command; for now, run it directly:)")
-    print(f"  CLAUDE_CONFIG_DIR=~/.aos/claude-profiles/{result.name} claude")
+    print(f"Next: run `{_launcher_for(result.name)}` once and /login with the account for this profile.")
     return 0
+
+
+def _launcher_for(name: str) -> str:
+    """The command that opens this profile.
+
+    A launcher on PATH named after the profile (cld2, cld3 — migration 135)
+    counts only when it resolves to the same script as `cld`; anything else
+    falls back to `cld --profile <name>`, which works for every profile.
+    """
+    import os
+    import shutil
+
+    cld = shutil.which("cld")
+    named = shutil.which(name)
+    if cld and named and os.path.realpath(named) == os.path.realpath(cld):
+        return name
+    return f"cld --profile {name}"
 
 
 def cmd_list(args) -> int:
