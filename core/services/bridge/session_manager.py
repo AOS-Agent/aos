@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import subprocess
+import sys
 import tempfile
 import time
 from collections.abc import AsyncGenerator
@@ -19,6 +20,45 @@ logger = logging.getLogger("aos.bridge.session_manager")
 
 WORKSPACE = Path.home() / "aos"
 AGENTS_DIR = WORKSPACE / ".claude" / "agents"
+
+# claude_lanes.py (core/infra/lib/) — loaded by repo-root-relative path (see
+# core/engine/notify/router.py for the same trick), so this resolves whether
+# this file runs from ~/aos or a dev worktree. None means "behave exactly as
+# before lanes existed" — no CLAUDE_CONFIG_DIR override, no failover.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "infra" / "lib"))
+try:
+    import claude_lanes
+except Exception:  # noqa: BLE001 — a missing lanes module must not break the bridge
+    claude_lanes = None
+
+
+def _spawn_env_and_lane() -> tuple[str, dict]:
+    """Which lane a fresh per-message spawn should use, and the env to spawn
+    it with. Mirrors persistent_session.py's `_spawn_env()` — architecturally
+    different processes (one-shot here vs. long-lived there), same lane
+    resolution."""
+    env = dict(os.environ)
+    if claude_lanes is None:
+        return "default", env
+    lane = claude_lanes.pick_lane(claude_lanes.load_lanes(), claude_lanes.load_state()) or "default"
+    config_dir = claude_lanes.resolve_config_dir(lane)
+    if config_dir:
+        env["CLAUDE_CONFIG_DIR"] = config_dir
+    else:
+        env.pop("CLAUDE_CONFIG_DIR", None)
+    return lane, env
+
+
+def _limit_hit(result, lane: str) -> bool:
+    """True — and, as a side effect, records the exhaustion — if *result* (a
+    SessionResult) reports a usage/rate limit for *lane*."""
+    if result is None or not result.is_error or claude_lanes is None:
+        return False
+    matched = claude_lanes.detect_limit(result.text or "")
+    if not matched:
+        return False
+    claude_lanes.record_exhaustion(lane, result.text or "")
+    return True
 
 
 def _sessions_file() -> Path:
@@ -565,12 +605,14 @@ async def stream_claude(
 
     async def _generate():
         nonlocal session_id, is_resumed
+        lane, spawn_env = _spawn_env_and_lane()
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=work_dir,
+                env=spawn_env,
                 limit=16 * 1024 * 1024,  # 16MB buffer for image-heavy stream output
             )
         except FileNotFoundError:
@@ -591,6 +633,7 @@ async def stream_claude(
 
         new_session_id = None
         is_stale_session = False
+        last_result = None
 
         try:
             async for raw_line in proc.stdout:
@@ -610,6 +653,7 @@ async def stream_claude(
                     new_session_id = event.session_id
                 elif isinstance(event, SessionResult):
                     new_session_id = event.session_id or new_session_id
+                    last_result = event
 
                 yield event
 
@@ -630,12 +674,25 @@ async def stream_claude(
         await proc.wait()
         _active_processes.pop(user_key, None)
 
-        # Handle stale session: retry without --resume
-        if is_stale_session and session_id:
-            logger.warning(f"Stale session {session_id} for {user_key}, retrying fresh")
-            bridge_event("session_stale", level="warn",
-                         user_key=user_key, session_id=session_id[:12])
-            clear_session(user_key)
+        # Usage-limit hit on this lane — retry once on the next lane, the
+        # same one-retry mechanism the stale-session path below already
+        # uses. _limit_hit() also records the exhaustion as a side effect.
+        limit_hit = _limit_hit(last_result, lane)
+
+        # Handle stale session: retry without --resume. A limit hit is not a
+        # stale session — session_id (if any) is still good — so only clear
+        # it in the stale-session case; either way the retry goes through
+        # _retry_fresh(), which never resumes, so is_resumed is overridden
+        # for both.
+        if (is_stale_session and session_id) or limit_hit:
+            if is_stale_session and session_id:
+                logger.warning(f"Stale session {session_id} for {user_key}, retrying fresh")
+                bridge_event("session_stale", level="warn",
+                             user_key=user_key, session_id=session_id[:12])
+                clear_session(user_key)
+            else:
+                logger.warning(f"Lane {lane!r} hit a usage limit for {user_key} "
+                                "— retrying on the next lane")
             is_resumed = False  # override — we're starting fresh
             async for event in _retry_fresh(
                 clean_message, user_key, agent_name, work_dir,
@@ -684,12 +741,15 @@ async def _retry_fresh(
     else:
         cmd.extend(["--agent", _get_default_agent()])
 
+    lane, spawn_env = _spawn_env_and_lane()
+
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=work_dir,
+            env=spawn_env,
         )
     except FileNotFoundError:
         yield SessionResult(
@@ -704,6 +764,7 @@ async def _retry_fresh(
         )
         return
 
+    last_result = None
     async for raw_line in proc.stdout:
         line = raw_line.decode("utf-8", errors="replace").strip()
         if not line:
@@ -711,9 +772,20 @@ async def _retry_fresh(
         event = parse_event(line)
         if event is None:
             continue
-        if isinstance(event, SessionResult) and event.session_id and not agent_name:
-            save_session_id(user_key, event.session_id)
+        if isinstance(event, SessionResult):
+            if event.session_id and not agent_name:
+                save_session_id(user_key, event.session_id)
+            last_result = event
         yield event
 
     await proc.wait()
     _auto_commit()
+
+    # This is already the one retry `_generate()` makes on a limit hit — no
+    # further retry here (never more than one extra lane per message). If
+    # this lane is ALSO exhausted, recording it means the NEXT message picks
+    # a fresh lane; this turn's result (already yielded above) stands as the
+    # real failure the operator sees, same as claude_lanes.run()'s contract.
+    if _limit_hit(last_result, lane):
+        logger.warning(f"Lane {lane!r} also hit a usage limit on retry for "
+                        f"{user_key} — no further retries this turn")

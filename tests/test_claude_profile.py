@@ -32,6 +32,7 @@ from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
 import pytest
+import yaml
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CLAUDE_PROFILE = REPO_ROOT / "core" / "bin" / "cli" / "claude-profile"
@@ -441,3 +442,76 @@ class TestEndToEndSubprocess:
         assert result.returncode == 0
         expected = fake_home["home"] / ".aos" / "claude-profiles" / "work"
         assert result.stdout.strip() == str(expected)
+
+
+# ---------------------------------------------------------------------------
+# Lanes integration (aos#244.3) — `add` appends to an operator-created
+# claude-lanes.yaml, and `status` reports lanes/login/exhaustion.
+# ---------------------------------------------------------------------------
+
+class TestAddAppendsToLanesConfig:
+    def _lanes_path(self, fake_home) -> Path:
+        return fake_home["home"] / ".aos" / "config" / "claude-lanes.yaml"
+
+    def test_no_lanes_file_means_add_does_not_create_one(self, mod, fake_home):
+        result = mod.create_profile("work")
+        assert result.lanes_note is None
+        assert not self._lanes_path(fake_home).exists()
+
+    def test_appends_the_new_name_to_an_existing_lanes_file(self, mod, fake_home):
+        lanes_path = self._lanes_path(fake_home)
+        lanes_path.parent.mkdir(parents=True, exist_ok=True)
+        lanes_path.write_text("lanes: [default]\n")
+
+        result = mod.create_profile("work")
+
+        assert "Added 'work'" in result.lanes_note
+        data = yaml.safe_load(lanes_path.read_text())
+        assert data["lanes"] == ["default", "work"]
+
+    def test_does_not_duplicate_an_already_listed_lane(self, mod, fake_home):
+        lanes_path = self._lanes_path(fake_home)
+        lanes_path.parent.mkdir(parents=True, exist_ok=True)
+        lanes_path.write_text("lanes: [default, work]\n")
+
+        result = mod.create_profile("work")
+
+        assert "already a lane" in result.lanes_note
+        data = yaml.safe_load(lanes_path.read_text())
+        assert data["lanes"] == ["default", "work"]  # unchanged, not duplicated
+
+    def test_cli_add_prints_the_lanes_note(self, mod, fake_home, capsys):
+        lanes_path = self._lanes_path(fake_home)
+        lanes_path.parent.mkdir(parents=True, exist_ok=True)
+        lanes_path.write_text("lanes: [default]\n")
+
+        mod.cmd_add(_ns(name="work"))
+        out = capsys.readouterr().out
+        assert "Added 'work'" in out
+
+
+class TestStatus:
+    def test_no_lanes_file_shows_default_only(self, mod, capsys):
+        rc = mod.cmd_status(_ns())
+        out = capsys.readouterr().out
+        assert rc == 0
+        assert "default" in out
+        assert "work" not in out
+
+    def test_lists_every_configured_lane_with_exhaustion(self, mod, fake_home, capsys):
+        lanes_path = fake_home["home"] / ".aos" / "config" / "claude-lanes.yaml"
+        lanes_path.parent.mkdir(parents=True, exist_ok=True)
+        lanes_path.write_text("lanes: [default, work]\n")
+        mod.create_profile("work")
+
+        state_dir = fake_home["home"] / ".aos" / "state"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        (state_dir / "claude-lanes.json").write_text(
+            json.dumps({"default": {"exhausted_until": "2099-01-01T00:00:00"}})
+        )
+
+        rc = mod.cmd_status(_ns())
+        out = capsys.readouterr().out
+        assert rc == 0
+        assert "default" in out and "work" in out
+        assert "exhausted until" in out

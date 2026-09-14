@@ -16,6 +16,7 @@ import os
 import shutil
 import sqlite3
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Optional
@@ -32,6 +33,16 @@ CONFIG_PATH = Path.home() / ".aos" / "config" / "sentinel.yaml"
 SENT_LOG = LOG_DIR / "sent.jsonl"
 
 CLAUDE_BIN = shutil.which("claude") or "claude"
+
+# claude_lanes.py (core/infra/lib/) — loaded by repo-root-relative path (see
+# core/engine/notify/router.py for the same trick) so this resolves whether
+# this file runs from ~/aos or a dev worktree. Falls back to a plain
+# subprocess.run — this module's pre-aos#244.3 behavior — if it can't load.
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "infra" / "lib"))
+try:
+    import claude_lanes
+except Exception:  # noqa: BLE001 — a missing lanes module must not break Sentinel
+    claude_lanes = None
 
 
 def _now() -> int:
@@ -260,8 +271,7 @@ class SentinelSpawner:
         ]
         log.info("Invoking claude (trigger=%s, log=%s)", trigger_id, log_file)
 
-        env = dict(os.environ)
-        env["SENTINEL_TRIGGER_ID"] = trigger_id
+        extra_env = {"SENTINEL_TRIGGER_ID": trigger_id}
 
         with log_file.open("w") as logf:
             logf.write(f"=== command: {' '.join(cmd)} <prompt via stdin: {len(prompt)} chars> ===\n")
@@ -269,12 +279,23 @@ class SentinelSpawner:
             log.info("subprocess.run starting for %s (timeout=%ds)", trigger_id, self.timeout)
             try:
                 # Pass prompt via stdin (claude --print expects this when arg flags
-                # contend with the prompt positional)
-                proc = subprocess.run(
-                    cmd, input=prompt,
-                    stdout=logf, stderr=subprocess.STDOUT,
-                    timeout=self.timeout, env=env, text=True,
-                )
+                # contend with the prompt positional). claude_lanes.run() always
+                # captures stdout/stderr itself (it has to, to detect a usage-limit
+                # hit) rather than letting the child write straight into logf as
+                # the old direct subprocess.run(stdout=logf, stderr=STDOUT) call
+                # did — so both streams are written to the log afterward instead.
+                # Exact interleaving between them is lost; their content is not.
+                if claude_lanes is not None:
+                    proc = claude_lanes.run(cmd, stdin=prompt, timeout=self.timeout, env=extra_env)
+                else:
+                    proc = subprocess.run(
+                        cmd, input=prompt, capture_output=True, text=True,
+                        timeout=self.timeout, env={**os.environ, **extra_env},
+                    )
+                if proc.stdout:
+                    logf.write(proc.stdout)
+                if proc.stderr:
+                    logf.write(proc.stderr)
                 log.info("subprocess.run returned rc=%d for %s", proc.returncode, trigger_id)
                 logf.write(f"\n=== rc={proc.returncode} ===\n")
                 return proc.returncode

@@ -3,6 +3,8 @@
 import json
 import logging
 import subprocess
+import sys
+from pathlib import Path
 
 from conversation_store import record_inbound, record_outbound
 from session_manager import WORKSPACE, clear_session, get_session_id, save_session_id
@@ -12,6 +14,24 @@ from slack_bolt.adapter.socket_mode import SocketModeHandler
 logger = logging.getLogger("aos.bridge.slack_channel")
 
 SLACK_MSG_LIMIT = 4000
+
+# claude_lanes.py (core/infra/lib/) — loaded by repo-root-relative path, not
+# ~/aos, so this resolves to whatever checkout this file itself is running
+# from (the bridge's own venv has no package context for a dotted import).
+# See core/engine/notify/router.py for the same trick. Falls back to a plain
+# subprocess.run — identical to this module's pre-aos#244.3 behavior — if the
+# lanes module cannot be loaded at all (e.g. an older ~/aos on this machine).
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "infra" / "lib"))
+try:
+    import claude_lanes
+except Exception:  # noqa: BLE001 — a missing lanes module must not break Slack
+    claude_lanes = None
+
+
+def _run_claude(cmd, *, timeout, cwd):
+    if claude_lanes is not None:
+        return claude_lanes.run(cmd, timeout=timeout, cwd=cwd)
+    return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, cwd=cwd)
 
 
 def _ask_claude_sync(message: str, user_key: str) -> str:
@@ -26,10 +46,7 @@ def _ask_claude_sync(message: str, user_key: str) -> str:
         cmd.extend(["--resume", session_id])
 
     try:
-        result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=300,
-            cwd=str(WORKSPACE),
-        )
+        result = _run_claude(cmd, timeout=300, cwd=str(WORKSPACE))
         if result.returncode == 0:
             data = json.loads(result.stdout)
             new_session_id = data.get("session_id")

@@ -68,6 +68,17 @@ LOG_ENTRY_TYPES = {"daily", "session", "session-export"}
 
 CLAUDE_BIN = shutil.which("claude") or "claude"
 
+# claude_lanes.py (core/infra/lib/) — loaded by repo-root-relative path so
+# this resolves correctly whether this file is running from ~/aos or a dev
+# worktree (see core/engine/notify/router.py for the same trick). Falls back
+# to a plain subprocess.run — this module's pre-aos#244.3 behavior — if the
+# lanes module cannot be loaded.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "infra" / "lib"))
+try:
+    import claude_lanes
+except Exception:  # noqa: BLE001 — a missing lanes module must not break the cron
+    claude_lanes = None
+
 _FRONTMATTER_RE = re.compile(r"\A---\s*\n(.*?)\n---\s*\n?(.*)\Z", re.DOTALL)
 _DATE_PREFIX_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})")
 
@@ -325,13 +336,16 @@ def dispatch_advisor(prompt: str, model: str = DEFAULT_MODEL, timeout: int = DEF
         "--dangerously-skip-permissions",
         "--allowedTools", "Read,Grep,Glob,Bash",
     ]
-    proc = subprocess.run(
-        cmd,
-        input=prompt,
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-    )
+    if claude_lanes is not None:
+        proc = claude_lanes.run(cmd, stdin=prompt, timeout=timeout)
+    else:
+        proc = subprocess.run(
+            cmd,
+            input=prompt,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
     if proc.returncode != 0:
         raise RuntimeError(
             f"advisor dispatch failed rc={proc.returncode}: {(proc.stderr or proc.stdout or '')[:400]}"

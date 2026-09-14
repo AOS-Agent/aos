@@ -15,6 +15,12 @@ Usage:
     claude-profile list             every profile + whether it's logged in
     claude-profile remove <name>    delete a profile directory (not `default`)
     claude-profile path <name>      print its CLAUDE_CONFIG_DIR value
+    claude-profile status           lanes, logged-in state, exhausted-until
+
+If ~/.aos/config/claude-lanes.yaml already exists (the operator created it —
+`add` never does), `add <name>` also appends <name> to its `lanes:` list when
+not already present, so a freshly-added profile is immediately in rotation for
+core/infra/lib/claude_lanes.py's failover (aos#244.3).
 
 `add` never touches the macOS Keychain — a profile's first login is always a
 manual `claude` + `/login` run by the operator, in the account for that
@@ -40,7 +46,10 @@ import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
+
+import yaml
 
 # ── layout ──────────────────────────────────────────────────────────
 # Resolved at import time (not cached earlier), so a test that points $HOME at
@@ -163,6 +172,39 @@ def ensure_readme() -> None:
         README_PATH.write_text(README_TEXT)
 
 
+# ── claude-lanes.yaml (aos#244.3) ─────────────────────────────────────
+
+def _lanes_config_path() -> Path:
+    return HOME / ".aos" / "config" / "claude-lanes.yaml"
+
+
+def _append_lane_if_configured(name: str) -> str | None:
+    """If ~/.aos/config/claude-lanes.yaml already exists (operator-created —
+    `add` never creates it), append *name* to its `lanes:` list when it is
+    not already there. Returns a one-line status for `add` to print, or None
+    when there is no lanes file to touch at all."""
+    path = _lanes_config_path()
+    if not path.exists():
+        return None
+    try:
+        data = yaml.safe_load(path.read_text()) or {}
+    except Exception:
+        return f"note: {path} exists but could not be parsed — lane not added automatically"
+    if not isinstance(data, dict):
+        return f"note: {path} exists but is not a mapping — lane not added automatically"
+
+    lanes = data.get("lanes")
+    lanes = list(lanes) if isinstance(lanes, list) else []
+    if name in [str(l) for l in lanes]:
+        return f"'{name}' is already a lane in {path}"
+
+    lanes.append(name)
+    data["lanes"] = lanes
+    payload = yaml.safe_dump(data, default_flow_style=False, sort_keys=False).encode("utf-8")
+    atomic_write(path, payload, mode=0o644)
+    return f"Added '{name}' to {path} (lanes: {', '.join(str(l) for l in lanes)})"
+
+
 # ── add ──────────────────────────────────────────────────────────────
 
 @dataclass
@@ -172,6 +214,7 @@ class AddResult:
     linked: list = field(default_factory=list)
     skipped: list = field(default_factory=list)
     claude_json_path: Path = None
+    lanes_note: str = None
 
 
 def create_profile(name: str) -> AddResult:
@@ -206,6 +249,7 @@ def create_profile(name: str) -> AddResult:
     atomic_write(claude_json_path, payload, mode=0o600)
 
     ensure_readme()
+    lanes_note = _append_lane_if_configured(name)
 
     return AddResult(
         name=name,
@@ -213,6 +257,7 @@ def create_profile(name: str) -> AddResult:
         linked=linked,
         skipped=skipped,
         claude_json_path=claude_json_path,
+        lanes_note=lanes_note,
     )
 
 
@@ -311,6 +356,8 @@ def cmd_add(args) -> int:
     if result.skipped:
         print("Not present in ~/.claude, skipped: " + ", ".join(result.skipped))
     print(f"Seeded {result.claude_json_path} (0600, per-account keys stripped)")
+    if result.lanes_note:
+        print(result.lanes_note)
     print()
     print(f"Next: run `{result.name}` once and /login with the account for this profile.")
     print("(Part 2 makes that a real command; for now, run it directly:)")
@@ -350,6 +397,53 @@ def cmd_path(args) -> int:
     return 0
 
 
+# ── status (aos#244.3 — lanes) ─────────────────────────────────────────
+
+def _load_claude_lanes():
+    """core/infra/lib/claude_lanes.py, on this CLI's own sys.path (it lives
+    two directories over: core/bin/cli/ -> core/infra/lib/). None if it
+    cannot be loaded — `status` degrades to reporting profiles with no
+    lane/exhaustion info rather than crashing."""
+    try:
+        lib_dir = Path(__file__).resolve().parents[2] / "infra" / "lib"
+        if str(lib_dir) not in sys.path:
+            sys.path.insert(0, str(lib_dir))
+        import claude_lanes
+        return claude_lanes
+    except Exception:
+        return None
+
+
+def cmd_status(args) -> int:
+    lanes_mod = _load_claude_lanes()
+    lanes = lanes_mod.load_lanes() if lanes_mod else [DEFAULT_PROFILE_NAME]
+    state = lanes_mod.load_state() if lanes_mod else {}
+    now = datetime.now()
+
+    if not lanes_mod:
+        print("  (core/infra/lib/claude_lanes.py not found — showing profiles only)")
+
+    for lane in lanes:
+        config_dir = CLAUDE_DIR if lane == DEFAULT_PROFILE_NAME else _profile_dir(lane)
+        status = _login_status(config_dir)
+
+        entry = state.get(lane) or {}
+        until_raw = entry.get("exhausted_until")
+        exhausted = "available"
+        if until_raw:
+            try:
+                until_dt = datetime.fromisoformat(until_raw)
+                exhausted = (
+                    f"exhausted until {until_dt.strftime('%H:%M')}"
+                    if until_dt > now else "available (reset passed)"
+                )
+            except ValueError:
+                exhausted = f"exhausted until {until_raw} (unparsed)"
+
+        print(f"  {lane:<12} {str(config_dir):<48} {status:<18} {exhausted}")
+    return 0
+
+
 # ── parser ────────────────────────────────────────────────────────────
 
 def build_parser() -> argparse.ArgumentParser:
@@ -374,6 +468,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp_path = sub.add_parser("path", help="print CLAUDE_CONFIG_DIR for a profile")
     sp_path.add_argument("name")
     sp_path.set_defaults(func=cmd_path)
+
+    sp_status = sub.add_parser("status", help="lanes, logged-in state, exhausted-until")
+    sp_status.set_defaults(func=cmd_status)
 
     return p
 
