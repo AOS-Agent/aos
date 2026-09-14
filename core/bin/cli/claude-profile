@@ -1,0 +1,394 @@
+#!/usr/bin/env python3
+"""claude-profile — isolated Claude Code login profiles, sharing the AOS layer.
+
+A profile is a separate CLAUDE_CONFIG_DIR under ~/.aos/claude-profiles/<name>/
+so a second (or third) Claude account can log in without disturbing the
+operator's default ~/.claude session. The AOS framework layer — skills,
+agents, rules, hooks, commands, projects, plugins, CLAUDE.md, settings.json,
+statusline.sh, keybindings.json — is symlinked in from ~/.claude and shared by
+every profile; only the per-account state in .claude.json is copied, and even
+that copy has every OAuth/token/credential/account/trial/usage-tracking key
+stripped before it is written.
+
+Usage:
+    claude-profile add <name>      create a profile, symlinked into ~/.claude
+    claude-profile list             every profile + whether it's logged in
+    claude-profile remove <name>    delete a profile directory (not `default`)
+    claude-profile path <name>      print its CLAUDE_CONFIG_DIR value
+
+`add` never touches the macOS Keychain — a profile's first login is always a
+manual `claude` + `/login` run by the operator, in the account for that
+profile. `remove` only ever deletes the profile's own directory; symlinks are
+unlinked, never followed, so the shared ~/.claude targets are untouched. The
+Keychain credential a login may have created for that CLAUDE_CONFIG_DIR is
+left in place — `remove` says so; it never touches Keychain either.
+
+Exit codes:
+    0  the operation completed
+    1  refused (already exists / not found / the reserved `default` name)
+    2  usage or runtime error
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+from dataclasses import dataclass, field
+from pathlib import Path
+
+# ── layout ──────────────────────────────────────────────────────────
+# Resolved at import time (not cached earlier), so a test that points $HOME at
+# a sandbox before loading this module gets a fully sandboxed set of paths.
+
+HOME = Path.home()
+CLAUDE_DIR = HOME / ".claude"
+CLAUDE_JSON = HOME / ".claude.json"
+PROFILES_DIR = HOME / ".aos" / "claude-profiles"
+README_PATH = PROFILES_DIR / "README.md"
+
+DEFAULT_PROFILE_NAME = "default"
+
+NAME_RE = re.compile(r"^[a-z][a-z0-9-]{1,31}$")
+
+# What's shared, symlinked straight from ~/.claude into every profile. Only
+# created when the target actually exists — a fresh install may be missing
+# several of these.
+LINK_TARGETS = (
+    "skills",
+    "agents",
+    "rules",
+    "hooks",
+    "commands",
+    "projects",
+    "plugins",
+    "CLAUDE.md",
+    "settings.json",
+    "statusline.sh",
+    "keybindings.json",
+)
+
+# Case-insensitive substrings that mark a top-level ~/.claude.json key as
+# per-account state a profile must never inherit from another account:
+# oauthAccount itself, plus anything token/credential/account/trial/usage/
+# identity-shaped. Everything else — mcpServers, preferences, per-project
+# state — is kept as-is.
+STRIP_SUBSTRINGS = (
+    "oauth",
+    "token",
+    "credential",
+    "account",
+    "trial",
+    "extrausage",
+    "anonymousid",
+    "userid",
+)
+
+README_TEXT = (
+    "This directory holds isolated Claude Code login profiles, one per subdirectory.\n"
+    "skills, agents, rules, hooks, commands, projects, plugins, CLAUDE.md, settings.json, "
+    "statusline.sh, and keybindings.json are symlinked in from ~/.claude and shared by every profile.\n"
+    "Only .claude.json is per-profile, seeded from ~/.claude.json with OAuth/token/credential/"
+    "account/trial/usage state stripped — each profile logs in on its own via `claude` + `/login`.\n"
+)
+
+
+# ── errors ──────────────────────────────────────────────────────────
+
+class ProfileError(Exception):
+    """Refused — bad input or a conflicting/missing profile. Exit 1 or 2."""
+
+
+# ── name validation ─────────────────────────────────────────────────
+
+def is_valid_name(name: str) -> bool:
+    return bool(NAME_RE.fullmatch(name))
+
+
+def _profile_dir(name: str) -> Path:
+    return PROFILES_DIR / name
+
+
+# ── .claude.json seeding ─────────────────────────────────────────────
+
+def _strip_key(key: str) -> bool:
+    lowered = key.lower()
+    return any(s in lowered for s in STRIP_SUBSTRINGS)
+
+
+def seed_claude_json(source: Path) -> dict:
+    """Load *source* (the operator's ~/.claude.json) and return a copy with
+    every per-account key removed. Missing or unparsable source -> {}."""
+    if source.exists():
+        try:
+            data = json.loads(source.read_text())
+        except (json.JSONDecodeError, OSError):
+            data = {}
+    else:
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    return {k: v for k, v in data.items() if not _strip_key(k)}
+
+
+def atomic_write(path: Path, data: bytes, mode: int = 0o600) -> None:
+    """Write *data* to *path* atomically (tmp file + rename), then chmod."""
+    parent = path.parent
+    parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(dir=str(parent), prefix=".claude-profile-tmp-")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        os.chmod(tmp_name, mode)
+        os.replace(tmp_name, path)
+    except BaseException:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
+
+
+def ensure_readme() -> None:
+    """Write the README on first use only — never overwrite an operator edit."""
+    PROFILES_DIR.mkdir(parents=True, exist_ok=True)
+    if not README_PATH.exists():
+        README_PATH.write_text(README_TEXT)
+
+
+# ── add ──────────────────────────────────────────────────────────────
+
+@dataclass
+class AddResult:
+    name: str
+    profile_dir: Path
+    linked: list = field(default_factory=list)
+    skipped: list = field(default_factory=list)
+    claude_json_path: Path = None
+
+
+def create_profile(name: str) -> AddResult:
+    if not is_valid_name(name):
+        raise ProfileError(
+            f"invalid profile name {name!r} — must match [a-z][a-z0-9-]{{1,31}}"
+        )
+    if name == DEFAULT_PROFILE_NAME:
+        raise ProfileError(
+            "'default' is reserved for the existing ~/.claude profile"
+        )
+
+    profile_dir = _profile_dir(name)
+    if profile_dir.exists() or profile_dir.is_symlink():
+        raise ProfileError(f"profile '{name}' already exists at {profile_dir}")
+
+    profile_dir.mkdir(parents=True)
+
+    linked = []
+    skipped = []
+    for entry in LINK_TARGETS:
+        target = CLAUDE_DIR / entry
+        if target.exists() or target.is_symlink():
+            os.symlink(target, profile_dir / entry)
+            linked.append(entry)
+        else:
+            skipped.append(entry)
+
+    seeded = seed_claude_json(CLAUDE_JSON)
+    claude_json_path = profile_dir / ".claude.json"
+    payload = (json.dumps(seeded, indent=2) + "\n").encode("utf-8")
+    atomic_write(claude_json_path, payload, mode=0o600)
+
+    ensure_readme()
+
+    return AddResult(
+        name=name,
+        profile_dir=profile_dir,
+        linked=linked,
+        skipped=skipped,
+        claude_json_path=claude_json_path,
+    )
+
+
+# ── list ─────────────────────────────────────────────────────────────
+
+@dataclass
+class ProfileStatus:
+    name: str
+    path: Path
+    status: str
+
+
+def _parse_logged_in(stdout: str) -> str:
+    text = (stdout or "").strip()
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        data = None
+    if isinstance(data, dict) and "loggedIn" in data:
+        return "logged in" if data["loggedIn"] else "not logged in"
+    m = re.search(r'"?loggedIn"?\s*[:=]\s*(true|false)', text, re.IGNORECASE)
+    if m:
+        return "logged in" if m.group(1).lower() == "true" else "not logged in"
+    return "unknown"
+
+
+def _login_status(config_dir: Path) -> str:
+    binary = shutil.which("claude")
+    if not binary:
+        return "claude not found"
+    env = dict(os.environ)
+    env["CLAUDE_CONFIG_DIR"] = str(config_dir)
+    try:
+        result = subprocess.run(
+            [binary, "auth", "status"],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except subprocess.TimeoutExpired:
+        return "timed out"
+    except FileNotFoundError:
+        return "claude not found"
+    except OSError as e:
+        return f"error: {e}"
+    return _parse_logged_in(result.stdout)
+
+
+def list_profiles() -> list:
+    rows = [ProfileStatus(DEFAULT_PROFILE_NAME, CLAUDE_DIR, _login_status(CLAUDE_DIR))]
+    if PROFILES_DIR.is_dir():
+        for entry in sorted(p for p in PROFILES_DIR.iterdir() if p.is_dir()):
+            rows.append(ProfileStatus(entry.name, entry, _login_status(entry)))
+    return rows
+
+
+# ── remove ───────────────────────────────────────────────────────────
+
+def remove_profile(name: str) -> Path:
+    if name == DEFAULT_PROFILE_NAME:
+        raise ProfileError("cannot remove the default profile (~/.claude)")
+    profile_dir = _profile_dir(name)
+    if not profile_dir.is_dir():
+        raise ProfileError(f"profile '{name}' does not exist")
+    # shutil.rmtree unlinks symlinked children rather than descending into
+    # them, so this only ever deletes the profile's own directory — every
+    # ~/.claude target a symlink pointed at is untouched.
+    shutil.rmtree(profile_dir)
+    return profile_dir
+
+
+# ── path ─────────────────────────────────────────────────────────────
+
+def resolve_profile_path(name: str) -> Path:
+    if name == DEFAULT_PROFILE_NAME:
+        return CLAUDE_DIR
+    profile_dir = _profile_dir(name)
+    if not profile_dir.is_dir():
+        raise ProfileError(f"profile '{name}' does not exist")
+    return profile_dir
+
+
+# ── CLI wrappers ──────────────────────────────────────────────────────
+
+def cmd_add(args) -> int:
+    try:
+        result = create_profile(args.name)
+    except ProfileError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+
+    print(f"Created profile '{result.name}' at {result.profile_dir}")
+    if result.linked:
+        print("Linked: " + ", ".join(result.linked))
+    if result.skipped:
+        print("Not present in ~/.claude, skipped: " + ", ".join(result.skipped))
+    print(f"Seeded {result.claude_json_path} (0600, per-account keys stripped)")
+    print()
+    print(f"Next: run `{result.name}` once and /login with the account for this profile.")
+    print("(Part 2 makes that a real command; for now, run it directly:)")
+    print(f"  CLAUDE_CONFIG_DIR=~/.aos/claude-profiles/{result.name} claude")
+    return 0
+
+
+def cmd_list(args) -> int:
+    for row in list_profiles():
+        print(f"  {row.name:<20} {str(row.path):<48} {row.status}")
+    return 0
+
+
+def cmd_remove(args) -> int:
+    try:
+        profile_dir = remove_profile(args.name)
+    except ProfileError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+
+    print(f"Removed profile '{args.name}' ({profile_dir})")
+    print("Symlinks removed; the shared ~/.claude targets are untouched.")
+    print(
+        "Note: any Keychain credential for that CLAUDE_CONFIG_DIR is left for "
+        "you — run `claude /logout` from that profile first if you want it cleared."
+    )
+    return 0
+
+
+def cmd_path(args) -> int:
+    try:
+        p = resolve_profile_path(args.name)
+    except ProfileError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    print(str(p))
+    return 0
+
+
+# ── parser ────────────────────────────────────────────────────────────
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="claude-profile",
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    sp_add = sub.add_parser("add", help="create a new profile")
+    sp_add.add_argument("name", help="[a-z][a-z0-9-]{1,31}, e.g. 'work'")
+    sp_add.set_defaults(func=cmd_add)
+
+    sp_list = sub.add_parser("list", help="list profiles and login status")
+    sp_list.set_defaults(func=cmd_list)
+
+    sp_remove = sub.add_parser("remove", help="delete a profile directory")
+    sp_remove.add_argument("name")
+    sp_remove.set_defaults(func=cmd_remove)
+
+    sp_path = sub.add_parser("path", help="print CLAUDE_CONFIG_DIR for a profile")
+    sp_path.add_argument("name")
+    sp_path.set_defaults(func=cmd_path)
+
+    return p
+
+
+def main(argv: list = None) -> int:
+    args = build_parser().parse_args(argv)
+    try:
+        return args.func(args)
+    except KeyboardInterrupt:
+        print("\ninterrupted", file=sys.stderr)
+        return 2
+    except Exception as e:  # noqa: BLE001 — CLI boundary, honest exit code
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())

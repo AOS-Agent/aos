@@ -2,6 +2,13 @@
 
 All notable changes to AOS. Release notes sent via Telegram after each 4am update.
 
+## v0.7.10 — a second Claude account, without a second machine — 2026-09-14
+
+Summary: Part 1 of Claude profiles (aos#244.1) — the plumbing for running more
+than one Claude Code login on this machine.
+
+- Added `claude-profile` (`core/bin/cli/claude-profile`), a stdlib+PyYAML CLI managing isolated Claude Code login profiles under `~/.aos/claude-profiles/<name>/` (aos#244.1). `add <name>` symlinks the shared AOS layer in — skills, agents, rules, hooks, commands, projects, plugins, CLAUDE.md, settings.json, statusline.sh, keybindings.json — from `~/.claude/`, creating each link only when its target exists, and seeds a per-profile `.claude.json` from the operator's `~/.claude.json` with every OAuth/token/credential/account/trial/usage-tracking key stripped (mcpServers, preferences, and per-project state are kept); the seed is written atomically at mode 0600. `list` shows every profile plus the default (`~/.claude`), each with a live login check (`CLAUDE_CONFIG_DIR=<dir> claude auth status`, 10s timeout, `claude not found` when the binary is missing). `remove` deletes only the profile's own directory — symlinks are unlinked, never followed, so the shared `~/.claude` targets are untouched — and refuses `default`. `path <name>` prints the `CLAUDE_CONFIG_DIR` value for scripts. Nothing here ever touches the macOS Keychain; a profile's first login is a manual `claude` + `/login` run by the operator. Part 2 will wire up a per-profile launcher (`cld2` and friends) so `add` won't have to spell out `CLAUDE_CONFIG_DIR=... claude` by hand.
+
 ## v0.7.9 — the reporter finally reports — 2026-09-13
 
 Summary: The seven "do now" issues from the GitHub triage that closed 131
