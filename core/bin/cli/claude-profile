@@ -289,7 +289,14 @@ def _login_status(config_dir: Path) -> str:
     if not binary:
         return "claude not found"
     env = dict(os.environ)
-    env["CLAUDE_CONFIG_DIR"] = str(config_dir)
+    if Path(config_dir).resolve() == CLAUDE_DIR.resolve():
+        # The default login must be probed the way Claude Code itself runs:
+        # with NO CLAUDE_CONFIG_DIR. Setting it explicitly to ~/.claude keys
+        # the Keychain lookup differently and reports "not logged in" for an
+        # account that is logged in (found live after the 0.7.10 install).
+        env.pop("CLAUDE_CONFIG_DIR", None)
+    else:
+        env["CLAUDE_CONFIG_DIR"] = str(config_dir)
     try:
         result = subprocess.run(
             [binary, "auth", "status"],

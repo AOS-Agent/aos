@@ -2,6 +2,12 @@
 
 All notable changes to AOS. Release notes sent via Telegram after each 4am update.
 
+## v0.7.11 — 2026-09-14
+
+Summary: One-line correctness fix found the moment 0.7.10 installed.
+
+- Fixed `aos claude-profile list`/`status` reporting the default login as "not logged in": it probed `claude auth status` with `CLAUDE_CONFIG_DIR` set explicitly to `~/.claude`, which keys the Keychain lookup differently from a plain run. The default profile is now probed with no `CLAUDE_CONFIG_DIR`, exactly as Claude Code runs it; named profiles are unchanged. Headless failover was never affected — the lane resolver already used no env for the default lane.
+
 ## v0.7.10 — a second Claude account, without a second machine — 2026-09-14
 
 Summary: Claude profiles (aos#244) — a second (or third) Claude Code login,

@@ -327,7 +327,8 @@ class TestList:
         monkeypatch.setattr(mod.shutil, "which", lambda name: "/usr/bin/claude")
 
         def fake_run(cmd, **kwargs):
-            cfg = kwargs["env"]["CLAUDE_CONFIG_DIR"]
+            # default is probed with NO CLAUDE_CONFIG_DIR; named profiles with it
+            cfg = kwargs["env"].get("CLAUDE_CONFIG_DIR", "")
             logged_in = cfg.endswith("work")
             payload = json.dumps({"loggedIn": logged_in})
             return subprocess.CompletedProcess(cmd, 0 if logged_in else 1, payload, "")
@@ -357,7 +358,10 @@ class TestList:
         monkeypatch.setattr(mod.subprocess, "run", fake_run)
         mod._login_status(mod.CLAUDE_DIR)
         assert captured["timeout"] == 10
-        assert captured["env"]["CLAUDE_CONFIG_DIR"] == str(mod.CLAUDE_DIR)
+        # The default profile is probed WITHOUT CLAUDE_CONFIG_DIR — setting it
+        # explicitly to ~/.claude makes `claude auth status` report a logged-in
+        # account as logged out (verified live on 0.7.10).
+        assert "CLAUDE_CONFIG_DIR" not in captured["env"]
 
 
 # ---------------------------------------------------------------------------
