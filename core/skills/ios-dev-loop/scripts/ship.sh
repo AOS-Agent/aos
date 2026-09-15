@@ -13,12 +13,15 @@
 # to run `upload`. Rules encoded:
 #   * clean tree; HEAD on main/master is refused, and so is the canonical checkout
 #     of a repo with linked worktrees — SHIP_ALLOW_MAIN=1 lifts both guards
-#   * optional project hooks run when present: script/sync-data --check,
+#   * optional project hooks run when present: script/sync-data (run, then --check)
+#     BEFORE xcodegen — prepare never rebuilds a project's derived data itself,
 #     script/preflight or tools/*preflight*.sh (survey), script/test (SHIP_SKIP_TESTS=1 to skip)
 #   * --changelog: CHANGELOG.md [Unreleased] must have content; it is rolled into a
 #     versioned entry and exported to build/RELEASE_NOTES.txt (TestFlight "What to Test")
 #   * version lives in ONE place: project.yml (CFBundleShortVersionString/CFBundleVersion
-#     or MARKETING_VERSION/CURRENT_PROJECT_VERSION), else the .pbxproj
+#     or MARKETING_VERSION/CURRENT_PROJECT_VERSION), else the .pbxproj; the bump
+#     commit stages every modified tracked file under the app dir (xcodegen
+#     rewrites Info.plists), never untracked ones
 #   * archive with ZERO DerivedData/BUILD_DIR overrides (they break xcodebuild archive)
 #   * verify the .xcarchive has an Info.plist before exporting
 #   * upload: SHIP_UPLOADER=altool (default) or fastlane (auto when .aos-app.env +
@@ -140,7 +143,9 @@ prepare)
     not_canonical; need_clean
     say "0. checkout: $(git rev-parse --abbrev-ref HEAD) @ $TOP  (app: $APP_REL)"
     SYNC=$(first_existing "$TOP/script/sync-data" "$APP/script/sync-data")
-    [[ -n "$SYNC" ]] && { say "0. project data present"; "$SYNC" --check; }
+    if [[ -n "$SYNC" ]]; then   # project-provided data step, before xcodegen; ship.sh never rebuilds derived data itself
+        say "0. project data ($SYNC)"; "$SYNC" --check >/dev/null 2>&1 || "$SYNC"; "$SYNC" --check
+    fi
     PRE=$(first_existing "$TOP/script/preflight" "$APP/script/preflight" "$TOP"/tools/*preflight*.sh)
     [[ -n "$PRE" ]] && { say "1. preflight survey (read this with the operator): $PRE"; "$PRE" || true; }
     (( BUILD > CUR_B )) || die "build $BUILD is not > current $CUR_B (origin/main may be ahead — see the preflight survey)"
@@ -170,7 +175,10 @@ PY
     if [[ -f "$APP/project.yml" ]]; then
         say "5. xcodegen"; ( cd "$APP" && xcodegen generate >/dev/null )
     fi
-    git add -A "$VF"; git add -A "$APP"/*.xcodeproj 2>/dev/null || true; (( CHANGELOG )) && git add CHANGELOG.md
+    # Stage every MODIFIED tracked file under the app dir — xcodegen rewrites each
+    # target's Info.plist (and the pbxproj) with the new version/build, and an
+    # unstaged rewrite makes archive's clean-tree check refuse. Never untracked files.
+    git add -u -- "$APP" "$VF"; (( CHANGELOG )) && git add -u -- CHANGELOG.md
     git commit -q -m "release: v$VERSION build $BUILD" && say "committed bump: $(git log -1 --format=%h)"
     save_state prepare
     echo; echo "Next: tools/ship.sh archive" ;;
