@@ -105,6 +105,10 @@ it automatically once processed.
 - **Liquid Glass** by default (free via the iOS 26 SDK — not opted out).
 - **XcodeGen `project.yml`** (`.xcodeproj` is generated + gitignored).
 - **`AGENTS.md` + `CLAUDE.md` pointer**, `script/` entry points, `#Preview`s.
+- **The iOS dev loop at birth** — `scaffold.py` runs the `ios-dev-loop` installer
+  (`script/snap`, `script/device`, `tools/{build-slot,provision,worktree,ship}.sh`,
+  hooks + `.claude/settings.json`, `.xcodebuildmcp/config.yaml`). See that skill
+  for the loop, `tools/ship.sh` for repeat ships; `script/ship` stays the first-ship bootstrap.
 - **`PrivacyInfo.xcprivacy`** prefilled (UserDefaults `CA92.1`), encryption
   declared exempt, and a valid **1024 app icon (no alpha)** so upload passes.
 - **Optional AI layer**: availability gating, `LanguageModelSession`,

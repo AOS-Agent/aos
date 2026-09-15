@@ -780,22 +780,30 @@ def main():
     for s in ("gen", "build", "test", "ship"):
         os.chmod(os.path.join(proj, "script", s), 0o755)
 
-    # iOS dev loop (ios-dev-loop skill): every new app is born with the
-    # snap/device iteration scripts. Raw copy — they self-discover scheme,
-    # bundle id, and devices, so no placeholder rendering is needed.
-    loop_scripts = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                "..", "..", "ios-dev-loop", "scripts")
-    for s in ("snap", "device"):
-        src_path = os.path.join(loop_scripts, s)
-        if os.path.exists(src_path):
-            with open(src_path) as f:
-                write(os.path.join(proj, "script", s), f.read())
-            os.chmod(os.path.join(proj, "script", s), 0o755)
-
     write_icon_png(os.path.join(proj, target, "Assets.xcassets", "AppIcon.appiconset", "icon-1024.png"))
 
     # generate the Xcode project
     subprocess.run(["xcodegen", "generate"], cwd=proj, check=True)
+
+    # iOS dev loop (ios-dev-loop skill): every new app is born with the loop —
+    # script/snap + device, tools/{build-slot,provision,worktree,ship}.sh, the
+    # hooks + settings.json block, .xcodebuildmcp/config.yaml, .swiftlint.yml.
+    # install.sh is idempotent and self-discovering (runs after xcodegen so the
+    # scheme can be read); never fatal — a scaffold must not die on its tooling.
+    loop_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "ios-dev-loop")
+    installer = os.path.join(loop_dir, "scripts", "install.sh")
+    if os.path.exists(installer):
+        try:
+            subprocess.run(["bash", installer, proj], check=True)
+        except (subprocess.CalledProcessError, OSError) as e:
+            print("WARN: ios-dev-loop install failed (%s) — run it later: %s %s" % (e, installer, proj), file=sys.stderr)
+    else:  # older skill layout: raw copy of the two loop scripts
+        for s in ("snap", "device"):
+            src_path = os.path.join(loop_dir, "scripts", s)
+            if os.path.exists(src_path):
+                with open(src_path) as f:
+                    write(os.path.join(proj, "script", s), f.read())
+                os.chmod(os.path.join(proj, "script", s), 0o755)
 
     print("PROJECT_DIR=%s" % proj)
 

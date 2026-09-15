@@ -31,9 +31,12 @@
 # Env: APP_DIR, SCHEME, EXPORT_OPTIONS (plist path), SHIP_ALLOW_MAIN=1.
 set -euo pipefail
 
-TOP=$(git rev-parse --show-toplevel)
-cd "$TOP"
 STAGE="${1:-status}"; shift || true
+if ! TOP=$(git rev-parse --show-toplevel 2>/dev/null); then
+    [[ "$STAGE" == status ]] || { echo "✗ not a git repository — a release is a commit, not a vibe" >&2; exit 1; }
+    TOP=$PWD
+fi
+cd "$TOP"
 STATE=".agent/ship-state"          # gitignored; stage artifacts recorded here
 SECRET="$HOME/aos/core/bin/cli/agent-secret"
 
