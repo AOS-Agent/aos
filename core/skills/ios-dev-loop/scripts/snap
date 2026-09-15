@@ -4,32 +4,63 @@
 # works out of the box on any single-app Xcode project; override via env.
 #
 # Usage:
-#   script/snap [--no-build] [route] [extra launch args…]
+#   script/snap [--no-build] [route[:a[:b]]] [extra launch args…]
 #   script/snap                       # default screen
 #   script/snap --no-build home       # re-snap without rebuilding (~15s)
-#   SIM="iPhone 16 Pro" script/snap   # pick a specific simulator
+#   SIM="iPhone 16 Pro" script/snap   # pick a specific simulator by name
+#   SNAP_DELAY=9 script/snap heavy    # wait longer before capture
 #
-# Output: build/snaps/<route>-<timestamp>.png  (path printed on last line)
+# Simulator pick: $SIM > this worktree's lease (.ios-sim, written by
+# tools/provision.sh) > a booted iPhone > the newest available iPhone.
+# Build: per-worktree DerivedData/ (DERIVED=… to override), one heavy build
+# at a time via tools/build-slot.sh when present, log filtered by xcsift.
+#
+# Output: build/snaps/<route>-<timestamp>.png and a -1x.png copy
+#   (points == pixels — read the 1x for tap coordinates, the full-res to judge).
+#   Paths are printed on the last lines.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 # ─── Overrides (set in env, or hardcode for this project) ───────────────
 SCHEME="${SCHEME:-}"          # default: first scheme in the project
-SIM="${SIM:-}"                # default: a booted iPhone, else newest iPhone
-SNAP_DELAY="${SNAP_DELAY:-3}" # seconds to let the UI settle before capture
+SIM="${SIM:-}"                # default: lease > booted iPhone > newest iPhone
+SNAP_DELAY="${SNAP_DELAY:-}"  # seconds before capture; default 5 (route-aware below)
+DERIVED="${DERIVED:-DerivedData}"  # per-worktree DerivedData (gitignored). Every
+                                    # xcodebuild call shares it so the .app we
+                                    # install is the one we just built.
+DD=(-derivedDataPath "$DERIVED")
 
 BUILD=1
 [[ "${1:-}" == "--no-build" ]] && { BUILD=0; shift; }
 ROUTE="${1:-default}"; [[ $# -gt 0 ]] && shift
 
 # ─── Routes → launch arguments (EDIT ME per project) ────────────────────
-# Wire each route to the app's debug launch args (e.g. -uiTestSeed,
-# -uiTab journey). Unknown routes pass through as raw launch args.
+# Grammar: name[:a[:b[:c]]]. Wire each route to the app's DEBUG launch args
+# (ProcessInfo.processInfo.arguments). Unknown routes pass through as raw
+# launch args, so `script/snap -startPage 12` keeps working. Document the map
+# in the project's AGENTS.md ("Dev loop" section); the skill carries the method,
+# the repo carries the map. Examples in the ios-dev-loop SKILL.md.
 ARGS=()
-case "$ROUTE" in
-  default) ;;
+# shellcheck disable=SC2034  # A/B/C are for the EDIT ME block
+IFS=: read -r R A B C <<<"$ROUTE"
+case "$R" in
+  default|home) ;;
+  # EDIT ME — e.g.
+  #   page)       ARGS+=(-startPage "${A:?page:<N>}") ;;
+  #   study)      ARGS+=(-readingMode study -startPage "${A:?study:<page>}")
+  #               [[ -n "$B" ]] && ARGS+=(-targetAyah "$B:${C:?ayah needs S:A}") ;;
+  #   today)      ARGS+=(-uiTestSeed -uiTab today) ;;
+  #   onboarding) ARGS=() ;;
   *) ARGS+=("$ROUTE") ;;
 esac
+# Settle delay: a blank/white capture means the screen was still loading.
+if [[ -z "$SNAP_DELAY" ]]; then
+  case "$R" in
+    # EDIT ME — routes that build data or register fonts before first paint:
+    #   page|study) SNAP_DELAY=9 ;;
+    *) SNAP_DELAY=5 ;;
+  esac
+fi
 ARGS+=("$@")
 
 # ─── Project discovery ──────────────────────────────────────────────────
@@ -39,42 +70,60 @@ PJ=$(find . -maxdepth 1 -name "*.xcodeproj" | head -1)
 if [[ -n "$WS" ]]; then CONTAINER=(-workspace "$WS"); else CONTAINER=(-project "${PJ:?no .xcodeproj or .xcworkspace here}"); fi
 [[ -n "$SCHEME" ]] || SCHEME=$(xcodebuild "${CONTAINER[@]}" -list 2>/dev/null | awk '/Schemes:/{f=1;next} f&&NF{print $1;exit}')
 
-# ─── Simulator discovery: prefer $SIM, else a booted iPhone, else boot one ──
-if [[ -n "$SIM" ]]; then
+# ─── Simulator discovery: $SIM > lease (.ios-sim) > booted > newest ─────
+REPO_TOP=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+LEASE="$REPO_TOP/.ios-sim"; [[ -f "$LEASE" ]] || LEASE=".ios-sim"
+if [[ -z "$SIM" && -f "$LEASE" ]] && xcrun simctl list devices available | grep -q "$(cat "$LEASE")"; then
+  UDID=$(cat "$LEASE")
+elif [[ -n "$SIM" ]]; then
   UDID=$(xcrun simctl list devices available | awk -F '[()]' -v n="$SIM" '$0 ~ n" \\(" {print $2; exit}')
 else
   UDID=$(xcrun simctl list devices booted | awk -F '[()]' '/iPhone/{print $2; exit}')
   [[ -n "$UDID" ]] || UDID=$(xcrun simctl list devices available | awk -F '[()]' '/iPhone/{u=$2} END{print u}')
 fi
-[[ -n "$UDID" ]] || { echo "no iPhone simulator found (set SIM=<name>)" >&2; exit 1; }
+[[ -n "$UDID" ]] || { echo "no iPhone simulator found (set SIM=<name>, or run tools/provision.sh to lease one)" >&2; exit 1; }
+export XCODEBUILDMCP_SIMULATOR_ID="$UDID"   # same device for xcodebuildmcp CLI calls
 xcrun simctl bootstatus "$UDID" -b >/dev/null
+SLOT="$REPO_TOP/tools/build-slot.sh"; [[ -x "$SLOT" ]] || SLOT="tools/build-slot.sh"; [[ -x "$SLOT" ]] || SLOT=""
 
 # ─── Build → install → launch → capture ─────────────────────────────────
 if [[ $BUILD -eq 1 ]]; then
-  xcodebuild "${CONTAINER[@]}" -scheme "$SCHEME" -configuration Debug \
-    -destination "id=$UDID" build 2>&1 | tail -2
+  # One heavy build at a time machine-wide; xcsift keeps only errors/warnings
+  # so the agent reads a dozen lines, not 5,000.
+  FILTER=(cat); command -v xcsift >/dev/null && FILTER=(xcsift -w)
+  $SLOT xcodebuild "${CONTAINER[@]}" -scheme "$SCHEME" -configuration Debug \
+    "${DD[@]}" -destination "id=$UDID" build 2>&1 | "${FILTER[@]}" | tail -25
+  [[ ${PIPESTATUS[0]} -eq 0 ]] || { echo "BUILD FAILED" >&2; exit 65; }
 fi
 SETTINGS=$(xcodebuild "${CONTAINER[@]}" -scheme "$SCHEME" -configuration Debug \
-  -destination "id=$UDID" -showBuildSettings 2>/dev/null)
+  "${DD[@]}" -destination "id=$UDID" -showBuildSettings 2>/dev/null)
 APP="$(awk -F' = ' '/ BUILT_PRODUCTS_DIR/{print $2; exit}' <<<"$SETTINGS")/$(awk -F' = ' '/ FULL_PRODUCT_NAME/{print $2; exit}' <<<"$SETTINGS")"
 BUNDLE_ID=$(awk -F' = ' '/ PRODUCT_BUNDLE_IDENTIFIER/{print $2; exit}' <<<"$SETTINGS")
 
 xcrun simctl install "$UDID" "$APP"
 xcrun simctl terminate "$UDID" "$BUNDLE_ID" 2>/dev/null || true
 sleep 1   # terminate is async — racing it can relaunch the old instance
-if [[ ${#ARGS[@]} -gt 0 ]]; then
-  xcrun simctl launch "$UDID" "$BUNDLE_ID" "${ARGS[@]}" >/dev/null
-else
-  xcrun simctl launch "$UDID" "$BUNDLE_ID" >/dev/null
-fi
+# --terminate-running-process: without it a relaunch silently no-ops and the
+# agent chases a "nothing changed" ghost.
+# ${ARGS[@]+"${ARGS[@]}"}: an empty array under set -u trips bash 3.2.
+xcrun simctl launch --terminate-running-process "$UDID" "$BUNDLE_ID" ${ARGS[@]+"${ARGS[@]}"} >/dev/null
 sleep "$SNAP_DELAY"
 
 mkdir -p build/snaps
 OUT="build/snaps/${ROUTE//[^a-zA-Z0-9_-]/_}-$(date +%H%M%S).png"
-# CoreSimulator may not have permission to write outside ~/ (e.g. external
-# volumes, TCC) — always stage via /tmp, then copy.
+# CoreSimulator may not have permission to write outside ~/ (external volumes,
+# TCC) — always stage via /tmp, then copy.
 TMP="$(mktemp -u /tmp/snap-XXXXXX).png"
 xcrun simctl io "$UDID" screenshot "$TMP" >/dev/null 2>&1
 cp -X "$TMP" "$OUT" 2>/dev/null || cp "$TMP" "$OUT"
 rm -f "$TMP"
+# 1x copy: points == pixels, so tap coordinates read straight off the image and
+# the agent pays ~1/9 of the image tokens. Full-res stays for pixel judgment.
+SCALE=$(xcrun simctl list devices -j | python3 -c 'import json,sys;u=sys.argv[1]
+for r in json.load(sys.stdin)["devices"].values():
+  for d in r:
+    if d["udid"]==u: print(3 if "Pro" in d["name"] or "Plus" in d["name"] else 2)' "$UDID" 2>/dev/null || echo 3)
+[[ -n "$SCALE" ]] || SCALE=3
+W=$(sips -g pixelWidth "$OUT" 2>/dev/null | awk '/pixelWidth/{print $2}')
+[[ -n "$W" ]] && sips --resampleWidth $((W / SCALE)) "$OUT" --out "${OUT%.png}-1x.png" >/dev/null 2>&1 && echo "${OUT%.png}-1x.png"
 echo "$OUT"

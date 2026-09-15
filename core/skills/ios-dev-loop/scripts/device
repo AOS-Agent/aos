@@ -6,6 +6,7 @@
 # Usage:
 #   script/device [--no-build]
 #   DEVICE_ID=<udid> script/device     # pick a specific device
+#   DERIVED=<path> script/device       # DerivedData (default: per-worktree DerivedData/)
 #
 # One-time setup on a new phone: plug in via USB, tap "Trust", enable
 # Developer Mode (Settings → Privacy & Security), keep it UNLOCKED the
@@ -16,6 +17,8 @@ cd "$(dirname "$0")/.."
 
 SCHEME="${SCHEME:-}"
 DEVICE_ID="${DEVICE_ID:-}"
+DERIVED="${DERIVED:-DerivedData}"   # per-worktree DerivedData (gitignored)
+DD=(-derivedDataPath "$DERIVED")
 
 BUILD=1
 [[ "${1:-}" == "--no-build" ]] && { BUILD=0; shift; }
@@ -30,8 +33,8 @@ if [[ -z "$DEVICE_ID" ]]; then
   exit 1
 fi
 if xcrun devicectl list devices 2>/dev/null | grep -q "no DDI"; then
-  echo "⚠️  Phone is paired but the developer disk image isn't mounted —" >&2
-  echo "   unlock the phone and re-run." >&2
+  echo "Phone is paired but the developer disk image isn't mounted —" >&2
+  echo "unlock the phone, wait ~30s, and re-run." >&2
   exit 1
 fi
 
@@ -41,14 +44,18 @@ WS=$(find . -maxdepth 1 -name "*.xcworkspace" | head -1)
 PJ=$(find . -maxdepth 1 -name "*.xcodeproj" | head -1)
 if [[ -n "$WS" ]]; then CONTAINER=(-workspace "$WS"); else CONTAINER=(-project "${PJ:?no .xcodeproj or .xcworkspace here}"); fi
 [[ -n "$SCHEME" ]] || SCHEME=$(xcodebuild "${CONTAINER[@]}" -list 2>/dev/null | awk '/Schemes:/{f=1;next} f&&NF{print $1;exit}')
+REPO_TOP=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+SLOT="$REPO_TOP/tools/build-slot.sh"; [[ -x "$SLOT" ]] || SLOT="tools/build-slot.sh"; [[ -x "$SLOT" ]] || SLOT=""
 
 # ─── Build → install → launch ───────────────────────────────────────────
 if [[ $BUILD -eq 1 ]]; then
-  xcodebuild "${CONTAINER[@]}" -scheme "$SCHEME" -configuration Debug \
-    -destination 'generic/platform=iOS' -allowProvisioningUpdates build 2>&1 | tail -2
+  FILTER=(cat); command -v xcsift >/dev/null && FILTER=(xcsift -w)
+  $SLOT xcodebuild "${CONTAINER[@]}" -scheme "$SCHEME" -configuration Debug \
+    "${DD[@]}" -destination 'generic/platform=iOS' -allowProvisioningUpdates build 2>&1 | "${FILTER[@]}" | tail -25
+  [[ ${PIPESTATUS[0]} -eq 0 ]] || { echo "BUILD FAILED" >&2; exit 65; }
 fi
 SETTINGS=$(xcodebuild "${CONTAINER[@]}" -scheme "$SCHEME" -configuration Debug \
-  -destination 'generic/platform=iOS' -showBuildSettings 2>/dev/null)
+  "${DD[@]}" -destination 'generic/platform=iOS' -showBuildSettings 2>/dev/null)
 APP="$(awk -F' = ' '/ BUILT_PRODUCTS_DIR/{print $2; exit}' <<<"$SETTINGS")/$(awk -F' = ' '/ FULL_PRODUCT_NAME/{print $2; exit}' <<<"$SETTINGS")"
 BUNDLE_ID=$(awk -F' = ' '/ PRODUCT_BUNDLE_IDENTIFIER/{print $2; exit}' <<<"$SETTINGS")
 
