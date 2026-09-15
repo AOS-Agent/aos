@@ -90,7 +90,17 @@ if [[ ! -f "$APP/.xcodebuildmcp/config.yaml" || $FORCE -eq 1 ]]; then
     if [[ -z "$PJ" && -f "$APP/project.yml" ]]; then PJ="$(awk '/^name:/{print $2; exit}' "$APP/project.yml" | tr -d '"'"'").xcodeproj"; fi
     SCH="${SCHEME:-}"
     [[ -n "$SCH" ]] || SCH=$(cd "$APP" && { [[ "$PJ" == *.xcworkspace ]] && xcodebuild -workspace "$PJ" -list 2>/dev/null || xcodebuild -project "$PJ" -list 2>/dev/null; } | awk '/Schemes:/{f=1;next} f&&NF{print $1;exit}')
-    [[ -n "$SCH" || ! -f "$APP/project.yml" ]] || SCH=$(awk '/^targets:/{f=1;next} f&&/^  [A-Za-z0-9_.-]+:/{sub(":","",$1);print $1;exit}' "$APP/project.yml")
+    # No .xcodeproj yet (fresh worktree, xcodegen not run): read project.yml. Prefer the
+    # first target of `type: application`, then the one named like the project, then the
+    # first target — the first key is often a test/extension target (deenoverdunya listed
+    # DeenOverDunyaUITests first and the installer wrote that as the scheme).
+    [[ -n "$SCH" || ! -f "$APP/project.yml" ]] || SCH=$(awk '
+        /^name:/ && !pn { pn=$2; gsub(/["'"'"']/,"",pn) }
+        /^targets:/ { f=1; next }
+        f && /^[^ ]/ { f=0 }
+        f && /^  [A-Za-z0-9_.-]+:/ { t=$1; sub(":","",t); if (!first) first=t }
+        f && t && /^ +type: *application/ && !app { app=t }
+        END { if (app) print app; else if (pn) print pn; else print first }' "$APP/project.yml")
     [[ -n "$SCH" ]] || SCH="${PJ%.*}"
     SIMN="${IOS_SIM_TYPE:-iPhone 16 Pro}"
     if (( DRY )); then echo "  + $APP_REL/.xcodebuildmcp/config.yaml (project $PJ, scheme $SCH)"; else
