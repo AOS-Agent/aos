@@ -56,11 +56,16 @@ SETTINGS="$REPO/.claude/settings.json"
 if (( DRY )); then echo "  ~ .claude/settings.json (hooks would be merged)"; else
 mkdir -p "$REPO/.claude"
 python3 - "$SETTINGS" "$SKILL/hooks/settings.hooks.json" <<'PY'
-import json, os, sys
+import json, os, re, sys
 path, snippet_path = sys.argv[1], sys.argv[2]
 snippet = json.load(open(snippet_path))["hooks"]
+indent = 2
 try:
-    data = json.load(open(path)) if os.path.exists(path) else {}
+    if os.path.exists(path):
+        raw = open(path).read(); data = json.loads(raw)
+        m = re.search(r'^( +)"', raw, re.M); indent = len(m.group(1)) if m else 2
+    else:
+        data = {}
 except ValueError:
     print("  ✗ .claude/settings.json is not valid JSON (LFS pointer? see .gitattributes) — hooks NOT merged"); sys.exit(0)
 hooks = data.setdefault("hooks", {})
@@ -74,7 +79,7 @@ for event, groups in snippet.items():
         entry = {k: v for k, v in g.items() if k != "hooks"}; entry["hooks"] = new
         existing.append(entry); added += len(new)
 if added:
-    json.dump(data, open(path, "w"), indent=2); open(path, "a").write("\n")
+    with open(path, "w") as f: json.dump(data, f, indent=indent, ensure_ascii=False); f.write("\n")
 print("  %s .claude/settings.json (%d hook(s) %s)" % ("+" if added else "=", added, "merged" if added else "already registered"))
 PY
 fi
@@ -85,6 +90,7 @@ if [[ ! -f "$APP/.xcodebuildmcp/config.yaml" || $FORCE -eq 1 ]]; then
     if [[ -z "$PJ" && -f "$APP/project.yml" ]]; then PJ="$(awk '/^name:/{print $2; exit}' "$APP/project.yml" | tr -d '"'"'").xcodeproj"; fi
     SCH="${SCHEME:-}"
     [[ -n "$SCH" ]] || SCH=$(cd "$APP" && { [[ "$PJ" == *.xcworkspace ]] && xcodebuild -workspace "$PJ" -list 2>/dev/null || xcodebuild -project "$PJ" -list 2>/dev/null; } | awk '/Schemes:/{f=1;next} f&&NF{print $1;exit}')
+    [[ -n "$SCH" || ! -f "$APP/project.yml" ]] || SCH=$(awk '/^targets:/{f=1;next} f&&/^  [A-Za-z0-9_.-]+:/{sub(":","",$1);print $1;exit}' "$APP/project.yml")
     [[ -n "$SCH" ]] || SCH="${PJ%.*}"
     SIMN="${IOS_SIM_TYPE:-iPhone 16 Pro}"
     if (( DRY )); then echo "  + $APP_REL/.xcodebuildmcp/config.yaml (project $PJ, scheme $SCH)"; else

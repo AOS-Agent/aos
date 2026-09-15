@@ -9,7 +9,10 @@ set -u
 INPUT=$(cat)
 FP=$(printf '%s' "$INPUT" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("tool_input",{}).get("file_path",""))' 2>/dev/null || echo "")
 [[ "$FP" == *.swift && -f "$FP" ]] || exit 0
+# canonicalize: symlinked paths (~/project → /Volumes/…, /tmp → /private/tmp) must strip against the -P toplevel
+[[ -e "$FP" ]] && FP="$(cd "$(dirname "$FP")" && pwd -P)/$(basename "$FP")"
 top=$(git -C "$(dirname "$FP")" rev-parse --show-toplevel 2>/dev/null || echo "")
+[[ -n "$top" ]] && top=$(cd "$top" && pwd -P)
 if command -v swiftlint >/dev/null 2>&1; then
   d=$(dirname "$FP"); CFG=""
   while :; do

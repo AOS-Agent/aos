@@ -26,7 +26,10 @@ fi
 if XP=$(xcode-select -p 2>/dev/null); then
   XV=$(xcodebuild -version 2>/dev/null | head -1)
   case "$XV" in
-    *" 27"*) warn "$XV selected at $XP — Claude Desktop's simulator pane needs xcode-select on Xcode 26.x; keep 27 side-by-side"; fix "sudo xcode-select -s /Applications/Xcode-26.app" ;;
+    *"Xcode 27"*)
+      X26=$(ls -d /Applications/Xcode*26*.app 2>/dev/null | head -1)
+      warn "$XV is the selected Xcode ($XP) — the Claude Desktop iOS simulator pane targets Xcode 26.x per code.claude.com/docs/en/desktop-ios-simulator; keep 26 selected and 27 side-by-side if you use that pane"
+      fix "sudo xcode-select -s ${X26:-/Applications/Xcode-26.app}" ;;
     "") bad "xcodebuild errored at $XP — license not accepted or CLT-only"; fix "sudo xcodebuild -license accept  (or select the full Xcode.app)" ;;
     *) ok "$XV at $XP" ;;
   esac
