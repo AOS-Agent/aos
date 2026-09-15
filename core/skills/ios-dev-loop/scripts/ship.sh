@@ -257,7 +257,7 @@ upload)
 # ───────────────────────────────────────────────────────────────────────────
 status)
     load_state; VF=$(ver_file)
-    echo "checkout: $TOP"; echo "branch:   $(git rev-parse --abbrev-ref HEAD)"; echo "app dir:  $APP_REL"
+    echo "checkout: $TOP"; echo "branch:   $(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "(not a git repo)")"; echo "app dir:  $APP_REL"
     [[ -n "$VF" && -f "$VF" ]] && echo "project:  v$(read_key "$VF" version) build $(read_key "$VF" build)  ($VF)"
     echo "stage:    ${STAGE_DONE:-none}  ${VERSION:+(v$VERSION b$BUILD)}"; [[ -n "${IPA:-}" ]] && echo "ipa:      $IPA"
     UP=altool; for d in "$APP" "$TOP"; do [[ -f "$d/.aos-app.env" && -f "$d/fastlane/Fastfile" ]] && UP=fastlane; done
