@@ -1,0 +1,19 @@
+# XcodeBuildMCP session defaults — read by both the MCP server and the CLI
+# (`xcodebuildmcp <workflow> <tool>`). Precedence: tool args > this file > env.
+# Committed; the per-worktree simulator UDID comes from `.ios-sim` via
+# XCODEBUILDMCP_SIMULATOR_ID, which `script/snap` exports.
+# Installed by the ios-dev-loop skill; __PLACEHOLDERS__ are filled at scaffold time.
+schemaVersion: 1
+enabledWorkflows:
+  - simulator
+  - ui-automation
+sessionDefaults:
+  projectPath: ./__PROJECT_FILE__
+  scheme: __SCHEME__
+  configuration: Debug
+  derivedDataPath: ./DerivedData      # per-worktree
+  simulatorName: __SIM_NAME__         # fallback when no .ios-sim lease exists
+  useLatestOS: true
+  extraArgs:
+    - -skipPackagePluginValidation
+    - -skipMacroValidation

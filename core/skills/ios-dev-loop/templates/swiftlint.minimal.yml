@@ -1,0 +1,18 @@
+# Minimal, autocorrect-safe rule set for the PostToolUse hook
+# (.claude/hooks/post-edit-swift.sh). Deliberately NOT the default rule set:
+# a full `swiftlint --fix` on a touched file would rewrite unrelated style and
+# bury the real diff. Grow this list only with rules whose fixes are mechanical.
+# Installed by the ios-dev-loop skill only when the project has no .swiftlint.yml.
+only_rules:
+  - trailing_whitespace
+  - trailing_newline
+  - vertical_whitespace
+  - leading_whitespace
+  - trailing_comma
+excluded:
+  - DerivedData
+  - build
+  - .build
+trailing_whitespace:
+  ignores_empty_lines: true
+  ignores_comments: true
