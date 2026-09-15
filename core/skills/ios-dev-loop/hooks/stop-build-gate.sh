@@ -36,8 +36,14 @@ STAMP="$DERIVED/.gate-ok"
 [[ -f "$STAMP" && "$(cat "$STAMP")" == "$SIG" ]] && exit 0
 [[ "$SIG" == "$(printf '' | md5)" ]] && exit 0            # no swift/project changes at all
 
-if [[ -f project.yml ]] && git -C "$TOP" diff HEAD --name-only | grep -q "project.yml"; then
-  command -v xcodegen >/dev/null 2>&1 && xcodegen generate >/dev/null 2>&1
+# Regenerate the project when project.yml changed OR a new .swift file exists:
+# XcodeGen globs sources, so an untracked file is invisible to a stale pbxproj
+# and a compile error in it would pass the gate green.
+if [[ -f project.yml ]] && command -v xcodegen >/dev/null 2>&1; then
+  if git -C "$TOP" diff HEAD --name-only | grep -q "project.yml" \
+     || [[ -n "$(git -C "$TOP" ls-files --others --exclude-standard -- '*.swift')" ]]; then
+    xcodegen generate >/dev/null 2>&1
+  fi
 fi
 WS=$(find . -maxdepth 1 -name "*.xcworkspace" | head -1)
 PJ=$(find . -maxdepth 1 -name "*.xcodeproj" | head -1)

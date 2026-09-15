@@ -47,6 +47,10 @@ case "${1:-}" in
         [[ -d "$TARGET" ]] || { echo "Error: no worktree at $TARGET" >&2; exit 1; }
         TARGET="$(cd "$TARGET" && pwd -P)"
         [[ "$TARGET" != "$REPO_MAIN" ]] || { echo "Error: refusing to remove the canonical checkout" >&2; exit 1; }
+        # Only a REGISTERED worktree may be removed — the rm fallback below must
+        # never touch a plain directory that merely sits under .claude/worktrees.
+        git worktree list --porcelain | grep -qx "worktree $TARGET" \
+            || { echo "Error: $TARGET is not a registered git worktree (git worktree list) — nothing removed" >&2; exit 1; }
         if [[ -n "$(git -C "$TARGET" status --porcelain 2>/dev/null)" ]]; then
             echo "Error: $TARGET has uncommitted changes — commit or stash first." >&2; exit 1
         fi

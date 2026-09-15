@@ -150,6 +150,25 @@ must be `Unique` (otherwise every worktree's products land in one shared
 `brew outdated`, Axiom plugin version, disk free, Chrome `code_sign_clone`
 bloat, build-slot state, stuck D-state build processes (usually `syspolicyd`).
 
+## Rollout / migration (applying to a project that already has an older loop)
+
+`quran-tools` shipped the first copy of these scripts under project-specific
+names. When you apply the installer there, retire the old copies in the same
+change or the two will fight:
+
+- **Build slot.** The old `tools/build-slot.sh` locked
+  `/Volumes/AOS-X/tmp-build/build-slot.lock`; this one locks
+  `${TMPDIR:-/tmp}/ios-build-slot.lock`. Two different lock paths mean builds
+  **stop serializing across projects**. Re-run `install.sh --force` (or set
+  `BUILD_SLOT_LOCK` to one shared path everywhere) so every project shares one slot.
+- **Provision + worktree.** `tools/qt-provision.sh` / `tools/qt-worktree.sh`
+  lease into `.qt-sim`; `provision.sh` / `worktree.sh` lease into `.ios-sim`.
+  Leaving both, plus the old `qt-provision.sh` SessionStart line, **leases two
+  simulators per worktree**. Delete the `qt-*` scripts and their settings line
+  when the installer's versions land.
+- **Sanity check after:** `tools/build-slot.sh --status` and `ls .qt-sim .ios-sim`
+  — exactly one lease file, one lock path.
+
 ## Gotchas (hard-won — trust these)
 
 | Symptom | Cause / fix |
@@ -162,6 +181,7 @@ bloat, build-slot state, stuck D-state build processes (usually `syspolicyd`).
 | Build hangs at SwiftPM resolve, machine-wide | Concurrent cold resolves wedge `syspolicyd`. Every build path goes through `tools/build-slot.sh`; `doctor.sh` flags D-state builds. |
 | `git worktree remove` refuses a clean worktree | It holds an initialized submodule. `tools/worktree.sh --remove` falls back to `rm` + `git worktree prune`. |
 | `.claude/settings.json` shows as an LFS pointer | `*.json filter=lfs` in `.gitattributes`. Exempt config JSON: `.claude/**/*.json !filter !diff !merge text`. |
+| Two simulators leased per worktree, builds not serializing | An older `qt-*` loop is still installed alongside this one — see Rollout / migration. |
 | Fresh worktree builds green but the app has no data / stale project | Empty submodule or `project.yml` newer than the tracked pbxproj. `tools/provision.sh` (SessionStart) handles both. |
 | Device "connected (no DDI)" | Developer disk image mounts only while the phone is **unlocked**. Unlock, wait ~30s, retry. |
 | `devicectl` finds no device | One-time USB pairing + Trust + Developer Mode. After that Wi-Fi works (same network). |
