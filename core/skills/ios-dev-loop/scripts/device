@@ -13,14 +13,14 @@
 # first time (the developer disk image can't mount on a locked phone).
 # After that, this works over Wi-Fi with the phone in a pocket, nearby.
 set -euo pipefail
-cd "$(dirname "$0")/.."
+case "${1:-}" in --help|-h) grep '^# ' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;; esac
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 SCHEME="${SCHEME:-}"
 DEVICE_ID="${DEVICE_ID:-}"
 DERIVED="${DERIVED:-DerivedData}"   # per-worktree DerivedData (gitignored)
 DD=(-derivedDataPath "$DERIVED")
 
-case "${1:-}" in --help|-h) grep '^# ' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;; esac
 BUILD=1
 [[ "${1:-}" == "--no-build" ]] && { BUILD=0; shift; }
 
@@ -49,11 +49,12 @@ REPO_TOP=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 SLOT="$REPO_TOP/tools/build-slot.sh"; [[ -x "$SLOT" ]] || SLOT="tools/build-slot.sh"; [[ -x "$SLOT" ]] || SLOT=""
 
 # ─── Build → install → launch ───────────────────────────────────────────
+rc=0
 if [[ $BUILD -eq 1 ]]; then
   FILTER=(cat); command -v xcsift >/dev/null && FILTER=(xcsift -w)
   $SLOT xcodebuild "${CONTAINER[@]}" -scheme "$SCHEME" -configuration Debug \
-    "${DD[@]}" -destination 'generic/platform=iOS' -allowProvisioningUpdates build 2>&1 | "${FILTER[@]}" | tail -25
-  [[ ${PIPESTATUS[0]} -eq 0 ]] || { echo "BUILD FAILED" >&2; exit 65; }
+    "${DD[@]}" -destination 'generic/platform=iOS' -allowProvisioningUpdates build 2>&1 | "${FILTER[@]}" | tail -25 || rc=$?
+  [[ ${rc:-0} -eq 0 ]] || { echo "BUILD FAILED (rc=$rc)" >&2; exit 65; }
 fi
 SETTINGS=$(xcodebuild "${CONTAINER[@]}" -scheme "$SCHEME" -configuration Debug \
   "${DD[@]}" -destination 'generic/platform=iOS' -showBuildSettings 2>/dev/null)

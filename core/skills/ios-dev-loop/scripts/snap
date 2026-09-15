@@ -19,7 +19,8 @@
 #   (points == pixels — read the 1x for tap coordinates, the full-res to judge).
 #   Paths are printed on the last lines.
 set -euo pipefail
-cd "$(dirname "$0")/.."
+case "${1:-}" in --help|-h) grep '^# ' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;; esac
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 # ─── Overrides (set in env, or hardcode for this project) ───────────────
 SCHEME="${SCHEME:-}"          # default: first scheme in the project
@@ -30,7 +31,6 @@ DERIVED="${DERIVED:-DerivedData}"  # per-worktree DerivedData (gitignored). Ever
                                     # install is the one we just built.
 DD=(-derivedDataPath "$DERIVED")
 
-case "${1:-}" in --help|-h) grep '^# ' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;; esac
 BUILD=1
 [[ "${1:-}" == "--no-build" ]] && { BUILD=0; shift; }
 ROUTE="${1:-default}"; [[ $# -gt 0 ]] && shift
@@ -88,13 +88,16 @@ xcrun simctl bootstatus "$UDID" -b >/dev/null
 SLOT="$REPO_TOP/tools/build-slot.sh"; [[ -x "$SLOT" ]] || SLOT="tools/build-slot.sh"; [[ -x "$SLOT" ]] || SLOT=""
 
 # ─── Build → install → launch → capture ─────────────────────────────────
+rc=0
 if [[ $BUILD -eq 1 ]]; then
   # One heavy build at a time machine-wide; xcsift keeps only errors/warnings
   # so the agent reads a dozen lines, not 5,000.
   FILTER=(cat); command -v xcsift >/dev/null && FILTER=(xcsift -w)
   $SLOT xcodebuild "${CONTAINER[@]}" -scheme "$SCHEME" -configuration Debug \
-    "${DD[@]}" -destination "id=$UDID" build 2>&1 | "${FILTER[@]}" | tail -25
-  [[ ${PIPESTATUS[0]} -eq 0 ]] || { echo "BUILD FAILED" >&2; exit 65; }
+    "${DD[@]}" -destination "id=$UDID" build 2>&1 | "${FILTER[@]}" | tail -25 || rc=$?
+  # rc is the pipeline's status under pipefail (xcodebuild's when it failed);
+  # captured explicitly so set -e cannot end the script before we report.
+  [[ ${rc:-0} -eq 0 ]] || { echo "BUILD FAILED (rc=$rc)" >&2; exit 65; }
 fi
 SETTINGS=$(xcodebuild "${CONTAINER[@]}" -scheme "$SCHEME" -configuration Debug \
   "${DD[@]}" -destination "id=$UDID" -showBuildSettings 2>/dev/null)

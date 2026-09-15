@@ -11,7 +11,8 @@
 # once shipped past a hold because an async "wait" message raced an agent
 # mid-run. Here the GO token is structural — nobody uploads without being told
 # to run `upload`. Rules encoded:
-#   * clean tree; the canonical checkout is refused when the repo uses linked worktrees
+#   * clean tree; HEAD on main/master is refused, and so is the canonical checkout
+#     of a repo with linked worktrees — SHIP_ALLOW_MAIN=1 lifts both guards
 #   * optional project hooks run when present: script/sync-data --check,
 #     script/preflight or tools/*preflight*.sh (survey), script/test (SHIP_SKIP_TESTS=1 to skip)
 #   * --changelog: CHANGELOG.md [Unreleased] must have content; it is rolled into a
@@ -28,7 +29,7 @@
 #
 # Credentials: ~/aos/core/bin/cli/agent-secret get ASC_KEY_ID / ASC_ISSUER_ID /
 # APPLE_TEAM_ID (Keychain) and ~/.appstoreconnect/private_keys/AuthKey_<id>.p8.
-# Env: APP_DIR, SCHEME, EXPORT_OPTIONS (plist path), SHIP_ALLOW_MAIN=1.
+# Env: APP_DIR, SCHEME, EXPORT_OPTIONS (plist path), SHIP_ALLOW_MAIN=1 (main branch + canonical checkout).
 set -euo pipefail
 
 STAGE="${1:-status}"; shift || true
@@ -43,10 +44,13 @@ SECRET="$HOME/aos/core/bin/cli/agent-secret"
 die() { echo "✗ $*" >&2; exit 1; }
 say() { printf '\033[1m→ %s\033[0m\n' "$*"; }
 need_clean() { [[ -z "$(git status --porcelain)" ]] || die "working tree not clean — commit or stash first"; }
-not_canonical() {
-    local common linked
+not_canonical() {  # SHIP_ALLOW_MAIN=1 lifts BOTH guards: the main branch and the canonical checkout
+    local common linked branch
+    [[ "${SHIP_ALLOW_MAIN:-0}" == "1" ]] && return 0
+    branch=$(git rev-parse --abbrev-ref HEAD)
+    [[ "$branch" != main && "$branch" != master ]] || die "on $branch — release from a release/v<version> branch (SHIP_ALLOW_MAIN=1 to override)"
     common=$(git rev-parse --git-common-dir); linked=$(git worktree list --porcelain | grep -c '^worktree ')
-    if [[ "$common" == ".git" && "$linked" -gt 1 && "${SHIP_ALLOW_MAIN:-0}" != "1" ]]; then
+    if [[ "$common" == ".git" && "$linked" -gt 1 ]]; then
         die "this is the canonical checkout of a repo that uses linked worktrees — ship from a release/v<version> worktree (SHIP_ALLOW_MAIN=1 to override)"
     fi
 }
@@ -143,7 +147,7 @@ prepare)
     TAG="v$VERSION-b$BUILD"; git rev-parse -q --verify "refs/tags/$TAG" >/dev/null && die "tag $TAG already exists"
     TEST=$(first_existing "$TOP/script/test" "$APP/script/test")
     if [[ -n "$TEST" && "${SHIP_SKIP_TESTS:-0}" != "1" ]]; then
-        say "2. tests ($TEST)"; "$TEST" >/dev/null 2>&1 || { "$TEST" 2>&1 | tail -20; die "tests failing"; }; echo "   tests green"
+        say "2. tests ($TEST)"; TLOG=$(mktemp); "$TEST" >"$TLOG" 2>&1 || { tail -20 "$TLOG"; rm -f "$TLOG"; die "tests failing"; }; rm -f "$TLOG"; echo "   tests green"
     fi
     NOTES_FILE=""
     if (( CHANGELOG )); then
