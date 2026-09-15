@@ -2,6 +2,19 @@
 
 All notable changes to AOS. Release notes sent via Telegram after each 4am update.
 
+## v0.7.12 — 2026-09-15
+
+Summary: The iOS dev loop becomes one installable skill for every iOS app, and named Claude profiles ask to log in.
+
+- Added `ios-dev-loop` v2: `scripts/install.sh` puts the whole loop into any XcodeGen or plain `.xcodeproj` project in one idempotent command — `script/snap` (per-worktree DerivedData, leased simulator, build slot, `xcsift`, 1x screenshots, `name[:a[:b]]` routes), `script/device`, `tools/build-slot.sh`, `tools/provision.sh`, `tools/worktree.sh`, `tools/ship.sh`, four hooks merged into `.claude/settings.json`, an `.xcodebuildmcp/config.yaml` filled with the real scheme, and a minimal autocorrect-only `.swiftlint.yml`.
+- Added `hooks/`: `pre-tool-guard.sh` blocks `.pbxproj`/`.xcodeproj`/`.entitlements`/`Package.resolved` edits on XcodeGen projects; `post-edit-swift.sh` runs `swiftlint --fix` and refuses edits that add `try!`/`as!`/`@unchecked Sendable`; `stop-build-gate.sh` builds when Swift or `project.yml` changed (hashes diff content, regenerates on untracked Swift files, skips when the build slot is busy); `handoff-staleness.sh` warns on a stale `.agent/HANDOFF.md`.
+- Added `scripts/ship.sh` — TestFlight in three explicit stages (`prepare`, `archive`, `upload`): version bump for `CFBundle*`/`MARKETING_VERSION`/pbxproj, optional `script/sync-data`, preflight and attach hooks, archive with no path overrides and an `Info.plist` check, `fastlane ios ship` or `altool`, tag only after upload, tag push opt-in (`SHIP_PUSH_TAG=1`), `upload` never runs unless asked.
+- Added `scripts/doctor.sh` — checks the Xcode build location is `Unique` (a `Custom` shared products dir silently clobbers parallel worktree builds), tool currency (`xcodebuildmcp`, `axe`, `xcsift`, `swiftlint`, `xcodegen`, Axiom), disk, Chrome `code_sign_clone` bloat, build-slot state.
+- Added `scripts/worktree.sh` — worktrees at `<project>/.claude/worktrees/<slug>` (the fleet convention), provisioned on create and by the SessionStart hook, with `--remove` (refuses anything that is not a registered worktree) and `--gc`.
+- Changed `new-ios-app`: `scaffold.py` runs the `ios-dev-loop` installer right after `xcodegen`, non-fatally, so new apps are born with the loop.
+- Changed `SKILL.md` for `ios-dev-loop`: Detect → Scaffold → Loop → Ship → Doctor, a Rollout/migration section for projects carrying an older loop, and eight new Gotchas (blank screenshot = settle delay, `"${ARGS[@]}"` under `set -u`, `--terminate-running-process`, submodule worktrees refuse `git worktree remove`, `*.json filter=lfs` swallowing `.claude/settings.json`, …).
+- Changed `aos claude-profile`: new named profiles (e.g. `cld2`) prompt for login on creation, and `claude-profile add` names the real launcher.
+
 ## v0.7.11 — 2026-09-14
 
 Summary: One-line correctness fix found the moment 0.7.10 installed.
