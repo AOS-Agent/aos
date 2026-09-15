@@ -21,8 +21,8 @@
 
 set -u
 
-LOCK_DIR="${BUILD_SLOT_LOCK:-${TMPDIR:-/tmp}/ios-build-slot.lock}"
-LOCK_DIR="${LOCK_DIR%/}"
+TMP="${TMPDIR:-/tmp}"
+LOCK_DIR="${BUILD_SLOT_LOCK:-${TMP%/}/ios-build-slot.lock}"
 TIMEOUT="${BUILD_SLOT_TIMEOUT:-1200}"
 TRY=0
 

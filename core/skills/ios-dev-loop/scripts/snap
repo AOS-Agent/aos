@@ -30,6 +30,7 @@ DERIVED="${DERIVED:-DerivedData}"  # per-worktree DerivedData (gitignored). Ever
                                     # install is the one we just built.
 DD=(-derivedDataPath "$DERIVED")
 
+case "${1:-}" in --help|-h) grep '^# ' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;; esac
 BUILD=1
 [[ "${1:-}" == "--no-build" ]] && { BUILD=0; shift; }
 ROUTE="${1:-default}"; [[ $# -gt 0 ]] && shift

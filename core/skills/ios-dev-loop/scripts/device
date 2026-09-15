@@ -20,6 +20,7 @@ DEVICE_ID="${DEVICE_ID:-}"
 DERIVED="${DERIVED:-DerivedData}"   # per-worktree DerivedData (gitignored)
 DD=(-derivedDataPath "$DERIVED")
 
+case "${1:-}" in --help|-h) grep '^# ' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;; esac
 BUILD=1
 [[ "${1:-}" == "--no-build" ]] && { BUILD=0; shift; }
 
