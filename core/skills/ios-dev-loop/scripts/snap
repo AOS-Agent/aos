@@ -84,7 +84,12 @@ else
 fi
 [[ -n "$UDID" ]] || { echo "no iPhone simulator found (set SIM=<name>, or run tools/provision.sh to lease one)" >&2; exit 1; }
 export XCODEBUILDMCP_SIMULATOR_ID="$UDID"   # same device for xcodebuildmcp CLI calls
+# A device booted by THIS run needs SpringBoard to settle before the first
+# launch foregrounds; otherwise the capture shows the home screen with the app
+# icon (chief-ios-app, 2026-09-15). Only pay the wait when we did the booting.
+WAS_BOOTED=$(xcrun simctl list devices booted | grep -c "$UDID" || true)
 xcrun simctl bootstatus "$UDID" -b >/dev/null
+[[ "$WAS_BOOTED" -gt 0 ]] || sleep "${FRESH_BOOT_SETTLE:-8}"
 SLOT="$REPO_TOP/tools/build-slot.sh"; [[ -x "$SLOT" ]] || SLOT="tools/build-slot.sh"; [[ -x "$SLOT" ]] || SLOT=""
 
 # ─── Build → install → launch → capture ─────────────────────────────────
