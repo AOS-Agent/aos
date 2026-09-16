@@ -2,6 +2,18 @@
 
 All notable changes to AOS. Release notes sent via Telegram after each 4am update.
 
+## v0.7.13 — iMessage joins the comms engine, one thread at a time — 2026-09-15
+
+Summary: iMessage is now a first-class comms channel with an operator-owned allowlist. macOS Full Disk Access exposes every conversation in `chat.db`; the new scope gate is what limits AOS to the threads the operator names, and it is enforced on every read and every send.
+
+- Added `core/engine/comms/scope.py`, the iMessage scope gate. It reads `~/.aos/config/comms.yaml` (`imessage.access: allowlist | all`, `allowed: [{name, handles}]`, `include_groups`). On an allowlist it installs SQLite temp views that shadow `message`, `chat`, `handle`, the join tables and attachments on the open connection, so every query — existing or future — only ever sees the allowed 1:1 threads. Phones match on digits (`+1 416…`, `416…`, formatted), emails case-insensitively. Missing file or `access: all` is today's behaviour exactly. Every gated open appends one audit line to `~/.aos/logs/comms.log` (`scope=allowlist source=adapter chats=1 handles=1`), so "is it really restricted?" is answered from the log.
+- Changed every `chat.db` reader to go through the gate: the iMessage adapter, the desktop ingest, Converse, the Sentinel watcher/ack/context builder, `attributedbody`'s self-test, and `operator-link`. Every iMessage sender (adapter, Converse, Envoy, Sentinel tapback) checks `send_allowed()` first and refuses a recipient outside the allowlist. `tests/test_comms_scope_guard.py` is a static guard that fails the suite if any comms file opens `chat.db` without the gate, hand-builds a `?mode=ro` URI, uses a `main.`-qualified table, or sends without the check.
+- Added `comms-send <name|handle> "<text>"` and `comms-thread <name> [--days N]`: send a verbatim message to an allowlisted contact, or print the recent thread, both through the gate. Names resolve from the allowlist (`comms-send Hisham "…"`). A denied recipient exits 2 and is logged; message text is never logged.
+- Added `.claude/rules/comms-imessage.md`: "message <Name>: <text>" runs `comms-send` with the operator's words verbatim; "what did <Name> say" runs `comms-thread`. Chief never composes an outbound iMessage on its own — Envoy and Sentinel remain the autonomous arms and stay off by default.
+- Added `config/defaults/comms.yaml` (template, `access: all`) and migration 136, which seeds `~/.aos/config/comms.yaml` from it when absent and never touches an existing file; `install.sh` copies it on a fresh install.
+- Fixed `sentinel/attributedbody.py` truncating every iMessage of 128 bytes or more: the typedstream length prefix `0x81` is followed by a 2-byte little-endian length (`0x82` → 4 bytes, `0x83` → 8), not one byte. A 439-character reply came out as 185 characters with a stray leading byte. Tests added.
+- Fixed `registry.load_adapter()` importing `core.comms.*`, a package path that stopped existing when the engine moved to `core/engine/comms/`; `load_adapter("messages")` returned `None` on every call. It now imports `core.engine.comms.*` (with the `engine.comms.*` shape the CLIs use as a fallback). `extract/pipeline.py` still carries the old path and is noted for a follow-up.
+
 ## v0.7.12 — 2026-09-15
 
 Summary: The iOS dev loop becomes one installable skill for every iOS app, and named Claude profiles ask to log in.

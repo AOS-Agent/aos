@@ -1559,6 +1559,16 @@ HOOK
         echo "  ✓ Onboard agent already active"
     fi
 
+    # Initialize comms config if not present (iMessage scope gate; access: all
+    # by default — see config/defaults/comms.yaml). Migration 136 does the same
+    # for machines that installed before it shipped.
+    if [[ ! -f "$USER_DIR/config/comms.yaml" ]]; then
+        if [[ -f "$AOS_DIR/config/defaults/comms.yaml" ]]; then
+            _step "Initializing comms configuration..."
+            cp "$AOS_DIR/config/defaults/comms.yaml" "$USER_DIR/config/comms.yaml"
+        fi
+    fi
+
     # Initialize trust config if not present
     if [[ ! -f "$USER_DIR/config/trust.yaml" ]]; then
         _step "Initializing trust configuration..."

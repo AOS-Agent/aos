@@ -55,6 +55,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[4]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+from core.engine.comms import scope  # noqa: E402
 from core.engine.util.macos_protected import (  # noqa: E402
     ensure_access,
     safe_snapshot,
@@ -274,6 +275,9 @@ def scan_messages(
     try:
         conn = sqlite3.connect(str(snap))
         conn.row_factory = sqlite3.Row
+        # Allowlist gate (scope.py): the snapshot is the whole chat.db; the
+        # temp views installed here are what keep the ingest to permitted threads.
+        scope.apply(conn, source="desktop-ingest")
 
         query = """
             SELECT

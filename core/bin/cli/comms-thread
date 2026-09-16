@@ -1,0 +1,229 @@
+#!/usr/bin/env python3
+"""comms-thread — print your recent iMessage thread with one contact.
+
+Reads ~/Library/Messages/chat.db live (needs Full Disk Access) through the
+allowlist gate in core/engine/comms/scope.py: a contact outside
+~/.aos/config/comms.yaml is refused before the database is touched, and the
+gate hides every other thread from the queries below anyway.
+
+Usage:
+    comms-thread <name-or-handle> [--days N] [--limit N] [--json]
+
+Examples:
+    comms-thread Hisham
+    comms-thread Hisham --days 30 --limit 200
+    comms-thread "+14165550100" --json
+
+Output (oldest first):
+    Hisham (+14165550100) — 3 messages, last 7 days
+    YYYY-MM-DD HH:MM  Hisham: pr is up
+    YYYY-MM-DD HH:MM  Me: looking now
+
+Exit codes:
+    0  printed (possibly 0 messages)
+    1  chat.db not readable (Full Disk Access missing) or not found
+    2  usage error, or contact not in the allowlist
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sqlite3
+import sys
+from datetime import datetime, timedelta
+from pathlib import Path
+
+# Make the engine package importable (core/ is parents[2] of this file).
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from engine.comms import recipients, scope  # noqa: E402
+from engine.comms.sentinel.attributedbody import extract_text  # noqa: E402
+
+# Apple stores `message.date` as nanoseconds since 2001-01-01 on current
+# macOS, and as seconds since 2001-01-01 on very old ones. Anything above
+# this is nanoseconds.
+MAC_EPOCH_OFFSET = 978307200
+NANOSECOND = 1_000_000_000
+_NS_THRESHOLD = 10**12
+
+
+def _chat_db_path() -> Path:
+    env = os.environ.get("AOS_CHAT_DB")
+    return Path(env).expanduser() if env else scope.CHAT_DB_PATH
+
+
+def _from_apple(value) -> datetime | None:
+    if value is None:
+        return None
+    try:
+        raw = int(value)
+    except (TypeError, ValueError):
+        return None
+    seconds = raw / NANOSECOND if abs(raw) >= _NS_THRESHOLD else float(raw)
+    try:
+        return datetime.fromtimestamp(seconds + MAC_EPOCH_OFFSET)
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
+def _contact_policy(rcpt: recipients.Recipient, handles: list[str]) -> scope.Policy:
+    """A throwaway allowlist holding only this contact's handles.
+
+    Used to decide which chat.db handles belong to the contact, with the
+    same phone/email matching rules the real gate uses.
+    """
+    return scope.Policy(
+        access=scope.ACCESS_ALLOWLIST,
+        allowed=[scope.AllowedContact(name=rcpt.name, handles=handles)],
+    )
+
+
+def _contact_chats(conn: sqlite3.Connection, matcher: scope.Policy) -> list[int]:
+    """1:1 chat ROWIDs whose every participant is one of the contact's handles."""
+    handle_ids = {
+        int(r[0])
+        for r in conn.execute("SELECT ROWID, id FROM handle")
+        if matcher.handle_allowed(str(r[1] or ""))
+    }
+    members: dict[int, set[int]] = {}
+    for chat_id, handle_id in conn.execute(
+        "SELECT chat_id, handle_id FROM chat_handle_join"
+    ):
+        members.setdefault(int(chat_id), set()).add(int(handle_id))
+
+    chats: list[int] = []
+    for rowid, identifier in conn.execute("SELECT ROWID, chat_identifier FROM chat"):
+        rowid = int(rowid)
+        participants = members.get(rowid)
+        if participants:
+            if participants <= handle_ids:
+                chats.append(rowid)
+        elif matcher.handle_allowed(str(identifier or "")):
+            chats.append(rowid)
+    return chats
+
+
+def _message_text(row: sqlite3.Row) -> str:
+    text = row["text"] if "text" in row.keys() else None
+    if text:
+        return str(text)
+    if "attributedBody" in row.keys():
+        decoded = extract_text(row["attributedBody"])
+        if decoded:
+            return decoded
+    return ""
+
+
+def _fetch(
+    conn: sqlite3.Connection, chats: list[int], since: datetime, limit: int
+) -> list[dict]:
+    if not chats:
+        return []
+    placeholders = ",".join("?" for _ in chats)
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        f"""
+        SELECT m.*, h.id AS handle_id_text
+        FROM message m
+        JOIN chat_message_join cmj ON cmj.message_id = m.ROWID
+        LEFT JOIN handle h ON h.ROWID = m.handle_id
+        WHERE cmj.chat_id IN ({placeholders})
+        ORDER BY m.date ASC, m.ROWID ASC
+        """,
+        chats,
+    ).fetchall()
+
+    out: list[dict] = []
+    for row in rows:
+        ts = _from_apple(row["date"])
+        if ts is None or ts < since:
+            continue
+        text = _message_text(row)
+        if not text.strip():
+            continue  # attachment-only / reaction rows carry no readable text
+        out.append(
+            {
+                "id": int(row["ROWID"]),
+                "timestamp": ts.isoformat(timespec="minutes"),
+                "from_me": bool(row["is_from_me"]),
+                "handle": row["handle_id_text"] or "",
+                "text": text,
+            }
+        )
+    if limit and len(out) > limit:
+        out = out[-limit:]  # keep the most recent N, still oldest→newest
+    return out
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="comms-thread",
+        description="Print your recent iMessage thread with one allowlisted contact.",
+    )
+    parser.add_argument("contact", help="allowlist name or phone/email handle")
+    parser.add_argument("--days", type=int, default=7, help="look back N days (7)")
+    parser.add_argument(
+        "--limit", type=int, default=50, help="most recent N messages (50)"
+    )
+    parser.add_argument("--json", action="store_true", help="machine-readable output")
+    args = parser.parse_args(argv)
+
+    policy = scope.load_policy()
+    rcpt = recipients.resolve(args.contact, policy)
+    if not rcpt.allowed:
+        print(
+            f"denied: {args.contact} is not in the iMessage allowlist "
+            f"({policy.source_path})",
+            file=sys.stderr,
+        )
+        return 2
+
+    db = _chat_db_path()
+    try:
+        conn = scope.open_chat_db(db, source="comms-thread", policy=policy)
+        conn.execute("SELECT COUNT(*) FROM chat").fetchone()
+    except FileNotFoundError:
+        print(f"chat.db: not found at {db}", file=sys.stderr)
+        return 1
+    except sqlite3.Error:
+        print("chat.db: not readable (Full Disk Access?)", file=sys.stderr)
+        return 1
+
+    try:
+        handles = recipients.all_handles(rcpt, policy)
+        matcher = _contact_policy(rcpt, handles)
+        chats = _contact_chats(conn, matcher)
+        since = datetime.now() - timedelta(days=max(args.days, 0))
+        messages = _fetch(conn, chats, since, args.limit)
+    finally:
+        conn.close()
+
+    header = f"{rcpt.label} — {len(messages)} messages, last {args.days} days"
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "contact": rcpt.name,
+                    "handle": rcpt.handle,
+                    "days": args.days,
+                    "count": len(messages),
+                    "messages": messages,
+                },
+                indent=2,
+            )
+        )
+        return 0
+
+    print(header)
+    for m in messages:
+        who = "Me" if m["from_me"] else rcpt.name
+        stamp = m["timestamp"].replace("T", " ")
+        text = m["text"].replace("\n", "\n" + " " * 18)
+        print(f"{stamp}  {who}: {text}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

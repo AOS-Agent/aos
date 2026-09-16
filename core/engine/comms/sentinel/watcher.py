@@ -37,6 +37,8 @@ from typing import Optional
 
 import yaml
 
+from .. import scope
+
 log = logging.getLogger(__name__)
 
 HOME = Path.home()
@@ -77,8 +79,7 @@ def _write_cursor(rowid: int) -> None:
 
 def _open_chat_db_ro() -> sqlite3.Connection:
     """Open chat.db read-only without copying. Apple's WAL is fine for reads."""
-    uri = f"file:{CHAT_DB}?mode=ro"
-    return sqlite3.connect(uri, uri=True, timeout=2)
+    return scope.open_chat_db(CHAT_DB, source="sentinel-watcher")
 
 
 def _resolve_recipient(chat_rowid: int) -> Optional[str]:

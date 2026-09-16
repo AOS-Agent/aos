@@ -20,12 +20,13 @@ Why no real tapback API:
 from __future__ import annotations
 
 import logging
-import sqlite3
 import subprocess
 from pathlib import Path
 from typing import Optional
 
 import yaml
+
+from .. import scope
 
 log = logging.getLogger(__name__)
 
@@ -62,9 +63,8 @@ def resolve_imessage_recipient(conversation_id: Optional[str]) -> Optional[str]:
         chat_rowid = int(conversation_id)
     except (TypeError, ValueError):
         return None
-    uri = f"file:{IMESSAGE_DB}?mode=ro"
     try:
-        conn = sqlite3.connect(uri, uri=True, timeout=2)
+        conn = scope.open_chat_db(IMESSAGE_DB, source="sentinel-ack")
         row = conn.execute("""
             SELECT h.id FROM chat_handle_join chj
             JOIN handle h ON chj.handle_id = h.ROWID
@@ -85,9 +85,8 @@ def _resolve_chat_guid(conversation_id: Optional[str]) -> Optional[str]:
         chat_rowid = int(conversation_id)
     except (TypeError, ValueError):
         return None
-    uri = f"file:{IMESSAGE_DB}?mode=ro"
     try:
-        conn = sqlite3.connect(uri, uri=True, timeout=2)
+        conn = scope.open_chat_db(IMESSAGE_DB, source="sentinel-ack")
         row = conn.execute("SELECT guid FROM chat WHERE rowid = ?",
                            (chat_rowid,)).fetchone()
         conn.close()
@@ -127,6 +126,9 @@ def _try_tapback_ack(conversation_id: Optional[str]) -> bool:
     recipient = resolve_imessage_recipient(conversation_id)
     if not recipient:
         log.warning("tapback: no recipient resolved for conv=%s", conversation_id)
+        return False
+    if not scope.send_allowed(recipient):
+        log.warning("scope: send to %s denied by allowlist", recipient)
         return False
 
     # AppleScript: activate Messages, focus the chat by handle, navigate to last

@@ -15,6 +15,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Optional
 
+from .. import scope
+
 log = logging.getLogger(__name__)
 
 COMMS_DB = Path.home() / ".aos" / "data" / "comms.db"
@@ -229,8 +231,7 @@ class ContextBuilder:
         if not chat_db.exists():
             return None
         try:
-            uri = f"file:{chat_db}?mode=ro"
-            conn = sqlite3.connect(uri, uri=True, timeout=2)
+            conn = scope.open_chat_db(chat_db, source="sentinel-context")
             row = conn.execute("""
                 SELECT m.rowid, m.text, m.attributedBody, m.date, m.is_from_me,
                        c.rowid AS chat_rowid
@@ -333,10 +334,9 @@ class ContextBuilder:
         except (TypeError, ValueError):
             return None
 
-        # Open chat.db read-only with immutable URI (no copy, no lock contention)
-        uri = f"file:{IMESSAGE_DB}?mode=ro"
+        # Open chat.db read-only through the scope gate (no copy, no lock contention)
         try:
-            conn = sqlite3.connect(uri, uri=True, timeout=2)
+            conn = scope.open_chat_db(IMESSAGE_DB, source="sentinel-context")
             row = conn.execute("""
                 SELECT h.id FROM chat_handle_join chj
                 JOIN handle h ON chj.handle_id = h.ROWID
@@ -407,8 +407,7 @@ class ContextBuilder:
         if not IMESSAGE_DB.exists():
             return []
         try:
-            uri = f"file:{IMESSAGE_DB}?mode=ro"
-            conn = sqlite3.connect(uri, uri=True, timeout=2)
+            conn = scope.open_chat_db(IMESSAGE_DB, source="sentinel-context")
             rows = conn.execute("""
                 SELECT m.rowid, m.text, m.attributedBody, m.date, m.is_from_me
                 FROM message m

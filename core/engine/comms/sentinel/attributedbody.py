@@ -76,23 +76,16 @@ def _try_decode_at(blob: bytes, start: int) -> Optional[str]:
     first = blob[p]; p += 1
     if first < 0x80:
         length = first
-    elif first == 0x81:
-        if p >= n:
+    elif first in (0x81, 0x82, 0x83):
+        # typedstream integer prefixes: 0x81 = int16, 0x82 = int32,
+        # 0x83 = int64, all little-endian. A 200-char message is encoded
+        # as 0x81 followed by two bytes; reading one byte here truncated
+        # every message of 128 bytes or more (seen live: a 443-byte reply
+        # cut at 187 with a stray leading byte).
+        width = {0x81: 2, 0x82: 4, 0x83: 8}[first]
+        if p + width > n:
             return None
-        length = blob[p]; p += 1
-    elif first == 0x82:
-        if p + 1 >= n:
-            return None
-        length = blob[p] | (blob[p + 1] << 8); p += 2
-    elif first == 0x83:
-        if p + 2 >= n:
-            return None
-        length = blob[p] | (blob[p + 1] << 8) | (blob[p + 2] << 16); p += 3
-    elif first == 0x84:
-        if p + 3 >= n:
-            return None
-        length = (blob[p] | (blob[p + 1] << 8)
-                  | (blob[p + 2] << 16) | (blob[p + 3] << 24)); p += 4
+        length = int.from_bytes(blob[p:p + width], "little"); p += width
     else:
         return None
 
@@ -111,11 +104,16 @@ def _try_decode_at(blob: bytes, start: int) -> Optional[str]:
 # ── self-test ────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    import sqlite3
+    import sys
     from pathlib import Path
+
+    _repo = Path(__file__).resolve().parents[4]
+    if str(_repo) not in sys.path:
+        sys.path.insert(0, str(_repo))
+    from core.engine.comms import scope  # noqa: E402
+
     db = Path.home() / "Library" / "Messages" / "chat.db"
-    uri = f"file:{db}?mode=ro"
-    conn = sqlite3.connect(uri, uri=True)
+    conn = scope.open_chat_db(db, source="attributedbody-selftest")
     rows = conn.execute("""
         SELECT rowid, text, attributedBody FROM message
         WHERE is_from_me=1 AND rowid IN (220210, 220209, 220208, 220187, 220150, 220149)

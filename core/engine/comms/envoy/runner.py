@@ -35,6 +35,7 @@ def _ensure_path():
 
 
 _ensure_path()
+from core.engine.comms import scope  # noqa: E402
 from core.engine.comms.envoy import prompts, store  # noqa: E402
 
 # ── Side effects ─────────────────────────────────────────────────────
@@ -42,6 +43,9 @@ from core.engine.comms.envoy import prompts, store  # noqa: E402
 
 def send_imessage(recipient: str, text: str) -> bool:
     """Same AppleScript path as the comms iMessage adapter."""
+    if not scope.send_allowed(recipient):
+        log.warning("scope: send to %s denied by allowlist", recipient)
+        return False
     safe_text = text.replace("\\", "\\\\").replace('"', '\\"')
     safe_rcpt = recipient.replace("\\", "\\\\").replace('"', '\\"')
     script = f'''

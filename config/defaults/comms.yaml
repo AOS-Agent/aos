@@ -1,0 +1,35 @@
+# Comms configuration — Default Template
+# Instance copy lives at ~/.aos/config/comms.yaml (seeded by install.sh or
+# migration 136 when absent; never overwritten). A missing file means every
+# setting below is at its default.
+#
+# ── iMessage scope ───────────────────────────────────────────────────────
+# macOS Full Disk Access is all-or-nothing: once AOS can open
+# ~/Library/Messages/chat.db it can read every conversation on the Mac. This
+# section is the only thing that narrows that. The gate lives in
+# core/engine/comms/scope.py and is applied on every chat.db connection the
+# comms engine opens (adapter, desktop ingest, Converse, Sentinel) and on
+# every outbound send.
+#
+#   access: all        — every thread visible, every recipient sendable.
+#                        This is the default and today's behaviour.
+#   access: allowlist  — only the contacts under `allowed:` are visible or
+#                        sendable. Everything else is invisible to AOS.
+#
+# Handles are matched on digits for phones (+1 416 555 0123 == 4165550123)
+# and case-insensitively for emails. A 1:1 chat is visible when its one
+# participant is allowlisted. Group chats are hidden unless
+# `include_groups: true`, in which case any group containing an allowlisted
+# participant becomes visible (including the other members' messages).
+#
+# Every gated open writes one line to ~/.aos/logs/comms.log:
+#   2026-09-15T19:20:01 scope=allowlist source=adapter chats=1 handles=2
+
+imessage:
+  access: all
+  include_groups: false
+  # allowed:
+  #   - name: Hisham
+  #     handles:
+  #       - "+14165550123"
+  #       - "hisham@example.com"

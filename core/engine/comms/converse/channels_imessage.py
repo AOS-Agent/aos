@@ -22,6 +22,7 @@ import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .. import scope
 from .channels import (
     InboundMsg,
     SendResult,
@@ -42,8 +43,7 @@ MAC_EPOCH = 978307200
 def _open_ro() -> sqlite3.Connection:
     """Read-only URI open of chat.db — no copy, matches
     sentinel/watcher.py's `_open_chat_db_ro`. Requires Full Disk Access."""
-    uri = f"file:{CHAT_DB}?mode=ro"
-    conn = sqlite3.connect(uri, uri=True, timeout=2)
+    conn = scope.open_chat_db(CHAT_DB, source="converse")
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -123,6 +123,9 @@ class iMessageChannel:
         """AppleScript send — conversation_ref is chat.db's chat_identifier,
         which for 1:1 iMessage IS the recipient handle (phone/email), so it
         is used directly as the `participant` target."""
+        if not scope.send_allowed(conversation_ref):
+            log.warning("scope: send to %s denied by allowlist", conversation_ref)
+            return SendResult(ok=False, error="scope: recipient not in allowlist")
         safe_text = text.replace("\\", "\\\\").replace('"', '\\"')
         safe_rcpt = conversation_ref.replace("\\", "\\\\").replace('"', '\\"')
         script = f'''

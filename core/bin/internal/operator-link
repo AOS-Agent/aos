@@ -40,6 +40,12 @@ import sys
 import time
 from pathlib import Path
 
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from core.engine.comms import scope  # noqa: E402
+
 PEOPLE_DB = Path.home() / ".aos" / "data" / "people.db"
 CHAT_DB = Path.home() / "Library" / "Messages" / "chat.db"
 OPERATOR_YAML = Path.home() / ".aos" / "config" / "operator.yaml"
@@ -119,6 +125,9 @@ def discover_operator_identifiers(default_region: str = "US") -> tuple[set[str],
         return phones, emails
 
     conn = sqlite3.connect(str(CHAT_DB))
+    # Allowlist gate: with a restricted policy this only sees the operator's
+    # own side of the permitted threads — still enough to find their account.
+    scope.apply(conn, source="operator-link")
     try:
         rows = conn.execute(
             "SELECT DISTINCT account FROM message WHERE is_from_me=1 AND account IS NOT NULL"

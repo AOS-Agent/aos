@@ -5,7 +5,7 @@ discover which communication channels are active. No separate comms config —
 the integrations registry is the single source of truth.
 
 Usage:
-    from core.comms.registry import get_active_channels, load_adapters
+    from core.engine.comms.registry import get_active_channels, load_adapters
 
     # What comms integrations are available?
     channels = get_active_channels()
@@ -115,21 +115,32 @@ def load_adapter(channel_id: str) -> ChannelAdapter | None:
     if not class_name:
         return None
 
-    try:
-        # Import relative to core.comms
-        full_module = f"core.comms.{module_path}"
-        module = importlib.import_module(full_module)
-        adapter_class = getattr(module, class_name)
-        return adapter_class()
-    except (ImportError, AttributeError):
-        # Try relative import as fallback
+    # The package lives at core/engine/comms. Which absolute name resolves
+    # depends on what the caller put on sys.path: the repo root
+    # (core.engine.comms.*), core/ (engine.comms.*, the shape every
+    # core/bin/cli tool uses), or a package-relative import when this module
+    # was itself imported as part of the package.
+    candidates = [
+        f"core.engine.comms.{module_path}",
+        f"engine.comms.{module_path}",
+    ]
+    pkg = __package__ or ""
+    if pkg:
+        candidates.append(f"{pkg}.{module_path}")
+
+    for full_module in candidates:
         try:
-            module = importlib.import_module(f".{module_path}", package="core.comms")
-            adapter_class = getattr(module, class_name)
+            module = importlib.import_module(full_module)
+        except ImportError:
+            continue
+        adapter_class = getattr(module, class_name, None)
+        if adapter_class is None:
+            continue
+        try:
             return adapter_class()
         except Exception:
-            pass
-        return None
+            return None
+    return None
 
 
 def load_adapters() -> list[ChannelAdapter]:

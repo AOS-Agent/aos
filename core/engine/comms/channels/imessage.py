@@ -15,10 +15,12 @@ import re
 import shutil
 import sqlite3
 import subprocess
+import sys
 import tempfile
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from .. import scope
 from ..channel import ChannelAdapter
 from ..models import Conversation, Message
 
@@ -288,6 +290,11 @@ class iMessageAdapter(ChannelAdapter):
         """
         if not recipient or not text:
             return False
+        if not scope.send_allowed(recipient):
+            print(
+                f"scope: send to {recipient} denied by allowlist", file=sys.stderr
+            )
+            return False
 
         # Escape single quotes for AppleScript
         safe_text = text.replace("\\", "\\\\").replace('"', '\\"')
@@ -335,6 +342,9 @@ class iMessageAdapter(ChannelAdapter):
 
         conn = sqlite3.connect(tmp.name)
         conn.row_factory = sqlite3.Row
+        # Allowlist gate: from here on every query on this connection sees
+        # only the threads ~/.aos/config/comms.yaml permits (scope.py).
+        scope.apply(conn, source="adapter")
         # Track tmp path for potential cleanup
         self._tmp_path = tmp.name
         return conn

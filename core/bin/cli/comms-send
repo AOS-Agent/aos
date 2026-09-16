@@ -1,0 +1,117 @@
+#!/usr/bin/env python3
+"""comms-send — send one iMessage, verbatim, to an allowlisted contact.
+
+The operator-facing send path of the comms engine. The recipient is an
+allowlist *name* from ~/.aos/config/comms.yaml ("Hisham") or a raw handle
+(phone number or email). The allowlist gate (core/engine/comms/scope.py) is
+checked here and again inside the adapter, so nothing outside it can be
+reached by this tool.
+
+Usage:
+    comms-send [--dry-run] [--channel messages] <name-or-handle> <text>
+
+Examples:
+    comms-send Hisham "running 10 min late"
+    comms-send --dry-run Hisham "hello"
+    comms-send "+14165550100" "hello"
+
+Exit codes:
+    0  sent (or --dry-run resolved)
+    1  send failed (Messages.app / AppleScript error)
+    2  usage error, or recipient not in the allowlist
+
+Every attempt appends one line to ~/.aos/logs/comms.log with the recipient,
+the character count and the result. The message text is never logged.
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+# Make the engine package importable (core/ is parents[2] of this file).
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from engine.comms import recipients, registry, scope  # noqa: E402
+
+CHANNEL_MESSAGES = "messages"
+
+
+def _load_adapter():
+    adapter = registry.load_adapter(CHANNEL_MESSAGES)
+    if adapter is not None:
+        return adapter
+    print(
+        "comms-send: registry could not load the iMessage adapter; "
+        "importing it directly",
+        file=sys.stderr,
+    )
+    from engine.comms.channels.imessage import iMessageAdapter
+
+    return iMessageAdapter()
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="comms-send",
+        description="Send one iMessage, verbatim, to an allowlisted contact.",
+    )
+    parser.add_argument("recipient", help="allowlist name or phone/email handle")
+    parser.add_argument("text", help="message body, sent exactly as given")
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="resolve and check the recipient, send nothing",
+    )
+    parser.add_argument(
+        "--channel",
+        default=CHANNEL_MESSAGES,
+        choices=[CHANNEL_MESSAGES],
+        help="outbound channel (only iMessage today)",
+    )
+    args = parser.parse_args(argv)
+
+    text = args.text
+    if not text.strip():
+        print("comms-send: refusing to send an empty message", file=sys.stderr)
+        return 2
+
+    policy = scope.load_policy()
+    rcpt = recipients.resolve(args.recipient, policy)
+    chars = len(text)
+
+    if not rcpt.allowed:
+        recipients.log_send(rcpt, channel=args.channel, chars=chars, result="denied")
+        print(
+            f"denied: {args.recipient} is not in the iMessage allowlist "
+            f"({policy.source_path})",
+            file=sys.stderr,
+        )
+        return 2
+
+    if args.dry_run:
+        recipients.log_send(rcpt, channel=args.channel, chars=chars, result="dry-run")
+        print(f"would send to {rcpt.label}")
+        return 0
+
+    adapter = _load_adapter()
+    try:
+        ok = bool(adapter.send_message(rcpt.handle, text))
+        reason = "Messages.app did not accept the message"
+    except Exception as exc:  # the adapter should not raise, but never crash here
+        ok = False
+        reason = str(exc) or exc.__class__.__name__
+
+    if ok:
+        recipients.log_send(rcpt, channel=args.channel, chars=chars, result="sent")
+        print(f"sent to {rcpt.label}")
+        return 0
+
+    recipients.log_send(rcpt, channel=args.channel, chars=chars, result="failed")
+    print(f"send failed: {reason}", file=sys.stderr)
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
