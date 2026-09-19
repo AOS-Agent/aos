@@ -102,7 +102,7 @@ def _resolve_db_path() -> Path:
 DB_PATH = _resolve_db_path()
 WORK_DIR = Path.home() / ".aos" / "work"
 ACTIVITY_FILE = WORK_DIR / "activity.yaml"
-AOS_REPO = "hishamalhadi/aos"
+AOS_REPO = "AOS-Agent/aos"
 MAX_ACTIVITY = 100
 
 # The title the SessionEnd hook generates, and therefore the one shape that

@@ -22,7 +22,7 @@
 ## Quick Start
 
 ```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/hishamalhadi/aos/main/bootstrap.sh)"
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/AOS-Agent/aos/main/bootstrap.sh)"
 ```
 
 Idempotent — safe to re-run. Budget **20–30 minutes**: it provisions its own Python,
@@ -245,13 +245,13 @@ Four boundaries. Never crossed.
 ### One-liner
 
 ```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/hishamalhadi/aos/main/bootstrap.sh)"
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/AOS-Agent/aos/main/bootstrap.sh)"
 ```
 
 ### Manual
 
 ```bash
-git clone https://github.com/hishamalhadi/aos.git ~/aos
+git clone https://github.com/AOS-Agent/aos.git ~/aos
 cd ~/aos && bash install.sh
 ```
 

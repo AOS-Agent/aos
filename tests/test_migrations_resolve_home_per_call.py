@@ -83,6 +83,8 @@ HELPERS: dict[str, list[str]] = {
     "135_claude_profile_launchers": [
         "_home", "_local_bin", "_cld_source", "_cld2_link", "_cld3_link", "_aos_link",
     ],
+    "136_comms_scope_config": ["_home", "_instance_config", "_template"],
+    "137_repo_url_aos_agent": ["_checkouts"],
 }
 
 

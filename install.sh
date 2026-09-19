@@ -5,10 +5,10 @@
 #
 #  Usage (one-liner — see bootstrap.sh; it fetches a tarball and hands off
 #  here, so a fresh Mac's git-stub CLT prompt can't kill the install):
-#    bash -c "$(curl -fsSL https://raw.githubusercontent.com/hishamalhadi/aos/main/bootstrap.sh)"
+#    bash -c "$(curl -fsSL https://raw.githubusercontent.com/AOS-Agent/aos/main/bootstrap.sh)"
 #
 #  Or manually:
-#    git clone https://github.com/hishamalhadi/aos.git ~/aos
+#    git clone https://github.com/AOS-Agent/aos.git ~/aos
 #    bash ~/aos/install.sh
 #
 #  Idempotent. Safe to re-run. Resumes from where it left off.
@@ -56,7 +56,7 @@ AOS_VERSION=$(
 )
 AOS_VERSION=$(echo "$AOS_VERSION" | tr -d '[:space:]')
 [[ -n "$AOS_VERSION" ]] || AOS_VERSION="0.1.0"
-AOS_REPO="https://github.com/hishamalhadi/aos.git"
+AOS_REPO="https://github.com/AOS-Agent/aos.git"
 AOS_BRANCH="main"
 
 # ── Paths ────────────────────────────────────────────

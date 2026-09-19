@@ -17,7 +17,7 @@
 
 set -euo pipefail
 
-REPO_TARBALL="https://codeload.github.com/hishamalhadi/aos/tar.gz/refs/heads/main"
+REPO_TARBALL="https://codeload.github.com/AOS-Agent/aos/tar.gz/refs/heads/main"
 
 STAGE="$(mktemp -d "${TMPDIR:-/tmp}/aos-bootstrap.XXXXXX")"
 # Cleaned on failure only. On success we `exec` into install.sh, which replaces
