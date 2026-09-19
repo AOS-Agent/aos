@@ -3,7 +3,11 @@ Test suite for the AOS Context Injection Hook (core/engine/work/inject_context.p
 
 Tests exercise the module's output contract:
   - Always produces valid JSON
-  - Contains the "additionalContext" key
+  - Context rides in hookSpecificOutput.additionalContext — the only place
+    Claude Code reads it. A top-level "additionalContext" key is silently
+    ignored; until v0.7.14 the hook emitted exactly that and no session ever
+    received its briefing, while this suite (which asserted the same wrong
+    shape) stayed green.
   - Handles an empty or absent work database without crashing
   - Active tasks appear in context
   - High-priority tasks (P1/P2) are surfaced
@@ -189,7 +193,8 @@ def maintenance_log_for(db_path: Path) -> Path:
 def run_inject_context(db_path: Path, hook_input: dict = None) -> dict:
     """Run inject_context.py as a subprocess against db_path, return parsed JSON."""
     if hook_input is None:
-        hook_input = {"session_id": "test-session-001", "cwd": str(db_path.parent)}
+        hook_input = {"session_id": "test-session-001", "cwd": str(db_path.parent),
+                      "hook_event_name": "SessionStart", "source": "startup"}
 
     import os
     env = dict(os.environ)
@@ -219,13 +224,15 @@ def run_inject_context(db_path: Path, hook_input: dict = None) -> dict:
 
 
 # ===========================================================================
-# Output Format — 3 tests
+# Output Format
 # ===========================================================================
 
 class TestOutputFormat:
 
-    def test_output_is_valid_json_with_additionalcontext_key(self, tmp_path):
-        """inject_context always outputs valid JSON with an 'additionalContext' key."""
+    def test_context_is_where_claude_code_reads_it(self, tmp_path):
+        """The documented SessionStart shape, exactly: context nested under
+        hookSpecificOutput with hookEventName naming the event, and no
+        top-level additionalContext (Claude Code drops that without a word)."""
         db_path = tmp_path / "work.db"
         _make_work_db(db_path)
 
@@ -233,10 +240,75 @@ class TestOutputFormat:
 
         assert isinstance(output, dict), \
             "Output must be a JSON object (dict)"
-        assert "additionalContext" in output, \
-            f"Output must contain 'additionalContext' key, got keys: {list(output.keys())}"
-        assert isinstance(output["additionalContext"], str), \
-            "additionalContext must be a string"
+        assert "additionalContext" not in output, (
+            "a top-level additionalContext is ignored by Claude Code — the "
+            "briefing never reaches the session"
+        )
+        hso = output.get("hookSpecificOutput")
+        assert isinstance(hso, dict), \
+            f"Output must carry hookSpecificOutput, got keys: {list(output.keys())}"
+        assert hso.get("hookEventName") == "SessionStart"
+        assert isinstance(hso.get("additionalContext"), str) and hso["additionalContext"], \
+            "additionalContext must be a non-empty string"
+
+    def test_the_briefing_is_reinjected_after_compaction(self, tmp_path):
+        """SessionStart fires again with source "compact" after compaction.
+        That is the path that restores the briefing, so it must inject."""
+        db_path = tmp_path / "work.db"
+        _make_work_db(db_path, tasks=[
+            {"id": "t#1", "title": "Build session linking", "status": "active",
+             "priority": 2, "created": "2026-01-01"},
+        ])
+
+        output = run_inject_context(db_path, {
+            "session_id": "s1", "cwd": str(tmp_path),
+            "hook_event_name": "SessionStart", "source": "compact",
+        })
+
+        assert output["hookSpecificOutput"]["hookEventName"] == "SessionStart"
+        assert "Build session linking" in output["hookSpecificOutput"]["additionalContext"]
+
+    def test_postcompact_stays_silent(self, tmp_path):
+        """The hook is also registered on PostCompact. SessionStart(compact)
+        already re-injects, so PostCompact emits nothing: no second copy of
+        the briefing, and no SessionStart-shaped payload on an event whose
+        name does not match it."""
+        db_path = tmp_path / "work.db"
+        _make_work_db(db_path, tasks=[
+            {"id": "t#1", "title": "Build session linking", "status": "active",
+             "priority": 2, "created": "2026-01-01"},
+        ])
+
+        output = run_inject_context(db_path, {
+            "session_id": "s1", "cwd": str(tmp_path),
+            "hook_event_name": "PostCompact",
+        })
+
+        assert output == {}, f"PostCompact must emit {{}}, got {output}"
+
+    def test_the_onboarding_banner_reaches_the_session(self, tmp_path):
+        """On a fresh install (no onboarding.yaml) the early-exit path carries
+        the onboarding banner — through the same documented shape."""
+        import os
+        home = tmp_path / "home"
+        home.mkdir()
+        env = dict(os.environ)
+        env["HOME"] = str(home)
+        env["AOS_WORK_DB"] = str(tmp_path / "does_not_exist.db")
+        env["AOS_MAINTENANCE_LOG"] = str(tmp_path / "maintenance.jsonl")
+
+        result = subprocess.run(
+            [sys.executable, str(INJECT_CONTEXT)],
+            input=json.dumps({"session_id": "s1", "cwd": str(tmp_path),
+                              "hook_event_name": "SessionStart", "source": "startup"}),
+            capture_output=True, text=True, timeout=20, env=env,
+        )
+
+        assert result.returncode == 0, result.stderr
+        output = json.loads(result.stdout.strip())
+        assert "additionalContext" not in output
+        assert output["hookSpecificOutput"]["hookEventName"] == "SessionStart"
+        assert "ONBOARDING REQUIRED" in output["hookSpecificOutput"]["additionalContext"]
 
     def test_works_with_no_work_db(self, tmp_path):
         """inject_context exits cleanly even when the work database does not exist."""
@@ -259,10 +331,10 @@ class TestOutputFormat:
 
         output = run_inject_context(db_path)
 
-        assert "additionalContext" in output, \
+        assert "additionalContext" in output.get("hookSpecificOutput", {}), \
             "Must produce additionalContext when tasks exist but none are active"
         # Should not crash trying to list active tasks when there are none
-        context = output["additionalContext"]
+        context = output["hookSpecificOutput"]["additionalContext"]
         assert isinstance(context, str) and len(context) > 0, \
             "Context string must be non-empty"
 
@@ -287,8 +359,8 @@ class TestThreadContinuity:
             db_path, {"session_id": "s1", "cwd": str(tmp_path)}
         )
 
-        assert "additionalContext" in output
-        assert "Current thread" not in output["additionalContext"]
+        assert "additionalContext" in output.get("hookSpecificOutput", {})
+        assert "Current thread" not in output["hookSpecificOutput"]["additionalContext"]
 
     def test_an_auto_thread_for_this_cwd_does_not_render(self, tmp_path):
         """v0.7.7: an auto "Work in <dir>" thread is a record that a directory
@@ -309,8 +381,8 @@ class TestThreadContinuity:
 
         output = run_inject_context(db_path, {"session_id": "s1", "cwd": cwd})
 
-        assert "additionalContext" in output
-        assert "Work in scratch" not in output["additionalContext"]
+        assert "additionalContext" in output.get("hookSpecificOutput", {})
+        assert "Work in scratch" not in output["hookSpecificOutput"]["additionalContext"]
 
     def test_an_operator_written_thread_renders(self, tmp_path):
         """The inverse, and the reason this is a filter rather than a deletion:
@@ -330,7 +402,7 @@ class TestThreadContinuity:
 
         output = run_inject_context(db_path, {"session_id": "s1", "cwd": cwd})
 
-        assert "Qren cutover night" in output["additionalContext"]
+        assert "Qren cutover night" in output["hookSpecificOutput"]["additionalContext"]
 
     def test_a_closed_thread_does_not_render(self, tmp_path):
         db_path = tmp_path / "work.db"
@@ -347,7 +419,7 @@ class TestThreadContinuity:
         conn.close()
 
         output = run_inject_context(db_path, {"session_id": "s1", "cwd": cwd})
-        assert "Qren cutover night" not in output["additionalContext"]
+        assert "Qren cutover night" not in output["hookSpecificOutput"]["additionalContext"]
 
 
 # ===========================================================================
@@ -367,7 +439,7 @@ class TestContextContent:
         ])
 
         output = run_inject_context(db_path)
-        context = output.get("additionalContext", "")
+        context = output.get("hookSpecificOutput", {}).get("additionalContext", "")
 
         assert "Active feature work" in context, \
             "Active task title must appear in injected context"
@@ -385,7 +457,7 @@ class TestContextContent:
         ])
 
         output = run_inject_context(db_path)
-        context = output.get("additionalContext", "")
+        context = output.get("hookSpecificOutput", {}).get("additionalContext", "")
 
         assert "Urgent P1 task" in context, \
             "P1 task must appear in context"
@@ -450,7 +522,7 @@ class TestBriefingDiet:
 
         context = run_inject_context(
             db_path, {"session_id": "s1", "cwd": cwd}
-        )["additionalContext"]
+        )["hookSpecificOutput"]["additionalContext"]
 
         assert "aos-app workspace layer build" in context, (
             "the promoted thread is the one the operator curated — it must render"
@@ -466,7 +538,7 @@ class TestBriefingDiet:
 
         context = run_inject_context(
             db_path, {"session_id": "s1", "cwd": cwd}
-        )["additionalContext"]
+        )["hookSpecificOutput"]["additionalContext"]
 
         est_tokens = len(context) / 4
         assert est_tokens < 900, (
@@ -486,7 +558,7 @@ class TestBriefingDiet:
 
         context = run_inject_context(
             db_path, {"session_id": "s1", "cwd": cwd}
-        )["additionalContext"]
+        )["hookSpecificOutput"]["additionalContext"]
 
         log = maintenance_log_for(db_path)
         assert log.exists(), "the hook did not write a maintenance log entry"
@@ -530,7 +602,7 @@ class TestBriefingDiet:
             capture_output=True, text=True, timeout=20, env=env,
         )
         assert result.returncode == 0, result.stderr
-        assert "additionalContext" in json.loads(result.stdout.strip())
+        assert "additionalContext" in json.loads(result.stdout.strip())["hookSpecificOutput"]
 
     def test_the_ceiling_holds_when_the_briefing_is_fat(self, tmp_path):
         """The 900-token figure is a delivered ceiling, not a section budget.
@@ -556,7 +628,7 @@ class TestBriefingDiet:
 
         context = run_inject_context(
             db_path, {"session_id": "s1", "cwd": cwd}
-        )["additionalContext"]
+        )["hookSpecificOutput"]["additionalContext"]
 
         est_tokens = len(context) / 4
         assert est_tokens < 900, (

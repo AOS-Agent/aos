@@ -3,14 +3,18 @@
 AOS Work Context Injection Hook
 
 Runs on SessionStart and PostCompact.
-Reads work.yaml, finds active/due tasks and threads, outputs additionalContext JSON.
+Reads work.yaml, finds active/due tasks and threads, injects them as context.
 
 Also writes a .session-context.json file that session_close.py reads
 to know which tasks were in scope during this session.
 
 Claude Code hooks protocol:
-- Read hook input from stdin (JSON with session info)
-- Output JSON to stdout with optional additionalContext field
+- Read hook input from stdin (JSON with session info, incl. hook_event_name)
+- Output JSON to stdout. Context goes in
+  {"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": ...}}
+  — see _emit(). A top-level "additionalContext" key is ignored without a
+  word; the hook emitted exactly that until v0.7.14, so no session received
+  its briefing.
 - MUST output valid JSON and exit 0 — any failure kills the session start
 """
 
@@ -22,12 +26,41 @@ import sys
 from pathlib import Path
 
 
-def _safe_exit(context: str = ""):
-    """Always output valid JSON and exit clean. Never let this hook fail."""
-    if context:
-        print(json.dumps({"additionalContext": context}))
+# The event that invoked this run. main() sets it from the hook input; an
+# early exit that fires before main() (an import failure) reads stdin itself.
+_HOOK_EVENT: str | None = None
+
+
+def _hook_event() -> str:
+    global _HOOK_EVENT
+    if _HOOK_EVENT is None:
+        try:
+            _HOOK_EVENT = json.loads(sys.stdin.read() or "{}").get("hook_event_name") or "SessionStart"
+        except Exception:
+            _HOOK_EVENT = "SessionStart"
+    return _HOOK_EVENT
+
+
+def _emit(context: str = "") -> None:
+    """Print the hook result in the shape Claude Code actually reads.
+
+    Only SessionStart injects. SessionStart also fires with source "compact"
+    after compaction, which is what restores the briefing, so the PostCompact
+    run prints {}: no second copy, and no SessionStart-shaped payload on an
+    event it does not name.
+    """
+    if context and _hook_event() == "SessionStart":
+        print(json.dumps({"hookSpecificOutput": {
+            "hookEventName": "SessionStart",
+            "additionalContext": context,
+        }}))
     else:
         print(json.dumps({}))
+
+
+def _safe_exit(context: str = ""):
+    """Always output valid JSON and exit clean. Never let this hook fail."""
+    _emit(context)
     sys.exit(0)
 
 
@@ -396,6 +429,9 @@ def main():
         hook_input = json.loads(sys.stdin.read())
     except (json.JSONDecodeError, Exception):
         hook_input = {}
+
+    global _HOOK_EVENT
+    _HOOK_EVENT = hook_input.get("hook_event_name") or "SessionStart"
 
     session_id = hook_input.get("session_id", "unknown")
     cwd = hook_input.get("cwd", os.getcwd())
@@ -978,7 +1014,7 @@ def main():
     except Exception:
         pass  # A hook must always emit valid JSON and exit 0
 
-    print(json.dumps({"additionalContext": rendered}))
+    _emit(rendered)
 
 
 if __name__ == "__main__":
