@@ -37,6 +37,17 @@ DUR_MS=$(echo "$input" | jq -r '.cost.total_duration_ms // 0')
 LA=$(echo "$input" | jq -r '.cost.total_lines_added // 0')
 LD=$(echo "$input" | jq -r '.cost.total_lines_removed // 0')
 VER=$(cat ~/aos/VERSION 2>/dev/null || echo "?")
+
+# Which login is this session spending? `cld2`/`cld3`/… export
+# CLAUDE_CONFIG_DIR to an isolated profile directory; plain `cld` leaves it
+# unset and Claude Code reads ~/.claude.json. With five lanes on this machine
+# the account is the one thing the line could not previously answer, and a
+# session running in somebody else's account should never look like the
+# operator's own. Absent/unreadable/logged-out resolves to empty and the
+# segment is simply omitted — the statusline never fails loudly.
+ACCOUNT_CFG="$HOME/.claude.json"
+[ -n "${CLAUDE_CONFIG_DIR:-}" ] && ACCOUNT_CFG="$CLAUDE_CONFIG_DIR/.claude.json"
+EMAIL=$(jq -r '.oauthAccount.emailAddress // empty' "$ACCOUNT_CFG" 2>/dev/null)
 HP=$(echo "$input" | jq -r '.rate_limits.five_hour.used_percentage // empty' | cut -d. -f1)
 WP=$(echo "$input" | jq -r '.rate_limits.seven_day.used_percentage // empty' | cut -d. -f1)
 HR=$(echo "$input" | jq -r '.rate_limits.five_hour.resets_at // empty')
@@ -84,6 +95,11 @@ O+=" ${DIM}\$${R}${COST} $(fmt_dur $DUR_MS)"
 
 # Version (VER already contains the number, no extra v)
 O+=" ${DIM}${YEL}${VER}${R}"
+
+# Account — grouped with the version as environment, not live metrics, and
+# ahead of dir/branch so a narrow terminal truncates the path before the
+# identity.
+[ -n "$EMAIL" ] && O+=" ${DIM}${EMAIL}${R}"
 
 # Dir + branch
 O+=" ${B}${DIR}${R}"
