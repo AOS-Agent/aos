@@ -50,6 +50,7 @@ import importlib.machinery
 import importlib.util
 import json
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -135,8 +136,14 @@ class TestDailyBriefingWritesUnderDotAos:
         drip message to send, without needing a real Telegram round trip."""
         home, aos_dir = sandbox_home
         (home / ".aos" / "config").mkdir(parents=True, exist_ok=True)
+        # Relative to today, not a fixed date: the drip only runs for the
+        # first 7 days after onboarding, so a hardcoded `completed` silently
+        # stops exercising the crash site once it ages past the window and
+        # `_send_learning_drip` returns before ever reaching the mkdir. This
+        # test was pinned to 2026-09-12 and began failing on 2026-09-19.
+        completed = datetime.now(timezone.utc) - timedelta(days=2)
         (home / ".aos" / "config" / "onboarding.yaml").write_text(
-            "completed: '2026-09-12T00:00:00Z'\n"
+            f"completed: '{completed.strftime('%Y-%m-%dT%H:%M:%SZ')}'\n"
         )
 
         mod = _load_module(DAILY_BRIEFING_PATH, "daily_briefing_uut_2")
