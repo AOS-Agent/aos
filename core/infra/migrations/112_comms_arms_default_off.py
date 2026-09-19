@@ -40,6 +40,7 @@ DESCRIPTION = "sentinel/converse/envoy off by default (autonomous comms → Qren
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 ARMS = ("sentinel", "converse", "envoy")
@@ -73,15 +74,34 @@ def _loaded(label: str) -> bool:
         return False
 
 
-def _bootout(label: str) -> bool:
+def _bootout(label: str, settle: float = 10.0) -> bool:
+    """Boot a job out and wait for it to actually leave the domain.
+
+    `launchctl bootout` returns before launchd has finished tearing the job
+    down, and every one of these arms ships `KeepAlive: true` — so a caller
+    that reads the domain immediately after can still see the job, either
+    mid-shutdown or re-spawned. up() ends in check(), which fails on a loaded
+    arm, so that race made this migration report failure on a machine where it
+    had in fact just succeeded — and a failed migration halts the whole chain
+    behind it (a v0.7.1 machine stranded at 111 on the way to 136).
+
+    So the wait belongs here, where the asynchrony is, rather than in check():
+    return only once the label is gone, or once we have genuinely given up.
+    """
     try:
         subprocess.run(
             ["launchctl", "bootout", f"gui/{os.getuid()}/{label}"],
             capture_output=True, timeout=30,
         )
-        return True
     except Exception:  # noqa: BLE001
         return False
+
+    deadline = time.monotonic() + settle
+    while time.monotonic() < deadline:
+        if not _loaded(label):
+            return True
+        time.sleep(0.25)
+    return not _loaded(label)
 
 
 def check() -> bool:
@@ -112,11 +132,14 @@ def up() -> bool:
         added = disable_service(name)
         state = "recorded off" if added else "already recorded off"
 
-        if _loaded(label):
-            _bootout(label)
+        if not _loaded(label):
+            print(f"  ✓ {name}: {state} (not loaded)")
+        elif _bootout(label):
             print(f"  ✓ {name}: {state}, booted out {label}")
         else:
-            print(f"  ✓ {name}: {state} (not loaded)")
+            # Say so rather than printing a ✓ and then failing in check() with
+            # no indication of which arm was the holdout.
+            print(f"  ✗ {name}: {state}, but {label} is STILL LOADED after bootout")
 
     print(f"     Declaration: {_services_config_path()}")
     print("     Opt back in: list the name under `enabled:` and reload its plist")
