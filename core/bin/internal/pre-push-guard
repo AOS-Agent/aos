@@ -21,8 +21,38 @@ fail() { echo "✋ pre-push-guard: $1" >&2; echo "   (override: FORCE_GUARD=1 gi
 
 while read -r _local_ref local_sha _remote_ref remote_sha; do
     [ "$local_sha" = "0000000000000000000000000000000000000000" ] && continue  # deletion
+
+    # A ref that lands on a commit the remote already carries adds no content:
+    # every object is already on the server, and already passed this guard on
+    # the way to main. `aos promote` is exactly this — it moves the `stable`
+    # tag onto a commit that IS origin/main. But the range below is computed
+    # against the ref's OLD value (July's tag), so the months of real history
+    # in between read as deleted migrations/tests and the push is refused as a
+    # stale-tree clobber. That trains the operator to reflex-override the one
+    # hook standing between a bad tree and main, which is worse than the false
+    # positive itself. A tag onto unpushed local work still has no containing
+    # remote branch, so it stays fully checked.
+    if git branch -r --contains "$local_sha" 2>/dev/null | grep -q .; then
+        continue
+    fi
+
     if [ "$remote_sha" = "0000000000000000000000000000000000000000" ]; then
-        range="$local_sha"  # new branch: check the tip commit only
+        # A ref the remote has never seen (new branch, or a new tag). The
+        # intent was "check the tip commit only", but `git diff <sha>` diffs
+        # the WORKING TREE against that commit — which is empty immediately
+        # after committing, so all three checks below silently found nothing
+        # and every new ref sailed straight through. Diff from the last commit
+        # the remote already carries instead, so a new ref is checked on
+        # exactly what it introduces.
+        oldest_new=$(git rev-list "$local_sha" --not --remotes 2>/dev/null | tail -1)
+        if [ -n "$oldest_new" ] && git rev-parse -q --verify "${oldest_new}^{commit}" >/dev/null 2>&1 \
+           && git rev-parse -q --verify "${oldest_new}^" >/dev/null 2>&1; then
+            range="${oldest_new}^..$local_sha"
+        else
+            # Root commit: diff against the empty tree so the checks still see
+            # every file the push introduces.
+            range="4b825dc642cb6eb9a060e54bf8d69288fbee4904..$local_sha"
+        fi
     else
         range="$remote_sha..$local_sha"
     fi

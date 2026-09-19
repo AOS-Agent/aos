@@ -85,3 +85,97 @@ def test_force_guard_overrides(tmp_path):
     base, tip = _shas(r)
     res = _run_guard(r, base, tip, {"FORCE_GUARD": "1"})
     assert res.returncode == 0
+
+
+# ── A ref that lands on a commit the remote already has ──────────────────────
+#
+# `aos promote` moves the `stable` tag onto the commit that IS origin/main.
+# The range is computed against the tag's OLD value — months back — so every
+# migration and test legitimately deleted in between read as a stale-tree
+# clobber and the promotion was refused (2026-09-19: a friend machine sat on
+# v0.7.1 while stable could not be advanced). Nothing is being introduced:
+# the server already has that commit, and it passed this guard on its way to
+# main. What must NOT happen is the guard going quiet for unpushed work that
+# merely has a tag pointed at it.
+
+def _mk_repo_with_remote(tmp_path):
+    """Fixture repo whose main is already published to a bare remote."""
+    r = _mk_repo(tmp_path)
+    bare = tmp_path / "remote.git"
+    _git(r, "init", "-q", "--bare", str(bare))
+    _git(r, "remote", "add", "origin", str(bare))
+    _git(r, "push", "-q", "origin", "main")
+    _git(r, "fetch", "-q", "origin")
+    return r
+
+
+def _run_guard_ref(repo, ref, tip_sha, remote_sha, env_extra=None):
+    import os
+    env = dict(os.environ)
+    env.pop("FORCE_GUARD", None)
+    if env_extra:
+        env.update(env_extra)
+    line = f"{ref} {tip_sha} {ref} {remote_sha}\n"
+    return subprocess.run(["bash", str(GUARD)], input=line, text=True,
+                          capture_output=True, cwd=str(repo), env=env)
+
+
+ZERO = "0" * 40
+
+
+def test_tag_promotion_onto_published_commit_passes(tmp_path):
+    """The promote case: tag moves onto a commit origin/main already carries."""
+    r = _mk_repo_with_remote(tmp_path)
+    old_tag_target = _git(r, "rev-parse", "HEAD").stdout.strip()
+
+    # A later commit legitimately retires a shipped migration, and is pushed.
+    _git(r, "rm", "-q", "core/infra/migrations/001_seed.py")
+    _git(r, "commit", "-qm", "retire 001 deliberately")
+    _git(r, "push", "-q", "origin", "main")
+    _git(r, "fetch", "-q", "origin")
+    tip = _git(r, "rev-parse", "HEAD").stdout.strip()
+
+    res = _run_guard_ref(r, "refs/tags/stable", tip, old_tag_target)
+    assert res.returncode == 0, (
+        "moving a tag onto a commit the remote already has introduces nothing "
+        f"and must not be refused: {res.stderr}")
+
+
+def test_tag_on_unpushed_work_is_still_checked(tmp_path):
+    """The hole that must stay shut: a tag is not a way past the guard."""
+    r = _mk_repo_with_remote(tmp_path)
+    _git(r, "rm", "-q", "core/infra/migrations/001_seed.py")
+    _git(r, "commit", "-qm", "unpushed clobber")
+    tip = _git(r, "rev-parse", "HEAD").stdout.strip()
+
+    res = _run_guard_ref(r, "refs/tags/rogue", tip, ZERO)
+    assert res.returncode != 0, "unpushed work must be inspected, tag or not"
+    assert "clobber" in res.stderr.lower()
+
+
+def test_new_branch_is_checked_on_what_it_introduces(tmp_path):
+    """A brand-new ref used to be diffed against the WORKING TREE, which is
+    empty right after committing — so new branches sailed past every check."""
+    r = _mk_repo_with_remote(tmp_path)
+    _git(r, "checkout", "-q", "-b", "feature")
+    (r / "big.bin").write_bytes(b"\0" * (6 * 1024 * 1024))
+    _git(r, "add", "big.bin")
+    _git(r, "commit", "-qm", "big binary on a new branch")
+    tip = _git(r, "rev-parse", "HEAD").stdout.strip()
+
+    res = _run_guard_ref(r, "refs/heads/feature", tip, ZERO)
+    assert res.returncode != 0, "a new branch must be checked, not waved through"
+    assert ">5MB" in res.stderr
+
+
+def test_clean_new_branch_still_passes(tmp_path):
+    """Checking new refs must not mean refusing ordinary ones."""
+    r = _mk_repo_with_remote(tmp_path)
+    _git(r, "checkout", "-q", "-b", "feature")
+    (r / "feature.py").write_text("x = 1\n")
+    _git(r, "add", "feature.py")
+    _git(r, "commit", "-qm", "clean feature")
+    tip = _git(r, "rev-parse", "HEAD").stdout.strip()
+
+    res = _run_guard_ref(r, "refs/heads/feature", tip, ZERO)
+    assert res.returncode == 0, res.stderr
