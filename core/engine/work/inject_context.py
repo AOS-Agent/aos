@@ -25,7 +25,6 @@ import os
 import sys
 from pathlib import Path
 
-
 # The event that invoked this run. main() sets it from the hook input; an
 # early exit that fires before main() (an import failure) reads stdin itself.
 _HOOK_EVENT: str | None = None
