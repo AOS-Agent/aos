@@ -2,6 +2,15 @@
 
 All notable changes to AOS. Release notes sent via Telegram after each 4am update.
 
+## v0.7.15 — a deleted secret is actually deleted — 2026-09-20
+
+Summary: `agent-secret delete` reported success while leaving the credential fully readable. Found while retiring a bot's token: the command printed `Deleted: …` and exited 0, and `agent-secret get` returned the live token immediately afterwards.
+
+- Fixed `core/bin/cli/agent-secret delete` removing only one of the two places a secret lives. A secret can sit in the login keychain under `aos.<NAME>` and in the pre-migration `agent.keychain` under `<NAME>` (account `agent`); `get` and `check` both fall back to the legacy copy, but `delete` only ever removed the prefixed one. It now removes both, then verifies against the same lookup path `get` uses and fails loudly if anything is still readable — a revoked credential that still works is worse than one never revoked, because nobody checks twice.
+- Fixed the same command exiting 0 when the secret did not exist, so a caller could not distinguish a no-op from a deletion. It now exits 1. It also no longer leaks `security`'s keychain attribute dump to stdout on success.
+- Changed `agent-secret set` to purge a superseded legacy copy as well. `get` prefers the prefixed entry so a rotation already returned the new value, but the old — often the leaked — secret stayed on disk.
+- Added `tests/test_agent_secret_delete.py`, which runs against a stub `security` modelling both stores and never touches the real Keychain. Five of its six cases fail against the previous implementation.
+
 ## v0.7.14 — the briefing actually arrives — 2026-09-20
 
 Summary: The SessionStart hook has been rendering a work briefing every session and then throwing it away. Claude Code reads injected context only from `hookSpecificOutput.additionalContext`; the hook printed `additionalContext` at the top level, which is dropped without a word. Three things each said it was fine — the hook logged `briefing_rendered` with a character count, the test suite asserted the same wrong key, and Chief is instructed that the context is already present and must not be re-gathered — so the one witness was told not to look.
