@@ -18,6 +18,7 @@ confidence text for each time window.
 """
 
 import logging
+import os
 import re
 import time
 from pathlib import Path
@@ -27,6 +28,14 @@ logger = logging.getLogger(__name__)
 # The one model. Loaded once, used everywhere.
 MODEL_REPO = "mlx-community/whisper-large-v3-turbo"
 _engine = None
+
+# Which path transcription takes. "cloud" sends the audio to OpenRouter and
+# holds no model in this process at all; "local" is the original mlx-whisper
+# path. Cloud is the default on this machine: a resident 809M-param model on
+# 16GB evicts everything else and the service kept being found dead. The local
+# path is untouched and still the fallback — set TRANSCRIBER_BACKEND=local to
+# force it (and once a Mac Studio is doing the work, flip the default back).
+BACKEND = os.environ.get("TRANSCRIBER_BACKEND", "cloud").strip().lower()
 
 # Arabic Unicode range for detecting Arabic script in text
 _ARABIC_RE = re.compile(r'[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]')
@@ -92,6 +101,14 @@ def _load_engine():
 
 def warmup():
     """Pre-load the model so first request is fast."""
+    if BACKEND == "cloud":
+        import cloud
+        logger.info(
+            "Backend=cloud (%s) — no local model to warm up. Credential present: %s",
+            cloud.CLOUD_MODEL, cloud.available(),
+        )
+        return
+
     import struct
     import tempfile
     import wave
@@ -256,6 +273,42 @@ def _merge_bilingual(en_result: dict, ar_result: dict) -> tuple[list[dict], str]
     return merged, lang_summary
 
 
+def active_model() -> str:
+    """The model actually serving requests — what /health and /info report.
+
+    MODEL_REPO stays the mlx repo id because the local path passes it to
+    mlx_whisper; reporting it while the cloud backend is serving would send
+    anyone debugging this straight down the wrong hole.
+    """
+    if BACKEND == "cloud":
+        import cloud
+        return cloud.CLOUD_MODEL
+    return MODEL_REPO
+
+
+def _transcribe_cloud(audio_path: str, language_hint: str,
+                      timestamps: bool) -> TranscriptionResult:
+    """Run the cloud backend and shape it like a local result.
+
+    Note on bilingual: the local path runs two Whisper passes (EN + AR) and
+    merges them per segment. The cloud model does language ID and code
+    switching in one pass, so mixed Arabic/English needs no special mode here.
+    """
+    import cloud
+
+    d = cloud.transcribe(audio_path, language_hint=language_hint,
+                         timestamps=timestamps)
+    return TranscriptionResult(
+        text=d["text"],
+        language=d["language"],
+        language_probability=d["language_probability"],
+        segments=d["segments"],
+        duration_audio=d["duration_audio"],
+        duration_processing=d["duration_processing"],
+        source=d["source"],
+    )
+
+
 def transcribe(
     audio_path: str,
     mode: str = "accurate",
@@ -273,10 +326,19 @@ def transcribe(
     Returns:
         TranscriptionResult with text, language, segments, timing
     """
-    engine = _load_engine()
-
     if not Path(audio_path).exists():
         raise FileNotFoundError(f"Audio file not found: {audio_path}")
+
+    # Cloud first, and deliberately before _load_engine() — that call is what
+    # pulls the model into RAM. A failure here falls through to local rather
+    # than returning nothing.
+    if BACKEND == "cloud":
+        try:
+            return _transcribe_cloud(audio_path, language_hint, timestamps)
+        except Exception as e:
+            logger.warning(f"Cloud transcription failed ({e}); using local model.")
+
+    engine = _load_engine()
 
     t0 = time.monotonic()
 

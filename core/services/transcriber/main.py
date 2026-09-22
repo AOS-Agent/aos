@@ -197,7 +197,7 @@ async def health():
     """Health check endpoint."""
     return HealthResponse(
         status="ready" if _model_ready else "loading",
-        model=engine.MODEL_REPO,
+        model=engine.active_model(),
         uptime_seconds=round(time.monotonic() - _start_time, 1),
         requests_served=_requests_served,
     )
@@ -207,8 +207,8 @@ async def health():
 async def info():
     """Model and service information."""
     return {
-        "model": engine.MODEL_REPO,
-        "parameters": "809M",
+        "model": engine.active_model(),
+        "parameters": "809M" if engine.BACKEND == "local" else "n/a (remote)",
         "languages": "99+",
         "optimized_for": ["en", "ar"],
         "modes": {
