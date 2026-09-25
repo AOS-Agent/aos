@@ -50,6 +50,9 @@ class LauncherNamingCheck(ReconcileCheck):
         "com.apple.", "com.google.", "com.microsoft.", "homebrew.mxcl.",
         "com.adobe.", "com.docker.", "io.tailscale.", "com.anthropic.",
         "org.mozilla.", "com.dropbox.", "us.zoom.",
+        # Qren is a separate product that installs and names its own agents;
+        # AOS must never wrap or rewrite them (operator, 2026-09-25; qren#413).
+        "ai.qren.",
     )
 
     def precondition(self) -> bool:
