@@ -23,7 +23,9 @@ import json
 import logging
 import mimetypes
 import os
+import shutil
 import subprocess
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -81,6 +83,33 @@ def api_key() -> str | None:
 def available() -> bool:
     """True when a credential is present, so the caller can pick a backend."""
     return api_key() is not None
+
+
+# Containers the provider accepts as-is, verified by upload on 2026-09-25.
+# It rejects .m4a (iPhone voice memos) with a bare HTTP 400, and a rejection
+# drops us onto the local model — which reloads the very Whisper this backend
+# exists to keep out of RAM. Anything else is converted to FLAC first.
+_ACCEPTED_SUFFIXES = {".wav", ".mp3", ".ogg", ".oga", ".opus", ".flac"}
+
+
+def _to_accepted_format(path: Path) -> tuple[Path, Path | None]:
+    """Return (path to upload, temp file to delete or None)."""
+    if path.suffix.lower() in _ACCEPTED_SUFFIXES:
+        return path, None
+    ffmpeg = shutil.which("ffmpeg") or "/opt/homebrew/bin/ffmpeg"
+    fd, tmp = tempfile.mkstemp(suffix=".flac")
+    os.close(fd)
+    out = Path(tmp)
+    try:
+        subprocess.run(
+            [ffmpeg, "-nostdin", "-loglevel", "error", "-y", "-i", str(path),
+             "-ac", "1", "-ar", "16000", str(out)],
+            check=True, capture_output=True, timeout=120,
+        )
+    except (OSError, subprocess.SubprocessError) as e:
+        out.unlink(missing_ok=True)
+        raise RuntimeError(f"Could not convert {path.suffix} for upload: {e}") from e
+    return out, out
 
 
 def _multipart(audio_path: str, fields: dict[str, str]) -> tuple[bytes, str]:
@@ -183,7 +212,12 @@ def transcribe(audio_path: str, language_hint: str = "auto",
     if language_hint and language_hint != "auto":
         fields["language"] = language_hint
 
-    body, content_type = _multipart(str(path), fields)
+    upload, tmp = _to_accepted_format(path)
+    try:
+        body, content_type = _multipart(str(upload), fields)
+    finally:
+        if tmp is not None:
+            tmp.unlink(missing_ok=True)
     req = urllib.request.Request(
         API_URL, data=body,
         headers={"Authorization": f"Bearer {key}", "Content-Type": content_type},

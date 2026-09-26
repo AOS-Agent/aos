@@ -2,6 +2,12 @@
 
 All notable changes to AOS. Release notes sent via Telegram after each 4am update.
 
+## v0.7.17 — iPhone voice memos stay in the cloud — 2026-09-25
+
+Summary: The cloud transcriber rejected .m4a uploads with a bare HTTP 400, so every iPhone voice memo fell back to the local model and pulled Whisper back into RAM.
+
+- Fixed `core/services/transcriber/cloud.py` uploading containers the provider refuses. WAV, MP3, OGG/Opus and FLAC go up as-is (each verified by upload); anything else is converted to 16kHz mono FLAC with ffmpeg first, and the temp file is removed afterwards.
+
 ## v0.7.16 — the Mini stops holding Whisper in RAM — 2026-09-25
 
 Summary: The transcriber now sends audio to OpenRouter (`microsoft/mai-transcribe-2`) instead of keeping an 809M-param Whisper model resident. On the 16GB Mini that model evicted everything else; the service now idles at about 11MB.
