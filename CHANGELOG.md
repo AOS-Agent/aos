@@ -2,6 +2,14 @@
 
 All notable changes to AOS. Release notes sent via Telegram after each 4am update.
 
+## v0.7.16 — the Mini stops holding Whisper in RAM — 2026-09-25
+
+Summary: The transcriber now sends audio to OpenRouter (`microsoft/mai-transcribe-2`) instead of keeping an 809M-param Whisper model resident. On the 16GB Mini that model evicted everything else; the service now idles at about 11MB.
+
+- Added `core/services/transcriber/cloud.py`, the cloud backend. It reads the key from the login Keychain (`openrouter-api` / `api-key`), falling back to `OPENROUTER_API_KEY` or `~/.aos/config/openrouter.key`. MAI returns one coarse segment per file, so it requests word timings and rebuilds segments from them. It handles code-switching in one pass, so mixed English/Arabic audio no longer needs the dual-pass merge.
+- Changed `engine.py` to default to `TRANSCRIBER_BACKEND=cloud`. If there is no key or the cloud call fails, it falls back to the local mlx model, so a machine without a key behaves exactly as before. `TRANSCRIBER_BACKEND=local` forces the local path. The HTTP contract on :7602 is unchanged, so bridge, content-engine and listen need no edits.
+- Known gap: diarization (speaker labels) came back empty on single-speaker test audio and is unproven on real meetings.
+
 ## v0.7.15 — a deleted secret is actually deleted — 2026-09-20
 
 Summary: `agent-secret delete` reported success while leaving the credential fully readable. Found while retiring a bot's token: the command printed `Deleted: …` and exited 0, and `agent-secret get` returned the live token immediately afterwards.
